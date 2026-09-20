@@ -65,7 +65,7 @@ public static class TransportNamespaceConnectionStrings {
 
     var map = new Dictionary<string, string>(StringComparer.Ordinal);
     var section = configuration?.GetSection($"{transportConfigurationSection}:{NAMESPACES_SUBSECTION}");
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return map;
     }
 

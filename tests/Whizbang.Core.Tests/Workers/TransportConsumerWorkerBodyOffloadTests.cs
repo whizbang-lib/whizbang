@@ -353,9 +353,9 @@ public class TransportConsumerWorkerBodyOffloadTests {
       lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: receptorRegistry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: receptorRegistry);
   }
 
   /// <summary>Registry that consumes NOTHING — mirrors a real service that has no receptor for the

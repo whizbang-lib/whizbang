@@ -31,23 +31,15 @@ public interface IStreamCompactor {
 
 /// <inheritdoc cref="IStreamCompactor" />
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed partial class StreamCompactor : IStreamCompactor {
-  private readonly IPerspectiveSnapshotStore _snapshots;
-  private readonly IWorkCoordinator _coordinator;
-  private readonly IEventStore _eventStore;
-  private readonly IStreamCloser _closer;
-  private readonly ILogger<StreamCompactor> _logger;
-
-  /// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 closer.</summary>
-  public StreamCompactor(
-      IPerspectiveSnapshotStore snapshots, IWorkCoordinator coordinator, IEventStore eventStore,
-      IStreamCloser closer, ILogger<StreamCompactor> logger) {
-    _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
-    _closer = closer ?? throw new ArgumentNullException(nameof(closer));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+/// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 closer.</summary>
+public sealed partial class StreamCompactor(
+    IPerspectiveSnapshotStore snapshots, IWorkCoordinator coordinator, IEventStore eventStore,
+    IStreamCloser closer, ILogger<StreamCompactor> logger) : IStreamCompactor {
+  private readonly IPerspectiveSnapshotStore _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly IEventStore _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
+  private readonly IStreamCloser _closer = closer ?? throw new ArgumentNullException(nameof(closer));
+  private readonly ILogger<StreamCompactor> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async Task<CompactionResult> CompactAsync(

@@ -21,7 +21,7 @@ public static class DbContextInitializationRegistry {
   /// process-wide flag told every host after the first "already initialized" and left its database
   /// with no schema. The weak table lets disposed hosts fall away.
   /// </summary>
-  private static readonly ConditionalWeakTable<IServiceProvider, InitializationState> _initializedByProvider = new();
+  private static readonly ConditionalWeakTable<IServiceProvider, InitializationState> _initializedByProvider = [];
 
   private sealed class InitializationState {
     public int Done;

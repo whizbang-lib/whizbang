@@ -26,24 +26,18 @@ namespace Whizbang.Core.DependencyInjection;
 /// </remarks>
 /// <docs>operations/dependency-injection/registration-validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationStartupTests.cs</tests>
-internal sealed class RegistrationValidationStartup : IHostedService {
+/// <remarks>Creates the startup check.</remarks>
+/// <param name="services">The collection to validate, as it stands at startup.</param>
+/// <param name="requirements">The generated manifest of constructor dependencies.</param>
+/// <param name="enabled">False to skip validation entirely.</param>
+internal sealed class RegistrationValidationStartup(
+    IServiceCollection services,
+    IReadOnlyList<ServiceRequirement> requirements,
+    bool enabled) : IHostedService {
 
-  private readonly IServiceCollection _services;
-  private readonly IReadOnlyList<ServiceRequirement> _requirements;
-  private readonly bool _enabled;
-
-  /// <summary>Creates the startup check.</summary>
-  /// <param name="services">The collection to validate, as it stands at startup.</param>
-  /// <param name="requirements">The generated manifest of constructor dependencies.</param>
-  /// <param name="enabled">False to skip validation entirely.</param>
-  public RegistrationValidationStartup(
-      IServiceCollection services,
-      IReadOnlyList<ServiceRequirement> requirements,
-      bool enabled) {
-    _services = services;
-    _requirements = requirements;
-    _enabled = enabled;
-  }
+  private readonly IServiceCollection _services = services;
+  private readonly IReadOnlyList<ServiceRequirement> _requirements = requirements;
+  private readonly bool _enabled = enabled;
 
   /// <inheritdoc />
   public Task StartAsync(CancellationToken cancellationToken) {

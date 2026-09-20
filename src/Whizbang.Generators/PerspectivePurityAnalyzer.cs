@@ -320,10 +320,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
     // Use shared discovery helper for consistent perspective detection
-    if (Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol)) {
-      return true;
-    }
-    return false;
+    return Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol);
   }
 
   private static bool _returnsTask(IMethodSymbol methodSymbol) {

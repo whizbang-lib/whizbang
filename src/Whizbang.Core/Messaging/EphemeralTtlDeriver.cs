@@ -40,6 +40,6 @@ internal static class EphemeralTtlDeriver {
       return null;
     }
     var info = resolver.Resolve(payload.GetType());
-    return info is not null && info.TtlSeconds >= 0 ? info.TtlSeconds : null;
+    return info?.TtlSeconds >= 0 ? info.TtlSeconds : null;
   }
 }

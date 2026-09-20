@@ -155,7 +155,7 @@ public class BacklogAgeDutyTests {
   public async Task AddWhizbangWorkers_RegistersTheDutyAndItsHealthSourceAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetService<BacklogAgeState>()).IsNotNull();
     await Assert.That(provider.GetService<BacklogAgeMetrics>()).IsNotNull();

@@ -150,9 +150,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           explicitSeconds = sec;
         }
       }
-      var explicitTtl = explicitSeconds >= 0 ? explicitSeconds
-          : explicitDays >= 0 ? explicitDays * 86400
-          : -1;
+      var explicitTtl = -1;
+      if (explicitSeconds >= 0) {
+        explicitTtl = explicitSeconds;
+      } else if (explicitDays >= 0) {
+        explicitTtl = explicitDays * 86400;
+      }
       if (explicitTtl >= 0) {
         ttlRowSeconds = explicitTtl;
       }
@@ -301,11 +304,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
+            IsFullHistory: isFullHistory
+,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec,
-            IsFullHistory: isFullHistory
-        ),
+            StreamGroupSpec: streamGroupSpec),
         Warning: null
     );
   }
@@ -833,8 +836,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         .GroupBy(x => x.fqn)
         .Select(g => g.First())
         .ToList();
-    var eventTypes = allEvents.Select(x => x.fqn).ToList();
-    var eventTypeSymbols = allEvents.Select(x => x.symbol).ToList();
+    var eventTypes = allEvents.ConvertAll(x => x.fqn);
+    var eventTypeSymbols = allEvents.ConvertAll(x => x.symbol);
 
     return (eventTypes, eventTypeSymbols);
   }

@@ -10,8 +10,8 @@ namespace Whizbang.Sagas.Generated;
 /// types directly (their per-saga generated contracts cover all the
 /// lifecycle events), so the per-consumer <c>MessageJsonContextGenerator</c>
 /// never sees them — the framework MUST own its own context or every
-/// consumer trips a <c>JsonTypeInfo metadata for type ... was not
-/// provided</c> failure the first time
+/// consumer trips a <code>JsonTypeInfo metadata for type ... was not
+/// provided</code> failure the first time
 /// <c>BaseSagaService.InitiateSagaAsync</c> publishes the auto-armed
 /// watchdog tick.
 /// </summary>

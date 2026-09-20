@@ -31,8 +31,7 @@ public interface IEventMint {
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
-public interface ICollectiveMint {
-}
+public interface ICollectiveMint;
 
 /// <summary>
 /// The checkpoint mint family: where a control-class message acquires its broker LIFETIME.

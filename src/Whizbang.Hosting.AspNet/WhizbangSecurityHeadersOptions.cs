@@ -52,5 +52,5 @@ public sealed class WhizbangSecurityHeadersOptions {
   /// on a service that should reject other verbs at the origin.
   /// </para>
   /// </summary>
-  public IList<string> AllowedMethods { get; } = new List<string>();
+  public IList<string> AllowedMethods { get; } = [];
 }

@@ -16,8 +16,7 @@ namespace Whizbang.Hosting.AspNet;
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
   PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(StartupStatusReport))]
-internal partial class StartupStatusJsonContext : JsonSerializerContext {
-}
+internal partial class StartupStatusJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The opt-in startup status surface: <c>GET /whizbang/startup</c> (overridable), serving the

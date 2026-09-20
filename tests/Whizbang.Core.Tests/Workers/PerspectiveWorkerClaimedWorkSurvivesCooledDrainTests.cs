@@ -179,6 +179,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           DrainLoopMaxIterations = 1,
           MaxConcurrentDrainConsumers = 1
         }),
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: null,
@@ -186,7 +187,6 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
         perspectiveDrainChannel: harness.DrainChannel,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         recentlyProcessedEventCache: cache);
 
       return new _Fixture { Worker = worker, Harness = harness, Registry = registry };

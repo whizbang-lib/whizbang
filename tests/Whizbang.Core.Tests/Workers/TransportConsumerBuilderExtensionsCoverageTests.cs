@@ -66,9 +66,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act - no IReceptorRegistry registered
     builder.AddTransportConsumer();
@@ -94,9 +92,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     services.AddSingleton<IReceptorRegistry>(new TestReceptorRegistry());
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -118,9 +114,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -145,9 +139,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     services.AddSingleton<IReceptorRegistry>(new TestReceptorRegistry());
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -174,9 +166,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -203,9 +193,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -229,14 +217,10 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
-    builder.AddTransportConsumer(config => {
-      config.ResilienceOptions.InitialRetryAttempts = 5;
-    });
+    builder.AddTransportConsumer(config => config.ResilienceOptions.InitialRetryAttempts = 5);
 
     // Assert
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(SubscriptionResilienceOptions));
@@ -257,16 +241,12 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     // Act
-    perspectiveBuilder.AddTransportConsumer(config => {
-      config.ResilienceOptions.InitialRetryAttempts = 3;
-    });
+    perspectiveBuilder.AddTransportConsumer(config => config.ResilienceOptions.InitialRetryAttempts = 3);
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -308,9 +288,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -329,9 +307,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -355,9 +331,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -385,9 +359,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerWorkerResolutionDependencies(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     builder.AddTransportConsumer();
 
@@ -409,9 +381,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerWorkerResolutionDependencies(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     perspectiveBuilder.AddTransportConsumer();
@@ -435,9 +405,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerWorkerResolutionDependencies(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     perspectiveBuilder.AddTransportConsumer();
@@ -465,9 +433,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     perspectiveBuilder.AddTransportConsumer();
@@ -510,9 +476,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     _registerRequiredServices(services, includeServiceInstanceProvider: false);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     perspectiveBuilder.AddTransportConsumer();

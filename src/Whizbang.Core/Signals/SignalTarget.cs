@@ -27,23 +27,21 @@ public enum SignalTargetKind {
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 public readonly struct SignalTarget {
   private readonly IReadOnlyList<Guid>? _streamIds;
-  private readonly Guid _instanceId;
-  private readonly SignalTargetKind _kind;
 
   private SignalTarget(SignalTargetKind kind, IReadOnlyList<Guid>? streamIds, Guid instanceId) {
-    _kind = kind;
+    Kind = kind;
     _streamIds = streamIds;
-    _instanceId = instanceId;
+    InstanceId = instanceId;
   }
 
   /// <summary>The kind of target this value carries.</summary>
-  public SignalTargetKind Kind => _kind;
+  public SignalTargetKind Kind { get; }
 
   /// <summary>Stream ids for <see cref="SignalTargetKind.Streams"/>. Empty for other kinds.</summary>
   public IReadOnlyList<Guid> StreamIds => _streamIds ?? [];
 
   /// <summary>Instance id for <see cref="SignalTargetKind.Instance"/>. <see cref="Guid.Empty"/> for other kinds.</summary>
-  public Guid InstanceId => _instanceId;
+  public Guid InstanceId { get; }
 
   /// <summary>No target — every instance's broadcast channel. Same as <see langword="default"/>.</summary>
   public static SignalTarget Broadcast => default;

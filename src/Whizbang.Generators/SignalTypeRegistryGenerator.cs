@@ -57,7 +57,7 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
 
     var fullyQualified = TypeNameHelper.GetFullyQualifiedName(symbol);   // "global::Ns.Type"
     var defaultWireName = fullyQualified.StartsWith("global::", StringComparison.Ordinal)
-        ? fullyQualified.Substring("global::".Length)
+        ? fullyQualified["global::".Length..]
         : fullyQualified;
     var wireName = _readWireNameAttribute(symbol) ?? defaultWireName;
     return new SignalTypeInfo(fullyQualified, wireName);

@@ -179,9 +179,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // minted a fresh correlation while scope survived — the asymmetric boundary bug.
       messageContextAccessor.Current = establishedContext;
       var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      if (initiatingAccessor is not null) {
-        initiatingAccessor.InitiatingContext = establishedContext;
-      }
+      initiatingAccessor?.InitiatingContext = establishedContext;
     }
 
     // Extract both trace context and scope from envelope hops.
@@ -400,9 +398,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     if (securityContext is not null) {
       var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      if (accessor is not null) {
-        accessor.Current = securityContext;
-      }
+      accessor?.Current = securityContext;
     }
 
     return securityContext;
@@ -465,9 +461,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Set on accessor so GetSecurityFromAmbient() can find it
     var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
-    if (accessor is not null) {
-      accessor.Current = immutableScope;
-    }
+    accessor?.Current = immutableScope;
 
     // Invoke security callbacks so a consumer's security callback sets its tenant context
     var callbacks = _scopedProvider.GetServices<ISecurityContextCallback>();
@@ -717,9 +711,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
     var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
-    if (lifecycleContextAccessor is not null) {
-      lifecycleContextAccessor.Current = lifecycleContext;
-    }
+    lifecycleContextAccessor?.Current = lifecycleContext;
   }
 
   /// <summary>

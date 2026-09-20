@@ -39,12 +39,12 @@ public class TransportNamespaceRoutingRegistrationTests {
     var services = new ServiceCollection();
     services.AddWhizbang(o => o.Tags.RouteNamespace("bulk-import", "bulk"));
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var resolver = provider.GetService<TransportNamespaceResolver>();
     var again = provider.GetService<TransportNamespaceResolver>();
 
     await Assert.That(resolver).IsNotNull();
-    await Assert.That(again).IsSameReferenceAs(resolver!)
+    await Assert.That(again).IsSameReferenceAs(resolver)
       .Because("the resolver caches per-type-name resolution and must be a singleton");
     await Assert.That(resolver!.HasBindings).IsTrue();
   }
@@ -60,7 +60,7 @@ public class TransportNamespaceRoutingRegistrationTests {
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbang(null);
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var resolver = provider.GetRequiredService<TransportNamespaceResolver>();
 
     await Assert.That(resolver.HasBindings).IsTrue();
@@ -81,7 +81,7 @@ public class TransportNamespaceRoutingRegistrationTests {
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbang(o => o.Tags.RouteNamespace("bulk-import", "bulk"));
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     _ = provider.GetRequiredService<TransportNamespaceResolver>();
 
     var tagOptions = provider.GetRequiredService<TagOptions>();

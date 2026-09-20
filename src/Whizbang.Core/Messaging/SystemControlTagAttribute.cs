@@ -30,5 +30,4 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Tags/SystemControlTagTests.cs:SupersedableControlSignals_CarryTheControlTagAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Tags/SystemControlTagTests.cs:ControlClassMembership_IsExactlyTheMessagingControlFamiliesAsync</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class SystemControlTagAttribute : MessageTagAttribute {
-}
+public sealed class SystemControlTagAttribute : MessageTagAttribute;

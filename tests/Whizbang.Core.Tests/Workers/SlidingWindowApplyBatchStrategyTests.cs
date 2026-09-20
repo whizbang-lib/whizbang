@@ -81,8 +81,8 @@ public class SlidingWindowApplyBatchStrategyTests {
     var arr = flushed.ToArray();
     await Assert.That(arr.Length).IsEqualTo(2);
     // Each stream should produce one flush with the right count.
-    var streamAFlush = System.Linq.Enumerable.Single(arr, t => t.StreamId == streamA);
-    var streamBFlush = System.Linq.Enumerable.Single(arr, t => t.StreamId == streamB);
+    var streamAFlush = arr.Single(t => t.StreamId == streamA);
+    var streamBFlush = arr.Single(t => t.StreamId == streamB);
     await Assert.That(streamAFlush.Count).IsEqualTo(2);
     await Assert.That(streamBFlush.Count).IsEqualTo(1);
   }

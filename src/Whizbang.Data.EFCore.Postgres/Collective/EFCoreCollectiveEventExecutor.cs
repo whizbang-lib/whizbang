@@ -20,20 +20,15 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveEventExecutorTests.cs:ModelType_ReportsTheClosedGenericArgumentAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveEventExecutorTests.cs:ApplyAsync_NonDbContextSession_ThrowsArgumentExceptionAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveEventExecutorTests.cs:ApplyAsync_NullDbContext_ThrowsArgumentNullAsync</tests>
-public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExecutor
+/// <remarks>Creates the executor with the apply policy (batching + statement_timeout) and the collective
+/// apply-hook registry. DI supplies both; the parameterless defaults are used by tests (a null registry falls
+/// back to the framework defaults, i.e. the whizbang.timestamps stamping).</remarks>
+public sealed class EFCoreCollectiveEventExecutor<TModel>(
+    CollectiveApplyOptions? options = null, CollectiveApplyHookRegistry? hookRegistry = null) : ICollectiveEventExecutor
     where TModel : class {
 
-  private readonly CollectiveApplyOptions _options;
-  private readonly CollectiveApplyHookRegistry? _hookRegistry;
-
-  /// <summary>Creates the executor with the apply policy (batching + statement_timeout) and the collective
-  /// apply-hook registry. DI supplies both; the parameterless defaults are used by tests (a null registry falls
-  /// back to the framework defaults, i.e. the whizbang.timestamps stamping).</summary>
-  public EFCoreCollectiveEventExecutor(
-      CollectiveApplyOptions? options = null, CollectiveApplyHookRegistry? hookRegistry = null) {
-    _options = options ?? CollectiveApplyOptions.Default;
-    _hookRegistry = hookRegistry;
-  }
+  private readonly CollectiveApplyOptions _options = options ?? CollectiveApplyOptions.Default;
+  private readonly CollectiveApplyHookRegistry? _hookRegistry = hookRegistry;
 
   /// <inheritdoc />
   public Type ModelType => typeof(TModel);

@@ -42,14 +42,9 @@ internal sealed class SignalHandlerList<TSignal> where TSignal : ISignal {
     }
   }
 
-  private sealed class Subscription : ISignalSubscription {
-    private readonly SignalHandlerList<TSignal> _owner;
-    private Func<TSignal, ValueTask>? _handler;
-
-    public Subscription(SignalHandlerList<TSignal> owner, Func<TSignal, ValueTask> handler) {
-      _owner = owner;
-      _handler = handler;
-    }
+  private sealed class Subscription(SignalHandlerList<TSignal> owner, Func<TSignal, ValueTask> handler) : ISignalSubscription {
+    private readonly SignalHandlerList<TSignal> _owner = owner;
+    private Func<TSignal, ValueTask>? _handler = handler;
 
     public void Dispose() {
       var h = Interlocked.Exchange(ref _handler, null);

@@ -99,7 +99,7 @@ public class TransportPublishStrategyHookChainTests {
     await Assert.That(result.Reason).IsEqualTo(MessageFailureReason.MessageBodyTooLarge)
       .Because("Pre-flight: size > ceiling AND no hook substituted the body — fail with a typed reason code so dashboards distinguish 'too big' from generic transport failures.");
     await Assert.That(result.Error).IsNotNull();
-    await Assert.That(result.Error!).Contains("AddWhizbangBodyOffload")
+    await Assert.That(result.Error).Contains("AddWhizbangBodyOffload")
       .Because("Error message points operators at the remediation knob (register offload, raise tier, or trim payload).");
     await Assert.That(transport.PublishCallCount).IsEqualTo(0)
       .Because("Strategy MUST NOT hand oversized payloads to the transport — that's what we're protecting against.");
@@ -130,7 +130,7 @@ public class TransportPublishStrategyHookChainTests {
     await Assert.That(transport.LastBulkItems!.Count).IsEqualTo(2);
     await Assert.That(transport.LastBulkItems.All(i => i.PreSerializedBytes is not null)).IsTrue()
       .Because("Every item in the batch MUST carry its own pre-serialized bytes — the bulk path is JIT-after-serialize per item, identical contract to single-publish.");
-    await Assert.That(transport.LastBulkItems.All(i => i.PerItemMetadata is not null && i.PerItemMetadata.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY))).IsTrue()
+    await Assert.That(transport.LastBulkItems.All(i => i.PerItemMetadata?.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY) == true)).IsTrue()
       .Because("Per-item whizbang.body-size is the load-bearing observability signal — bulk path MUST stamp it just like single publish.");
   }
 

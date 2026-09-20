@@ -136,7 +136,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT {_fn("release_held_dead_letter_cohort")}(@fp, @stagger)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("stagger", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)stagger.TotalSeconds });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(stagger), NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)stagger.TotalSeconds });
     return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
   }
 
@@ -304,7 +304,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT {_fn("mark_dead_letter_discarded")}(@id, @note)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("note", NpgsqlTypes.NpgsqlDbType.Text) { Value = note ?? (object)DBNull.Value });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(note), NpgsqlTypes.NpgsqlDbType.Text) { Value = note ?? (object)DBNull.Value });
     await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
   }
 
@@ -346,7 +346,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     }
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(id), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
     await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
   }
 }

@@ -272,7 +272,7 @@ public class StartupReadyCompositeTests {
   [Test]
   public async Task TransportConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
     var gate = new SchemaReadyGate();
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(
@@ -285,8 +285,8 @@ public class StartupReadyCompositeTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: gate);
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");
@@ -307,15 +307,15 @@ public class StartupReadyCompositeTests {
 
   [Test]
   public async Task ServiceBusConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
       transport: new Whizbang.Core.Transports.InProcessTransport(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("servicebus-consumer");

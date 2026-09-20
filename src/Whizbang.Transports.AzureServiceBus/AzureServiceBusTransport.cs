@@ -43,7 +43,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <summary>Last age-capability value reported per entity — see <c>_buildPoisonContext</c>.</summary>
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private readonly bool _isEmulator;
-  private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
   private readonly TimeProvider _timeProvider;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -144,7 +143,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     if (_options.EnableReceiveLivenessWatchdog) {
       if (_adminClient is not null) {
         var adminClientForProbe = _adminClient;
-        _livenessWatchdog = new ReceiveLivenessWatchdog(
+        LivenessWatchdog = new ReceiveLivenessWatchdog(
           _options,
           (topic, sub, ct) => adminClientForProbe.GetSubscriptionActiveMessageCountAsync(topic, sub, ct),
           _ => _invokeRecoveryHandlerAsync(),
@@ -173,7 +172,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// available). Internal so tests drive sweeps deterministically via
   /// <see cref="ReceiveLivenessWatchdog.ProbeAsync"/>.
   /// </summary>
-  internal ReceiveLivenessWatchdog? LivenessWatchdog => _livenessWatchdog;
+  internal ReceiveLivenessWatchdog? LivenessWatchdog { get; }
 
   /// <summary>
   /// Test seam for the head peek that supplies backlog AGE. Defaults to a real receiver peek;
@@ -195,12 +194,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <returns>One sample per live subscription; empty when nothing is subscribed yet.</returns>
   internal async Task<IReadOnlyList<Whizbang.Core.Transports.BacklogSample>> PeekBacklogsAsync(
       CancellationToken cancellationToken) {
-    if (_livenessWatchdog is null || _adminClient is null) {
+    if (LivenessWatchdog is null || _adminClient is null) {
       return [];
     }
 
     var samples = new List<Whizbang.Core.Transports.BacklogSample>();
-    foreach (var (topic, subscription) in _livenessWatchdog.TrackedEntities) {
+    foreach (var (topic, subscription) in LivenessWatchdog.TrackedEntities) {
       long depth;
       try {
         depth = await _adminClient.GetSubscriptionActiveMessageCountAsync(topic, subscription, cancellationToken)
@@ -795,14 +794,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var message = new ServiceBusMessage(json) {
       MessageId = envelope.MessageId.Value.ToString(),
       Subject = item.RoutingKey ?? destination.RoutingKey ?? "message",
-      ContentType = "application/json"
+      ContentType = "application/json",
+      // Session id for FIFO ordering — ASB delivers same-session messages in order to one consumer.
+      // Always set, never conditional: a session-enabled entity rejects a null session id, which is
+      // what silently dead-lettered streamless control-plane broadcasts. Same rule as the single
+      // publish path above, deliberately sharing one implementation so the two cannot drift.
+      SessionId = AsbSessionKey.For(item.StreamId, envelope.MessageId.Value)
     };
-
-    // Session id for FIFO ordering — ASB delivers same-session messages in order to one consumer.
-    // Always set, never conditional: a session-enabled entity rejects a null session id, which is
-    // what silently dead-lettered streamless control-plane broadcasts. Same rule as the single
-    // publish path above, deliberately sharing one implementation so the two cannot drift.
-    message.SessionId = AsbSessionKey.For(item.StreamId, envelope.MessageId.Value);
 
     message.ApplicationProperties[ENVELOPE_TYPE_PROPERTY] = envelopeTypeName;
 
@@ -897,9 +895,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             topicName, subscriptionName, batchHandler, batchOptions, destination, cancellationToken);
 
       _activeSubscriptionKeys.TryAdd((topicName, subscriptionName), 0);
-      if (_livenessWatchdog is not null) {
-        _livenessWatchdog.Track(topicName, subscriptionName);
-        _livenessWatchdog.Start();
+      if (LivenessWatchdog is not null) {
+        LivenessWatchdog.Track(topicName, subscriptionName);
+        LivenessWatchdog.Start();
       }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
@@ -935,7 +933,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
     sessionProcessor.ProcessMessageAsync += args => {
-      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
@@ -1280,7 +1278,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
-      _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
       if (!subscription.IsActive) {
         return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       }
@@ -1384,7 +1382,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
         sessionProcessor.ProcessMessageAsync += async args => {
-          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -1426,7 +1424,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscription = new AzureServiceBusSubscription(processor, _logger);
 
         processor.ProcessMessageAsync += async args => {
-          _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
           if (!subscription.IsActive) {
             _logger.LogWarning(
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -1447,9 +1445,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       _activeSubscriptionKeys.TryAdd((topicName, subscriptionName), 0);
-      if (_livenessWatchdog is not null) {
-        _livenessWatchdog.Track(topicName, subscriptionName);
-        _livenessWatchdog.Start();
+      if (LivenessWatchdog is not null) {
+        LivenessWatchdog.Track(topicName, subscriptionName);
+        LivenessWatchdog.Start();
       }
 
       if (_logger.IsEnabled(LogLevel.Information)) {
@@ -2420,8 +2418,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     _recoveryHandler = null;
 
     // Stop the receive-liveness loop before tearing anything else down
-    if (_livenessWatchdog is not null) {
-      await _livenessWatchdog.DisposeAsync();
+    if (LivenessWatchdog is not null) {
+      await LivenessWatchdog.DisposeAsync();
     }
 
     // Stop the adaptive acceptor evaluation loop (started lazily on the first governed

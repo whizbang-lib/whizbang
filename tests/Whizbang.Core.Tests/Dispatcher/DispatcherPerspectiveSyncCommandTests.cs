@@ -95,9 +95,7 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var eventMessage = new TestSyncEvent(Guid.NewGuid());
 
     // Act & Assert - SHOULD throw timeout because no perspective processes the event
-    await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () => {
-      await dispatcher.LocalInvokeAsync(eventMessage);
-    }).Because("Event WITH [AwaitPerspectiveSync] should wait and timeout when not processed");
+    await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () => await dispatcher.LocalInvokeAsync(eventMessage)).Because("Event WITH [AwaitPerspectiveSync] should wait and timeout when not processed");
   }
 
   [Test]

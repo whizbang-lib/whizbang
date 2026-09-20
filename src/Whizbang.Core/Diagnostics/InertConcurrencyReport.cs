@@ -57,7 +57,7 @@ public static class InertConcurrencyReport {
     var drainWidth = outboxDrain?.MaxConcurrentStreams ?? 1;
     var dispatchWidth = inboxDispatch?.MaxConcurrentDispatch ?? 1;
 
-    if (coordinator is not null && !coordinator.ParallelizeStreams && drainWidth > 1) {
+    if (coordinator?.ParallelizeStreams == false && drainWidth > 1) {
       findings.Add(string.Format(
         CultureInfo.InvariantCulture,
         "{0}.{1} is false, so {2}.{3} = {4} cannot take effect — outbox streams drain serially. "
@@ -67,7 +67,7 @@ public static class InertConcurrencyReport {
         drainWidth));
     }
 
-    if (orderedStream is not null && !orderedStream.ParallelizeStreams && dispatchWidth > 1) {
+    if (orderedStream?.ParallelizeStreams == false && dispatchWidth > 1) {
       findings.Add(string.Format(
         CultureInfo.InvariantCulture,
         "{0}.{1} is false, so {2}.{3} = {4} cannot take effect — inbox dispatch runs serially. "

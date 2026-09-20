@@ -103,7 +103,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
@@ -143,7 +143,7 @@ public class ServiceBusConsumerWorkerGapTests {
     // gate and reaches the serializer-resolution branch under test. No IEnvelopeSerializer
     // is registered anywhere, so _serializeToNewInboxMessage must throw InvalidOperationException.
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     var worker = _createWorker(transport, strategy, services);
 
@@ -408,7 +408,7 @@ public class ServiceBusConsumerWorkerGapTests {
     ));
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -509,7 +509,7 @@ public class ServiceBusConsumerWorkerGapTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -591,7 +591,7 @@ public class ServiceBusConsumerWorkerGapTests {
     ]);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -643,6 +643,7 @@ public class ServiceBusConsumerWorkerGapTests {
       jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
       },
@@ -650,8 +651,7 @@ public class ServiceBusConsumerWorkerGapTests {
       envelopeSerializer: null,
       messageProcessingOptions: messageProcessingOptions,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: null,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      runtimeReceptorRegistry: null);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(

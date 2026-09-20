@@ -33,24 +33,23 @@ namespace Whizbang.Core.Observability;
 public sealed class PassiveCounter<T> where T : struct, INumberBase<T> {
   private readonly Cell _untagged = new();
   private readonly ConcurrentDictionary<TagSet, Cell> _series = new();
-  private readonly Instrument _instrument;
 
   internal PassiveCounter(Meter meter, string name, string? unit, string? description, bool monotonic) {
     ArgumentNullException.ThrowIfNull(meter);
     ArgumentException.ThrowIfNullOrWhiteSpace(name);
-    _instrument = monotonic
+    Instrument = monotonic
       ? meter.CreateObservableCounter(name, _observe, unit, description)
       : meter.CreateObservableUpDownCounter(name, _observe, unit, description);
   }
 
   /// <summary>The instrument name, as the meter reports it.</summary>
-  public string Name => _instrument.Name;
+  public string Name => Instrument.Name;
 
   /// <summary>The meter this counter reports on.</summary>
-  public Meter Meter => _instrument.Meter;
+  public Meter Meter => Instrument.Meter;
 
   /// <summary>The observable instrument registered on the meter.</summary>
-  public Instrument Instrument => _instrument;
+  public Instrument Instrument { get; }
 
   /// <summary>Adds to the untagged count.</summary>
   /// <param name="delta">The amount to add.</param>

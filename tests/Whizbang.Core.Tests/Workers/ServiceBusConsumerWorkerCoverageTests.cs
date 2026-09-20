@@ -47,8 +47,8 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
-      options: workerOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: workerOptions);
 
     // Act & Assert — subscribing happens in the background now (behind the schema gate), so the
     // failure surfaces through SubscriptionsReady rather than StartAsync. A waiter must fault,
@@ -83,8 +83,8 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
-      options: workerOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: workerOptions);
 
     // Act - Start then stop (triggers OperationCanceledException in ExecuteAsync)
     using var cts = new CancellationTokenSource();
@@ -198,7 +198,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     var registry = new SpyReceptorRegistry();
     var resolutionCount = 0;
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(o => { o.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => {
@@ -274,7 +274,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
 
     var recordingLogger = new RecordingLogger<ServiceBusConsumerWorker>();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(o => { o.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -354,9 +354,9 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
-      lifecycleMessageDeserializer: lifecycleMessageDeserializer,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer);
   }
 
   private static MessageEnvelope<JsonElement> _buildJsonEnvelope(MessageId messageId, Guid streamId) {

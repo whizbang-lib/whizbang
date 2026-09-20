@@ -94,8 +94,8 @@ public class MessageIdConverterTests {
   public async Task Write_WithValidMessageId_ShouldWriteGuidStringAsync() {
     // Arrange - Use MessageId.New() which generates valid UUIDv7
     var messageId = MessageId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     _converter.Write(writer, messageId, JsonSerializerOptions.Default);
@@ -110,8 +110,8 @@ public class MessageIdConverterTests {
   public async Task RoundTrip_WithValidMessageId_ShouldPreserveValueAsync() {
     // Arrange - Use MessageId.New() which generates valid UUIDv7
     var original = MessageId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act - Write
     _converter.Write(writer, original, JsonSerializerOptions.Default);
@@ -168,8 +168,8 @@ public class MessageIdConverterTests {
   public async Task Write_WithMultipleMessageIds_ShouldWriteAllAsync() {
     // Arrange - Use MessageId.New() which generates valid UUIDv7
     var messageIds = Enumerable.Range(0, 5).Select(_ => MessageId.New()).ToList();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     writer.WriteStartArray();

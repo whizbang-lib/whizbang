@@ -21,17 +21,12 @@ namespace Whizbang.Core.Temporal;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/temporal/pre-fire-hook</docs>
-public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGate {
+/// <remarks>Constructor.</remarks>
+public sealed partial class ScheduleOccurrencePublishGate(IServiceScopeFactory scopeFactory, ILogger<ScheduleOccurrencePublishGate> logger) : IOccurrencePublishGate {
   private const short RUN_SKIPPED = 2;
 
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ILogger<ScheduleOccurrencePublishGate> _logger;
-
-  /// <summary>Constructor.</summary>
-  public ScheduleOccurrencePublishGate(IServiceScopeFactory scopeFactory, ILogger<ScheduleOccurrencePublishGate> logger) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly ILogger<ScheduleOccurrencePublishGate> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async ValueTask<OccurrencePublishDecision> EvaluateAsync(

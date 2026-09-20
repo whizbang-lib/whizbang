@@ -123,7 +123,7 @@ public sealed class WhizbangPinnedPoolOptions {
   /// <example>
   /// <c>ExcludeWorkers: ["HeartbeatWorker", "LeaseRenewalWorker"]</c>
   /// </example>
-  public IList<string> ExcludeWorkers { get; set; } = new List<string>();
+  public IList<string> ExcludeWorkers { get; set; } = [];
 
   /// <summary>
   /// Per-connection lifetime cap (seconds) before the pool recycles the

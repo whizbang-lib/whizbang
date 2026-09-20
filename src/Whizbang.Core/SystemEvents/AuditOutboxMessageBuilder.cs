@@ -96,8 +96,8 @@ public static partial class AuditOutboxMessageBuilder {
     // its authority does not. The consumer still establishes a context, because the extractor needs
     // either a tenant or a user and the tenant is present.
     var sourceHops = (eventMessage.Envelope.Hops ?? [])
-      .Select(h => h with { Type = HopType.Causation })
-      .ToList();
+      .ConvertAll(h => h with { Type = HopType.Causation })
+;
     sourceHops.Insert(0, new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,

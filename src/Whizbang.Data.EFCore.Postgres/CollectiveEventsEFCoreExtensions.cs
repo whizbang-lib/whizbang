@@ -65,8 +65,8 @@ public static class CollectiveEventsEFCoreExtensions {
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
       applyEntries,
-      sp.GetServices<ICollectiveScopeResolver>().ToList(),
-      sp.GetServices<ICollectiveEventExecutor>().ToList(),
+      [.. sp.GetServices<ICollectiveScopeResolver>()],
+      [.. sp.GetServices<ICollectiveEventExecutor>()],
       sp.GetService<EventCategoryMetrics>()));
     // Replay/rebuild seam: folds these collective events back into each stream's per-row rebuild so the
     // mutation survives a perspective rebuild (the rebuilder never runs the set-based SQL path). Scoped so it
@@ -76,7 +76,7 @@ public static class CollectiveEventsEFCoreExtensions {
       sp,
       sp.GetRequiredService<IEventStore>(),
       sp.GetRequiredService<IEventStoreQuery>(),
-      sp.GetServices<ICollectiveInMemoryExecutor>().ToList()));
+      [.. sp.GetServices<ICollectiveInMemoryExecutor>()]));
     return services;
   }
 

@@ -88,10 +88,10 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: gate,
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
-      },
-      schemaReadyGate: gate);
+      });
   }
 
   /// <summary>

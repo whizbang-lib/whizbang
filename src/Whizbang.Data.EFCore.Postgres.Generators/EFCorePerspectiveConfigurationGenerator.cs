@@ -616,13 +616,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // FieldStorageMode.Split == 2
-    if (storageAttr.ConstructorArguments.Length > 0 &&
+    return storageAttr.ConstructorArguments.Length > 0 &&
         storageAttr.ConstructorArguments[0].Value is int mode &&
-        mode == 2) {
-      return true;
-    }
-
-    return false;
+        mode == 2;
   }
 
   /// <summary>

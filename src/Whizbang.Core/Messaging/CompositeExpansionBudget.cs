@@ -43,10 +43,8 @@ public sealed class CompositeExpansionBudget {
   public readonly record struct ExpansionPlan(
     int InnerEventCount, int Chunks, int ChunkSize, bool ExceedsBudget);
 
-  private readonly int _maxChildren;
-
   /// <summary>Children one expansion step may produce.</summary>
-  public int MaxChildrenPerExpansion => _maxChildren;
+  public int MaxChildrenPerExpansion { get; }
 
   /// <summary>Initializes a new instance of the <see cref="CompositeExpansionBudget"/> class.</summary>
   /// <param name="maxChildrenPerExpansion">
@@ -55,7 +53,7 @@ public sealed class CompositeExpansionBudget {
   /// </param>
   public CompositeExpansionBudget(int maxChildrenPerExpansion) {
     ArgumentOutOfRangeException.ThrowIfLessThan(maxChildrenPerExpansion, 1);
-    _maxChildren = maxChildrenPerExpansion;
+    MaxChildrenPerExpansion = maxChildrenPerExpansion;
   }
 
   /// <summary>
@@ -72,14 +70,14 @@ public sealed class CompositeExpansionBudget {
       return new ExpansionPlan(0, 0, 0, ExceedsBudget: false);
     }
 
-    if (innerEventCount <= _maxChildren) {
+    if (innerEventCount <= MaxChildrenPerExpansion) {
       // Exactly at the budget is within it. An off-by-one here would double the round trips for
       // every composite sized to the documented limit.
       return new ExpansionPlan(innerEventCount, Chunks: 1, ChunkSize: innerEventCount, ExceedsBudget: false);
     }
 
     // Ceiling division: a floor would drop the final partial chunk and lose those events.
-    var chunks = (innerEventCount + _maxChildren - 1) / _maxChildren;
-    return new ExpansionPlan(innerEventCount, chunks, _maxChildren, ExceedsBudget: true);
+    var chunks = (innerEventCount + MaxChildrenPerExpansion - 1) / MaxChildrenPerExpansion;
+    return new ExpansionPlan(innerEventCount, chunks, MaxChildrenPerExpansion, ExceedsBudget: true);
   }
 }

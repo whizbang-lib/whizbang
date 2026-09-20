@@ -458,7 +458,7 @@ public class TransportSubscriptionBuilderTests {
     services.AddSingleton(new EventSubscriptionDiscovery(
         Options.Create(routingOptions), TestEventNamespaceRegistry.Empty));
     services.AddTransportSubscriptionBuilder("OrderService");
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var manifest = provider.GetService<TopologyManifest>();
 

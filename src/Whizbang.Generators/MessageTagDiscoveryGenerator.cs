@@ -181,7 +181,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
           a.AttributeClass is not null
           && TypeNameUtilities.FullyQualified(a.AttributeClass)
               == "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute");
-      if (conventionAttr is not null && conventionAttr.ConstructorArguments.Length > 0) {
+      if (conventionAttr?.ConstructorArguments.Length > 0) {
         var rawValue = conventionAttr.ConstructorArguments[0].Value;
         if (rawValue is int intValue) {
           return (AttributeArgNamingConvention)intValue;
@@ -254,8 +254,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         var enumTypeName = value.Type is null ? "int" : TypeNameUtilities.FullyQualified(value.Type);
         return $"({enumTypeName})({value.Value})";
       case TypedConstantKind.Type:
-        var t = value.Value as ITypeSymbol;
-        return t is null ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
+        return value.Value is not ITypeSymbol t ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
       case TypedConstantKind.Array:
         var elementType = value.Type is IArrayTypeSymbol arrayType ? TypeNameUtilities.FullyQualified(arrayType.ElementType) : null;
         if (elementType is null) { return null; }

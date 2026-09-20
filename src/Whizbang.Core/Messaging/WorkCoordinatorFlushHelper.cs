@@ -44,6 +44,7 @@ internal readonly record struct FlushContext(
 /// <docs>messaging/work-coordinator#inbox-completions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
 /// <remarks>
+/// <para>
 /// The legacy implementation routed every flush through <c>process_work_batch</c>, which
 /// inserted messages, recorded completions/failures, and claimed work in one trip.
 /// The new path decomposes those responsibilities:
@@ -52,11 +53,13 @@ internal readonly record struct FlushContext(
 ///  - <see cref="IInboxHandlerCommitChannel"/> (or <see cref="IWorkCoordinator.CommitHandlerResultAsync"/>
 ///    without a scope) lands queued inbox completions as handler commits
 ///  - <c>claim_work</c> is owned by <c>ClaimWorker</c>; nothing is claimed during a flush
-///
+/// </para>
+/// <para>
 /// Lifecycle stages, tracing, and audit-message expansion that this helper used to drive
 /// during a flush are now driven by <c>OutboxPublishWorker</c> and <c>InboxDispatchWorker</c>
 /// when they pick up the inserted rows. The strategy flush path therefore only needs to
 /// persist the queued state and signal the publisher to wake.
+/// </para>
 /// </remarks>
 internal static class WorkCoordinatorFlushHelper {
   internal static async Task<WorkBatch> ExecuteFlushAsync(
@@ -203,7 +206,7 @@ internal static class WorkCoordinatorFlushHelper {
       return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
     }
     var claimOptions = scopedProvider.GetService<IOptions<ClaimWorkerOptions>>()?.Value;
-    if (claimOptions is not null && claimOptions.PartitionCount > 0) {
+    if (claimOptions?.PartitionCount > 0) {
       return claimOptions.PartitionCount;
     }
     return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;

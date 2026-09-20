@@ -321,9 +321,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     string? humanizer(string eventType) => eventType == "TestEvent" ? "Test" : null;
 
     // Act - Exercise line 58: sets CustomHumanizer
-    services.AddSystemEvents(opts => {
-      opts.EventNameHumanizer = humanizer;
-    });
+    services.AddSystemEvents(opts => opts.EventNameHumanizer = humanizer);
 
     // Assert - CustomHumanizer was set
     await Assert.That(Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomHumanizer).IsNotNull();
@@ -339,9 +337,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     string? descHumanizer(string eventType) => "Description";
 
     // Act - Exercise line 61: sets CustomDescriptionHumanizer
-    services.AddSystemEvents(opts => {
-      opts.EventDescriptionHumanizer = descHumanizer;
-    });
+    services.AddSystemEvents(opts => opts.EventDescriptionHumanizer = descHumanizer);
 
     // Assert - CustomDescriptionHumanizer was set
     await Assert.That(Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomDescriptionHumanizer).IsNotNull();

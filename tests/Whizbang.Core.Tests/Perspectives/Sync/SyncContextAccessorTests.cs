@@ -202,9 +202,7 @@ public class SyncContextAccessorTests {
     accessor.Current = context1;
 
     // Act - start new task (different async flow)
-    var task = Task.Run(() => {
-      capturedInTask = accessor.Current;
-    });
+    var task = Task.Run(() => capturedInTask = accessor.Current);
     await task;
 
     // Assert - new task should NOT see the context (different async flow)

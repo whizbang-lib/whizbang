@@ -12,6 +12,7 @@ namespace Whizbang.Core.Tests.Workers;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Reproduces a bulk-import "5 lost events with 0 rewinds" symptom on a cold
 /// in-memory cursor cache. Before this fix: <see cref="PerspectiveCursorCache.TryGet"/>
 /// returns false on a cold lookup. The inversion detector in
@@ -19,16 +20,18 @@ namespace Whizbang.Core.Tests.Workers;
 /// compare incoming events against any cursor, and forwards everything to
 /// <c>RunWithEventsAsync</c>. The runner's own idempotency filter then reads the
 /// persisted <c>metadata.EventId</c> (which IS current) and drops any event whose
-/// id is lexically less than it. The drop is silent — <c>wh_perspective_events
-/// .processed_at</c> gets stamped and the event_work_id is gone forever.
-///
+/// id is lexically less than it. The drop is silent — <code>wh_perspective_events
+/// .processed_at</code> gets stamped and the event_work_id is gone forever.
+/// </para>
+/// <para>
 /// The two checks (inversion detector + runner filter) use different truth
 /// sources: the detector consults the in-memory cache; the filter consults the
 /// persisted metadata. When the cache is cold and persisted metadata is ahead,
 /// they disagree — the detector misses the inversion that the filter would
 /// otherwise reject as "already applied", so no rewind fires, the late event is
 /// dropped, and the projection silently undercounts.
-///
+/// </para>
+/// <para>
 /// The fix: a single <see cref="IPerspectiveCursorResolver"/> that callers use
 /// to obtain the current cursor. On a cold cache miss, the resolver reads
 /// <see cref="IWorkCoordinator.GetPerspectiveCursorAsync"/> (which carries
@@ -36,6 +39,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <c>wh_perspective_cursors</c>) and warms the cache. Inversion detector
 /// and runner filter now see the same cursor; late events trigger rewinds
 /// instead of being silently dropped.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/cursor-inversion</docs>
 public class PerspectiveCursorResolverTests {

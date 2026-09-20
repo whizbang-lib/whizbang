@@ -132,9 +132,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestReceptor",
-        InvokeAsync: (_, message, envelope, callerInfo, ct) => {
-          return ValueTask.FromResult<object?>(null);
-        }
+        InvokeAsync: (_, message, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
       ),
       LifecycleStage.LocalImmediateInline);
 
@@ -215,9 +213,7 @@ public class ReceptorInvokerInitiatingContextTests {
     var registry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.AllowAnonymous = true;
-    });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);

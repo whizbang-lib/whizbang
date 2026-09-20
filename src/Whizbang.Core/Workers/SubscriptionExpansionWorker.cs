@@ -109,8 +109,8 @@ public sealed partial class SubscriptionExpansionWorker(
     // A pending name with no catalog entry (type since removed) passes through unchanged —
     // an unmatched name at the origin is a no-op, same as today.
     var pendingWireForms = pending
-      .Select(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
-      .ToList();
+      .ConvertAll(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
+;
     if (await _sendBackfillRequestAsync(services, pendingWireForms, cancellationToken).ConfigureAwait(false)) {
       await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
       services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);

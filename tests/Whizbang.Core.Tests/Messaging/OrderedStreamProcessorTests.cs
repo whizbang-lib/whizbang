@@ -142,9 +142,7 @@ public class OrderedStreamProcessorTests {
         return await Task.FromResult(MessageProcessingStatus.EventStored);
       },
       completionHandler: (_, _) => { },
-      failureHandler: (messageId, _, _) => {
-        failedMessages.Add(messageId);
-      }
+      failureHandler: (messageId, _, _) => failedMessages.Add(messageId)
     );
 
     // Assert
@@ -501,9 +499,7 @@ public class OrderedStreamProcessorTests {
         return await Task.FromResult(MessageProcessingStatus.Published);
       },
       completionHandler: (_, _) => { },
-      failureHandler: (messageId, _, _) => {
-        failedMessages.Add(messageId);
-      }
+      failureHandler: (messageId, _, _) => failedMessages.Add(messageId)
     );
 
     // Assert
@@ -581,12 +577,8 @@ public class OrderedStreamProcessorTests {
     // Act
     await sut.ProcessInboxWorkAsync(
       messages,
-      processor: async _ => {
-        return await Task.FromResult(MessageProcessingStatus.EventStored);
-      },
-      completionHandler: (messageId, status) => {
-        completedMessages.Add((messageId, status));
-      },
+      processor: async _ => await Task.FromResult(MessageProcessingStatus.EventStored),
+      completionHandler: (messageId, status) => completedMessages.Add((messageId, status)),
       failureHandler: (_, _, _) => { }
     );
 
@@ -611,12 +603,8 @@ public class OrderedStreamProcessorTests {
     // Act
     await sut.ProcessOutboxWorkAsync(
       messages,
-      processor: async _ => {
-        return await Task.FromResult(MessageProcessingStatus.Published);
-      },
-      completionHandler: (messageId, status) => {
-        completedMessages.Add((messageId, status));
-      },
+      processor: async _ => await Task.FromResult(MessageProcessingStatus.Published),
+      completionHandler: (messageId, status) => completedMessages.Add((messageId, status)),
       failureHandler: (_, _, _) => { }
     );
 
@@ -642,9 +630,7 @@ public class OrderedStreamProcessorTests {
     // Act
     await sut.ProcessOutboxWorkAsync(
       [message],
-      processor: async _ => {
-        throw new InvalidOperationException("Publishing failed");
-      },
+      processor: async _ => throw new InvalidOperationException("Publishing failed"),
       completionHandler: (_, _) => { },
       failureHandler: (_, partialStatus, error) => {
         reportedPartialStatus = partialStatus;

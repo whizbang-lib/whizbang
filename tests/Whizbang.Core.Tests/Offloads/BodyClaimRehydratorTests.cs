@@ -49,7 +49,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.BodyClaimProviderUnknown)
       .Because("Unknown provider MUST dead-letter with the typed reason — silently dropping would lose the message, processing without the body would skip the payload.");
     await Assert.That(result.FailureDescription).IsNotNull();
-    await Assert.That(result.FailureDescription!).Contains("AddWhizbang");
+    await Assert.That(result.FailureDescription).Contains("AddWhizbang");
   }
 
   [Test]
@@ -187,7 +187,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("Missing JsonTypeInfo is a config gap — dead-letter with a clear message pointing at the registration so ops can diagnose.");
-    await Assert.That(result.FailureDescription!).Contains("Some.Unknown.NotRegisteredType");
+    await Assert.That(result.FailureDescription).Contains("Some.Unknown.NotRegisteredType");
   }
 
   [Test]
@@ -205,7 +205,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("Storage corruption / wrong-type claims must dead-letter with SerializationError — the worker must never bubble JsonException to its outer scope.");
-    await Assert.That(result.FailureDescription!).Contains("Failed to deserialize");
+    await Assert.That(result.FailureDescription).Contains("Failed to deserialize");
   }
 
   // Helpers

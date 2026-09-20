@@ -41,7 +41,7 @@ public sealed class DefaultRequirePermissionInterceptor : IReceptorInterceptor {
     string? failedPermission = null;
 
     foreach (var attr in attrs) {
-      if (context is null || !context.HasPermission(attr.Permission)) {
+      if (context?.HasPermission(attr.Permission) != true) {
         var attrAction = attr.OnDenied;
         if (failureAction is null || _strictness(attrAction) > _strictness(failureAction.Value)) {
           failureAction = attrAction;

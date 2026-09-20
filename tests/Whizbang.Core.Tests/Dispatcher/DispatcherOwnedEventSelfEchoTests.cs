@@ -111,9 +111,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
-    services.Configure<RoutingOptions>(opts => {
-      opts.OwnDomains("Whizbang.Core.Tests.Dispatcher");
-    });
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var sp = services.BuildServiceProvider();
@@ -169,9 +167,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
-    services.Configure<RoutingOptions>(opts => {
-      opts.OwnDomains("Whizbang.Core.Tests.Dispatcher");
-    });
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var sp = services.BuildServiceProvider();

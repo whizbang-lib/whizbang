@@ -59,7 +59,7 @@ public sealed class InMemorySpanCollector : IDisposable {
 
     _listener = new ActivityListener {
       ShouldListenTo = source => _sourceNames.Count == 0 || _sourceNames.Contains(source.Name),
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) =>
+      Sample = (ref _) =>
         ActivitySamplingResult.AllDataAndRecorded,
       ActivityStopped = _onActivityStopped
     };

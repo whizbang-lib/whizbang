@@ -23,7 +23,7 @@ internal sealed class PoisonMessageOptionsConfigurationBinder(IConfiguration? co
   public void PostConfigure(string? name, PoisonMessageOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return;
     }
 

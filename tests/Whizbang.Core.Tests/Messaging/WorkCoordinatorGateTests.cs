@@ -166,9 +166,7 @@ public class WorkCoordinatorGateTests {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
-      observed.Add(tags.ToArray());
-    });
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
     using (await gate.AcquireAsync(CancellationToken.None)) {
@@ -246,7 +244,7 @@ public class WorkCoordinatorGateTests {
     // the gate. Both are required for the gate's DI factory to receive the metrics.
     services.AddWhizbang();
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var metrics = provider.GetRequiredService<Whizbang.Core.Observability.WorkCoordinatorMetrics>();
     var gate = provider.GetRequiredService<WorkCoordinatorGate>();
 
@@ -291,9 +289,7 @@ public class WorkCoordinatorGateTests {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
-      observed.Add(tags.ToArray());
-    });
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
     var holding = await gate.AcquireAsync(CancellationToken.None);  // 1 observation when this disposes

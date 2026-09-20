@@ -36,7 +36,7 @@ public class EventMintTests {
     var services = new ServiceCollection();
 
     services.AddWhizbang();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var mint = provider.GetService<IEventMint>();
     await Assert.That(mint is not null).IsTrue()

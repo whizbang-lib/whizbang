@@ -23,7 +23,7 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
     IEnumerable<ISignalTransport> transports,
     IEnumerable<ISignalSource>? pullSources = null) {
     ArgumentNullException.ThrowIfNull(transports);
-    _transports = transports.ToArray();
+    _transports = [.. transports];
     _pullSources = pullSources?.ToArray() ?? [];
   }
 

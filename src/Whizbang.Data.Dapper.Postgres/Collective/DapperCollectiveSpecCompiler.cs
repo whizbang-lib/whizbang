@@ -64,8 +64,8 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// parameter dictionary it binds. The fragment is a single
   /// expression intended to substitute the entire <c>SET</c> body —
   /// callers prepend their own <c>UPDATE … SET </c> prefix and append
-  /// any additional column writes (e.g. <c>last_collective_event_id =
-  /// @evt_id</c>) and the <c>WHERE</c> clause.
+  /// any additional column writes (e.g. <code>last_collective_event_id =
+  /// @evt_id</code>) and the <c>WHERE</c> clause.
   /// </summary>
   public sealed record CompiledSetClause(
     string SqlFragment,
@@ -105,7 +105,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
     }
     var properties = removedFields is { Count: > 0 }
-      ? visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath)).ToList()
+      ? [.. visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath))]
       : visitor.Properties;
 
     return new CompiledSetClause(
@@ -143,17 +143,12 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// Walks the spec's expression body, collecting one
   /// <see cref="_propertyAssignment"/> per <c>SetProperty</c> call.
   /// </summary>
-  private sealed class _setterVisitor : ExpressionVisitor {
-    private readonly JsonSerializerOptions _jsonOptions;
-    private readonly string _parameterPrefix;
+  private sealed class _setterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) : ExpressionVisitor {
+    private readonly JsonSerializerOptions _jsonOptions = jsonOptions;
+    private readonly string _parameterPrefix = parameterPrefix;
     private int _seq;
-    public List<_propertyAssignment> Properties { get; } = new();
+    public List<_propertyAssignment> Properties { get; } = [];
     public Dictionary<string, object?> Parameters { get; } = new(StringComparer.Ordinal);
-
-    public _setterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) {
-      _jsonOptions = jsonOptions;
-      _parameterPrefix = parameterPrefix;
-    }
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
       // Match: ICollectiveSetters<TModel>.SetProperty<TProp>(selector, value)

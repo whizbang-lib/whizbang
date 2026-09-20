@@ -169,7 +169,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning disable S2077
     cmd.CommandText = $"SELECT inbox_rows, outbox_rows, perspective_rows FROM {functionName}(@instanceId)";
 #pragma warning restore S2077
-    cmd.Parameters.AddWithValue("instanceId", instanceId);
+    cmd.Parameters.AddWithValue(nameof(instanceId), instanceId);
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     if (!await reader.ReadAsync(cancellationToken)) {
@@ -671,7 +671,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
     cmd.CommandText =
-      $"SELECT DISTINCT es.stream_id, ma.target_name, c.last_event_id " +
+      "SELECT DISTINCT es.stream_id, ma.target_name, c.last_event_id " +
       $"FROM {body} eb " +
       $"JOIN {store} es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
@@ -680,9 +680,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // #13b4 safety gate: scope to EPHEMERAL events explicitly — once sourced bodies live in
       // wh_event_body (full split), consumed sourced events must not become snapshot targets.
       "WHERE (es.flags & 8) = 8 " +
-      $"AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
+      "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
-      $"  * INTERVAL '1 second') " +
+      "  * INTERVAL '1 second') " +
       "AND es.commit_sequence IS NOT NULL AND c.last_event_id IS NOT NULL " +
       $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       $"AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
@@ -1647,7 +1647,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     cmd.CommandText =
-      $"SELECT event_id, stream_id, version, event_type, event_data::text, metadata::text " +
+      "SELECT event_id, stream_id, version, event_type, event_data::text, metadata::text " +
       $"FROM {archive} WHERE stream_id = @sid ORDER BY version";
 #pragma warning restore S2077
     var pStream = cmd.CreateParameter();
@@ -1681,7 +1681,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       $"SELECT DISTINCT ma.target_name FROM {store} es " +
       $"JOIN {assoc} ma ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective' " +
-      $"WHERE es.stream_id = @sid AND es.version <= @through";
+      "WHERE es.stream_id = @sid AND es.version <= @through";
 #pragma warning restore S2077
     var pStream = cmd.CreateParameter();
     pStream.ParameterName = "sid";
@@ -1743,16 +1743,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // perspective lacks a covering snapshot). These are the bodies THIS maintenance cycle will reap.
 #pragma warning disable S2077
     cmd.CommandText =
-      $"SELECT es.event_id, es.stream_id, es.event_type " +
+      "SELECT es.event_id, es.stream_id, es.event_type " +
       $"FROM {body} eb " +
       $"JOIN {store} es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {grace} g ON g.event_type = es.event_type " +
       "WHERE (es.flags & 8) = 8 " +
       // E2-3: skip bodies a hook already held (Cancel/Defer) — don't re-offer them until the hold lapses.
       $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.event_id = eb.event_id AND h.hold_until > NOW()) " +
-      $"AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
+      "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
-      $"  * INTERVAL '1 second') " +
+      "  * INTERVAL '1 second') " +
       $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       $"AND NOT EXISTS (SELECT 1 FROM {assoc} ma WHERE ma.normalized_message_type = es.event_type " +
       "  AND ma.association_type = 'perspective' " +
@@ -1824,25 +1824,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // 'infinity'), 0=RetryThenForcedDelete (past cap => force, '-infinity'). Under the cap all policies use the
     // TTL-halving/fallback retry_until.
     cmd.CommandText =
-      $"WITH src AS ( " +
-      $"  SELECT id AS event_id, " +
-      $"    CASE WHEN @pol = 2 THEN '-infinity'::timestamptz " +
-      $"         WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
-      $"         THEN NOW() + ((eb.metadata ->> 'ephemeral_expires_at')::timestamptz - NOW()) / 2 " +
-      $"         ELSE @until END AS retry_until " +
-      $"  FROM unnest(@ids) AS id " +
+      "WITH src AS ( " +
+      "  SELECT id AS event_id, " +
+      "    CASE WHEN @pol = 2 THEN '-infinity'::timestamptz " +
+      "         WHEN eb.metadata ->> 'ephemeral_expires_at' IS NOT NULL " +
+      "         THEN NOW() + ((eb.metadata ->> 'ephemeral_expires_at')::timestamptz - NOW()) / 2 " +
+      "         ELSE @until END AS retry_until " +
+      "  FROM unnest(@ids) AS id " +
       $"  LEFT JOIN {bodyTable} eb ON eb.event_id = id), " +
-      $"upserted AS ( " +
+      "upserted AS ( " +
       $"  INSERT INTO {holdTable} (event_id, hold_until, failure_count) " +
-      $"  SELECT event_id, retry_until, 1 FROM src " +
-      $"  ON CONFLICT (event_id) DO UPDATE SET " +
+      "  SELECT event_id, retry_until, 1 FROM src " +
+      "  ON CONFLICT (event_id) DO UPDATE SET " +
       $"    failure_count = {holdTable}.failure_count + 1, " +
-      $"    hold_until = CASE " +
-      $"      WHEN @pol = 2 THEN '-infinity'::timestamptz " +
+      "    hold_until = CASE " +
+      "      WHEN @pol = 2 THEN '-infinity'::timestamptz " +
       $"      WHEN {holdTable}.failure_count + 1 > @max " +
-      $"        THEN (CASE WHEN @pol = 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END) " +
-      $"      ELSE EXCLUDED.hold_until END " +
-      $"  RETURNING failure_count) " +
+      "        THEN (CASE WHEN @pol = 1 THEN 'infinity'::timestamptz ELSE '-infinity'::timestamptz END) " +
+      "      ELSE EXCLUDED.hold_until END " +
+      "  RETURNING failure_count) " +
       "SELECT COALESCE(MAX(failure_count), 0) FROM upserted";
 #pragma warning restore S2077
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = ids });
@@ -2058,8 +2058,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText =
-      $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
-      $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
+      "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
+      "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
       $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
@@ -3701,9 +3701,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
       await using var cmd = scope.Connection.CreateCommand().WithCoordinatorTimeout();
       cmd.CommandText = sql;
-      cmd.Parameters.AddWithValue("messages", json);
+      cmd.Parameters.AddWithValue(nameof(messages), json);
       cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-      cmd.Parameters.AddWithValue("partitionCount", partitionCount);
+      cmd.Parameters.AddWithValue(nameof(partitionCount), partitionCount);
       cmd.Parameters.AddWithValue("observedIds", observedIds);
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
         // Skip the store's own rowset, then read the observation projection.
@@ -3977,9 +3977,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
 
     var released = 0;
-    await PostgresDeadlockRetry.ExecuteAsync(async () => {
-      released = await _dbContext.Database.ExecuteSqlRawAsync(sql, [group], cancellationToken);
-    }, logger: _logger, cancellationToken: cancellationToken);
+    await PostgresDeadlockRetry.ExecuteAsync(async () => released = await _dbContext.Database.ExecuteSqlRawAsync(sql, [group], cancellationToken), logger: _logger, cancellationToken: cancellationToken);
     return released;
   }
 
@@ -4721,7 +4719,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streamIds is Guid[] arr ? arr : System.Linq.Enumerable.ToArray(streamIds)
+      Value = streamIds is Guid[] arr ? arr : [.. streamIds]
     });
 #pragma warning restore RCS1130
     cmd.Parameters.Add(new NpgsqlParameter("p_max_attempts", maxAttempts));
@@ -5202,7 +5200,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var param = (Npgsql.NpgsqlParameter)command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = handledTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(handledTypeNames);
+    param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];
     command.Parameters.Add(param);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);

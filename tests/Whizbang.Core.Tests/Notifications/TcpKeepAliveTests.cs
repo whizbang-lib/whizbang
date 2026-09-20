@@ -132,7 +132,7 @@ public class TcpKeepAliveTests {
     services.AddWhizbangPostgresNotifications();
     services.AddSingleton<IConfiguration>(configuration);
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var options = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
     await Assert.That(options.TcpKeepAliveTime).IsEqualTo(120)
@@ -150,7 +150,7 @@ public class TcpKeepAliveTests {
     services.AddWhizbangPostgresNotifications();
     services.AddSingleton<IConfiguration>(configuration);
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var options = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
     await Assert.That(options.TcpKeepAliveInterval).IsEqualTo(5)
@@ -169,7 +169,7 @@ public class TcpKeepAliveTests {
     services.AddWhizbangPostgresNotifications();
     services.AddSingleton<IConfiguration>(configuration);
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var options = sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value;
 
     await Assert.That(options.TcpKeepAliveTime).IsEqualTo(60);

@@ -104,16 +104,14 @@ public sealed class MessageAwaiter<TResult>(
 /// test), so a routing/correlation assertion is deterministic instead of racing whichever message
 /// happens to be delivered first.
 /// </summary>
-public sealed class MessageIdAwaiter : IAwaiterIdentity {
+/// <remarks>
+/// Creates a message-id awaiter. When <paramref name="expectedMessageId"/> is non-null, only a
+/// message with that id completes the awaiter; otherwise the first message received completes it.
+/// </remarks>
+public sealed class MessageIdAwaiter(string? expectedMessageId = null) : IAwaiterIdentity {
   private readonly TaskCompletionSource<string> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
-  private readonly string? _expectedMessageId;
-
-  /// <summary>
-  /// Creates a message-id awaiter. When <paramref name="expectedMessageId"/> is non-null, only a
-  /// message with that id completes the awaiter; otherwise the first message received completes it.
-  /// </summary>
-  public MessageIdAwaiter(string? expectedMessageId = null) => _expectedMessageId = expectedMessageId;
+  private readonly string? _expectedMessageId = expectedMessageId;
 
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 

@@ -55,9 +55,7 @@ public class BackgroundStageDispatchCoverageTests {
 
     var stragglerRan = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    capturedContext!.Post(_ => {
-      stragglerRan.TrySetResult(Thread.CurrentThread.IsThreadPoolThread);
-    }, null);
+    capturedContext!.Post(_ => stragglerRan.TrySetResult(Thread.CurrentThread.IsThreadPoolThread), null);
 
     var ranOnThreadPool = await stragglerRan.Task.WaitAsync(TimeSpan.FromSeconds(5));
 

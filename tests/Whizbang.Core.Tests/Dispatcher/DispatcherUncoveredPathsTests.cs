@@ -79,8 +79,8 @@ public class DispatcherUncoveredPathsTests {
       envelopeRegistry: envelopeRegistry,
       outboxRoutingStrategy: outboxRoutingStrategy,
       streamIdExtractor: streamIdExtractor,
-      scopedEventTracker: scopedEventTracker,
-      receptorRegistry: receptorRegistry) {
+      receptorRegistry: receptorRegistry,
+      scopedEventTracker: scopedEventTracker) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
     private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
     private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;
@@ -692,7 +692,7 @@ public class DispatcherUncoveredPathsTests {
     // Arrange - only void sync invoker, no async
     var invoked = false;
     var dispatcher = _createDispatcher(
-      voidSyncInvoker: msg => { invoked = true; });
+      voidSyncInvoker: msg => invoked = true);
     var command = new TestCommand("void-sync-options");
     var options = new DispatchOptions();
 
@@ -773,7 +773,7 @@ public class DispatcherUncoveredPathsTests {
       ));
     var dispatcher = _createDispatcher(
       receptorRegistry: registry,
-      voidSyncInvoker: msg => { invoked = true; });
+      voidSyncInvoker: msg => invoked = true);
     var command = new TestCommand("generic-void-sync-immediate");
 
     // Act
@@ -835,7 +835,7 @@ public class DispatcherUncoveredPathsTests {
       ));
     var dispatcher = _createDispatcher(
       receptorRegistry: registry,
-      voidSyncInvoker: msg => { invoked = true; });
+      voidSyncInvoker: msg => invoked = true);
     var command = new TestCommand("sync-immediate");
 
     // Act - goes through _localInvokeVoidSyncWithSyncCheckAsync
@@ -860,7 +860,7 @@ public class DispatcherUncoveredPathsTests {
       ));
     var dispatcher = _createDispatcher(
       receptorRegistry: registry,
-      voidSyncInvoker: msg => { invoked = true; });
+      voidSyncInvoker: msg => invoked = true);
     var command = new TestCommand("sync-post-lifecycle");
 
     // Act

@@ -178,8 +178,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
         MaxOutboxAttempts = maxOutboxAttempts,
       }),
       NullLogger<OutboxPublishWorker>.Instance,
-      publishStrategy: strategy,
       instanceProvider: wireDeadLetterStore ? new _FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      publishStrategy: strategy,
       deadLetterStore: wireDeadLetterStore ? dlq : null,
       generationProvider: wireDeadLetterStore ? new _FakeGenerationProvider("test-gen") : null);
     return (worker, channel, failure, dlq);
@@ -360,8 +360,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       NullLogger<OutboxPublishWorker>.Instance,
-      publishStrategy: strategy,
       instanceProvider: new _FakeServiceInstanceProvider(),
+      publishStrategy: strategy,
       deadLetterStore: dlq,
       generationProvider: new _FakeGenerationProvider("test-gen"));
 
@@ -406,8 +406,8 @@ public class OutboxPublishWorkerDlqPromotionTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       NullLogger<OutboxPublishWorker>.Instance,
-      publishStrategy: strategy,
       instanceProvider: new _FakeServiceInstanceProvider(),
+      publishStrategy: strategy,
       deadLetterStore: throwingDlq,
       generationProvider: new _FakeGenerationProvider("test-gen"));
 

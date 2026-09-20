@@ -101,9 +101,9 @@ public class TransportConsumerWorkerKnownEventFilterTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: Options.Create(routing),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(routing));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

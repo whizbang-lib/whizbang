@@ -61,7 +61,7 @@ public class TransportSubscriptionBuilderCoverageTests {
     services.AddSingleton(Options.Create(routingOptions));
     services.AddSingleton(new EventSubscriptionDiscovery(Options.Create(routingOptions), null));
     services.AddTransportSubscriptionBuilder("OrderService");
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var builder = provider.GetRequiredService<TransportSubscriptionBuilder>();
     var destination = builder.BuildInboxDestination();
@@ -81,7 +81,7 @@ public class TransportSubscriptionBuilderCoverageTests {
   public async Task AddTransportSubscriptionBuilder_NoRoutingOptionsRegistered_TopologyManifestIsEmptyAsync() {
     var services = new ServiceCollection();
     services.AddTransportSubscriptionBuilder("OrderService");
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var manifest = provider.GetService<TopologyManifest>();
 

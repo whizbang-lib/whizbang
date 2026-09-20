@@ -186,7 +186,7 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
         NullLogger<PoisonMessageDetector>.Instance,
         new Meter("Whizbang.Core.Tests.TransportConsumerPoison")));
     }
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
@@ -202,9 +202,9 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new AlwaysConsumedRegistry(),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new AlwaysConsumedRegistry());
 
     return (worker, transport, sp);
   }

@@ -49,7 +49,7 @@ public sealed partial class PgAppSignalChannel(
     await using var conn = await plan.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand("SELECT pg_notify(@channel, @payload)", conn);
     cmd.Parameters.AddWithValue("channel", channel);
-    cmd.Parameters.AddWithValue("payload", payload ?? string.Empty);
+    cmd.Parameters.AddWithValue(nameof(payload), payload ?? string.Empty);
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
   }
 

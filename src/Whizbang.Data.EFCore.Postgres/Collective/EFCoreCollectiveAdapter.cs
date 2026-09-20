@@ -227,7 +227,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     if (options.StatementTimeoutSeconds is int secs && secs > 0) {
       await dbContext.Database.ExecuteSqlRawAsync(
         "SELECT set_config('statement_timeout', @wb_stmt_timeout, true)",
-        new[] { _param("wb_stmt_timeout", (secs * 1000).ToString(CultureInfo.InvariantCulture)) },
+        [_param("wb_stmt_timeout", (secs * 1000).ToString(CultureInfo.InvariantCulture))],
         cancellationToken).ConfigureAwait(false);
     }
 
@@ -236,7 +236,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       // the next collective batch proceed between batches; blocks other collective applies to the same key.
       await dbContext.Database.ExecuteSqlRawAsync(
         "SELECT pg_advisory_xact_lock(@wb_lock)",
-        new[] { _param("wb_lock", key) }, cancellationToken).ConfigureAwait(false);
+        [_param("wb_lock", key)], cancellationToken).ConfigureAwait(false);
     }
 
     var selectParams = new List<Npgsql.NpgsqlParameter>(where.Parameters.Count + 1);
@@ -244,7 +244,7 @@ public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       selectParams.Add(_param(name, value ?? (object)DBNull.Value));
     }
     selectParams.Add(_param("wb_lastid", lastId));
-    var ids = await dbContext.Database.SqlQueryRaw<Guid>(selectSql, selectParams.Cast<object>().ToArray())
+    var ids = await dbContext.Database.SqlQueryRaw<Guid>(selectSql, [.. selectParams.Cast<object>()])
       .ToListAsync(cancellationToken).ConfigureAwait(false);
 
     if (ids.Count == 0) {

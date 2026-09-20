@@ -16,8 +16,7 @@ namespace Whizbang.Hosting.AspNet;
   PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ApplyStackReport))]
 [JsonSerializable(typeof(ApplyStackStreamsReport))]
-internal partial class ApplyStackJsonContext : JsonSerializerContext {
-}
+internal partial class ApplyStackJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The opt-in apply-stack surface, minimal-API flavor: <c>GET {pattern}</c> serves the path

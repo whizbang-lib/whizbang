@@ -36,7 +36,7 @@ internal sealed record DiscoveredPinnedType(string PinnedId, string ClrTypeName,
 /// </remarks>
 internal sealed class PinnedTypeLedger {
   public int Version { get; set; } = 1;
-  public List<PinnedTypeLedgerEntry> Types { get; set; } = new();
+  public List<PinnedTypeLedgerEntry> Types { get; set; } = [];
 
   /// <summary>Standard on-disk file name. Discovered among <c>AdditionalFiles</c> by suffix match.</summary>
   public const string FILE_NAME = "pinned-type-ledger.json";
@@ -82,7 +82,7 @@ internal sealed class PinnedTypeLedger {
         || string.IsNullOrWhiteSpace(e.PinnedId)
         || string.IsNullOrWhiteSpace(e.ClrTypeName));
       foreach (var e in ledger.Types) {
-        e.FormerNames ??= new List<string>();
+        e.FormerNames ??= [];
       }
       return ledger;
     } catch (JsonException) {
@@ -149,7 +149,7 @@ internal sealed class PinnedTypeLedger {
   public string ToJson() {
     var stable = new PinnedTypeLedger {
       Version = Version,
-      Types = Types.OrderBy(e => e.ClrTypeName, System.StringComparer.Ordinal).ToList(),
+      Types = [.. Types.OrderBy(e => e.ClrTypeName, System.StringComparer.Ordinal)],
     };
     return JsonSerializer.Serialize(stable, _writeOptions);
   }
@@ -179,13 +179,11 @@ internal sealed class PinnedTypeLedger {
         PinnedId = type.PinnedId,
         ClrTypeName = type.ClrTypeName,
         Kind = type.Kind,
-        FormerNames = new List<string>(),
+        FormerNames = [],
       };
     }
 
-    merged.Types = byPinnedId.Values
-      .OrderBy(e => e.ClrTypeName, System.StringComparer.Ordinal)
-      .ToList();
+    merged.Types = [.. byPinnedId.Values.OrderBy(e => e.ClrTypeName, System.StringComparer.Ordinal)];
     return merged;
   }
 }
@@ -195,7 +193,7 @@ internal sealed class PinnedTypeLedgerEntry {
   public string PinnedId { get; set; } = "";
   public string ClrTypeName { get; set; } = "";
   public string? Kind { get; set; }
-  public List<string> FormerNames { get; set; } = new();
+  public List<string> FormerNames { get; set; } = [];
 
   /// <summary>True when <paramref name="name"/> is the current name or any recorded former name (ordinal).</summary>
   public bool KnowsName(string name) {

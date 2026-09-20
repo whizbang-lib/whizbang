@@ -30,19 +30,14 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </remarks>
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbBacklogPeekTests.cs</tests>
-public sealed class AsbBacklogPeek : IBacklogPeek {
-  private readonly ITransport _transport;
-  private readonly TagOptions? _tagOptions;
-
-  /// <summary>Creates the peek over the host's transport (routing peer or single instance).</summary>
-  /// <param name="transport">The registered transport.</param>
-  /// <param name="tagOptions">Tag options, so a namespace can be labelled with the traffic class
-  /// routed to it; null ⇒ every sample reports the unclassified domain class.</param>
-  /// <exception cref="ArgumentNullException">Thrown when transport is null.</exception>
-  public AsbBacklogPeek(ITransport transport, TagOptions? tagOptions = null) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _tagOptions = tagOptions;
-  }
+/// <remarks>Creates the peek over the host's transport (routing peer or single instance).</remarks>
+/// <param name="transport">The registered transport.</param>
+/// <param name="tagOptions">Tag options, so a namespace can be labelled with the traffic class
+/// routed to it; null ⇒ every sample reports the unclassified domain class.</param>
+/// <exception cref="ArgumentNullException">Thrown when transport is null.</exception>
+public sealed class AsbBacklogPeek(ITransport transport, TagOptions? tagOptions = null) : IBacklogPeek {
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly TagOptions? _tagOptions = tagOptions;
 
   /// <inheritdoc />
   public string TransportName => "asb";

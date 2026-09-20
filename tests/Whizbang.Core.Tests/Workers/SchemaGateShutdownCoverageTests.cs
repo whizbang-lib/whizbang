@@ -97,7 +97,7 @@ public class SchemaGateShutdownCoverageTests {
   [Test]
   public async Task OrphanInboxJanitor_StoppedAtTheGate_OpensNoScopeAndReturnsCleanlyAsync() {
     var gate = new BlockingGate();
-    using var inner = new ServiceCollection().BuildServiceProvider();
+    await using var inner = new ServiceCollection().BuildServiceProvider();
     var watched = new ScopeWatchingProvider(inner);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SchemaGateShutdownCoverageTests)]);
     var janitor = new OrphanInboxJanitor(watched, snapshot, schemaReadyGate: gate);
@@ -127,7 +127,7 @@ public class SchemaGateShutdownCoverageTests {
   [Test]
   public async Task CoalesceShipWorker_StoppedAtTheGate_RunsNoStartupRecoveryAsync() {
     var gate = new BlockingGate();
-    using var inner = new ServiceCollection().BuildServiceProvider();
+    await using var inner = new ServiceCollection().BuildServiceProvider();
     var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
 
     var tagOptions = new TagOptions();
@@ -164,7 +164,7 @@ public class SchemaGateShutdownCoverageTests {
   [Test]
   public async Task CoalesceShipWorker_NoEnabledBindings_NeverReachesTheGateAsync() {
     var gate = new BlockingGate();
-    using var inner = new ServiceCollection().BuildServiceProvider();
+    await using var inner = new ServiceCollection().BuildServiceProvider();
     var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
     // The parked-no-bindings log is ExecuteAsync's first statement on this path, so it is the
     // signal that the body actually ran. Without it, StartAsync + StopAsync would assert on a
@@ -215,7 +215,7 @@ public class SchemaGateShutdownCoverageTests {
   [Test]
   public async Task OutboxPublishWorker_StoppedAtTheGate_NeverEntersThePublishLoopAsync() {
     var gate = new BlockingGate();
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var channel = new RecordingWorkChannelWriter();
     var strategy = new RecordingPublishStrategy();
 
@@ -262,7 +262,7 @@ public class SchemaGateShutdownCoverageTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("topic-under-test"));
 
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new TransportConsumerWorker(
       transport: transport,

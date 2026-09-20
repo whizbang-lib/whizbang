@@ -66,7 +66,7 @@ public static class RequirePermissionMiddleware {
       if (!_appliesTo(attr.Operation, actualOperation)) {
         continue;
       }
-      if (scope is null || !scope.HasPermission(attr.Permission)) {
+      if (scope?.HasPermission(attr.Permission) != true) {
         return ErrorBuilder.New()
           .SetMessage($"Missing required permission: {attr.Permission.Value}")
           .SetCode("AUTH_NOT_AUTHORIZED")

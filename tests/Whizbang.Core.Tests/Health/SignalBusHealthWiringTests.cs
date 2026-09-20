@@ -37,7 +37,7 @@ public class SignalBusHealthWiringTests {
     var health = await source.ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(health.Detail!).Contains("PostgresSignalTransport");
+    await Assert.That(health.Detail).Contains("PostgresSignalTransport");
   }
 
   [Test]

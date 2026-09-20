@@ -27,30 +27,23 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMqHostRegistrationIntegrationTests.cs</tests>
-public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
-  private readonly IConnection _connection;
-  private readonly string _dlqName;
-  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync;
-  private readonly ILogger<RabbitMqDeadLetterDrainer> _logger;
-
-  /// <summary>Creates a drainer bound to a single dead-letter queue.</summary>
-  /// <param name="connection">Shared broker connection. Lifetime owned by DI; not disposed here.</param>
-  /// <param name="dlqName">The dead-letter queue to drain (convention: <c>{queue}.dlq</c>).</param>
-  /// <param name="importAsync">Custody seam — wraps <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>.
-  ///   Returns <c>true</c> when a custody row was created, <c>false</c> for a duplicate (still safe
-  ///   to ack), and THROWS on failure so the message is requeued for the next pass.</param>
-  /// <param name="logger">Logger.</param>
-  public RabbitMqDeadLetterDrainer(
-    IConnection connection,
-    string dlqName,
-    Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-    ILogger<RabbitMqDeadLetterDrainer> logger) {
-    _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-    _dlqName = !string.IsNullOrWhiteSpace(dlqName) ? dlqName
+/// <remarks>Creates a drainer bound to a single dead-letter queue.</remarks>
+/// <param name="connection">Shared broker connection. Lifetime owned by DI; not disposed here.</param>
+/// <param name="dlqName">The dead-letter queue to drain (convention: <c>{queue}.dlq</c>).</param>
+/// <param name="importAsync">Custody seam — wraps <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>.
+///   Returns <c>true</c> when a custody row was created, <c>false</c> for a duplicate (still safe
+///   to ack), and THROWS on failure so the message is requeued for the next pass.</param>
+/// <param name="logger">Logger.</param>
+public sealed class RabbitMqDeadLetterDrainer(
+  IConnection connection,
+  string dlqName,
+  Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
+  ILogger<RabbitMqDeadLetterDrainer> logger) : ITransportDeadLetterDrainer {
+  private readonly IConnection _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+  private readonly string _dlqName = !string.IsNullOrWhiteSpace(dlqName) ? dlqName
       : throw new ArgumentException("DLQ name required", nameof(dlqName));
-    _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RabbitMqDeadLetterDrainer>.Instance;
-  }
+  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
+  private readonly ILogger<RabbitMqDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RabbitMqDeadLetterDrainer>.Instance;
 
   /// <inheritdoc />
   public string TransportName => $"rmq:{_dlqName}";

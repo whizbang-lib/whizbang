@@ -45,9 +45,7 @@ public static class LeaseDispatchExecutor {
     // `await using` registration disposes BEFORE the lease handle disposes (when the executor
     // method returns), preventing a late callback fire.
     var cancellationSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    await using var registration = ct.UnsafeRegister(static (state, _) => {
-      ((TaskCompletionSource)state!).TrySetResult();
-    }, cancellationSignal);
+    await using var registration = ct.UnsafeRegister(static (state, _) => ((TaskCompletionSource)state!).TrySetResult(), cancellationSignal);
 
     var winner = await Task.WhenAny(dispatchTask, cancellationSignal.Task).ConfigureAwait(false);
 
@@ -65,7 +63,7 @@ public static class LeaseDispatchExecutor {
     // determinism). Attach an observe-only continuation so a future exception on this task
     // doesn't escape as UnobservedTaskException.
     _ = dispatchTask.ContinueWith(
-      static t => { _ = t.Exception; },  // accessing .Exception marks it observed
+      static t => _ = t.Exception,  // accessing .Exception marks it observed
       CancellationToken.None,
       TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
       TaskScheduler.Default);

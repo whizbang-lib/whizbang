@@ -250,8 +250,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains(ownedDomains));
     var sp = services.BuildServiceProvider();
 
     var instanceProvider = new StubServiceInstanceProvider(serviceName);
@@ -265,9 +265,9 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       serviceInstanceProvider: instanceProvider,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>());
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

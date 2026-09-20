@@ -131,16 +131,15 @@ public sealed class DispatchFanoutControl {
 
   /// <summary>Disposable handle for an open control. Disposing restores the previously-active control.</summary>
   public readonly struct ControlScope : IDisposable {
-    private readonly DispatchFanoutControl _control;
     private readonly DispatchFanoutControl? _previous;
 
     internal ControlScope(DispatchFanoutControl control, DispatchFanoutControl? previous) {
-      _control = control;
+      Control = control;
       _previous = previous;
     }
 
     /// <summary>The control this scope opened.</summary>
-    public DispatchFanoutControl Control => _control;
+    public DispatchFanoutControl Control { get; }
 
     /// <inheritdoc />
     public void Dispose() => _current.Value = _previous;

@@ -15,10 +15,22 @@ namespace Whizbang.Core.Fingerprint;
 /// Detect-by-default, act-by-opt-in (<see cref="EphemeralOptions.ReconcileHistoricalOnStartup"/>).
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
-public sealed partial class TypeDefinitionReconciler {
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly EphemeralOptions _options;
-  private readonly ILogger<TypeDefinitionReconciler> _logger;
+/// <remarks>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</remarks>
+/// <remarks>
+/// <see cref="IWorkCoordinator"/> is a SCOPED service (one per DbContext scope), so this singleton
+/// reconciler resolves it from a freshly-created scope per pass rather than capturing it in the
+/// constructor — capturing a scoped service on a singleton is a captive-dependency bug that throws
+/// under scope validation ("Cannot resolve scoped service … from root provider") and yields a broken
+/// root-scoped instance without it. Mirrors <c>MaintenanceWorker</c>.
+/// </remarks>
+public sealed partial class TypeDefinitionReconciler(
+    IServiceScopeFactory scopeFactory,
+    IOptions<EphemeralOptions> options,
+    ILogger<TypeDefinitionReconciler> logger,
+    IMessageTypeCatalog? catalog = null) {
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
+  private readonly EphemeralOptions _options = options.Value;
+  private readonly ILogger<TypeDefinitionReconciler> _logger = logger;
 
   /// <summary>
   /// How recently a sibling's reconcile suppresses this one. Deliberately short: this is startup
@@ -26,26 +38,7 @@ public sealed partial class TypeDefinitionReconciler {
   /// The window only needs to cover one fleet's simultaneous boot, not a whole deployment cycle.
   /// </summary>
   private static readonly TimeSpan _claimWindow = TimeSpan.FromMinutes(2);
-  private readonly IMessageTypeCatalog? _catalog;
-
-  /// <summary>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</summary>
-  /// <remarks>
-  /// <see cref="IWorkCoordinator"/> is a SCOPED service (one per DbContext scope), so this singleton
-  /// reconciler resolves it from a freshly-created scope per pass rather than capturing it in the
-  /// constructor — capturing a scoped service on a singleton is a captive-dependency bug that throws
-  /// under scope validation ("Cannot resolve scoped service … from root provider") and yields a broken
-  /// root-scoped instance without it. Mirrors <c>MaintenanceWorker</c>.
-  /// </remarks>
-  public TypeDefinitionReconciler(
-      IServiceScopeFactory scopeFactory,
-      IOptions<EphemeralOptions> options,
-      ILogger<TypeDefinitionReconciler> logger,
-      IMessageTypeCatalog? catalog = null) {
-    _scopeFactory = scopeFactory;
-    _options = options.Value;
-    _logger = logger;
-    _catalog = catalog;
-  }
+  private readonly IMessageTypeCatalog? _catalog = catalog;
 
   /// <summary>Runs one reconciliation pass over the catalog. Returns a summary of what it found/did.</summary>
   public async Task<TypeDefinitionReconcileSummary> ReconcileAsync(CancellationToken cancellationToken = default) {

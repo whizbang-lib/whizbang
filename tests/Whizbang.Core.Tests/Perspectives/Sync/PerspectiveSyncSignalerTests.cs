@@ -81,7 +81,7 @@ public class PerspectiveSyncSignalerTests {
     var goodRan = false;
 
     using var badSub = signaler.Subscribe(perspectiveType, _ => throw new InvalidOperationException("boom"));
-    using var goodSub = signaler.Subscribe(perspectiveType, _ => { goodRan = true; });
+    using var goodSub = signaler.Subscribe(perspectiveType, _ => goodRan = true);
 
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
 
@@ -104,9 +104,7 @@ public class PerspectiveSyncSignalerTests {
     using var signaler = new LocalSyncSignaler();
     var receivedCount = 0;
 
-    using var subscription = signaler.Subscribe(typeof(PerspectiveA), _ => {
-      Interlocked.Increment(ref receivedCount);
-    });
+    using var subscription = signaler.Subscribe(typeof(PerspectiveA), _ => Interlocked.Increment(ref receivedCount));
 
     signaler.SignalCheckpointUpdated(typeof(PerspectiveB), Guid.NewGuid(), Guid.NewGuid());
 
@@ -165,9 +163,7 @@ public class PerspectiveSyncSignalerTests {
     var perspectiveType = typeof(TestPerspective);
     var signalsReceived = 0;
 
-    var subscription = signaler.Subscribe(perspectiveType, _ => {
-      Interlocked.Increment(ref signalsReceived);
-    });
+    var subscription = signaler.Subscribe(perspectiveType, _ => Interlocked.Increment(ref signalsReceived));
 
     // Send first signal and wait for it to be processed
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());

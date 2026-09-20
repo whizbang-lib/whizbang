@@ -34,14 +34,11 @@ public sealed class SignalBusHealthSource(
     if (phase == LifecyclePhase.Stopping) {
       return new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.Draining));
     }
-    switch (phase) {
-      case LifecyclePhase.Starting:
-      case LifecyclePhase.Connecting:
-        return new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.Connecting));
-      case LifecyclePhase.Running:
-        return new ValueTask<ComponentHealth>(_liveness.Report());
-      default: // Migrating / Pausing / Paused / Resuming — the bus is not relied on right now.
-        return new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.PausedByDesign));
-    }
+    return phase switch {
+      LifecyclePhase.Starting or LifecyclePhase.Connecting => new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.Connecting)),
+      LifecyclePhase.Running => new ValueTask<ComponentHealth>(_liveness.Report()),
+      // Migrating / Pausing / Paused / Resuming — the bus is not relied on right now.
+      _ => new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.PausedByDesign)),
+    };
   }
 }

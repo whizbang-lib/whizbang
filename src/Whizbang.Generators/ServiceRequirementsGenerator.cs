@@ -118,7 +118,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // One type argument registers that type as its own implementation; two register the second as
     // the implementation of the first. Either way the LAST argument is what actually gets built,
     // and only a constructed type has a constructor to inspect.
-    var implementationSyntax = args[args.Count - 1];
+    var implementationSyntax = args[^1];
     if (ctx.SemanticModel.GetSymbolInfo(implementationSyntax, ct).Symbol is not INamedTypeSymbol implementation) {
       return null;
     }

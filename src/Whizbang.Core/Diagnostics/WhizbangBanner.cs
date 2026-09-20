@@ -209,7 +209,7 @@ public static partial class WhizbangBanner {
     var titleLine = $"  {name} v{version} (Whizbang v{whizbangVersion})";
 
     writer.WriteLine($"  ╔{new string('═', innerWidth)}╗");
-    writer.WriteLine($"  ║{titleLine.PadRight(innerWidth)}║");
+    writer.WriteLine($"  ║{titleLine,-innerWidth}║");
 
     if (!string.IsNullOrEmpty(configLine)) {
       writer.WriteLine($"  ║{"  " + configLine.PadRight(innerWidth - 2)}║");
