@@ -18,22 +18,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// for the inner store — the EFCore impl only calls base <c>Database.GetDbConnection()</c>
 /// methods, so the concrete type doesn't matter at the storage layer.
 /// </remarks>
-internal sealed class ScopedEFCoreDeadLetterStore : IDeadLetterStore {
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly Type _dbContextType;
-  private readonly ILogger<EFCoreDeadLetterStore<DbContext>> _logger;
-  private readonly WorkCoordinatorGate? _gate;
-
-  public ScopedEFCoreDeadLetterStore(
-      IServiceScopeFactory scopeFactory,
-      Type dbContextType,
-      ILogger<EFCoreDeadLetterStore<DbContext>> logger,
-      WorkCoordinatorGate? gate) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _gate = gate;
-  }
+internal sealed class ScopedEFCoreDeadLetterStore(
+    IServiceScopeFactory scopeFactory,
+    Type dbContextType,
+    ILogger<EFCoreDeadLetterStore<DbContext>> logger,
+    WorkCoordinatorGate? gate) : IDeadLetterStore {
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
+  private readonly ILogger<EFCoreDeadLetterStore<DbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly WorkCoordinatorGate? _gate = gate;
 
   public async Task<Guid?> MoveAsync(
       Guid deadLetterId,

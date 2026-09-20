@@ -54,14 +54,14 @@ public interface IEventUpcaster {
   /// <para>Default empty: re-key and backfill upcasters keep the same type, which is already
   /// subscribed, so they need declare nothing.</para>
   /// </remarks>
-  IReadOnlyList<Type> SourceTypes => Array.Empty<Type>();
+  IReadOnlyList<Type> SourceTypes => [];
 
   /// <summary>
   /// The event types this upcaster <b>produces</b>. Paired with <see cref="SourceTypes"/> so the
   /// read seam only pulls in this upcaster's foreign inputs when a rebuilt perspective actually
   /// subscribes to one of these targets. Default empty (no type-change).
   /// </summary>
-  IReadOnlyList<Type> TargetTypes => Array.Empty<Type>();
+  IReadOnlyList<Type> TargetTypes => [];
 
   /// <summary>
   /// Transforms the event into its current shape. Only called when <see cref="CanUpcast"/>

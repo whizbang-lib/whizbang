@@ -39,15 +39,11 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/events/event-upcasting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/UpcastingEventStoreDecoratorTests.cs</tests>
-public sealed class UpcastingEventStoreDecorator : ForwardingEventStoreDecorator {
-  private readonly EventUpcasterPipeline _pipeline;
-
-  /// <summary>Initializes the decorator.</summary>
-  /// <param name="inner">The underlying event store.</param>
-  /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
-  public UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) : base(inner) {
-    _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
-  }
+/// <remarks>Initializes the decorator.</remarks>
+/// <param name="inner">The underlying event store.</param>
+/// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
+public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) : ForwardingEventStoreDecorator(inner) {
+  private readonly EventUpcasterPipeline _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
 
   private MessageEnvelope<IEvent> _upcast(MessageEnvelope<IEvent> envelope) {
     var upcasted = _pipeline.Apply(envelope.Payload);

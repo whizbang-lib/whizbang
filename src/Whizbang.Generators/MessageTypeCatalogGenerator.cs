@@ -59,8 +59,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       AdditionalText file, System.Threading.CancellationToken ct) {
     var ledger = PinnedTypeLedger.TryParse(file.GetText(ct)?.ToString());
     return ledger is null
-      ? ImmutableArray<PinnedFormerName>.Empty
-      : ledger.ToPinnedFormerNames().ToImmutableArray();
+      ? []
+      : [.. ledger.ToPinnedFormerNames()];
   }
 
   private static MessageTypeCatalogEntryInfo? _extractEntry(
@@ -234,7 +234,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var formerByPinnedId = new Dictionary<string, List<string>>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var pf in formerNames) {
       if (!formerByPinnedId.TryGetValue(pf.PinnedId, out var list)) {
-        list = new List<string>();
+        list = [];
         formerByPinnedId[pf.PinnedId] = list;
       }
       if (!list.Contains(pf.FormerClrTypeName)) {

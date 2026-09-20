@@ -16,20 +16,14 @@ namespace Whizbang.Core.Workers;
 /// directly) see the same truth source the runner's idempotency filter uses.
 /// </remarks>
 /// <docs>fundamentals/perspectives/cursor-inversion</docs>
-public sealed partial class PerspectiveCursorResolver : IPerspectiveCursorResolver {
-  private readonly PerspectiveCursorCache _cache;
-  private readonly IWorkCoordinator _coordinator;
-  private readonly ILogger<PerspectiveCursorResolver> _logger;
-
-  /// <summary>Initializes a new instance.</summary>
-  public PerspectiveCursorResolver(
-      PerspectiveCursorCache cache,
-      IWorkCoordinator coordinator,
-      ILogger<PerspectiveCursorResolver> logger) {
-    _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+/// <remarks>Initializes a new instance.</remarks>
+public sealed partial class PerspectiveCursorResolver(
+    PerspectiveCursorCache cache,
+    IWorkCoordinator coordinator,
+    ILogger<PerspectiveCursorResolver> logger) : IPerspectiveCursorResolver {
+  private readonly PerspectiveCursorCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly ILogger<PerspectiveCursorResolver> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async Task<(Guid? LastEventId, long? LastCommitSequence)> GetAsync(

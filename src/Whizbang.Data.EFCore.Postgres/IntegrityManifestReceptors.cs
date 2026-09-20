@@ -557,11 +557,11 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var now = DateTimeOffset.UtcNow;
     var burstWindow = TimeSpan.FromMinutes(Math.Max(1, options.AuditIntervalMinutes));
-    var entry = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
+    var (Pages, Last) = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
       ? seen
       : (Pages: 0, Last: now);
-    if (entry.Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
-      LogCursorFollowCapped(logger, message.OriginServiceName, entry.Pages);
+    if (Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
+      LogCursorFollowCapped(logger, message.OriginServiceName, Pages);
       services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName));
       return;   // the rest of the lane re-audits from the seal next cycle.
@@ -583,7 +583,7 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    _pagesFollowed[key] = (entry.Pages + 1, now);
+    _pagesFollowed[key] = (Pages + 1, now);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesFollowed.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     if (_pagesFollowed.Count > 256) {
@@ -616,7 +616,7 @@ public sealed partial class IntegrityManifestReceptor(
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
-    LogCursorFollowed(logger, entry.Pages + 1, message.OriginServiceName);
+    LogCursorFollowed(logger, Pages + 1, message.OriginServiceName);
   }
 
   /// <summary>

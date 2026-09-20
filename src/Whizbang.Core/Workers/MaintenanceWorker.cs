@@ -672,7 +672,7 @@ public sealed partial class MaintenanceWorker(
       if (anyDeferred) {
         var reseed = seeds
           .Where(s => tableByType.ContainsKey(s.Item1))
-          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.Item2))
+          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.RowId))
           .ToList();
         await coordinator.RequeueRowEvictionsAsync(reseed, ct).ConfigureAwait(false);
       }

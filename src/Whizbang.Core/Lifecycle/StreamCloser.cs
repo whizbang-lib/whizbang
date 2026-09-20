@@ -28,17 +28,11 @@ public interface IStreamCloser {
 /// registered it is a thin pass-through to the gated truncate.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed partial class StreamCloser : IStreamCloser {
-  private readonly IWorkCoordinator _coordinator;
-  private readonly ILogger<StreamCloser> _logger;
-  private readonly IDestructionHook _hook;
-
-  /// <summary>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</summary>
-  public StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _hook = hook;
-  }
+/// <remarks>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</remarks>
+public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) : IStreamCloser {
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly ILogger<StreamCloser> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IDestructionHook _hook = hook;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>

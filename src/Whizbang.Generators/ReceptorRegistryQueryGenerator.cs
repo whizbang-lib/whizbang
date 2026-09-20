@@ -129,8 +129,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
-    if (classSymbol is null || classSymbol.IsAbstract) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol classSymbol || classSymbol.IsAbstract) {
       return null;
     }
 
@@ -167,8 +166,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var classSymbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
-    if (classSymbol is null || classSymbol.IsAbstract) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol classSymbol || classSymbol.IsAbstract) {
       return null;
     }
 
@@ -200,8 +198,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) as INamedTypeSymbol;
-    if (symbol is null || symbol.IsAbstract) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not INamedTypeSymbol symbol || symbol.IsAbstract) {
       return null;
     }
     var hasTag = symbol.GetAttributes().Any(a =>
@@ -225,8 +222,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) as INamedTypeSymbol;
-    if (symbol is null || symbol.IsAbstract) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not INamedTypeSymbol symbol || symbol.IsAbstract) {
       return null;
     }
     var implementsComposite = symbol.AllInterfaces.Any(i =>
@@ -250,8 +246,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var typeDecl = context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) as INamedTypeSymbol;
-    if (symbol is null || symbol.IsAbstract) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDecl, ct) is not INamedTypeSymbol symbol || symbol.IsAbstract) {
       return null;
     }
     var implementsCollective = symbol.AllInterfaces.Any(i =>

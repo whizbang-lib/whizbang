@@ -33,7 +33,7 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    ImmutableArray.Create(DiagnosticDescriptors.OptionalInjectedParameter);
+    [DiagnosticDescriptors.OptionalInjectedParameter];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {

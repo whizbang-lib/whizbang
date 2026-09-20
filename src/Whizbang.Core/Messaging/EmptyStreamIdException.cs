@@ -13,25 +13,19 @@ namespace Whizbang.Core.Messaging;
 /// motivation (a production forensic investigation).
 /// </remarks>
 /// <docs>operations/configuration/empty-stream-id-policy</docs>
+/// <remarks>
+/// Constructs with the offending <paramref name="messageId"/> and
+/// <paramref name="messageType"/>. The exception's <c>Message</c> property is
+/// self-describing so log readers don't need to inspect the structured fields.
+/// </remarks>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "EmptyStreamIdException always carries MessageId + MessageType — those are required for the exception to be useful. The standard parameterless / message-only / message-and-inner constructors would defeat the purpose; the typed (Guid, string) constructor is the only valid shape.")]
-public sealed class EmptyStreamIdException : System.Exception {
+public sealed class EmptyStreamIdException(System.Guid messageId, string messageType) : System.Exception(_format(messageId, messageType)) {
   /// <summary>The <c>message_id</c> of the row whose <c>stream_id</c> was Empty.</summary>
-  public System.Guid MessageId { get; }
+  public System.Guid MessageId { get; } = messageId;
 
   /// <summary>The <c>message_type</c> (AQN) of the offending row's payload.</summary>
-  public string MessageType { get; }
-
-  /// <summary>
-  /// Constructs with the offending <paramref name="messageId"/> and
-  /// <paramref name="messageType"/>. The exception's <c>Message</c> property is
-  /// self-describing so log readers don't need to inspect the structured fields.
-  /// </summary>
-  public EmptyStreamIdException(System.Guid messageId, string messageType)
-    : base(_format(messageId, messageType)) {
-    MessageId = messageId;
-    MessageType = messageType;
-  }
+  public string MessageType { get; } = messageType;
 
   private static string _format(System.Guid messageId, string messageType) =>
     $"Producer attempted to write {messageType} (message_id={messageId}) with stream_id=Guid.Empty (00000000-0000-0000-0000-000000000000). " +

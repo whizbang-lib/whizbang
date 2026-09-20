@@ -37,7 +37,7 @@ public sealed partial class SignalBusHostedService(
 ) : IHostedService, IDisposable {
   private readonly SignalBus _bus = bus ?? throw new ArgumentNullException(nameof(bus));
   private readonly SignalBusLivenessState _liveness = liveness ?? throw new ArgumentNullException(nameof(liveness));
-  private readonly ISignalTransport[] _transports = (transports ?? throw new ArgumentNullException(nameof(transports))).ToArray();
+  private readonly ISignalTransport[] _transports = [.. (transports ?? throw new ArgumentNullException(nameof(transports)))];
   private readonly ILogger<SignalBusHostedService> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly SignalBusOptions _options = options?.Value ?? new SignalBusOptions();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;

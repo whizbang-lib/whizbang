@@ -154,26 +154,26 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       System.Threading.CancellationToken cancellationToken) {
 
     if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
-      return ImmutableArray<ReceptorInfo>.Empty;
+      return [];
     }
 
     // The generated registrations reference these types from generated public code, so every link in
     // the containment chain must be public.
     for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
       if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return ImmutableArray<ReceptorInfo>.Empty;
+        return [];
       }
     }
 
     var attribute = context.Attributes.FirstOrDefault();
     if (attribute is null) {
-      return ImmutableArray<ReceptorInfo>.Empty;
+      return [];
     }
 
     foreach (var namedArgument in attribute.NamedArguments) {
       if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&
           namedArgument.Value.Value is bool generateService && !generateService) {
-        return ImmutableArray<ReceptorInfo>.Empty;
+        return [];
       }
     }
 

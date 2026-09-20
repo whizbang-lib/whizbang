@@ -1543,7 +1543,7 @@ public partial class PerspectiveWorker(
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal IReadOnlyList<AffinityHold> SnapshotAffinityHolds(TimeSpan olderThan, long? nowUtcTicks = null) {
     var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
-    return _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold).ToList();
+    return [.. _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold)];
   }
 
   /// <summary>

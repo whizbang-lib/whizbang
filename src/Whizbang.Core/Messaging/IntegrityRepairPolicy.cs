@@ -1,3 +1,4 @@
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -162,7 +163,7 @@ public sealed class IntegrityRepairPolicy {
   private int _windowsUnderRepair;
   // Checkpoints from different origins are handled concurrently, and every verdict reads or writes
   // the shared window table. The sections are tiny (a dictionary probe), so one lock is enough.
-  private readonly object _sync = new();
+  private readonly Lock _sync = new();
 
   /// <summary>Initializes a new instance of the <see cref="IntegrityRepairPolicy"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>

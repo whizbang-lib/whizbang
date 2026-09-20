@@ -105,7 +105,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
     }
     var properties = removedFields is { Count: > 0 }
-      ? visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath)).ToList()
+      ? [.. visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath))]
       : visitor.Properties;
 
     return new CompiledSetClause(
@@ -143,17 +143,12 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// Walks the spec's expression body, collecting one
   /// <see cref="_propertyAssignment"/> per <c>SetProperty</c> call.
   /// </summary>
-  private sealed class _setterVisitor : ExpressionVisitor {
-    private readonly JsonSerializerOptions _jsonOptions;
-    private readonly string _parameterPrefix;
+  private sealed class _setterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) : ExpressionVisitor {
+    private readonly JsonSerializerOptions _jsonOptions = jsonOptions;
+    private readonly string _parameterPrefix = parameterPrefix;
     private int _seq;
-    public List<_propertyAssignment> Properties { get; } = new();
+    public List<_propertyAssignment> Properties { get; } = [];
     public Dictionary<string, object?> Parameters { get; } = new(StringComparer.Ordinal);
-
-    public _setterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) {
-      _jsonOptions = jsonOptions;
-      _parameterPrefix = parameterPrefix;
-    }
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
       // Match: ICollectiveSetters<TModel>.SetProperty<TProp>(selector, value)

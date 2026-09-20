@@ -192,11 +192,9 @@ public static class InboxSchema {
     // CREATE INDEX IF NOT EXISTS runs on every startup, so a declaration here re-creates the index
     // on the boot after the migration dropped it. Their equivalents live on wh_inbox_state, which is
     // where the columns they index now live.
-    Indexes: ImmutableArray.Create(
-      new IndexDefinition(
+    Indexes: [new IndexDefinition(
         Name: "idx_inbox_received_at",
         Columns: [Columns.RECEIVED_AT]
-      )
-    )
+      )]
   );
 }

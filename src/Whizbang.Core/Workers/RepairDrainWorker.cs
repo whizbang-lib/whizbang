@@ -111,7 +111,7 @@ public sealed partial class RepairDrainWorker(
 
     var budget = (int)Math.Min(Math.Floor(_tokens), _options.RepairDrainBatchSize);
     var claimed = await coordinator.IntegrityClaimRepairDrainAsync(
-      origins.Select(o => o.OriginServiceId).ToList(), now,
+      [.. origins.Select(o => o.OriginServiceId)], now,
       TimeSpan.FromSeconds(_options.RepairRequestBackoffSeconds), _options.MaxRepairAttemptsPerBucket,
       budget, cancellationToken).ConfigureAwait(false);
     if (claimed.Count == 0) {

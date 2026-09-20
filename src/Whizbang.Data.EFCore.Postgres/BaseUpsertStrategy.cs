@@ -554,7 +554,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         // When forceUpdateScope is true (IScopeEvent), scope IS included in UPDATE.
         // Guard: only mark as unmodified when Scope is mapped as a complex property.
         var entityType = context.Entry(row).Metadata;
-        if (entityType.FindComplexProperty(nameof(PerspectiveRow<TModel>.Scope)) != null) {
+        if (entityType.FindComplexProperty(nameof(PerspectiveRow<>.Scope)) != null) {
           context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
         }
       }

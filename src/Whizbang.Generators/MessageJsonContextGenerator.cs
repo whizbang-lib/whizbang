@@ -190,20 +190,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
-      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+      return [];
     }
 
     // The generated JsonTypeInfo lives in a public context class, so every link in the containment
     // chain must be public for the emitted code to compile.
     for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
       if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return ImmutableArray<SagaSynthesizedEvent>.Empty;
+        return [];
       }
     }
 
     var attribute = context.Attributes.FirstOrDefault();
     if (attribute is null) {
-      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+      return [];
     }
 
     var includeHooks = true;
@@ -346,7 +346,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>Parses a ledger additional file into rename aliases. Returns empty on a missing/blank/malformed ledger.</summary>
   private static ImmutableArray<RenameAlias> _readLedgerAliases(AdditionalText file, System.Threading.CancellationToken ct) {
     var ledger = PinnedTypeLedger.TryParse(file.GetText(ct)?.ToString());
-    return ledger is null ? ImmutableArray<RenameAlias>.Empty : ledger.ToRenameAliases().ToImmutableArray();
+    return ledger is null ? [] : [.. ledger.ToRenameAliases()];
   }
 
   /// <summary>
@@ -3093,9 +3093,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<JsonMessageTypeInfo> _extractPerspectiveEventTypes(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct) as INamedTypeSymbol;
-    if (typeSymbol is null || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is not INamedTypeSymbol typeSymbol || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       return [];
     }
 

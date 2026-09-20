@@ -34,7 +34,10 @@ namespace Whizbang.Core.Offloads;
 /// (issue #704).
 /// </remarks>
 /// <docs>fundamentals/offloads/message-body-store</docs>
-public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
+/// <remarks>Builds the hook. <see cref="IServiceProvider"/> is used to resolve the keyed body store at invocation time so options changes don't require DI rebuild.</remarks>
+public sealed partial class BodyOffloadPostSerializeHook(
+    IServiceProvider serviceProvider,
+    IOptionsMonitor<MessageBodyOffloadOptions> options) : IPostSerializeHook {
 #pragma warning disable CA1707
   /// <summary>Destination metadata key set to <c>true</c> when the wire bytes are a claim envelope.</summary>
   public const string IS_CLAIM_METADATA_KEY = "whizbang.is-claim";
@@ -46,16 +49,8 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
   public const string ORIGINAL_TYPE_METADATA_KEY = "whizbang.original-type";
 #pragma warning restore CA1707
 
-  private readonly IServiceProvider _serviceProvider;
-  private readonly IOptionsMonitor<MessageBodyOffloadOptions> _options;
-
-  /// <summary>Builds the hook. <see cref="IServiceProvider"/> is used to resolve the keyed body store at invocation time so options changes don't require DI rebuild.</summary>
-  public BodyOffloadPostSerializeHook(
-      IServiceProvider serviceProvider,
-      IOptionsMonitor<MessageBodyOffloadOptions> options) {
-    _serviceProvider = serviceProvider;
-    _options = options;
-  }
+  private readonly IServiceProvider _serviceProvider = serviceProvider;
+  private readonly IOptionsMonitor<MessageBodyOffloadOptions> _options = options;
 
   /// <inheritdoc />
   public int Order => 1000;

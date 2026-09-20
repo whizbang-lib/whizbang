@@ -14,7 +14,18 @@ namespace Whizbang.Hosting.AspNet;
 /// </summary>
 /// <docs>resilience/database-availability-middleware</docs>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DatabaseAvailabilityMiddlewareTests.cs</tests>
-public class DatabaseAvailabilityMiddleware {
+/// <remarks>
+/// Creates the middleware. <paramref name="exemptPaths"/> is the set of path prefixes that always
+/// pass through even before the schema is ready (<see langword="null"/> uses
+/// <see cref="DefaultExemptPaths"/>); <paramref name="mode"/> selects whether every non-exempt
+/// request is gated or only mutating ones (see <see cref="AvailabilityGateMode"/>);
+/// <paramref name="dynamicExemptions"/> carries exemptions surfaces register for themselves at
+/// mapping time (the startup status endpoint must not share a failure domain with what it reports on).
+/// </remarks>
+public class DatabaseAvailabilityMiddleware(
+    RequestDelegate next, ISchemaReadyGate schemaReadyGate, IReadOnlyList<string>? exemptPaths = null,
+    AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt,
+    WhizbangAvailabilityExemptions? dynamicExemptions = null) {
   /// <summary>
   /// Default exempt path prefixes: the standard liveness (<c>/alive</c>), readiness (<c>/health</c>)
   /// and version (<c>/version</c>) endpoints. A request whose path starts with one of these is never
@@ -25,30 +36,11 @@ public class DatabaseAvailabilityMiddleware {
   private static readonly byte[] _responseBody = Encoding.UTF8.GetBytes(
     """{"error":"Service temporarily unavailable","reason":"schema_initializing"}""");
 
-  private readonly RequestDelegate _next;
-  private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly PathString[] _exemptPaths;
-  private readonly WhizbangAvailabilityExemptions? _dynamicExemptions;
-  private readonly AvailabilityGateMode _mode;
-
-  /// <summary>
-  /// Creates the middleware. <paramref name="exemptPaths"/> is the set of path prefixes that always
-  /// pass through even before the schema is ready (<see langword="null"/> uses
-  /// <see cref="DefaultExemptPaths"/>); <paramref name="mode"/> selects whether every non-exempt
-  /// request is gated or only mutating ones (see <see cref="AvailabilityGateMode"/>);
-  /// <paramref name="dynamicExemptions"/> carries exemptions surfaces register for themselves at
-  /// mapping time (the startup status endpoint must not share a failure domain with what it reports on).
-  /// </summary>
-  public DatabaseAvailabilityMiddleware(
-      RequestDelegate next, ISchemaReadyGate schemaReadyGate, IReadOnlyList<string>? exemptPaths = null,
-      AvailabilityGateMode mode = AvailabilityGateMode.AllNonExempt,
-      WhizbangAvailabilityExemptions? dynamicExemptions = null) {
-    _next = next;
-    _schemaReadyGate = schemaReadyGate;
-    _exemptPaths = [.. (exemptPaths ?? DefaultExemptPaths).Select(static p => new PathString(p))];
-    _dynamicExemptions = dynamicExemptions;
-    _mode = mode;
-  }
+  private readonly RequestDelegate _next = next;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
+  private readonly PathString[] _exemptPaths = [.. (exemptPaths ?? DefaultExemptPaths).Select(static p => new PathString(p))];
+  private readonly WhizbangAvailabilityExemptions? _dynamicExemptions = dynamicExemptions;
+  private readonly AvailabilityGateMode _mode = mode;
 
   /// <summary>
   /// Returns 503 with a JSON error body and Retry-After header when the schema gate has not yet

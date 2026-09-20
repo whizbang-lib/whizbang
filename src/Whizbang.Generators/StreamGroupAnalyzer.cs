@@ -137,9 +137,9 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
       if (group.Any(x => x.Membership.Announce && x.Perspective.HasEvictor)) {
         continue;
       }
-      foreach (var member in group) {
+      foreach (var (Perspective, Membership) in group) {
         context.ReportDiagnostic(Diagnostic.Create(
-          InertGroup, member.Perspective.Location, group.Key));
+          InertGroup, Perspective.Location, group.Key));
       }
     }
 

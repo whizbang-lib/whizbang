@@ -71,10 +71,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// </summary>
   public IReadOnlyList<GateHolder> SnapshotHolders() {
     var now = Environment.TickCount64;
-    return _holders.Values
+    return [.. _holders.Values
       .Select(h => new GateHolder(h.Caller, now - h.StartTicks))
-      .OrderByDescending(h => h.HeldMs)
-      .ToList();
+      .OrderByDescending(h => h.HeldMs)];
   }
 
   /// <summary>Holders grouped by caller with a count and the oldest age, for the deadline warning.</summary>

@@ -22,7 +22,7 @@ public sealed record MessageTypeCatalogEntry(
   /// been renamed. Used by the registry populator to recognise an acknowledged rename and reconcile
   /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
   /// </summary>
-  public IReadOnlyList<string> FormerNames { get; init; } = System.Array.Empty<string>();
+  public IReadOnlyList<string> FormerNames { get; init; } = [];
 
   /// <summary>
   /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The

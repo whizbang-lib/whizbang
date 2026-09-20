@@ -132,7 +132,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
 
   private static string _simpleName(string clrName) {
     var lastSep = clrName.LastIndexOfAny(['+', '.']);
-    return lastSep >= 0 ? clrName.Substring(lastSep + 1) : clrName;
+    return lastSep >= 0 ? clrName[(lastSep + 1)..] : clrName;
   }
 
   private readonly struct LivingPinnedType(string clrTypeName, Location location) {

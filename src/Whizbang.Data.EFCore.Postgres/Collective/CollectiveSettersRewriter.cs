@@ -125,7 +125,7 @@ internal static class CollectiveSettersRewriter {
   /// raw-SQL escape hatch.
   /// </summary>
   private sealed class _propertyCollector(Type modelType) : ExpressionVisitor {
-    public List<_propertyAssignment> Assignments { get; } = new();
+    public List<_propertyAssignment> Assignments { get; } = [];
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
       if (node.Method.Name != "SetProperty" ||

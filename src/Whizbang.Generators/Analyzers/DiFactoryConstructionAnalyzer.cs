@@ -42,7 +42,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    ImmutableArray.Create(DiagnosticDescriptors.DiFactoryOmitsDependency);
+    [DiagnosticDescriptors.DiFactoryOmitsDependency];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -102,7 +102,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
   private static bool _isInsideServiceProviderFactory(SyntaxNode node) {
     for (var current = node.Parent; current is not null; current = current.Parent) {
       var parameters = current switch {
-        SimpleLambdaExpressionSyntax simple => new[] { simple.Parameter },
+        SimpleLambdaExpressionSyntax simple => [simple.Parameter],
         ParenthesizedLambdaExpressionSyntax paren => paren.ParameterList.Parameters.ToArray(),
         _ => null,
       };

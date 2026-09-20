@@ -795,14 +795,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var message = new ServiceBusMessage(json) {
       MessageId = envelope.MessageId.Value.ToString(),
       Subject = item.RoutingKey ?? destination.RoutingKey ?? "message",
-      ContentType = "application/json"
+      ContentType = "application/json",
+      // Session id for FIFO ordering — ASB delivers same-session messages in order to one consumer.
+      // Always set, never conditional: a session-enabled entity rejects a null session id, which is
+      // what silently dead-lettered streamless control-plane broadcasts. Same rule as the single
+      // publish path above, deliberately sharing one implementation so the two cannot drift.
+      SessionId = AsbSessionKey.For(item.StreamId, envelope.MessageId.Value)
     };
-
-    // Session id for FIFO ordering — ASB delivers same-session messages in order to one consumer.
-    // Always set, never conditional: a session-enabled entity rejects a null session id, which is
-    // what silently dead-lettered streamless control-plane broadcasts. Same rule as the single
-    // publish path above, deliberately sharing one implementation so the two cannot drift.
-    message.SessionId = AsbSessionKey.For(item.StreamId, envelope.MessageId.Value);
 
     message.ApplicationProperties[ENVELOPE_TYPE_PROPERTY] = envelopeTypeName;
 

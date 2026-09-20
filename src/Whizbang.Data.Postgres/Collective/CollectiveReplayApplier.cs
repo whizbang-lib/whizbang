@@ -110,7 +110,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
         }
       }
     }
-    return merged.OrderByMessageId().ToList();
+    return [.. merged.OrderByMessageId()];
   }
 
   /// <inheritdoc/>

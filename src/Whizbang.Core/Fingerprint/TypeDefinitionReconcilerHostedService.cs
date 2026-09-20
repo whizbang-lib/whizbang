@@ -11,20 +11,14 @@ namespace Whizbang.Core.Fingerprint;
 /// the next startup. Inert when no catalog is registered.
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
-public sealed partial class TypeDefinitionReconcilerHostedService : BackgroundService {
-  private readonly TypeDefinitionReconciler _reconciler;
-  private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly ILogger<TypeDefinitionReconcilerHostedService> _logger;
-
-  /// <summary>Creates the hosted service.</summary>
-  public TypeDefinitionReconcilerHostedService(
-      TypeDefinitionReconciler reconciler,
-      ISchemaReadyGate schemaReadyGate,
-      ILogger<TypeDefinitionReconcilerHostedService> logger) {
-    _reconciler = reconciler;
-    _schemaReadyGate = schemaReadyGate;
-    _logger = logger;
-  }
+/// <remarks>Creates the hosted service.</remarks>
+public sealed partial class TypeDefinitionReconcilerHostedService(
+    TypeDefinitionReconciler reconciler,
+    ISchemaReadyGate schemaReadyGate,
+    ILogger<TypeDefinitionReconcilerHostedService> logger) : BackgroundService {
+  private readonly TypeDefinitionReconciler _reconciler = reconciler;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
+  private readonly ILogger<TypeDefinitionReconcilerHostedService> _logger = logger;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {

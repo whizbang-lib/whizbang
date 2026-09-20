@@ -75,9 +75,7 @@ public sealed partial class IntegritySweepScheduler(
       }, cancellationToken).ConfigureAwait(false);
 
       var state = services.GetService<IntegritySweepScheduleState>();
-      if (state is not null) {
-        state.CronActive = true;
-      }
+      state?.CronActive = true;
       LogSweepScheduled(logger, splayed, handle.NextFireAt);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Never let a scheduling failure lose the sweep: CronActive stays false, so the audit

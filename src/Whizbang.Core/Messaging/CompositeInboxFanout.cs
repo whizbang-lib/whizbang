@@ -123,7 +123,7 @@ public static partial class CompositeInboxFanout {
     ArgumentNullException.ThrowIfNull(scope);
 
     if (composite is null) {
-      return new FanoutResult(FanoutOutcome.NotComposite, Array.Empty<InboxMessage>(), null, null);
+      return new FanoutResult(FanoutOutcome.NotComposite, [], null, null);
     }
 
     var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
@@ -174,13 +174,13 @@ public static partial class CompositeInboxFanout {
       count++;
       if (identityIds is not null && count > identityIds.Count) {
         return new FanoutResult(
-          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          FanoutOutcome.Failed, [],
           $"Identity-preserving composite '{compositeTypeName}' yielded more inner events than InnerEventIds ({identityIds.Count}).",
           compositeTypeName);
       }
       if (identitySequences is not null && count > identitySequences.Count) {
         return new FanoutResult(
-          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          FanoutOutcome.Failed, [],
           $"Identity-preserving composite '{compositeTypeName}' yielded more inner events than InnerCommitSequences ({identitySequences.Count}).",
           compositeTypeName);
       }
@@ -188,20 +188,20 @@ public static partial class CompositeInboxFanout {
         // Cap breach is a producer bug (runaway enumerator), not a per-child fault — whole composite
         // dead-letters regardless of atomicity; stop at the first yield past the cap.
         return new FanoutResult(
-          FanoutOutcome.CapExceeded, Array.Empty<InboxMessage>(),
+          FanoutOutcome.CapExceeded, [],
           $"Composite '{compositeTypeName}' yielded at least {count} inner events, exceeding MaxInnerEventsAllowed ({max}).",
           compositeTypeName);
       }
       if (inner is null) {
         if (identityIds is not null) {
           return new FanoutResult(
-            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            FanoutOutcome.Failed, [],
             $"Identity-preserving composite '{compositeTypeName}' yielded a null inner event at position {count - 1} — the id pairing cannot be preserved.",
             compositeTypeName);
         }
         if (atomic) {
           return new FanoutResult(
-            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            FanoutOutcome.Failed, [],
             $"Composite '{compositeTypeName}' yielded a null inner event at position {count - 1}.",
             compositeTypeName);
         }
@@ -231,7 +231,7 @@ public static partial class CompositeInboxFanout {
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (atomic) {
           return new FanoutResult(
-            FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+            FanoutOutcome.Failed, [],
             $"Composite '{compositeTypeName}' child serialization failed: {ex.Message}",
             compositeTypeName);
         }
@@ -249,13 +249,13 @@ public static partial class CompositeInboxFanout {
 
     if (identityIds is not null && identityIds.Count != count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Identity-preserving composite '{compositeTypeName}' carries {identityIds.Count} InnerEventIds for {count} inner events.",
         compositeTypeName);
     }
     if (identitySequences is not null && identitySequences.Count != count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Identity-preserving composite '{compositeTypeName}' carries {identitySequences.Count} InnerCommitSequences for {count} inner events.",
         compositeTypeName);
     }
@@ -286,25 +286,25 @@ public static partial class CompositeInboxFanout {
 
     if (typeNames.Count != payloads.Count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Raw composite '{compositeTypeName}' carries {typeNames.Count} InnerTypeNames for {payloads.Count} InnerPayloads.",
         compositeTypeName);
     }
     if (identityIds is not null && identityIds.Count != payloads.Count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Identity-preserving composite '{compositeTypeName}' carries {identityIds.Count} InnerEventIds for {payloads.Count} inner events.",
         compositeTypeName);
     }
     if (identitySequences is not null && identitySequences.Count != payloads.Count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Identity-preserving composite '{compositeTypeName}' carries {identitySequences.Count} InnerCommitSequences for {payloads.Count} inner events.",
         compositeTypeName);
     }
     if (payloads.Count > composite.MaxInnerEventsAllowed) {
       return new FanoutResult(
-        FanoutOutcome.CapExceeded, Array.Empty<InboxMessage>(),
+        FanoutOutcome.CapExceeded, [],
         $"Composite '{compositeTypeName}' carries {payloads.Count} inner events, exceeding MaxInnerEventsAllowed ({composite.MaxInnerEventsAllowed}).",
         compositeTypeName);
     }
@@ -316,7 +316,7 @@ public static partial class CompositeInboxFanout {
     var innerStreams = composite.InnerStreamIds;
     if (innerStreams is { Count: > 0 } && innerStreams.Count != payloads.Count) {
       return new FanoutResult(
-        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        FanoutOutcome.Failed, [],
         $"Raw composite '{compositeTypeName}' carries {innerStreams.Count} inner stream ids for {payloads.Count} payloads — the pairing cannot be preserved.",
         compositeTypeName);
     }
@@ -326,7 +326,7 @@ public static partial class CompositeInboxFanout {
       var wireTypeName = typeNames[i];
       if (payloads[i].ValueKind == JsonValueKind.Undefined || string.IsNullOrWhiteSpace(wireTypeName)) {
         return new FanoutResult(
-          FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+          FanoutOutcome.Failed, [],
           $"Raw composite '{compositeTypeName}' carries an empty payload or type name at position {i} — the pairing cannot be preserved.",
           compositeTypeName);
       }
