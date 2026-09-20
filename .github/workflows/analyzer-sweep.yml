@@ -101,8 +101,23 @@ jobs:
           Applied by the Analyzer Sweep workflow, one diagnostic per commit.
 
           Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-              git push -q origin HEAD:"$BRANCH"
-              echo "pushed $n fixes for $d"
+              # Rebase before pushing. The branch is shared -- a person or another job can land a
+              # commit while a long sweep is mid-rule, and a plain push then fails non-fast-forward.
+              # Without this the loop keeps going and every later push fails the same way, which is
+              # the same "work completed but discarded" failure the per-rule commit exists to prevent.
+              for attempt in 1 2 3; do
+                if git push -q origin HEAD:"$BRANCH" 2>/dev/null; then
+                  echo "pushed $n fixes for $d"
+                  break
+                fi
+                echo "push rejected (attempt $attempt) -- rebasing onto origin/$BRANCH"
+                git fetch -q origin "$BRANCH"
+                if ! git rebase -q "origin/$BRANCH"; then
+                  git rebase --abort || true
+                  echo "::error::could not rebase $d onto origin/$BRANCH; stopping so nothing is lost"
+                  exit 1
+                fi
+              done
               TOTAL=$((TOTAL + n))
             fi
             # Roslynator exits between rules but the build server does not: VBCSCompiler
