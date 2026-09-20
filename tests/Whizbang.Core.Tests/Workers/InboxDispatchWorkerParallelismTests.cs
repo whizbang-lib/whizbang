@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -310,6 +311,10 @@ public class InboxDispatchWorkerParallelismTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ADispatchCanceledByShutdown_IsNotRecordedAsAFailureAsync(
       CancellationToken cancellationToken) {
     // A dispatch that throws is routed to the failure channel and dropped from in-flight, so the

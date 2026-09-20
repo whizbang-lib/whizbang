@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -95,6 +96,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Send_WhenOnlyAForeignAssemblyKnowsTheReceptor_InvokesItAsync(CancellationToken cancellationToken) {
     var foreign = new _foreignAssemblyLookup("contracts-assembly");
     await using var sp = _buildHost(foreign);
@@ -109,6 +114,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Publish_FansOutToEveryForeignAssemblysReceptorsAsync(CancellationToken cancellationToken) {
     var contracts = new _foreignAssemblyLookup("contracts-assembly");
     var billing = new _foreignAssemblyLookup("billing-assembly");
@@ -124,6 +133,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Send_WithNoLookupAnywhere_KeepsTodaysBehaviourAsync(CancellationToken cancellationToken) {
     await using var sp = _buildHost();
     var dispatcher = new _blindDispatcher(sp);
@@ -206,6 +219,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignAsyncVoidReceptorAsync(CancellationToken cancellationToken) {
     var foreign = new _allShapesLookup();
     await using var sp = _buildHost(foreign);
@@ -220,6 +237,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignSyncReceptorAsync(CancellationToken cancellationToken) {
     // Sync is the fallback the dispatcher tries only after the async table answers null, so the
     // foreign consultation has to happen on that second pass as well.
@@ -234,6 +255,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignSyncVoidReceptorAsync(CancellationToken cancellationToken) {
     var foreign = new _allShapesLookup();
     await using var sp = _buildHost(foreign);
@@ -247,6 +272,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ForeignLookup_IsConsultedOnlyWhenTheOwnTableAnswersNullAsync(CancellationToken cancellationToken) {
     // The fallback is additive: an assembly that can answer for itself must never hand the
     // message to a foreign assembly, or a publish would double-deliver.
@@ -263,6 +292,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ForeignLookup_TakesTheFirstAssemblyThatAnswersForASendAsync(CancellationToken cancellationToken) {
     // Sends have exactly one handler by definition, so the scan stops at the first match rather
     // than fanning out the way a publish does.
@@ -279,6 +312,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ForeignLookup_SkipsAnAssemblyThatDoesNotKnowTheTypeAsync(CancellationToken cancellationToken) {
     // The scan has to keep walking past assemblies that answer null, not stop at the first one.
     var stranger = new _foreignAssemblyLookup("unrelated-assembly");
@@ -293,6 +330,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task UnknownMessage_StillThrowsAfterEveryForeignLookupAnswersNullAsync(CancellationToken cancellationToken) {
     // The scan must terminate in the same ReceptorNotFoundException as before — a message nobody
     // handles has to stay a loud error, not become a silent no-op once lookups are registered.
@@ -377,6 +418,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignReceptorThatReturnsACompositeAsync(
       CancellationToken cancellationToken) {
     // The RPC-extraction fallback is the dispatcher's last resort: a receptor whose result
@@ -399,6 +444,10 @@ public class DispatcherForeignLookupTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Cascade_AsksTheForeignAssemblyForItsReceptorsDefaultRoutingAsync(
       CancellationToken cancellationToken) {
     // Messages cascaded out of a receptor's result inherit that receptor's declared routing.

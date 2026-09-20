@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -44,6 +45,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ASingleReportGrant_CanceledDuringShutdown_PropagatesInsteadOfReadingAsRefusedAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -61,6 +66,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ABatchReportGrant_CanceledDuringShutdown_PropagatesInsteadOfFallingBackPerKeyAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -80,6 +89,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task AWindowStamp_CanceledDuringShutdown_PropagatesInsteadOfWideningTheDrainAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -98,6 +111,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ARepairDrainClaim_CanceledDuringShutdown_PropagatesInsteadOfLookingIdleAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -116,6 +133,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task AHealedBatchMark_CanceledDuringShutdown_PropagatesInsteadOfLosingTheAgesAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -133,6 +154,10 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ALedgerSummaryRead_CanceledDuringShutdown_PropagatesInsteadOfPublishingAGaugeAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
