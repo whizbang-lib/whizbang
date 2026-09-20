@@ -155,7 +155,7 @@ public class TopologyManifestTests {
       .Because("The manifest is a set projection — input enumeration order must not matter.");
     // Deterministic order: sorted by message type name
     await Assert.That(fromForward.PublishDestinations[0].MessageTypeName)
-      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName!);
+      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName);
   }
 
   [Test]
@@ -192,7 +192,7 @@ public class TopologyManifestTests {
 
     await Assert.That(manifest.PublishDestinations.Count).IsEqualTo(1);
     await Assert.That(manifest.PublishDestinations[0].MessageTypeName)
-      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName!);
+      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName);
   }
 
   [Test]

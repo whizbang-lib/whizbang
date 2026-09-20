@@ -44,7 +44,7 @@ public class RedeliveryPumpTests {
 
     var (envA, destA, typeA) = transport.Published[0];
     await Assert.That(destA.Address).IsEqualTo("repair-topic");
-    await Assert.That(typeA!).Contains("RedeliveryComposite")
+    await Assert.That(typeA).Contains("RedeliveryComposite")
       .Because("the wire envelope-type is derived from the composite's runtime type by the serializer seam.");
     await Assert.That(envA.Target).IsEqualTo("svc-x")
       .Because("the repair bundle is directed at the damaged consumer — everyone else discards.");
@@ -59,13 +59,13 @@ public class RedeliveryPumpTests {
       .Because("each child's stored wire type name rides beside its raw payload.");
     await Assert.That(compositeA.OriginServiceId).IsEqualTo(origin)
       .Because("Phase B accounting keys on the origin — the bundle names the service the events came from.");
-    await Assert.That(compositeA.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
+    await Assert.That(compositeA.InnerCommitSequences).IsEquivalentTo([(long?)1, 2])
       .Because("original commit sequences ride the bundle so repaired events recount in their window.");
 
     var compositeB = serializer.Captured[1].Payload;
     await Assert.That(compositeB.StreamId).IsEqualTo(streamB);
     await Assert.That(compositeB.InnerEventIds).IsEquivalentTo([b1]);
-    await Assert.That(compositeB.InnerCommitSequences!).IsEquivalentTo([(long?)1]);
+    await Assert.That(compositeB.InnerCommitSequences).IsEquivalentTo([(long?)1]);
   }
 
   [Test]

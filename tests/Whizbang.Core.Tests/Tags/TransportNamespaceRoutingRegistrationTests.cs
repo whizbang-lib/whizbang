@@ -44,7 +44,7 @@ public class TransportNamespaceRoutingRegistrationTests {
     var again = provider.GetService<TransportNamespaceResolver>();
 
     await Assert.That(resolver).IsNotNull();
-    await Assert.That(again).IsSameReferenceAs(resolver!)
+    await Assert.That(again).IsSameReferenceAs(resolver)
       .Because("the resolver caches per-type-name resolution and must be a singleton");
     await Assert.That(resolver!.HasBindings).IsTrue();
   }

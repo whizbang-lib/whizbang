@@ -71,11 +71,11 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     await Assert.That(msg).IsNotNull();
     // The new format must name the source (DirectKey here) and the key
     // ("test-db") so operators can match the symptom to the env var.
-    await Assert.That(msg!).Contains("DirectKey");
-    await Assert.That(msg!).Contains("test-db");
+    await Assert.That(msg).Contains("DirectKey");
+    await Assert.That(msg).Contains("test-db");
     // The operator-actionable hint must also be present so the log line stands
     // on its own without needing source-code lookup.
-    await Assert.That(msg!).Contains("-direct");
+    await Assert.That(msg).Contains("-direct");
   }
 
   [Test]
@@ -113,12 +113,12 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
 
     var msg = logger.LastDisconnectMessage;
     await Assert.That(msg).IsNotNull();
-    await Assert.That(msg!).Contains("PooledKeyFallback");
-    await Assert.That(msg!).Contains("test-db");
+    await Assert.That(msg).Contains("PooledKeyFallback");
+    await Assert.That(msg).Contains("test-db");
     // Operator-actionable hint must appear so the fix is obvious without
     // having to read the source.
-    await Assert.That(msg!).Contains("pgbouncer");
-    await Assert.That(msg!).Contains("test-db-direct");
+    await Assert.That(msg).Contains("pgbouncer");
+    await Assert.That(msg).Contains("test-db-direct");
   }
 
   [Test]
@@ -149,8 +149,8 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastResolvedConnectionMessage).IsNotNull();
-    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("DirectKey");
-    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("test-db");
+    await Assert.That(logger.LastResolvedConnectionMessage).Contains("DirectKey");
+    await Assert.That(logger.LastResolvedConnectionMessage).Contains("test-db");
   }
 
   [Test]
@@ -183,8 +183,8 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastPooledFallbackMessage).IsNotNull();
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("pgbouncer");
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("test-db-direct");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("pgbouncer");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("test-db-direct");
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
