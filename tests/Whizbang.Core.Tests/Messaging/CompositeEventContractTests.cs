@@ -109,7 +109,7 @@ public class CompositeEventContractTests {
       _count = count;
     }
     private readonly int _count;
-    public int MaterializeCalls { get; private set; }
+    public int MaterializeCalls { get; }
     public IEnumerable<IMessage> InnerEvents {
       get {
         for (var i = 0; i < _count; i++) {
