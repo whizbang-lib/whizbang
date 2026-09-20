@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -50,6 +51,10 @@ public class PgSharedNotifyConnectionStateTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task BeforeStarting_TheAliveLockIsNotClaimedAsync(CancellationToken cancellationToken) {
     using var shared = _connection(ConnectionString);
 
@@ -106,6 +111,10 @@ public class PgSharedNotifyConnectionStateTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task AProbeCanceledByTheCaller_PropagatesRatherThanReportingUnavailableAsync(
       CancellationToken cancellationToken) {
     // The guard ahead of the try. A caller who cancelled is not asking any more, and answering

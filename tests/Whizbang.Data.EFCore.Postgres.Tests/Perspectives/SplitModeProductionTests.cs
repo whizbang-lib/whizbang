@@ -1,5 +1,6 @@
 #pragma warning disable CA1707
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -499,6 +500,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Where_PhysicalField_SqlUsesColumn_NotJsonbAsync(CancellationToken ct) {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price >= 50.00m);
@@ -593,6 +598,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task GroupBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .GroupBy(r => r.Data.Category)
@@ -609,6 +618,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task OrderBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .OrderBy(r => r.Data.Price);
@@ -659,6 +672,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Join_OnPhysicalField_UsesColumnNotJsonbAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Join(
@@ -681,6 +698,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Where_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.TenantId == Guid.Empty)
@@ -692,6 +713,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Where_StringField_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Category == "test")
@@ -703,6 +728,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Where_DecimalField_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price >= 50.0m)
@@ -714,6 +743,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_OrderBy_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .OrderBy(r => r.Data.Price)
@@ -725,6 +758,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_GroupBy_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .GroupBy(r => r.Data.Category)
@@ -737,6 +774,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Select_VectorField_ViaEFProperty_UsesPhysicalColumnAsync(CancellationToken ct) {
     // Vector Select projections use EF.Property<Vector?> directly (not the expression visitor)
     // because shadow property type (Vector) differs from model type (float[])
@@ -750,6 +791,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Select_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Select(r => r.Data.TenantId)
@@ -761,6 +806,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Sql_Count_Where_UsesPhysicalColumnAsync(CancellationToken ct) {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price > 50.0m)
