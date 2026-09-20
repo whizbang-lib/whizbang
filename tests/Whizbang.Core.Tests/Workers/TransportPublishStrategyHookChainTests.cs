@@ -99,7 +99,7 @@ public class TransportPublishStrategyHookChainTests {
     await Assert.That(result.Reason).IsEqualTo(MessageFailureReason.MessageBodyTooLarge)
       .Because("Pre-flight: size > ceiling AND no hook substituted the body — fail with a typed reason code so dashboards distinguish 'too big' from generic transport failures.");
     await Assert.That(result.Error).IsNotNull();
-    await Assert.That(result.Error!).Contains("AddWhizbangBodyOffload")
+    await Assert.That(result.Error).Contains("AddWhizbangBodyOffload")
       .Because("Error message points operators at the remediation knob (register offload, raise tier, or trim payload).");
     await Assert.That(transport.PublishCallCount).IsEqualTo(0)
       .Because("Strategy MUST NOT hand oversized payloads to the transport — that's what we're protecting against.");

@@ -60,7 +60,7 @@ public class EnvelopeReceptorDedupStoreTests {
     await store.RecordInvocationAsync(envelope, record, CancellationToken.None);
 
     await Assert.That(envelope.ReceptorInvocations).IsNotNull();
-    await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(1);
+    await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(1);
     await Assert.That(envelope.ReceptorInvocations![0]).IsEqualTo(record);
   }
 
@@ -87,7 +87,7 @@ public class EnvelopeReceptorDedupStoreTests {
 
     await store.RecordInvocationAsync(envelope, record, CancellationToken.None);
 
-    await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(2);
+    await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(2);
     await Assert.That(envelope.ReceptorInvocations![1]).IsEqualTo(record);
   }
 

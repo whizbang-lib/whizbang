@@ -129,7 +129,7 @@ public class BodyOffloadCipherTests {
 
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.BodyClaimCipherUnknown);
-    await Assert.That(result.FailureDescription!).Contains("kv");
+    await Assert.That(result.FailureDescription).Contains("kv");
   }
 
   [Test]
@@ -149,7 +149,7 @@ public class BodyOffloadCipherTests {
 
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.BodyClaimIntegrityFailure);
-    await Assert.That(result.FailureDescription!).Contains("kek-1");
+    await Assert.That(result.FailureDescription).Contains("kek-1");
   }
 
   [Test]

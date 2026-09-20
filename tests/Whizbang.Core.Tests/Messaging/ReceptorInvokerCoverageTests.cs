@@ -451,9 +451,9 @@ namespace Whizbang.Core.Tests.Messaging {
       var skipLine = captured.Messages.FirstOrDefault(m => m.Contains("Skipped", StringComparison.Ordinal));
       await Assert.That(skipLine).IsNotNull()
         .Because("a silent skip with no diagnostic is indistinguishable from a receptor that ran and did nothing");
-      await Assert.That(skipLine!).Contains(nameof(ServiceEchoCommand))
+      await Assert.That(skipLine).Contains(nameof(ServiceEchoCommand))
         .Because("the reader needs to know which message was dropped, not merely that something was");
-      await Assert.That(skipLine!).Contains(envelope.MessageId.Value.ToString())
+      await Assert.That(skipLine).Contains(envelope.MessageId.Value.ToString())
         .Because("naming the type alone cannot distinguish one dropped message from thousands of the same type");
     }
 

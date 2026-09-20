@@ -88,7 +88,7 @@ public class TransportConsumerServiceNameFallbackTests {
     await Assert.That(names.Count).IsEqualTo(1)
       .Because("every destination must carry the same subscriber name; two different names would "
              + "split one service across two broker queues");
-    await Assert.That(names[0]).IsEqualTo(expected!)
+    await Assert.That(names[0]).IsEqualTo(expected)
       .Because("with no instance provider the subscriber name must fall back to the entry "
              + "assembly, which is stable per deployed process — the alternative is a blank name "
              + "that TransportSubscriptionBuilder rejects outright");

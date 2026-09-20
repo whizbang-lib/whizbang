@@ -75,7 +75,7 @@ public class StartupPipelineHealthSourceTests {
       .Because("fail-closed: a failed blocking step means this boot never reports ready, and "
              + "health must say so instead of looking merely slow");
     await Assert.That(health.Detail).Contains("Migrate");
-    await Assert.That(health.Detail!).DoesNotContain("tenant_secrets")
+    await Assert.That(health.Detail).DoesNotContain("tenant_secrets")
       .Because("reasons originate in exception messages, and the health endpoint is usually the "
              + "least protected surface a pod has");
   }

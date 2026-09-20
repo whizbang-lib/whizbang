@@ -1681,7 +1681,7 @@ public class OutboxDrainWorkerTests {
     await Assert.That(warning).IsNotNull()
       .Because("a swallowed lookup failure is indistinguishable from the legacy fallback; the log line "
              + "is the only evidence that origin attribution is now wrong on every published envelope");
-    await Assert.That(warning!).Contains("attribute")
+    await Assert.That(warning).Contains("attribute")
       .Because("the message must name the consequence, not just the failure");
   }
 

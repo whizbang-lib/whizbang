@@ -68,7 +68,7 @@ public class SubscriptionExpansionWorkerTests {
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
     await Assert.That(command.StateOnly).IsTrue()
       .Because("backfill builds STATE — trigger receptors must never re-run over delivered history.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo([_expandedWireType])
+    await Assert.That(command.EventTypes).IsEquivalentTo([_expandedWireType])
       .Because("the registry keys on the no-assembly CLR name (persisted rows must not re-baseline), " +
                "but the ORIGIN matches event_type in the assembly-qualified wire form — a FullName-only " +
                "request silently backfills nothing.");

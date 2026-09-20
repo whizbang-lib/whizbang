@@ -93,7 +93,7 @@ public class DispatcherSyncModeContractTests {
       await Assert.That(attr).IsNotNull()
         .Because($"Old overload {overload} MUST carry [Obsolete] — without it, callers have no compiler-visible signal to migrate to the new SyncMode shape.");
       await Assert.That(attr!.Message).IsNotNull();
-      await Assert.That(attr.Message!).Contains("SyncMode")
+      await Assert.That(attr.Message).Contains("SyncMode")
         .Because("The [Obsolete] message MUST point at the SyncMode replacement so consumers know where to migrate.");
     }
   }

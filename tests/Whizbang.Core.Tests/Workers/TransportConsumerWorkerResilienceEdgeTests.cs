@@ -283,7 +283,7 @@ public class TransportConsumerWorkerResilienceEdgeTests {
 
     await Assert.That(provisioner.ProvisionedDomains).IsNotNull()
       .Because("Owned domains + a registered provisioner must trigger infrastructure provisioning at startup.");
-    await Assert.That(provisioner.ProvisionedDomains!).Contains("TestApp.Orders")
+    await Assert.That(provisioner.ProvisionedDomains).Contains("TestApp.Orders")
       .Because("The provisioner must receive the exact owned-domain set from RoutingOptions.");
     await Assert.That(provisioner.SubscribeCountAtProvisionTime).IsEqualTo(0)
       .Because("Provisioning must complete BEFORE any subscription is created — subscribing to a topic that doesn't exist yet fails.");

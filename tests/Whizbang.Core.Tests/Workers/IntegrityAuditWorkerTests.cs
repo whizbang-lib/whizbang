@@ -49,8 +49,8 @@ public class IntegrityAuditWorkerTests {
     await Assert.That(reports.Count(r => r.AutoRebuildRequested)).IsEqualTo(1)
       .Because("the rebuild cap is a hard per-cycle budget — the second gap reports without rebuilding.");
     var rebuild = (RebuildPerspectiveCommand)dispatcher.Sent.Single();
-    await Assert.That(rebuild.PerspectiveNames!).IsEquivalentTo(["OrdersPerspective"]);
-    await Assert.That(rebuild.IncludeStreamIds!).IsEquivalentTo([coordinator.Gaps[0].StreamId])
+    await Assert.That(rebuild.PerspectiveNames).IsEquivalentTo(["OrdersPerspective"]);
+    await Assert.That(rebuild.IncludeStreamIds).IsEquivalentTo([coordinator.Gaps[0].StreamId])
       .Because("the rebuild is scoped to exactly the uncovered stream — local repair, minimal blast radius.");
   }
 
@@ -98,7 +98,7 @@ public class IntegrityAuditWorkerTests {
       ((MessageEnvelope<JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestIntegrityManifest)))!;
     await Assert.That(request.RequesterService).IsEqualTo("auditor-svc");
-    await Assert.That(request.EventTypes!).IsEquivalentTo([TypeNameFormatter.Format(typeof(AuditProbeEvent))])
+    await Assert.That(request.EventTypes).IsEquivalentTo([TypeNameFormatter.Format(typeof(AuditProbeEvent))])
       .Because("the request restricts the manifest to the types this consumer actually subscribes to — " +
                "in the assembly-qualified wire form the origin's event_type/digest columns store, " +
                "or the origin's exact-match lookup silently returns nothing.");

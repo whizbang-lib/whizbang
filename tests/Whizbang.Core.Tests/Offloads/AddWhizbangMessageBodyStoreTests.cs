@@ -61,7 +61,7 @@ public class AddWhizbangMessageBodyStoreTests {
     var first = provider.GetKeyedService<IMessageBodyStore>("test");
     var second = provider.GetKeyedService<IMessageBodyStore>("test");
 
-    await Assert.That(first).IsSameReferenceAs(second!)
+    await Assert.That(first).IsSameReferenceAs(second)
       .Because("Singleton lifetime — providers with expensive state (HTTP clients, connection pools) MUST construct once.");
   }
 

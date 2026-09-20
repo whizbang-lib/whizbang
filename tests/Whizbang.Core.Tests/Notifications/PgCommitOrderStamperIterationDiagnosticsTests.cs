@@ -68,8 +68,8 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
 
     var msg = logger.LastIterationFailedMessage;
     await Assert.That(msg).IsNotNull();
-    await Assert.That(msg!).Contains("DirectKey");
-    await Assert.That(msg!).Contains("test-db");
+    await Assert.That(msg).Contains("DirectKey");
+    await Assert.That(msg).Contains("test-db");
   }
 
   [Test]
@@ -109,8 +109,8 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastStartedMessage).IsNotNull();
-    await Assert.That(logger.LastStartedMessage!).Contains("DirectKey");
-    await Assert.That(logger.LastStartedMessage!).Contains("test-db");
+    await Assert.That(logger.LastStartedMessage).Contains("DirectKey");
+    await Assert.That(logger.LastStartedMessage).Contains("test-db");
   }
 
   [Test]
@@ -149,8 +149,8 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastPooledFallbackMessage).IsNotNull();
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("pgbouncer");
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("test-db-direct");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("pgbouncer");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("test-db-direct");
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
