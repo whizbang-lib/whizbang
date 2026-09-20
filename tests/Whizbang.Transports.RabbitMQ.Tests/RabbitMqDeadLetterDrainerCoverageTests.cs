@@ -20,7 +20,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// <code-under-test>src/Whizbang.Transports.RabbitMQ/RabbitMqDeadLetterDrainer.cs</code-under-test>
 public class RabbitMqDeadLetterDrainerCoverageTests {
 
-  private const string _id1 = "00000000-0000-0000-0000-000000000101";
+  private static readonly string _id1 = "00000000-0000-0000-0000-000000000101";
 
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);

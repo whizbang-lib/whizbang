@@ -19,8 +19,8 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusDeadLetterDrainer.cs</code-under-test>
 public class AzureServiceBusDeadLetterDrainerTests {
 
-  private const string _id1 = "00000000-0000-0000-0000-000000000001";
-  private const string _id2 = "00000000-0000-0000-0000-000000000002";
+  private static readonly string _id1 = "00000000-0000-0000-0000-000000000001";
+  private static readonly string _id2 = "00000000-0000-0000-0000-000000000002";
 
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);
