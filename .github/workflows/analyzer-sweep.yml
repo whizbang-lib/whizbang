@@ -71,6 +71,7 @@ jobs:
         env:
           PROJECT: ${{ inputs.project }}
           DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
         run: |
           set -uo pipefail
           # The analyzer assemblies ship inside the Roslynator.Analyzers package the project already
@@ -79,6 +80,13 @@ jobs:
           # is required or it refuses to fix a project it believes is broken.
           A=$(find ~/.nuget/packages/roslynator.analyzers -type d -name cs -path "*roslyn*" | sort | tail -1)
           echo "analyzer assemblies: $A"
+          # COMMIT AFTER EACH DIAGNOSTIC. A 16 GB hosted runner completes one rule on the
+          # largest suite (RCS1249 fixed 67 in 13 minutes) and then dies partway through the
+          # next with exit 143, so a run that batches rules and commits once at the end loses
+          # everything it had already fixed. Pushing per rule means a killed runner costs the
+          # rule in flight, not the whole run.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           TOTAL=0
           for d in $DIAGS; do
             echo "::group::$d"
@@ -86,7 +94,17 @@ jobs:
                   --ignore-compiler-errors --verbosity minimal 2>&1 \
                 | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1)
             echo "$d: ${n:-0} fixed"
-            [ -n "${n:-}" ] && TOTAL=$((TOTAL + n))
+            if [ -n "${n:-}" ] && [ "$n" -gt 0 ] && ! git diff --quiet; then
+              git add -u
+              git commit -q -m "test(quality): $d fixes for $(basename "$(dirname "$PROJECT")") ($n)
+
+          Applied by the Analyzer Sweep workflow, one diagnostic per commit.
+
+          Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+              git push -q origin HEAD:"$BRANCH"
+              echo "pushed $n fixes for $d"
+              TOTAL=$((TOTAL + n))
+            fi
             echo "::endgroup::"
           done
           echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
