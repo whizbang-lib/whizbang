@@ -3155,7 +3155,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return results.Count > 0 ? results.ToImmutable() : default;
+    return results.Count > 0 ? results.ToImmutable() : [];
   }
 
   /// <summary>

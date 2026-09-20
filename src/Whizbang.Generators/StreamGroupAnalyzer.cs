@@ -39,7 +39,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     isEnabledByDefault: true,
     description: "Explicit group keys can drift: a new perspective over the same streams silently "
       + "reintroduces lingering rows. The shared event types are the oracle that catches it.",
-    customTags: [WellKnownDiagnosticTags.CompilationEnd]);
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
 
   /// <summary>
   /// WHIZ141: Warning — no announcing member of the group carries a row evictor
@@ -56,7 +56,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     isEnabledByDefault: true,
     description: "A cascade-only group with no trigger is inert; every member should also keep its "
       + "own backstop retention.",
-    customTags: [WellKnownDiagnosticTags.CompilationEnd]);
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
 
   /// <summary>
   /// WHIZ142: Warning — <c>Bridge</c> on a perspective's ONLY membership. Bridging re-announces a
@@ -137,7 +137,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
       if (group.Any(x => x.Membership.Announce && x.Perspective.HasEvictor)) {
         continue;
       }
-      foreach (var (Perspective, Membership) in group) {
+      foreach (var (Perspective, _) in group) {
         context.ReportDiagnostic(Diagnostic.Create(
           InertGroup, Perspective.Location, group.Key));
       }

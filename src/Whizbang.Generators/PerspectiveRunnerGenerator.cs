@@ -150,9 +150,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           explicitSeconds = sec;
         }
       }
-      var explicitTtl = explicitSeconds >= 0 ? explicitSeconds
-          : explicitDays >= 0 ? explicitDays * 86400
-          : -1;
+      var explicitTtl = -1;
+      if (explicitSeconds >= 0) {
+        explicitTtl = explicitSeconds;
+      } else if (explicitDays >= 0) {
+        explicitTtl = explicitDays * 86400;
+      }
       if (explicitTtl >= 0) {
         ttlRowSeconds = explicitTtl;
       }

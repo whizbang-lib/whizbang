@@ -15,7 +15,6 @@ namespace Whizbang.Generators;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Security";
-  private const string INHERIT_SCOPE_ATTR = "Whizbang.Core.Lenses.InheritScopeAttribute";
   private const string PERSPECTIVE_INTERFACE_PREFIX = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   /// <summary>
