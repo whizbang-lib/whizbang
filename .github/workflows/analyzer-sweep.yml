@@ -105,6 +105,12 @@ jobs:
               echo "pushed $n fixes for $d"
               TOTAL=$((TOTAL + n))
             fi
+            # Roslynator exits between rules but the build server does not: VBCSCompiler
+            # persists across invocations and has been measured at 7 GB in this repo, which
+            # is the likeliest reason a run survives its first rule and is killed during its
+            # second. Reclaim it before the next one starts.
+            dotnet build-server shutdown >/dev/null 2>&1 || true
+            free -g | head -2 | sed 's/^/          mem /'
             echo "::endgroup::"
           done
           echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
