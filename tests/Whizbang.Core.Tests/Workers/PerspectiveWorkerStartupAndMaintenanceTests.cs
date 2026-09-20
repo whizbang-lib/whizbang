@@ -294,16 +294,16 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
         PollingIntervalMilliseconds = 1_000_000,
         MaxConcurrentDrainConsumers = 1,
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new BatchedCompletionStrategy(),
+      rewindOptions: rewindOptions is null ? null : Options.Create(rewindOptions),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       leaseRenewalChannel: harness.LeaseRenewalCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      rewindOptions: rewindOptions is null ? null : Options.Create(rewindOptions),
-      perspectiveNotificationListener: notificationListener,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveNotificationListener: notificationListener);
     return new _Fixture(worker, harness, coordinator, lifecycle);
   }
 

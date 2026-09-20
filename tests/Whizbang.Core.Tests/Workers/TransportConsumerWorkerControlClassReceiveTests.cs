@@ -247,11 +247,11 @@ public class TransportConsumerWorkerControlClassReceiveTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       receptorRegistry: new AlwaysConsumedRegistry(),
       controlClass: Options.Create(new ControlClassOptions { NonDurableReceive = nonDurableReceive }),
-      controlClassResolver: _resolver(),
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      controlClassResolver: _resolver());
 
     return (worker, transport, sp);
   }

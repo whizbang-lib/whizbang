@@ -265,9 +265,9 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       serviceInstanceProvider: instanceProvider,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>());
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

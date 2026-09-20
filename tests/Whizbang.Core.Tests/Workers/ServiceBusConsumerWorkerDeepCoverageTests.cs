@@ -137,8 +137,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options: null,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: null);
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
@@ -1307,12 +1307,12 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: lifecycleMessageDeserializer,
       envelopeSerializer: envelopeSerializer,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: runtimeReceptorRegistry,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      runtimeReceptorRegistry: runtimeReceptorRegistry);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {

@@ -206,8 +206,8 @@ public class DeadLetterMetricsEmissionTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       NullLogger<OutboxPublishWorker>.Instance,
-      publishStrategy: strategy,
       instanceProvider: new _FakeServiceInstanceProvider(),
+      publishStrategy: strategy,
       deadLetterStore: dlqStore,
       generationProvider: new _FakeGenerationProvider("test-gen"),
       dlqMetrics: dlqMetrics);
@@ -270,8 +270,8 @@ public class DeadLetterMetricsEmissionTests {
       // — promotion gate disabled; failure-channel routing only.
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = null }),
       NullLogger<OutboxPublishWorker>.Instance,
-      publishStrategy: strategy,
       instanceProvider: new _FakeServiceInstanceProvider(),
+      publishStrategy: strategy,
       deadLetterStore: dlqStore,
       generationProvider: new _FakeGenerationProvider("test-gen"),
       dlqMetrics: dlqMetrics);

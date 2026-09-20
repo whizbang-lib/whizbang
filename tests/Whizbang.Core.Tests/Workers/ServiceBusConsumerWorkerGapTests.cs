@@ -643,6 +643,7 @@ public class ServiceBusConsumerWorkerGapTests {
       jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
       },
@@ -650,8 +651,7 @@ public class ServiceBusConsumerWorkerGapTests {
       envelopeSerializer: null,
       messageProcessingOptions: messageProcessingOptions,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: null,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      runtimeReceptorRegistry: null);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(

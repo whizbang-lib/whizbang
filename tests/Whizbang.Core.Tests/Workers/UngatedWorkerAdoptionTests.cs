@@ -175,8 +175,8 @@ public class UngatedWorkerAdoptionTests {
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
-      schemaReadyGate: gate);
+      schemaReadyGate: gate,
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -211,8 +211,8 @@ public class UngatedWorkerAdoptionTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

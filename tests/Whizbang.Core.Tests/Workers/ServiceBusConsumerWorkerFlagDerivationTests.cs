@@ -110,12 +110,12 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
       },
       eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()));
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));

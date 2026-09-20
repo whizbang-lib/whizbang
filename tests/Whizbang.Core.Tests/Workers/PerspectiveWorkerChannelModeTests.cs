@@ -65,13 +65,13 @@ public class PerspectiveWorkerChannelModeTests {
         PollingIntervalMilliseconds = 1_000_000,
         MaxStreamsPerBatch = 10
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
-      failureChannel: failureCapture,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      failureChannel: failureCapture);
 
     // Act — call the new entry point directly with an empty batch. The flush of pending
     // completions should run regardless of batch contents.
@@ -114,14 +114,14 @@ public class PerspectiveWorkerChannelModeTests {
       instanceProvider: instanceProvider,
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new BatchedCompletionStrategy(),
       eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
       failureChannel: failureCapture,
-      perspectiveDrainChannel: drainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: drainChannel);
 
     // Act — call the drain-aware overload with NO per-event work but ONE drain stream ID.
     // This must not throw and must not touch the legacy poll path.
