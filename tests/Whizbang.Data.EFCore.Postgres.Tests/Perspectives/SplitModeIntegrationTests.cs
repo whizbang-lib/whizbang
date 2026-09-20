@@ -265,7 +265,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
       "SELECT scope::text FROM wh_per_split_test WHERE id = @id", new { id = (Guid)testId });
 
     await Assert.That(scopeJson).IsNotNull();
-    await Assert.That(scopeJson!).Contains("c0ffee00")
+    await Assert.That(scopeJson).Contains("c0ffee00")
       .Because("Scope should contain the tenant ID from the event hop metadata");
   }
 

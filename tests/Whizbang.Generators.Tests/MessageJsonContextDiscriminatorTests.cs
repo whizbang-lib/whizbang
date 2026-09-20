@@ -23,7 +23,8 @@ public class MessageJsonContextDiscriminatorTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDistinctSimpleNames_KeepsSimpleNameDiscriminatorAsync() {
-    const string source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace ConsumerApp.Events;
@@ -32,9 +33,10 @@ public class OrderEventBase : IEvent {
   public System.Guid MessageId { get; set; }
 }
 
-public sealed class OrderPlaced : OrderEventBase { public string OrderId { get; set; } = """"; }
-public sealed class OrderShipped : OrderEventBase { public string OrderId { get; set; } = """"; }
-";
+public sealed class OrderPlaced : OrderEventBase { public string OrderId { get; set; } = ""; }
+public sealed class OrderShipped : OrderEventBase { public string OrderId { get; set; } = ""; }
+
+""";
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -50,7 +52,8 @@ public sealed class OrderShipped : OrderEventBase { public string OrderId { get;
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCollidingSimpleNames_DisambiguatesWithFullNameAsync() {
-    const string source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace ConsumerApp.Events {
@@ -60,13 +63,14 @@ namespace ConsumerApp.Events {
 }
 
 namespace ConsumerApp.Events.Retail {
-  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = """"; }
+  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = ""; }
 }
 
 namespace ConsumerApp.Events.Wholesale {
-  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = """"; }
+  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = ""; }
 }
-";
+
+""";
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -87,7 +91,8 @@ namespace ConsumerApp.Events.Wholesale {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMixedCollision_LeavesUncollidedNamesShortAsync() {
-    const string source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace ConsumerApp.Events {
@@ -95,17 +100,18 @@ namespace ConsumerApp.Events {
     public System.Guid MessageId { get; set; }
   }
 
-  public sealed class OrderShipped : OrderEventBase { public string OrderId { get; set; } = """"; }
+  public sealed class OrderShipped : OrderEventBase { public string OrderId { get; set; } = ""; }
 }
 
 namespace ConsumerApp.Events.Retail {
-  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = """"; }
+  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = ""; }
 }
 
 namespace ConsumerApp.Events.Wholesale {
-  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = """"; }
+  public sealed class OrderPlaced : ConsumerApp.Events.OrderEventBase { public string OrderId { get; set; } = ""; }
 }
-";
+
+""";
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 

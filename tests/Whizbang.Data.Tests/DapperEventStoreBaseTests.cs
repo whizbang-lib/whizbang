@@ -440,7 +440,7 @@ public class DapperEventStoreBaseTests : IDisposable {
   [Test]
   public async Task EnsureConnectionOpen_ClosedConnection_OpensItAsync() {
     // Arrange - a fresh SQLite connection starts Closed
-    using var connection = new SqliteConnection("Data Source=:memory:");
+    await using var connection = new SqliteConnection("Data Source=:memory:");
     await Assert.That(connection.State).IsEqualTo(ConnectionState.Closed);
 
     // Act - covers the State != Open branch that pre-opened factories never hit
@@ -459,7 +459,7 @@ public class DapperEventStoreBaseTests : IDisposable {
   // ========================================
 
   private async Task<ThreeColumnEventStore> _createStoreAsync() {
-    using var command = _testBase.Connection.CreateCommand();
+    await using var command = _testBase.Connection.CreateCommand();
     command.CommandText = @"
       CREATE TABLE IF NOT EXISTS three_col_events (
         position INTEGER PRIMARY KEY AUTOINCREMENT,

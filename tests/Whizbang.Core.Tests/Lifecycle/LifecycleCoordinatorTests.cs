@@ -1346,7 +1346,7 @@ public class LifecycleCoordinatorTests {
       return [new ReceptorInfo(
         MessageType: messageType,
         ReceptorId: "ContextCapture",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
           var accessor = sp.GetService<ILifecycleContextAccessor>();
           _onInvoke(accessor?.Current);
           return ValueTask.FromResult<object?>(null);
@@ -1393,7 +1393,7 @@ public class LifecycleCoordinatorTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }));
@@ -1419,7 +1419,7 @@ public class LifecycleCoordinatorTests {
         return [new ReceptorInfo(
           MessageType: messageType,
           ReceptorId: "ThrowingReceptor",
-          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+          InvokeAsync: (_, msg, envelope, callerInfo, ct) =>
             throw new InvalidOperationException("Simulated receptor failure"))];
       }
       return [];
@@ -1440,7 +1440,7 @@ public class LifecycleCoordinatorTests {
         return [new ReceptorInfo(
           MessageType: messageType,
           ReceptorId: "CancelingReceptor",
-          InvokeAsync: (sp, msg, envelope, callerInfo, ct) =>
+          InvokeAsync: (_, msg, envelope, callerInfo, ct) =>
             throw new OperationCanceledException("Simulated cancellation"))];
       }
       return [];

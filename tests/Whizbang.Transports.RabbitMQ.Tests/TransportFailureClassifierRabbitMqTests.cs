@@ -74,7 +74,7 @@ public class TransportFailureClassifierRabbitMqTests {
         global::RabbitMQ.Client.ShutdownInitiator.Application,
         replyCode: 0,
         replyText: "any"));
-    await Assert.That(ex.GetType().FullName!)
+    await Assert.That(ex.GetType().FullName)
       .StartsWith("RabbitMQ.Client.")
       .Because("the classifier matches by RabbitMQ.Client.* namespace; a rename here would silently bypass throttle classification");
   }

@@ -59,7 +59,7 @@ public class SlidingWindowApplyBatchStrategyTests {
     var flushCount = 0;
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => {
+      flush: (sid, count, _) => {
         flushed.Add((sid, count));
         if (System.Threading.Interlocked.Increment(ref flushCount) == 2) {
           done.TrySetResult();

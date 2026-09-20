@@ -102,7 +102,7 @@ public class ScopedLensQueryTests {
     var scopedQuery = rootProvider.GetRequiredService<IScopedLensQuery<TestModel>>();
 
     // Act
-    var result = await scopedQuery.ExecuteAsync(async (query, ct) => {
+    var result = await scopedQuery.ExecuteAsync(async (query, _) => {
       var rows = query.Query.ToList();
       return rows.Select(r => r.Data).ToList();
     });

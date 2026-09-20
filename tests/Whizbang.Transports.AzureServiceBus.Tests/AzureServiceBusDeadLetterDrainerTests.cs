@@ -80,13 +80,13 @@ public class AzureServiceBusDeadLetterDrainerTests {
       body: BinaryData.FromString("""{"v":1,"p":{"x":1}}"""),
       messageId: _id1,
       sessionId: _id2,
-      deliveryCount: 10,
-      enqueuedTime: enqueued,
       properties: new Dictionary<string, object> {
         ["EnvelopeType"] = "Whizbang.Test.Envelope",
         ["DeadLetterReason"] = "MaxDeliveryAttemptsExceeded",
         ["DeadLetterErrorDescription"] = "JsonTypeInfo metadata for type X was not provided",
-      });
+      },
+      deliveryCount: 10,
+      enqueuedTime: enqueued);
 
     var ok = AzureServiceBusDeadLetterDrainer.TryBuildImport(msg, "orders", "billing", out var import);
 

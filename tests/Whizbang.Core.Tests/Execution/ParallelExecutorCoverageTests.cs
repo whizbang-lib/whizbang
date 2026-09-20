@@ -55,7 +55,7 @@ public class ParallelExecutorCoverageTests {
     var context = _createTestContext();
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(7),
+      (_, _) => ValueTask.FromResult(7),
       context
     );
     await Assert.That(result).IsEqualTo(7);
@@ -66,7 +66,7 @@ public class ParallelExecutorCoverageTests {
     // Assert - the underlying StopAsync ran, so new work is rejected
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(0),
+      (_, _) => ValueTask.FromResult(0),
       context
     )).Throws<InvalidOperationException>()
       .Because("Dispose must stop the executor, not merely release its own resources");

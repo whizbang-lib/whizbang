@@ -128,7 +128,7 @@ public class IntegrityLedgerContractTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
     public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
-      IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
+      IEnumerable<(Guid streamId, string perspectiveName)> _, CancellationToken cancellationToken = default) =>
       Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) =>

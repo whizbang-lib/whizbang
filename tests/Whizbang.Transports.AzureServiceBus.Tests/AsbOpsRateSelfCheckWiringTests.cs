@@ -34,7 +34,7 @@ public class AsbOpsRateSelfCheckWiringTests {
 
   private static Task<ISubscription> _subscribeAsync(AzureServiceBusTransport transport, string topic) =>
     transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       new TransportDestination(topic) { RoutingKey = "self-check-sub" },
       new TransportBatchOptions());
 

@@ -140,7 +140,7 @@ public class ExecutionStatePoolTests {
   }
 
   private static Func<IMessageEnvelope, PolicyContext, ValueTask<int>> _createTestHandler() {
-    return (envelope, context) => ValueTask.FromResult(42);
+    return (_, context) => ValueTask.FromResult(42);
   }
 
   private sealed class TestMessage {

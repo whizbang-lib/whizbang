@@ -58,7 +58,7 @@ internal static class AsbTransportTestData {
     var typeInfo = CombinedOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
     return RawMessage(
-      body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount, enqueuedTime);
+      body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName, deliveryCount, enqueuedTime);
   }
 
   /// <summary>Builds a broker message with an arbitrary body and optional EnvelopeType property.</summary>
@@ -279,8 +279,7 @@ internal sealed class RaisableSessionProcessor : ServiceBusSessionProcessor {
 
   public Task RaiseSessionClosingAsync(ProcessSessionEventArgs args) => OnSessionClosingAsync(args);
 
-  private sealed class InnerRaisableProcessor : ServiceBusProcessor {
-  }
+  private sealed class InnerRaisableProcessor : ServiceBusProcessor;
 }
 
 /// <summary>

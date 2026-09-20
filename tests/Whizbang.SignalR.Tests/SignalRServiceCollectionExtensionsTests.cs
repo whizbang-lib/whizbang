@@ -34,7 +34,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
   [Test]
   public async Task AddWhizbangSignalR_AppliesTheCombinedJsonContextAsync() {
-    using var provider = _build(s => s.AddWhizbangSignalR());
+    await using var provider = _build(s => s.AddWhizbangSignalR());
 
     var options = provider.GetRequiredService<IOptions<JsonHubProtocolOptions>>().Value;
 
@@ -44,7 +44,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
   [Test]
   public async Task AddWhizbangSignalR_WithHubOptions_AppliesTheCombinedJsonContextAsync() {
-    using var provider = _build(s => s.AddWhizbangSignalR(hub => hub.EnableDetailedErrors = true));
+    await using var provider = _build(s => s.AddWhizbangSignalR(hub => hub.EnableDetailedErrors = true));
 
     var options = provider.GetRequiredService<IOptions<JsonHubProtocolOptions>>().Value;
 
@@ -54,7 +54,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
   [Test]
   public async Task AddWhizbangSignalR_WithHubOptions_RunsTheCallerDelegateAsync() {
-    using var provider = _build(s => s.AddWhizbangSignalR(hub => hub.EnableDetailedErrors = true));
+    await using var provider = _build(s => s.AddWhizbangSignalR(hub => hub.EnableDetailedErrors = true));
 
     var hubOptions = provider.GetRequiredService<IOptions<HubOptions>>().Value;
 
@@ -63,7 +63,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
   [Test]
   public async Task AddWhizbangSignalR_WithoutHubOptions_LeavesDetailedErrorsOffAsync() {
-    using var provider = _build(s => s.AddWhizbangSignalR());
+    await using var provider = _build(s => s.AddWhizbangSignalR());
 
     var hubOptions = provider.GetRequiredService<IOptions<HubOptions>>().Value;
 

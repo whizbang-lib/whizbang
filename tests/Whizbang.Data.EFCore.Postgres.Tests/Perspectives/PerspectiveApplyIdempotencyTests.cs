@@ -295,23 +295,27 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// Inverse stamper-lag mixed-mode (G5d): metadata's <c>CommitSequence</c> is NULL (the
   /// stamper hadn't caught up to the checkpoint event when <c>SaveModelAndCheckpointAsync</c>
   /// called <c>_eventStore.GetCommitSequenceAsync</c>, returning null and persisting null
   /// to metadata) but the late-arriving envelope's <c>LocalCommitSequence</c> is SET.
   /// Pre-fix the filter falls back to event_id lex compare — same UUIDv7 inversion the cs
   /// path was added to avoid. The lex-smaller event_id gets silently dropped.
-  ///
+  /// </para>
+  /// <para>
   /// Concrete observation from a production bulk-import run: the
   /// BulkImportOrchestration saga projection's metadata never had CommitSequence
   /// because the SagaItemCompletedEvents were being checkpointed faster than the stamper
   /// could keep up — every checkpoint write got null cs. Subsequent batches arrived with
   /// stamped cs but the persisted floor was null, so the filter fell to event_id compare
   /// and dropped 5 consecutive lines (249–253).
-  ///
+  /// </para>
+  /// <para>
   /// Fix: a single mixed-mode branch — when EITHER side has cs but not both, defer to
   /// Apply. event_id lex compare only fires when BOTH sides lack cs (legacy
   /// single-source / pre-stamper world).
+  /// </para>
   /// </summary>
   [Test]
   public async Task RunWithEvents_MetadataMissingCommitSequence_EnvelopeHasCommitSequence_LexSmallerEventId_IsAppliedAsync() {
@@ -386,21 +390,25 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// Stamper-lag mixed-mode regression: metadata has <c>CommitSequence</c> set (the runner is
   /// "in commit_sequence mode") but the late-arriving envelope's <c>LocalCommitSequence</c> is
   /// null because the post-commit stamper hasn't caught up to this event yet. The pre-fix
   /// filter fell back to event_id lex compare in that case — the same UUIDv7 inversion the
   /// commit_sequence-based filter exists to avoid. The result was that a never-applied event
   /// with lex-smaller event_id got silently dropped.
-  ///
+  /// </para>
+  /// <para>
   /// Fix: 3-way branch in the runner filter — when metadata has commit_sequence but the
   /// envelope's is null, do NOT filter. Pass the event through to Apply; Apply's natural
   /// idempotency guards (Contains, Version check, value-mutate-only no-op, etc.) handle
   /// real duplicates without guessing from event_id.
-  ///
+  /// </para>
+  /// <para>
   /// Synthetic UUIDv7 prefixes 4c17/4a1e represent the inversion shape: <c>4a1e</c> is
   /// lex-smaller than <c>4c17</c>, the pre-fix fallback would compare them and drop the
   /// "smaller" one even though it represents the later-fetched but never-applied event.
+  /// </para>
   /// </summary>
   [Test]
   public async Task RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync() {

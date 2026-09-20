@@ -114,7 +114,7 @@ public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
       for (var i = 1; i < perThreadIds[t].Count; i++) {
         var prev = perThreadIds[t][i - 1].ToString("D");
         var curr = perThreadIds[t][i].ToString("D");
-        await Assert.That(string.Compare(curr, prev, StringComparison.Ordinal) > 0).IsTrue()
+        await Assert.That(string.CompareOrdinal(curr, prev) > 0).IsTrue()
           .Because($"Thread {t}: id at index {i} ({curr}) must be > id at index {i - 1} ({prev}). The TrackedGuid.NewMedo() lock guarantees this even under cross-thread contention.");
       }
     }

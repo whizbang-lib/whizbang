@@ -253,7 +253,7 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     var transport = _createTransport();
     await transport.InitializeAsync(ct);
 
-    var unroutedEntity = "inbox.wbtopo.unrouted.commands";
+    const string unroutedEntity = "inbox.wbtopo.unrouted.commands";
     var marked = new TransportDestination(
       unroutedEntity,
       "wbtopo.unrouted.commands.lostcommand",

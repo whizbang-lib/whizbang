@@ -170,9 +170,11 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {
-      body.CommandText = @"
+      body.CommandText = """
+
         INSERT INTO wh_event_body (event_id, event_data, metadata)
-        VALUES (@event, '{""seeded"":true}'::jsonb, @meta::jsonb)";
+        VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
+""";
       body.Parameters.AddWithValue("event", eventId);
       body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
       await body.ExecuteNonQueryAsync();

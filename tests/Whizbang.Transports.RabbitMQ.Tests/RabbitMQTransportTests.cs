@@ -229,7 +229,7 @@ public class RabbitMQTransportTests {
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -268,7 +268,7 @@ public class RabbitMQTransportTests {
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -302,7 +302,7 @@ public class RabbitMQTransportTests {
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -339,7 +339,7 @@ public class RabbitMQTransportTests {
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -378,7 +378,7 @@ public class RabbitMQTransportTests {
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -424,7 +424,7 @@ public class RabbitMQTransportTests {
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -458,7 +458,7 @@ public class RabbitMQTransportTests {
 
     // Act & Assert - Should throw because SubscriberName is required
     await Assert.That(async () => await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     )).Throws<InvalidOperationException>();
   }
@@ -494,7 +494,7 @@ public class RabbitMQTransportTests {
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -530,14 +530,14 @@ public class RabbitMQTransportTests {
 
     // Act - Subscribe twice (simulating two service instances)
     var subscription1 = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
     var firstQueueName = fakeChannel.LastDeclaredQueueName;
 
     var subscription2 = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -575,7 +575,7 @@ public class RabbitMQTransportTests {
 
     // Act & Assert - Should throw because SubscriberName is effectively missing
     await Assert.That(async () => await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     )).Throws<InvalidOperationException>();
   }

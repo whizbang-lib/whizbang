@@ -464,8 +464,8 @@ public class ServiceBusAdminClientWrapperTests {
       LastCancellationToken = cancellationToken;
       // One rule per page so callers exercise multi-page enumeration.
       var pages = Rules
-        .Select(rule => Page<RuleProperties>.FromValues([rule], null, _rawResponse))
-        .ToList();
+        .ConvertAll(rule => Page<RuleProperties>.FromValues([rule], null, _rawResponse))
+;
       return AsyncPageable<RuleProperties>.FromPages(pages);
     }
 

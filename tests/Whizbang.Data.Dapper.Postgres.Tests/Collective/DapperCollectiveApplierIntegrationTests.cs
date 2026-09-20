@@ -1,5 +1,4 @@
-#pragma warning disable CA1707
-#pragma warning disable CA1859 // tests assert against the interface return type
+#pragma warning disable CA1707, CA1859 // tests assert against the interface return type
 
 using System.Linq.Expressions;
 using Dapper;
@@ -67,7 +66,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   private static CollectiveApplyEntry _jobEntry() => new(
     ModelType: typeof(_jobModel), EventType: typeof(_archiveEvent), HandlerType: typeof(_jobPerspective),
     MethodName: nameof(_jobPerspective.Archive), ScopeHandling: CollectiveScopeHandling.Framework,
-    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
   private Task<int> _applyWithHooksAsync(CollectiveApplyHookRegistry hooks, string tenant = "t-A") =>
     DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
@@ -300,7 +299,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       MethodName: nameof(_jobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
     var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
       entry,
@@ -341,7 +340,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       MethodName: nameof(_jobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
     var before = DateTime.UtcNow;
     var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
@@ -379,7 +378,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       MethodName: nameof(_jobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
     var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
       entry,
@@ -467,7 +466,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     MethodName: nameof(_draftPerspective.ArchiveDrafts),
     ScopeHandling: handling,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_draftPerspective)h).ArchiveDrafts((_archiveEvent)e));
+    Invoker: static (h, e, _) => ((_draftPerspective)h).ArchiveDrafts((_archiveEvent)e));
 
   private sealed class _jobModel {
     public string Status { get; set; } = "";
@@ -569,7 +568,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     MethodName: nameof(_overlayActivePerspective.SetActive),
     ScopeHandling: CollectiveScopeHandling.Custom,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e));
+    Invoker: static (h, e, _) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e));
 
   private sealed class _overlayModel {
     public Guid Id { get; set; }

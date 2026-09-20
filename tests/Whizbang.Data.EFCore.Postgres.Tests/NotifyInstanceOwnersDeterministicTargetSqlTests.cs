@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
+/// <para>
 /// v0.685 lock-in — <c>notify_instance_owners</c> must deliver a NOTIFY to
 /// the deterministic owner (partition-modulo on live instances) when the
 /// stream is NOT in <c>wh_active_streams</c>. Without this, first-event-on-
@@ -16,13 +17,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// before <c>claim_orphaned_*</c> discovers the row — observed in production
 /// during a large import as a 30 s+ dispatch-to-processing delay on cold
 /// start.
-///
+/// </para>
+/// <para>
 /// The deterministic target must match the partition-modulo formula that
 /// <c>claim_orphaned_*</c> uses: the instance whose
 /// <c>ROW_NUMBER() OVER (ORDER BY instance_id) - 1 = partition_number % active_count</c>.
 /// So the same instance that WOULD claim the row when its ClaimWorker next
 /// ticks is the one that gets the notify — preserving the algorithmic
 /// assignment design (no race, no broadcast).
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notify-instance-owners</docs>
 [Category("Shard1")]

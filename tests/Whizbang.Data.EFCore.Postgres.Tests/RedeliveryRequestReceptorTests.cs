@@ -63,8 +63,8 @@ public class RedeliveryRequestReceptorTests {
 
     var request = coordinator.Requests[0];
     await Assert.That(request.TenantScope).IsEqualTo("tenant-a");
-    await Assert.That(request.EventTypes!).IsEquivalentTo(typeFilter);
-    await Assert.That(request.StreamIds!).IsEquivalentTo(streamFilter);
+    await Assert.That(request.EventTypes).IsEquivalentTo(typeFilter);
+    await Assert.That(request.StreamIds).IsEquivalentTo(streamFilter);
     await Assert.That(request.FromCommitSequence).IsEqualTo(10L);
     await Assert.That(request.ToCommitSequence).IsEqualTo(99L);
     await Assert.That(request.MaxEvents).IsEqualTo(5)
@@ -81,7 +81,7 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(composite.OriginServiceId).IsEqualTo(coordinator.LocalServiceId)
       .Because("the receptor names THIS origin on the bundle so repaired children recount under " +
                "the origin identity Phase B accounting keys on.");
-    await Assert.That(composite.InnerCommitSequences!).IsEquivalentTo([(long?)1, 2])
+    await Assert.That(composite.InnerCommitSequences).IsEquivalentTo([(long?)1, 2])
       .Because("each child's ORIGINAL commit sequence rides the bundle.");
     await Assert.That(transport.Published[0].Envelope.StateOnly).IsTrue()
       .Because("the requester's StateOnly intent (backfill vs repair) rides through to the bundles.");

@@ -118,7 +118,7 @@ public class MessageTagParameterAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<MessageTagParameterAnalyzer>(source);
 
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ090").Count()).IsEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ090")).IsEqualTo(1)
       .Because("'enabled' matches no property by name, so the mismatch must still be reported even though no property's type matches the parameter's bool type");
     var diagnostic = diagnostics.First(d => d.Id == "WHIZ090");
     var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);

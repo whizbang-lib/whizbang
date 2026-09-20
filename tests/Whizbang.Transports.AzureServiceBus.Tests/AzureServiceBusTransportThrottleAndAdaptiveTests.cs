@@ -16,6 +16,7 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Coverage-round-23 resilience tests: the adaptive-acceptor governor surviving a resize
 /// failure and a sweep failure, the shared periodic-evaluation loop's start-once idempotency,
 /// the namespace-throttle detached pause/resume (success and failed-resume paths, with the
@@ -23,12 +24,14 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// targets — the slice-2 perspective no-consumer filter with a non-empty-but-non-matching
 /// registry, empty-SubscriberName subscription-name fallback, an unclassifiable JsonElement on
 /// a published message, and the sender cache's double-checked-lock race.
-///
+/// </para>
+/// <para>
 /// No broker is used: the Azure SDK's mocking constructors are exercised via the shared
 /// RaisableServiceBusClient / RaisableSessionProcessor doubles. Adaptive-acceptor timing runs
 /// on FakeTimeProvider; the namespace-throttle pause genuinely delays in real time (the
 /// production code calls the non-TimeProvider Task.Delay overload deliberately), so those two
 /// tests take a few real seconds and use a generous class-level Timeout.
+/// </para>
 /// </summary>
 [Timeout(30_000)]
 public class AzureServiceBusTransportThrottleAndAdaptiveTests {
@@ -57,7 +60,7 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
 
   private static Task<ISubscription> _subscribeBatchAsync(AzureServiceBusTransport transport, string topic, string routingKey) =>
     transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
       new TransportDestination(topic) { RoutingKey = routingKey },
       new TransportBatchOptions());
 

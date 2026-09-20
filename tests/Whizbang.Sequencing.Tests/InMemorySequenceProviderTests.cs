@@ -275,9 +275,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     var workItems = streamKeys.SelectMany(key =>
       Enumerable.Range(0, callsPerStream).Select(_ => key)).ToArray();
 
-    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => {
-      await provider.GetNextAsync(streamKey, ct);
-    });
+    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => await provider.GetNextAsync(streamKey, ct));
 
     // Assert - Verify each stream reached expected count (correctness, not timing)
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {

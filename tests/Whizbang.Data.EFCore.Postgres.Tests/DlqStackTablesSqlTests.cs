@@ -45,7 +45,7 @@ public class DlqStackTablesSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var text = "System.InvalidOperationException: x\n"
+    const string text = "System.InvalidOperationException: x\n"
       + "   at My.App.First.RunAsync()\n   at My.App.Second.RunAsync()";
     var id = await _seedAsync(conn, text);
     var stack = StackNormalizer.Normalize(text)!;
@@ -77,9 +77,9 @@ public class DlqStackTablesSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var shared = "   at My.Shared.Helper.DoAsync()\n";
-    var t1 = "System.Exception: a\n" + shared + "   at My.App.CallerOne.RunAsync()";
-    var t2 = "System.Exception: b\n" + shared + "   at My.App.CallerTwo.RunAsync()";
+    const string shared = "   at My.Shared.Helper.DoAsync()\n";
+    const string t1 = "System.Exception: a\n" + shared + "   at My.App.CallerOne.RunAsync()";
+    const string t2 = "System.Exception: b\n" + shared + "   at My.App.CallerTwo.RunAsync()";
     var id1 = await _seedAsync(conn, t1);
     var id2 = await _seedAsync(conn, t2);
     var svc = _svc(ctx);
@@ -98,7 +98,7 @@ public class DlqStackTablesSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var text = "System.Exception: x\n   at My.App.Only.RunAsync()";
+    const string text = "System.Exception: x\n   at My.App.Only.RunAsync()";
     var id = await _seedAsync(conn, text);
     var stack = StackNormalizer.Normalize(text)!;
     var svc = _svc(ctx);

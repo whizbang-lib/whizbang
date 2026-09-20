@@ -637,7 +637,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"deep_cov_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -716,7 +716,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"postlc_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -794,7 +794,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"fallback_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -872,7 +872,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       receptorRegistry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"skip_postlc_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }

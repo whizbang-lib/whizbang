@@ -56,9 +56,9 @@ public class PgDutyElectorUnitTests {
     var attempt = await _elector().TryAcquireAsync("commit-order-stamper", CancellationToken.None);
 
     await Assert.That(attempt.Detail).IsNotNull();
-    await Assert.That(attempt.Detail!).Contains("commit-order-stamper")
+    await Assert.That(attempt.Detail).Contains("commit-order-stamper")
       .Because("a host contending for several duties cannot tell from the refusal alone which one went unheld");
-    await Assert.That(attempt.Detail!).Contains("DirectConnectionString")
+    await Assert.That(attempt.Detail).Contains("DirectConnectionString")
       .Because("the refusal is only actionable if it names the setting that would fix it");
   }
 

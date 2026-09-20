@@ -30,7 +30,7 @@ public class WhizbangAvailabilityStartupFilterTests {
     if (gateRegistered) {
       services.AddSingleton<ISchemaReadyGate>(new FakeGate());
     }
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var app = new ApplicationBuilder(provider);
     var configure = new WhizbangAvailabilityStartupFilter().Configure(

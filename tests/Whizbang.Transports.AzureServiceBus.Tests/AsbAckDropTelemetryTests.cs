@@ -47,7 +47,7 @@ public class AsbAckDropTelemetryTests {
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var decision = new AsbReceiveDecision {
@@ -87,7 +87,7 @@ public class AsbAckDropTelemetryTests {
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var decision = new AsbReceiveDecision {

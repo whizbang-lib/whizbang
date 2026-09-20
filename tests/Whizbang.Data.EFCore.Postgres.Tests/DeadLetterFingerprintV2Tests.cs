@@ -47,10 +47,10 @@ public class DeadLetterFingerprintV2Tests : EFCoreTestBase {
 
   [Test]
   public async Task AsyncStateMachineFrames_NormalizeAcrossRecompilesAsync() {
-    var build1 = "System.InvalidOperationException: boom\n"
+    const string build1 = "System.InvalidOperationException: boom\n"
       + "   at MyApp.Orders.OrderProcessor.<ApplyAsync>d__12.MoveNext()\n"
       + "   at MyApp.Orders.OrderService.<HandleAsync>d__4.MoveNext()";
-    var build2 = "System.InvalidOperationException: boom\n"
+    const string build2 = "System.InvalidOperationException: boom\n"
       + "   at MyApp.Orders.OrderProcessor.<ApplyAsync>d__13.MoveNext()\n"
       + "   at MyApp.Orders.OrderService.<HandleAsync>d__7.MoveNext()";
 
@@ -61,10 +61,10 @@ public class DeadLetterFingerprintV2Tests : EFCoreTestBase {
 
   [Test]
   public async Task InnermostExceptionType_WinsOverTheWrapperAsync() {
-    var wrappedTimeout = "MyApp.PipelineException: stage failed\n"
+    const string wrappedTimeout = "MyApp.PipelineException: stage failed\n"
       + " ---> System.TimeoutException: The operation has timed out.\n"
       + "   at MyApp.Data.Repo.QueryAsync()";
-    var wrappedNull = "MyApp.PipelineException: stage failed\n"
+    const string wrappedNull = "MyApp.PipelineException: stage failed\n"
       + " ---> System.NullReferenceException: Object reference not set.\n"
       + "   at MyApp.Data.Repo.QueryAsync()";
 
@@ -75,9 +75,9 @@ public class DeadLetterFingerprintV2Tests : EFCoreTestBase {
 
   [Test]
   public async Task ProseErrors_ScrubVolatileValues_KeepTheTemplateAsync() {
-    var a = "Attempt 1 ended without a reported outcome: lease held by instance "
+    const string a = "Attempt 1 ended without a reported outcome: lease held by instance "
       + "01a064d6-57d0-75e4-86f4-d82890e6e1f2 expired at 2026-09-03 03:58:23.722689+00";
-    var b = "Attempt 7 ended without a reported outcome: lease held by instance "
+    const string b = "Attempt 7 ended without a reported outcome: lease held by instance "
       + "9f00aa11-2233-4455-8677-889900aabbcc expired at 2026-09-04 11:11:11.000000+00";
 
     await Assert.That(await _fpAsync(a)).IsEqualTo(await _fpAsync(b))
@@ -87,8 +87,8 @@ public class DeadLetterFingerprintV2Tests : EFCoreTestBase {
 
   [Test]
   public async Task ProseErrors_DifferentTemplates_StayDistinctAsync() {
-    var lease = "Attempt 1 ended without a reported outcome: lease held by instance x expired";
-    var observed = "Message 'x' has been durably observed 10 times, at or past the 10 bound";
+    const string lease = "Attempt 1 ended without a reported outcome: lease held by instance x expired";
+    const string observed = "Message 'x' has been durably observed 10 times, at or past the 10 bound";
 
     await Assert.That(await _fpAsync(lease)).IsNotEqualTo(await _fpAsync(observed))
       .Because("v1's first-word heuristic could collapse different prose failures that "

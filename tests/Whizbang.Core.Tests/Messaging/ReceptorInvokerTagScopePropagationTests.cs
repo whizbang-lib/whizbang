@@ -131,7 +131,7 @@ public class ReceptorInvokerTagScopePropagationTests {
     receptorRegistry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestTaggedEvent),
       ReceptorId: $"test_tag_no_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();
@@ -176,7 +176,7 @@ public class ReceptorInvokerTagScopePropagationTests {
     receptorRegistry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestTaggedEvent),
       ReceptorId: $"test_tag_di_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();
@@ -348,7 +348,7 @@ public class ReceptorInvokerTagScopePropagationTests {
     receptorRegistry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestTaggedEvent),
       ReceptorId: $"test_tag_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();

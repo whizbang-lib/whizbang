@@ -64,7 +64,7 @@ public class NotificationDataSourceAutoDiscoveryTests {
 
     // A disposed NpgsqlDataSource refuses to hand out connections; the application's pool must
     // survive the notification stack's disposal.
-    using var stillUsable = applicationDataSource.CreateConnection();
+    await using var stillUsable = applicationDataSource.CreateConnection();
     await Assert.That(stillUsable).IsNotNull()
       .Because("the notification stack borrowed the data source; disposing the host must not "
              + "dispose the application's connection pool underneath EF Core");

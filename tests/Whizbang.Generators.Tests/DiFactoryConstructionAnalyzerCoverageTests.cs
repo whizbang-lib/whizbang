@@ -47,7 +47,7 @@ public class DiFactoryConstructionAnalyzerCoverageTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ConstructingAnUnresolvedTypeInsideAFactoryIsNotReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using Microsoft.Extensions.DependencyInjection;
         public static class Reg {
@@ -70,7 +70,7 @@ public class DiFactoryConstructionAnalyzerCoverageTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ExplicitlyTypedServiceProviderParameterIsRecognizedAsAFactoryAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using Microsoft.Extensions.DependencyInjection;
         using App;
@@ -94,7 +94,7 @@ public class DiFactoryConstructionAnalyzerCoverageTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ConstructionInsideAnUnrelatedLambdaIsNotReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using App;
         public static class Reg {

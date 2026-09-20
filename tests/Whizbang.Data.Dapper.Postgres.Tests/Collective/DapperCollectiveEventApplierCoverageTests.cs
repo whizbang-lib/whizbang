@@ -1,5 +1,4 @@
-#pragma warning disable CA1707
-#pragma warning disable CA1859 // tests assert against the interface return type
+#pragma warning disable CA1707, CA1859 // tests assert against the interface return type
 
 using System.Data;
 using System.Linq.Expressions;
@@ -66,7 +65,7 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     MethodName: nameof(_jobPerspective.Archive),
     ScopeHandling: CollectiveScopeHandling.Framework,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+    Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
   private sealed class _jobModel {
     public string Status { get; set; } = "";

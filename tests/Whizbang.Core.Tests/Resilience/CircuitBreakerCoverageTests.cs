@@ -37,7 +37,7 @@ public class CircuitBreakerCoverageTests {
     var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var firstTask = breaker.ExecuteAsync(async ct => {
+    var firstTask = breaker.ExecuteAsync(async _ => {
       firstStarted.SetResult();
       await releaseFirst.Task;
       return 42;

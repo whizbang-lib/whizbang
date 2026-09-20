@@ -78,7 +78,7 @@ public class ReceptorInvokerServiceRegistrationTests {
         new ReceptorInfo(
           MessageType: typeof(TestMessage),
           ReceptorId: "ScopedDependencyReceptor",
-          InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
             // This is the critical part: resolve a scoped dependency from the provider
             // If the provider is the root provider, this will throw for scoped services
             var scopedDep = sp.GetRequiredService<ScopedDependency>();

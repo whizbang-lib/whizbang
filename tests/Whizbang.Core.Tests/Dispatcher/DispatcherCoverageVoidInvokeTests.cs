@@ -51,7 +51,7 @@ public class DispatcherCoverageVoidInvokeTests {
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidAsyncCommand)) {
-        return msg => {
+        return _ => {
           _track("async-void");
           return ValueTask.CompletedTask;
         };
@@ -60,7 +60,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
@@ -73,14 +73,14 @@ public class DispatcherCoverageVoidInvokeTests {
 
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidSyncCommand)) {
-        return msg => _track("sync-void");
+        return _ => _track("sync-void");
       }
       return null;
     }
 
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
       if (messageType == typeof(VoidAnyCommand)) {
-        return msg => {
+        return _ => {
           _track("any-invoker");
           return ValueTask.FromResult<object?>(new VoidAnyResult("result"));
         };
@@ -100,7 +100,7 @@ public class DispatcherCoverageVoidInvokeTests {
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidAsyncCommand)) {
-        return msg => {
+        return _ => {
           _track("async-void-traced");
           return ValueTask.CompletedTask;
         };
@@ -109,7 +109,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {

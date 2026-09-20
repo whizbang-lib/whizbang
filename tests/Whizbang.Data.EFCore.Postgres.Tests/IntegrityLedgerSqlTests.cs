@@ -384,7 +384,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     var ages = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, [_key(origin)]);
 
     await Assert.That(ages).IsNotNull();
-    await Assert.That(ages!).IsEmpty();
+    await Assert.That(ages).IsEmpty();
   }
 
   [Test]

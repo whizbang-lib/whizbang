@@ -29,7 +29,7 @@ public class DapperPostgresPerspectiveStoreCoverageTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
+    const string createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
         "id UUID PRIMARY KEY, " +
         "data JSONB NOT NULL, " +
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb, " +
@@ -264,7 +264,7 @@ public class DapperPostgresPerspectiveStoreCoverageTests : PostgresTestBase {
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       $"SELECT data->>'Name', scope->>'t' FROM {TABLE_NAME} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return (null, null);

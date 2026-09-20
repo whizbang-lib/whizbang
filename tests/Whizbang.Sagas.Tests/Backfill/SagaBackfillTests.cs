@@ -111,7 +111,7 @@ public class SagaBackfillTests {
       sagaProjection: null,
       hookName: "pre-archive",
       displayName: null,
-      work: async (ct) => { ran = true; await Task.CompletedTask; },
+      work: async (_) => { ran = true; await Task.CompletedTask; },
       CancellationToken.None);
 
     await Assert.That(result).IsTrue();

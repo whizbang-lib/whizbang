@@ -115,7 +115,7 @@ public class WolverineHttpTransformerCoverageTests {
       .Because("with no string literal to read, the extractor falls back to the argument's own source text");
     var warning = result.Warnings.FirstOrDefault(w => w.Contains("MANUAL CONVERSION", StringComparison.Ordinal));
     await Assert.That(warning).IsNotNull();
-    await Assert.That(warning!).Contains("Route")
+    await Assert.That(warning).Contains("Route")
       .Because("the fallback text must reach the warning, even though it is not a real route path");
   }
 }

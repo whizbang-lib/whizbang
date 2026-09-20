@@ -251,12 +251,14 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     var eventId = (Guid)TrackedGuid.NewMedo();
 
     await using (var ins = conn.CreateCommand()) {
-      ins.CommandText = @"
+      ins.CommandText = """
+
         INSERT INTO wh_event_store
           (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
-        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', '{""tenant"":""t1""}'::jsonb, 1, NOW());
+        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', '{"tenant":"t1"}'::jsonb, 1, NOW());
         INSERT INTO wh_event_body (event_id, event_data, metadata)
-        VALUES (@evt, '{""payload"":42}'::jsonb, '{""hop"":1}'::jsonb)";
+        VALUES (@evt, '{"payload":42}'::jsonb, '{"hop":1}'::jsonb)
+""";
       ins.Parameters.AddWithValue("evt", eventId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();

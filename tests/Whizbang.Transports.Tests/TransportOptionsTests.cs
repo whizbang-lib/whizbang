@@ -19,8 +19,7 @@ public class TransportOptionsTests {
   /// Minimal concrete subclass that allows testing the abstract TransportOptions base.
   /// Adds a transport-specific nullable override property to test precedence.
   /// </summary>
-  private sealed class TestTransportOptions : TransportOptions {
-  }
+  private sealed class TestTransportOptions : TransportOptions;
 
   /// <summary>
   /// Subclass that overrides base defaults (simulates RabbitMQ-like behavior

@@ -45,7 +45,7 @@ public class AsbAcceptorAdaptiveWiringTests {
 
   private static Task<ISubscription> _subscribeBatchAsync(AzureServiceBusTransport transport, string topic = "inbox") =>
     transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       new TransportDestination(topic) { RoutingKey = "adaptive-sub" },
       new TransportBatchOptions());
 

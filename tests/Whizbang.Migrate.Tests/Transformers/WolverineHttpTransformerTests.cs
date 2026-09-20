@@ -79,7 +79,7 @@ public class WolverineHttpTransformerTests {
 
     var warning = result.Warnings.FirstOrDefault(w => w.Contains("MANUAL CONVERSION", StringComparison.Ordinal));
     await Assert.That(warning).IsNotNull();
-    await Assert.That(warning!).Contains("OrderEndpoints.GetOrder()");
+    await Assert.That(warning).Contains("OrderEndpoints.GetOrder()");
     await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.AttributeRemoved)).IsTrue();
   }
 

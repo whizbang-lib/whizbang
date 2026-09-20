@@ -112,7 +112,7 @@ public class AsbReceiveDecisionMakerCoverageTests {
   // degrading to ack+drop.
   [Test]
   public async Task Decide_TypeInfoMisses_RawReceptorRegistered_BodyMissingPayloadProperty_FallsThroughToAckAndDropAsync() {
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
     var receptor = new _fakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
     var rawRegistry = new RawReceptorRegistry([receptor]);
     var decider = new AsbReceiveDecisionMaker();

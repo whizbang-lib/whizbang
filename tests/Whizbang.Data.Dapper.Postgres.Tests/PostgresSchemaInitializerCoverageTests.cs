@@ -260,7 +260,7 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
     await Assert.That(step.Action).IsEqualTo(MigrationAction.BlueGreenEventReplay)
       .Because("an unparseable new-side column set must be treated as removing every existing column — the safe (destructive) strategy — never a silent direct-DDL no-op");
     await Assert.That(step.RemovedColumns).IsNotNull();
-    await Assert.That(step.RemovedColumns!).Contains("id")
+    await Assert.That(step.RemovedColumns).Contains("id")
       .Because("every old column must show as removed when the new DDL could not be parsed at all");
     await Assert.That(step.AddedColumns).IsNull()
       .Because("nothing was actually parsed out of the new DDL, so nothing can be reported as added");

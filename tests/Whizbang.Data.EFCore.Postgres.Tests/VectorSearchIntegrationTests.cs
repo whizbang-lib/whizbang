@@ -736,7 +736,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Act & Assert - Lambda that isn't a property access should throw immediately during expression building
     await Assert.That(() => context.VectorTestRows
-        .OrderByCosineDistance(m => new float[] { 1, 0, 0 }, searchVector)) // Not a property!
+        .OrderByCosineDistance(_ => new float[] { 1, 0, 0 }, searchVector)) // Not a property!
         .Throws<ArgumentException>();
   }
 

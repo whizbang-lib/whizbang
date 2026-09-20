@@ -10,10 +10,10 @@ using Whizbang.Data.EFCore.Custom;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
+/// <para>
 /// Consumer-observed regression lock. Before this fix:
 ///   - The EF source generator baked the connection-string key from the
 ///     <c>[WhizbangDbContext(ConnectionStringName=...)]</c> attribute into the
@@ -27,7 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///     <c>"app-db"</c> (didn't exist), so the LISTEN/NOTIFY resolver fell back
 ///     to the DbContext connection (pgbouncer) and probe-failure-reconnected
 ///     every 5 minutes in production.
-///
+/// </para>
+/// <para>
 /// The fix: the source generator now ALSO emits a
 /// <c>services.PostConfigure&lt;WhizbangNotificationOptions&gt;</c> that funnels
 /// the EF-side key into the notifications resolver. This test pins that
@@ -35,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// generated turnkey extension and assert
 /// <c>WhizbangNotificationOptions.ConnectionStringKey</c> ends up at the
 /// attribute value, not the class-name derivation.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 [Category("Shard2")]
@@ -82,9 +84,7 @@ public class SourceGenEmitsNotificationConnectionStringPostConfigureTests {
     services.AddSingleton<IConfiguration>(config);
 
     // Operator-set override fires FIRST (Configure runs before PostConfigure).
-    services.Configure<WhizbangNotificationOptions>(opts => {
-      opts.ConnectionStringKey = "operator-override";
-    });
+    services.Configure<WhizbangNotificationOptions>(opts => opts.ConnectionStringKey = "operator-override");
 
     services.AddAttributeOverrideDbContext();
 

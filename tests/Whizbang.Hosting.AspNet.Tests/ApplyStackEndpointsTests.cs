@@ -132,7 +132,7 @@ public class ApplyStackEndpointsTests {
     var body = await host.GetTestClient().GetStringAsync(
       "/whizbang/apply-stacks/streams?step=Created&step=Updated%2B&step=Closed&limit=5");
 
-    await Assert.That(query.SeenPath!).IsEquivalentTo(["Created", "Updated+", "Closed"])
+    await Assert.That(query.SeenPath).IsEquivalentTo(["Created", "Updated+", "Closed"])
       .Because("repeated step parameters carry the exact collapsed path — event-type names may contain characters a delimited form would break on");
     await Assert.That(query.SeenLimit).IsEqualTo(5);
     await Assert.That(body).Contains(streamId.ToString());

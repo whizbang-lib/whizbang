@@ -17,17 +17,13 @@ namespace Whizbang.Generators.Tests;
 /// <c>PinnedIdInfo.Kind</c> property.
 /// </summary>
 /// <remarks>
-/// Line 46 (<c>semanticModel.GetDeclaredSymbol(...) is not INamedTypeSymbol typeSymbol =&gt; return
-/// null</c>) is not covered here. As established in earlier coverage rounds, <c>GetDeclaredSymbol</c>
+/// Line 46 (<code>semanticModel.GetDeclaredSymbol(...) is not INamedTypeSymbol typeSymbol =&gt; return
+/// null</code>) is not covered here. As established in earlier coverage rounds, <c>GetDeclaredSymbol</c>
 /// always returns a real symbol for a <c>ClassDeclarationSyntax</c>/<c>RecordDeclarationSyntax</c>/
 /// <c>StructDeclarationSyntax</c> node — this is a defensive Roslyn-contract guard with no reachable
 /// path in a compiling program, not a gap in these tests.
 /// </remarks>
 public class PinnedIdRegistryGeneratorCoverageTests {
-  private static readonly Type _pinnedIdInfoType = typeof(AttributeArgNamingHelper).Assembly
-    .GetType("Whizbang.Generators.PinnedIdInfo")
-    ?? throw new InvalidOperationException("Whizbang.Generators.PinnedIdInfo not found — check the type's namespace/name.");
-
   // A non-public pinned type is silently excluded from the generated registry (PinnedIdRegistryGenerator.cs:54):
   // if this regressed and an internal type WERE registered, a consumer that filters IPinnedIdRegistry.GetAll()
   // expecting only publicly-usable message/perspective types would see an entry it cannot construct or reference.

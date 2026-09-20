@@ -16,8 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the private static list via the same reflection technique
 /// <see cref="DbContextInitializationRegistryTests.ResetStaticState"/> already uses lets
 /// <c>RunAsync</c> delegate into an empty registry, which the registry's own contract guarantees
-/// completes without touching a database (see <c>DbContextInitializationRegistryTests
-/// .InitializeAllAsync_WithNoRegistrations_CompletesSuccessfullyAsync</c>). <see
+/// completes without touching a database (see <code>DbContextInitializationRegistryTests
+/// .InitializeAllAsync_WithNoRegistrations_CompletesSuccessfullyAsync</code>). <see
 /// cref="NotInParallelAttribute"/> uses the exact key <see cref="DbContextInitializationRegistryTests"/>
 /// already uses to guard the same static state, so the two classes serialize against each other
 /// instead of racing. No database is used in this file.

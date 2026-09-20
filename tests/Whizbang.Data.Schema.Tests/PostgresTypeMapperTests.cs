@@ -221,7 +221,7 @@ public class PostgresTypeMapperTests {
 
   [Test]
   public async Task MapDataType_UnknownDataType_ThrowsArgumentOutOfRangeAsync() {
-    var unknown = (WhizbangDataType)9999;
+    const WhizbangDataType unknown = (WhizbangDataType)9999;
 
     await Assert.That(() => PostgresTypeMapper.MapDataType(unknown))
         .ThrowsExactly<ArgumentOutOfRangeException>();

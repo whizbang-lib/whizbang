@@ -34,7 +34,7 @@ public sealed class RebuildBalanceCollectiveHandler {
   /// <summary>Reset the target row's balance — a constant setter gated by the row's own id.</summary>
   [CollectiveApplyFor(ScopeHandling = CollectiveScopeHandling.Custom)]
   public ICollectiveSpec<RebuildBalanceModel> Reset(
-      RebuildResetBalanceCollectiveEvent e, ICollectiveQuery query) =>
+      RebuildResetBalanceCollectiveEvent e, ICollectiveQuery _) =>
     new RebuildBalanceSpec(
       Setters: s => s.SetProperty(m => m.Balance, e.ResetTo),
       Where: r => r.Id == e.TargetId);

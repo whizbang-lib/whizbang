@@ -18,8 +18,7 @@ using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Deep-path tests for <see cref="DapperSqliteEventStore"/> covering the branches the

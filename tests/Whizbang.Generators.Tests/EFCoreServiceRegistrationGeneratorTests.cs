@@ -2501,7 +2501,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_ModelWithNestedCollections_EmitsRecursiveDataCoalescerRegistrationAsync() {
     // Arrange - a model two complex-collection levels deep, with a nullable collection that must be skipped.
-    var source = """
+    const string source = """
       #nullable enable
       using System;
       using System.Collections.Generic;

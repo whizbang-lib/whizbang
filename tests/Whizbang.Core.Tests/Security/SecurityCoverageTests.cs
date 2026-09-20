@@ -316,7 +316,7 @@ public class SecurityCoverageTests {
     using var cts = new CancellationTokenSource();
     var callbackCount = 0;
     services.AddSingleton<ISecurityContextCallback>(
-      new TestSecurityCallback(async (_, _, _, ct) => {
+      new TestSecurityCallback(async (_, _, _, _) => {
         callbackCount++;
         // Cancel after first callback executes
         await cts.CancelAsync();

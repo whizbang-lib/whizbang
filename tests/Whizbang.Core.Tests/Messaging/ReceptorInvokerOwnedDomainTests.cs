@@ -75,7 +75,7 @@ public class ReceptorInvokerOwnedDomainTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           tracker.Record(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }

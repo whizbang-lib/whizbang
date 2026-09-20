@@ -345,7 +345,7 @@ public sealed class AllOptionsBindingMatrixTests {
     }).Build();
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(configuration);
-    services.AddWhizbangPinnedWorkerPool(o => { });
+    services.AddWhizbangPinnedWorkerPool(_ => { });
     await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<WhizbangPinnedPoolOptions>>().Value;
     await Assert.That(options.Size).IsEqualTo(3)

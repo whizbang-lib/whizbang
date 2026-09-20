@@ -12,16 +12,19 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Unit tests for AzureServiceBusTransport's provisioning and options-validation paths:
 /// constructor guards, InitializeAsync branches, _ensureInfrastructureExistsAsync,
 /// _createSubscriptionAsync, _ensureTopicExistsViaAdminAsync,
 /// _migrateSubscriptionToSessionsIfNeededAsync, subscription-name derivation, and the
 /// SqlFilter / CorrelationFilter rule application paths.
-///
+/// </para>
+/// <para>
 /// The ASB emulator has no management plane, so every admin-plane path is driven through a
 /// recording fake IServiceBusAdminClient. The broker itself is replaced with mockable
 /// ServiceBusClient/ServiceBusProcessor subclasses (the Azure SDK's documented mocking
 /// surface), so SubscribeAsync/SubscribeBatchAsync complete end-to-end without any network.
+/// </para>
 /// </summary>
 [Timeout(10_000)]
 public class AzureServiceBusProvisioningPathTests {
@@ -1063,8 +1066,7 @@ public class AzureServiceBusProvisioningPathTests {
 
     public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    private sealed class InnerFakeProcessor : ServiceBusProcessor {
-    }
+    private sealed class InnerFakeProcessor : ServiceBusProcessor;
   }
 
   /// <summary>

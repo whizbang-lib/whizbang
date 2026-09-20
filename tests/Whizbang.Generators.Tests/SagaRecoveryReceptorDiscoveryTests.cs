@@ -48,13 +48,15 @@ namespace MyApp.Sagas;
   public async Task PublicSaga_GetsRecoveryReceptorsAsync() {
     // The per-item terminals and the watchdog tick are what drive SagaCompletedEvent from
     // the store; without them completion depends on one pod's in-memory tracker.
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"")]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders")]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
   public sealed record ItemFailedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -71,15 +73,17 @@ public partial class OrderSaga {
     // registers a second discovery pipeline for it. Nothing matched that pipeline, which means a
     // saga written the generic way got no recovery receptors at all and its completion fell back
     // to one pod's in-memory tracker.
-    var source = _source(@"
+    var source = _source("""
+
 namespace MyApp.Contracts { public class AppSagaEventBase { } }
 
-[global::Whizbang.Sagas.Saga<global::MyApp.Contracts.AppSagaEventBase>(""orders"")]
+[global::Whizbang.Sagas.Saga<global::MyApp.Contracts.AppSagaEventBase>("orders")]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
   public sealed record ItemFailedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -102,7 +106,8 @@ public partial class OrderSaga {
     // The tick type is declared HERE rather than in the shared surface, because the companion
     // test asserts the handler is omitted without it — putting it in the surface would quietly
     // disarm that one.
-    var source = SAGA_ATTRIBUTE_DECL + @"
+    const string source = SAGA_ATTRIBUTE_DECL + """
+
 namespace Whizbang.Sagas {
   public sealed class SagaCompletionWatchdogTickEvent : global::Whizbang.Core.IEvent {
     public System.Guid SagaId { get; set; }
@@ -111,12 +116,13 @@ namespace Whizbang.Sagas {
 
 namespace MyApp.Sagas;
 
-[global::Whizbang.Sagas.Saga(""orders"")]
+[global::Whizbang.Sagas.Saga("orders")]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
   public sealed record ItemFailedEvent;
 }
-";
+
+""";
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -133,12 +139,14 @@ public partial class OrderSaga {
   [Test]
   public async Task GenericSaga_IsSkippedAsync() {
     // A generic saga has no single closed type to emit handlers against.
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"")]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders")]
 public partial class OrderSaga<T> where T : class {
   public sealed record ItemCompletedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -153,12 +161,14 @@ public partial class OrderSaga<T> where T : class {
   public async Task InternalSaga_IsSkippedAsync() {
     // The emitted handlers are public types referencing the saga, so a non-public saga
     // would produce code that cannot compile.
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"")]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders")]
 internal partial class OrderSaga {
   public sealed record ItemCompletedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -172,14 +182,16 @@ internal partial class OrderSaga {
   [Test]
   public async Task SagaNestedInANonPublicType_IsSkippedAsync() {
     // The accessibility walk goes up the containing chain, not just the saga itself.
-    var source = _source(@"
+    var source = _source("""
+
 internal static partial class Holder {
-  [global::Whizbang.Sagas.Saga(""orders"")]
+  [global::Whizbang.Sagas.Saga("orders")]
   public partial class OrderSaga {
     public sealed record ItemCompletedEvent;
   }
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -194,12 +206,14 @@ internal static partial class Holder {
   public async Task SagaWithGenerateServiceFalse_IsSkippedAsync() {
     // The recovery receptors take the generated service as a constructor dependency, so
     // suppressing the service must suppress them too rather than emit uncompilable code.
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"", GenerateService = false)]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders", GenerateService = false)]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -212,13 +226,15 @@ public partial class OrderSaga {
 
   [Test]
   public async Task SagaWithGenerateServiceTrue_StillEmitsAsync() {
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"", GenerateService = true)]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders", GenerateService = true)]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
   public sealed record ItemFailedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
@@ -232,13 +248,15 @@ public partial class OrderSaga {
     // The watchdog receptor is keyed on the framework's own tick event. Without
     // Whizbang.Sagas referenced there is no such type, so that one shape is skipped while
     // the per-item terminals still emit.
-    var source = _source(@"
-[global::Whizbang.Sagas.Saga(""orders"")]
+    var source = _source("""
+
+[global::Whizbang.Sagas.Saga("orders")]
 public partial class OrderSaga {
   public sealed record ItemCompletedEvent;
   public sealed record ItemFailedEvent;
 }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 

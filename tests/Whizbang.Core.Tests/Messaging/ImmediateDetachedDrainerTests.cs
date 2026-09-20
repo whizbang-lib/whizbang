@@ -237,7 +237,7 @@ public class ImmediateDetachedDrainerTests {
 
     // The invoker will enqueue a new item when processing the first item
     var enqueueOnce = true;
-    var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
+    var invoker = new CallbackReceptorInvoker((_, stage, context, ct) => {
       if (enqueueOnce) {
         enqueueOnce = false;
         drainer.Enqueue(chainEnvelope);

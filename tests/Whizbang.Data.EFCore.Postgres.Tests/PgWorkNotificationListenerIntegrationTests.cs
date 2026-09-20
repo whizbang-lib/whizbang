@@ -64,9 +64,6 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     return (listener, shared, instanceProvider.InstanceId);
   }
 
-  private PgWorkNotificationListener _newListener(WhizbangNotificationOptions options)
-    => _newListenerWithInstance(options).Listener;
-
   /// <summary>
   /// Starts the shared connection, waits for its probe to succeed, then subscribes the
   /// listener. Returns a disposable that tears down in reverse order. Mirrors what the

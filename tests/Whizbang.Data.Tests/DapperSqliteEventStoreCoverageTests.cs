@@ -14,8 +14,7 @@ using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Coverage for <see cref="DapperSqliteEventStore.ReadPolymorphicAsync"/> branches the existing

@@ -27,8 +27,7 @@ public class ShardCoverageGuardTests {
   [Test]
   public async Task EveryTestClass_DeclaresExactlyOneShardCategoryAsync() {
     var offenders = typeof(ShardCoverageGuardTests).Assembly.GetTypes()
-      .Where(t => t is { IsClass: true, IsAbstract: false })
-      .Where(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+      .Where(t => t is { IsClass: true, IsAbstract: false } && t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                    .Any(m => m.GetCustomAttributes(typeof(TestAttribute), inherit: false).Length > 0))
       .Select(t => new {
         Type = t,
@@ -46,7 +45,7 @@ public class ShardCoverageGuardTests {
       })
       .Where(x => x.IsBenchmark ? x.Shards.Count != 0 : x.Shards.Count != 1)
       .Select(x => $"{x.Type.FullName} -> [{string.Join(", ", x.Shards)}]")
-      .OrderBy(s => s)
+      .Order()
       .ToList();
 
     await Assert.That(offenders).IsEmpty()

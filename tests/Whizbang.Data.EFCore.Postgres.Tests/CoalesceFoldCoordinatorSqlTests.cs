@@ -228,15 +228,17 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       string? scheduledForSql = null) {
     var messageId = (Guid)TrackedGuid.NewMedo();
     await using var ins = connection.CreateCommand();
-    ins.CommandText = $@"
+    ins.CommandText = $$"""
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, coalesce_group, scheduled_for)
       VALUES (@msg, 'test-topic', 'TestEvent',
-        '{{""id"":""{messageId}"",""p"":{{""record"":""data""}},""h"":[]}}',
-        '{{}}', 0, 0,
-        NOW() - INTERVAL '{createdAgoSeconds} seconds', @stream, 0, @grp,
-        {(scheduledForSql ?? "NOW() + INTERVAL '60 seconds'")})";
+        '{"id":"{{messageId}}","p":{"record":"data"},"h":[]}',
+        '{}', 0, 0,
+        NOW() - INTERVAL '{{createdAgoSeconds}} seconds', @stream, 0, @grp,
+        {{scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"}})
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", Guid.NewGuid());
     ins.Parameters.AddWithValue("grp", group);

@@ -18,8 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard4")]
 public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
-  private readonly Uuid7IdProvider _idProvider = new();
-
   private IServiceProvider BuildServiceProvider() {
     var services = new ServiceCollection();
 

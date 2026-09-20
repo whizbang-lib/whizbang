@@ -124,9 +124,8 @@ public class ServiceBusReadinessCheckTests {
 /// Test implementation of ITransport for testing readiness checks.
 /// </summary>
 internal sealed class TestTransport(bool isInitialized) : ITransport {
-  private readonly bool _isInitialized = isInitialized;
 
-  public bool IsInitialized => _isInitialized;
+  public bool IsInitialized { get; } = isInitialized;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
   public Task InitializeAsync(CancellationToken cancellationToken = default) {

@@ -152,7 +152,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
     await using (var set = conn.CreateCommand()) {
-      set.CommandText = @"UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
+      set.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
       await set.ExecuteNonQueryAsync();
     }
     var inst = (Guid)TrackedGuid.NewMedo();

@@ -25,7 +25,7 @@ public class PerspectiveWorkerPostLifecycleTests {
     registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
       MessageType: typeof(TestPostLifecycleEvent),
       ReceptorId: "test_post_lifecycle_async_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         invoked = true;
         return ValueTask.FromResult<object?>(null);
       }
@@ -57,7 +57,7 @@ public class PerspectiveWorkerPostLifecycleTests {
     registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
       MessageType: typeof(TestPostLifecycleEvent),
       ReceptorId: "test_post_lifecycle_inline_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         invoked = true;
         return ValueTask.FromResult<object?>(null);
       }

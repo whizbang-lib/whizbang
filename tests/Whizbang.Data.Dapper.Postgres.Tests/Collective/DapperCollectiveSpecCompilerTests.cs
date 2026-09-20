@@ -165,7 +165,7 @@ public class DapperCollectiveSpecCompilerTests {
 
   [Test]
   public async Task Compile_CapturedLocal_ResolvedAtCompileTimeAsync() {
-    var statusValue = "Pending";
+    const string statusValue = "Pending";
     var spec = _spec(s => s.SetProperty(j => j.Status, statusValue));
 
     var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
