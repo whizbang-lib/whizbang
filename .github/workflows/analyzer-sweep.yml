@@ -95,6 +95,18 @@ jobs:
                 | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1)
             echo "$d: ${n:-0} fixed"
             if [ -n "${n:-}" ] && [ "$n" -gt 0 ] && ! git diff --quiet; then
+              # Build BEFORE committing. Pushing per rule means a run that dies later leaves this
+              # rule's commit on the branch permanently, so an unverified push is a broken branch
+              # rather than a wasted job. Several of these fixes can break the build legitimately:
+              # RCS1249 strips a null-forgiving operator that was load-bearing wherever no guard
+              # dominates the use, which surfaces as CS8600/CS8603. Revert the rule and carry on.
+              if ! dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo 2>&1 | tail -20; then
+                echo "::warning::$d broke the build; reverting it and continuing"
+                git checkout -- .
+                dotnet build-server shutdown >/dev/null 2>&1 || true
+                echo "::endgroup::"
+                continue
+              fi
               git add -u
               git commit -q -m "test(quality): $d fixes for $(basename "$(dirname "$PROJECT")") ($n)
 
