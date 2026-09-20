@@ -6,9 +6,7 @@ using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Core.Tests.Notifications;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
-#pragma warning disable CS0618 // Slice 1's NotifyHealthyPollingInterval is marked [Obsolete] in Slice 4; these tests intentionally exercise the legacy knob's semantics until the stamper backstop loop fully retires.
+#pragma warning disable CA1707, IDE1006, CS0618 // Slice 1's NotifyHealthyPollingInterval is marked [Obsolete] in Slice 4; these tests intentionally exercise the legacy knob's semantics until the stamper backstop loop fully retires.
 
 /// <summary>
 /// Slice 1 of the zero-idle-polling architecture — locks the gate-aware polling
