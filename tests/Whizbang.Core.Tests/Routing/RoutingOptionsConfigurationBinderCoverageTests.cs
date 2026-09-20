@@ -40,7 +40,7 @@ public class RoutingOptionsConfigurationBinderCoverageTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.CommandNamespacesToInbox).Contains("myapp.orders.commands");

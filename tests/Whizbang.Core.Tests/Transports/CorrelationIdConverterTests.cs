@@ -94,8 +94,8 @@ public class CorrelationIdConverterTests {
   public async Task Write_WithValidCorrelationId_ShouldWriteGuidStringAsync() {
     // Arrange - Use CorrelationId.New() which generates valid UUIDv7
     var correlationId = CorrelationId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     _converter.Write(writer, correlationId, JsonSerializerOptions.Default);
@@ -110,8 +110,8 @@ public class CorrelationIdConverterTests {
   public async Task RoundTrip_WithValidCorrelationId_ShouldPreserveValueAsync() {
     // Arrange - Use CorrelationId.New() which generates valid UUIDv7
     var original = CorrelationId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act - Write
     _converter.Write(writer, original, JsonSerializerOptions.Default);
@@ -168,8 +168,8 @@ public class CorrelationIdConverterTests {
   public async Task Write_WithMultipleCorrelationIds_ShouldWriteAllAsync() {
     // Arrange - Use CorrelationId.New() which generates valid UUIDv7
     var correlationIds = Enumerable.Range(0, 5).Select(_ => CorrelationId.New()).ToList();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     writer.WriteStartArray();

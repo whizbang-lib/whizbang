@@ -77,7 +77,7 @@ public class LeaseDispatchExecutorTests {
     // Receptor that honors CT: awaits the ct, throws OCE when canceled.
     var helper = LeaseDispatchExecutor.RunWithLeaseAsync(lease, async ct => {
       var honorTcs = new TaskCompletionSource();
-      using var reg = ct.Register(() => honorTcs.TrySetResult());
+      await using var reg = ct.Register(() => honorTcs.TrySetResult());
       await honorTcs.Task.ConfigureAwait(false);
       ct.ThrowIfCancellationRequested();
     });

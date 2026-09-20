@@ -272,7 +272,7 @@ public class StartupReadyCompositeTests {
   [Test]
   public async Task TransportConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
     var gate = new SchemaReadyGate();
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(
@@ -307,7 +307,7 @@ public class StartupReadyCompositeTests {
 
   [Test]
   public async Task ServiceBusConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
       transport: new Whizbang.Core.Transports.InProcessTransport(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),

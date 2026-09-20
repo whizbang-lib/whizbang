@@ -94,7 +94,7 @@ public class LifecycleTrackingStateTests {
     // pipeline runs every receptor for that stage a second time -- duplicate emails,
     // duplicate charges -- and nothing throws to reveal it.
     var (tracking, provider, invoker, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);
@@ -109,7 +109,7 @@ public class LifecycleTrackingStateTests {
     // it runs after the stage and is awaited, so a receptor registered there is guaranteed
     // to have completed before the pipeline moves on.
     var (tracking, provider, invoker, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);
 
@@ -120,7 +120,7 @@ public class LifecycleTrackingStateTests {
   [Test]
   public async Task PostLifecycleInline_CompletesTheTrackingAsync() {
     var (tracking, provider, _, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await Assert.That(tracking.IsComplete).IsFalse();
 
@@ -134,7 +134,7 @@ public class LifecycleTrackingStateTests {
     // Completion is terminal. A late stage arriving after PostLifecycleInline must not
     // reopen the event and invoke receptors against state that has already been finalized.
     var (tracking, provider, invoker, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
     var afterCompletion = invoker.Stages.Count;
@@ -151,7 +151,7 @@ public class LifecycleTrackingStateTests {
     // A scope with no invoker registered is a legitimate configuration (a host with no
     // receptors). It must degrade to a no-op rather than tearing down the pipeline.
     var (tracking, provider, _, _) = _build(registerInvoker: false);
-    using var _p = provider;
+    await using var _p = provider;
 
     await Assert.That(async () =>
         await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None))
@@ -164,7 +164,7 @@ public class LifecycleTrackingStateTests {
     // way to observe them is the drain. This is also what shutdown relies on to avoid
     // killing in-flight receptors.
     var (tracking, provider, invoker, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeDetached, provider, CancellationToken.None);
     await tracking.DrainDetachedAsync();
@@ -183,7 +183,7 @@ public class LifecycleTrackingStateTests {
       ThrowOnlyFor = LifecycleStage.PreDistributeDetached,
     };
     var (tracking, provider, _, logger) = _build(failing);
-    using var _p = provider;
+    await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeDetached, provider, CancellationToken.None);
     await tracking.DrainDetachedAsync();
@@ -197,7 +197,7 @@ public class LifecycleTrackingStateTests {
   [Test]
   public async Task DrainingWithNoDetachedWork_CompletesImmediatelyAsync() {
     var (tracking, provider, _, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
 
     await Assert.That(async () => await tracking.DrainDetachedAsync()).ThrowsNothing();
   }
@@ -207,7 +207,7 @@ public class LifecycleTrackingStateTests {
     // LastActivityUtc drives stale-tracking cleanup: a sliding window that must move on
     // every transition, or a busy event gets reaped as abandoned.
     var (tracking, provider, _, _) = _build();
-    using var _p = provider;
+    await using var _p = provider;
     var before = tracking.LastActivityUtc;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);

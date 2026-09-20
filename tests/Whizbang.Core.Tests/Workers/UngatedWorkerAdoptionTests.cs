@@ -168,7 +168,7 @@ public class UngatedWorkerAdoptionTests {
   [Test]
   public async Task ServiceBusConsumer_DoesNotSubscribeUntilTheGateOpensAsync() {
     var gate = new _observableGate();
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
       transport: new Whizbang.Core.Transports.InProcessTransport(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -198,7 +198,7 @@ public class UngatedWorkerAdoptionTests {
   [Test]
   public async Task TransportConsumer_DoesNotSubscribeUntilTheGateOpensAsync() {
     var gate = new _observableGate();
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(

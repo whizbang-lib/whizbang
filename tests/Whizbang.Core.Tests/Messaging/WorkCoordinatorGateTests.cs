@@ -244,7 +244,7 @@ public class WorkCoordinatorGateTests {
     // the gate. Both are required for the gate's DI factory to receive the metrics.
     services.AddWhizbang();
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var metrics = provider.GetRequiredService<Whizbang.Core.Observability.WorkCoordinatorMetrics>();
     var gate = provider.GetRequiredService<WorkCoordinatorGate>();
 

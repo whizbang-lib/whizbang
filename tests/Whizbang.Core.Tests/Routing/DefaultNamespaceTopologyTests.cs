@@ -64,7 +64,7 @@ public class DefaultNamespaceTopologyTests {
     var services = new ServiceCollection();
     new WhizbangBuilder(services).WithRouting(r => r.OwnDomains("outboxtesttypes.orders.commands"));
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(provider.GetRequiredService<IInboxRoutingStrategy>())
@@ -84,7 +84,7 @@ public class DefaultNamespaceTopologyTests {
     var services = new ServiceCollection();
     new WhizbangBuilder(services).WithRouting(_ => { });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
     await Assert.That(options.SharedInboxRetired).IsTrue();
@@ -130,7 +130,7 @@ public class DefaultNamespaceTopologyTests {
     new WhizbangBuilder(services).WithRouting(_ => { });
     services.AddTransportSubscriptionBuilder("order-service");
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var manifest = provider.GetRequiredService<TopologyManifest>();
 
     await Assert.That(manifest.Subscriptions.Select(s => s.Topic)).DoesNotContain("inbox");
@@ -321,7 +321,7 @@ public class DefaultNamespaceTopologyTests {
       r.RetireSharedInbox();
     });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var exception = Assert.Throws<InvalidOperationException>(
       () => provider.GetRequiredService<IOptions<RoutingOptions>>());
@@ -343,7 +343,7 @@ public class DefaultNamespaceTopologyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.AllCommandNamespacesRouteToInbox).IsFalse();
@@ -363,7 +363,7 @@ public class DefaultNamespaceTopologyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.SharedInboxRetired).IsFalse();
@@ -385,7 +385,7 @@ public class DefaultNamespaceTopologyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.AllCommandNamespacesRouteToInbox).IsFalse();

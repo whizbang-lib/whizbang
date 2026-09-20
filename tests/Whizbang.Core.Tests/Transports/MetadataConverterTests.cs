@@ -218,8 +218,8 @@ public class MetadataConverterTests {
   [Test]
   public async Task Write_WithNullValue_ShouldWriteNullAsync() {
     // Arrange
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     _converter.Write(writer, null, JsonSerializerOptions.Default);
@@ -233,8 +233,8 @@ public class MetadataConverterTests {
   [Test]
   public async Task Write_WithEmptyDictionary_ShouldWriteEmptyObjectAsync() {
     // Arrange
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement>();
 
     // Act
@@ -249,8 +249,8 @@ public class MetadataConverterTests {
   [Test]
   public async Task Write_WithStringValues_ShouldWriteCorrectlyAsync() {
     // Arrange
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement> {
       ["name"] = JsonSerializer.SerializeToElement("test")
     };
@@ -268,8 +268,8 @@ public class MetadataConverterTests {
   [Test]
   public async Task Write_WithMixedValueTypes_ShouldWriteCorrectlyAsync() {
     // Arrange
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement> {
       ["str"] = JsonSerializer.SerializeToElement("hello"),
       ["num"] = JsonSerializer.SerializeToElement(42),
@@ -306,8 +306,8 @@ public class MetadataConverterTests {
     };
 
     // Act - Write
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     _converter.Write(writer, original, JsonSerializerOptions.Default);
     writer.Flush();
 
@@ -331,8 +331,8 @@ public class MetadataConverterTests {
   [Test]
   public async Task RoundTrip_WithNullValue_ShouldPreserveNullAsync() {
     // Act - Write null
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     _converter.Write(writer, null, JsonSerializerOptions.Default);
     writer.Flush();
 

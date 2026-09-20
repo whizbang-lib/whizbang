@@ -51,7 +51,7 @@ public class LenientDateTimeOffsetConverterCoverageTests {
   public async Task Write_CalledDirectlyWithNullValue_WritesJsonNullAsync() {
     var converter = new LenientNullableDateTimeOffsetConverter();
     var options = new JsonSerializerOptions();
-    using var stream = new MemoryStream();
+    await using var stream = new MemoryStream();
     await using (var writer = new Utf8JsonWriter(stream)) {
       converter.Write(writer, null, options);
     }

@@ -119,7 +119,7 @@ public class WhizbangBannerTests {
 
   [Test]
   public async Task Print_WhenDisabled_WritesNothingAsync() {
-    using var writer = new StringWriter();
+    await using var writer = new StringWriter();
 
     WhizbangBanner.Print(writer, enabled: false);
 
@@ -129,7 +129,7 @@ public class WhizbangBannerTests {
   [Test]
   public async Task Print_WithoutColorSupport_WritesThePlainBannerAsync() {
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var writer = new StringWriter();
+    await using var writer = new StringWriter();
 
     WhizbangBanner.Print(writer);
 
@@ -141,7 +141,7 @@ public class WhizbangBannerTests {
   [Test]
   public async Task Print_WithColorSupport_EmitsAnsiSequencesAsync() {
     Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
-    using var writer = new StringWriter();
+    await using var writer = new StringWriter();
 
     WhizbangBanner.Print(writer);
 
@@ -154,7 +154,7 @@ public class WhizbangBannerTests {
   [Test]
   public async Task Print_WithColorSupport_SetsTheBannerBackgroundAsync() {
     Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
-    using var writer = new StringWriter();
+    await using var writer = new StringWriter();
 
     WhizbangBanner.Print(writer);
 
@@ -164,7 +164,7 @@ public class WhizbangBannerTests {
   [Test]
   public async Task Print_WithColorSupport_RendersEveryBannerRowAsync() {
     Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
-    using var writer = new StringWriter();
+    await using var writer = new StringWriter();
 
     WhizbangBanner.Print(writer);
 
@@ -177,8 +177,8 @@ public class WhizbangBannerTests {
   public async Task Print_IsDeterministicInShapeAcrossRunsAsync() {
     // The star glyphs are random, so two runs differ in content but not in row count.
     Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
-    using var first = new StringWriter();
-    using var second = new StringWriter();
+    await using var first = new StringWriter();
+    await using var second = new StringWriter();
 
     WhizbangBanner.Print(first);
     WhizbangBanner.Print(second);
@@ -223,7 +223,7 @@ public class WhizbangBannerTests {
   public async Task PrintHeader_WhenDisabled_WritesNothingAsync() {
     // The header is config-driven; a service that turns it off must emit no stray
     // box-drawing characters into a structured log sink.
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
 
     WhizbangBanner.PrintHeader("OrderService", enabled: false, writer: sw);
 
@@ -235,7 +235,7 @@ public class WhizbangBannerTests {
     // A box whose rows disagree on width renders as a torn frame in a terminal. The
     // padding arithmetic is the only thing holding the corners together, so pin it.
     WhizbangBanner.OutputRedirectedOverride = true;   // plain banner keeps the parse simple
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
 
     WhizbangBanner.PrintHeader(
       "OrderService", "1.2.3",
@@ -258,7 +258,7 @@ public class WhizbangBannerTests {
     // The header is the one place an operator reads which build is running against which
     // library version, so both numbers have to survive into the title row.
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
 
     WhizbangBanner.PrintHeader("OrderService", "1.2.3", whizbangVersion: "9.9.9", writer: sw);
 
@@ -273,7 +273,7 @@ public class WhizbangBannerTests {
     // A caller that cannot supply a version still gets a well-formed title rather than
     // "v" followed by nothing.
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
 
     WhizbangBanner.PrintHeader("whizbang-migrate", version: null, whizbangVersion: "9.9.9", writer: sw);
 
@@ -286,7 +286,7 @@ public class WhizbangBannerTests {
     // sorts them so the same run configuration always reads identically -- otherwise two
     // hosts with identical settings produce diffs that look like real changes.
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
 
     var unordered = new Dictionary<string, string> {
       ["Zone"] = "west",
@@ -305,8 +305,8 @@ public class WhizbangBannerTests {
   public async Task PrintHeader_WithNoParameters_OmitsTheConfigRowAsync() {
     // An empty configuration must collapse the row rather than draw an empty band.
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var sw = new StringWriter();
-    using var withParams = new StringWriter();
+    await using var sw = new StringWriter();
+    await using var withParams = new StringWriter();
 
     WhizbangBanner.PrintHeader("OrderService", "1.0.0", whizbangVersion: "9.9.9", writer: sw);
     WhizbangBanner.PrintHeader(
@@ -324,8 +324,8 @@ public class WhizbangBannerTests {
     // PrintHeader is banner + box; if it silently stopped calling Print the box would
     // still look correct on its own, so assert the two are ordered and both present.
     WhizbangBanner.OutputRedirectedOverride = true;
-    using var banner = new StringWriter();
-    using var header = new StringWriter();
+    await using var banner = new StringWriter();
+    await using var header = new StringWriter();
 
     WhizbangBanner.Print(banner);
     WhizbangBanner.PrintHeader("OrderService", "1.0.0", whizbangVersion: "9.9.9", writer: header);
@@ -348,7 +348,7 @@ public class WhizbangBannerTests {
     // has to arrive a row at a time rather than as one blob with embedded newlines.
     WhizbangBanner.OutputRedirectedOverride = true;
     var logger = new RecordingLogger();
-    using var sw = new StringWriter();
+    await using var sw = new StringWriter();
     WhizbangBanner.Print(sw);
     var expected = sw.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.TrimEnd('\r')).ToList();

@@ -794,8 +794,8 @@ public class JsonMessageSerializerTests {
     // Arrange
     var converter = new CorrelationIdConverter();
     var correlationId = CorrelationId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     converter.Write(writer, correlationId, JsonSerializerOptions.Default);
@@ -881,8 +881,8 @@ public class JsonMessageSerializerTests {
   public async Task MetadataConverter_Write_WithNullValue_ShouldWriteNullLiteralAsync() {
     // Arrange
     var converter = new MetadataConverter();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     converter.Write(writer, null, JsonSerializerOptions.Default);
@@ -897,8 +897,8 @@ public class JsonMessageSerializerTests {
   public async Task MetadataConverter_Write_WithDictionary_ShouldWriteObjectAsync() {
     // Arrange
     var converter = new MetadataConverter();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement> {
       ["name"] = JsonSerializer.SerializeToElement("test"),
       ["count"] = JsonSerializer.SerializeToElement(42)
@@ -928,8 +928,8 @@ public class JsonMessageSerializerTests {
     };
 
     // Act - Write
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     converter.Write(writer, original, JsonSerializerOptions.Default);
     writer.Flush();
 
