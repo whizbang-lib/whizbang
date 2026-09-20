@@ -116,14 +116,10 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
-    builder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub"));
-    });
+    builder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -141,9 +137,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer(config => {
@@ -173,9 +167,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act - TransportConsumerWorker always has resilience built-in
     builder.AddTransportConsumer();
@@ -209,9 +201,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -288,9 +278,7 @@ public class TransportConsumerBuilderExtensionsTests {
     services.AddSingleton<IServiceInstanceProvider>(new TestServiceInstanceProvider("MyTestService"));
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -308,9 +296,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services, includeServiceInstanceProvider: false);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -350,9 +336,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act - Call twice
     builder.AddTransportConsumer();
@@ -408,16 +392,12 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     // Act
-    perspectiveBuilder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub"));
-    });
+    perspectiveBuilder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -463,9 +443,7 @@ public class TransportConsumerBuilderExtensionsTests {
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 

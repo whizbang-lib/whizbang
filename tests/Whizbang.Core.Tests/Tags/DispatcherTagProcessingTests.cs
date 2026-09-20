@@ -262,13 +262,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt test message types from security — these tests are about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Replace the registered IMessageTagProcessor with our spy
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
@@ -297,13 +293,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt test message types from security — these tests are about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Remove the IMessageTagProcessor registration to test null handling
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
@@ -333,13 +325,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt ThrowingCommand from security — this test is about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(ThrowingCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(ThrowingCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Replace the registered IMessageTagProcessor with our spy
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));

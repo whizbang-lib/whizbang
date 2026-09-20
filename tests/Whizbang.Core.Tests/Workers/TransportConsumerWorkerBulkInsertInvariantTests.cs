@@ -141,7 +141,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
@@ -277,7 +277,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
     var countingFactory = new CountingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
 

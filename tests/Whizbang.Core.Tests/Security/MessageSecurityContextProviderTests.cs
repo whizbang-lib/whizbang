@@ -383,9 +383,7 @@ public class MessageSecurityContextProviderTests {
       priority: 100,
       extraction: null,
       onExtract: () => { },
-      onExtractWithContext: (_, options) => {
-        receivedValidateFlag = options.ValidateCredentials;
-      }
+      onExtractWithContext: (_, options) => receivedValidateFlag = options.ValidateCredentials
     );
 
     var options = new MessageSecurityOptions {

@@ -123,7 +123,7 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();

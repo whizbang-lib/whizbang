@@ -101,9 +101,7 @@ public class MessageContextAccessorTests {
     MessageContextAccessor.CurrentContext = parentContext;
 
     // Act — child scope sets a DIFFERENT context (simulates local-dispatch cascade)
-    await Task.Run(() => {
-      MessageContextAccessor.CurrentContext = _createContext("child-tenant", "child-user");
-    });
+    await Task.Run(() => MessageContextAccessor.CurrentContext = _createContext("child-tenant", "child-user"));
 
     // Assert — parent's context must survive unchanged
     // With the buggy holder pattern, the child setter nulls holder.Context on the shared
@@ -142,9 +140,7 @@ public class MessageContextAccessorTests {
       MessageContextAccessor.CurrentContext = _createContext("L1-tenant", "L1-user");
 
       // Grandchild scope
-      await Task.Run(() => {
-        MessageContextAccessor.CurrentContext = _createContext("L2-tenant", "L2-user");
-      });
+      await Task.Run(() => MessageContextAccessor.CurrentContext = _createContext("L2-tenant", "L2-user"));
 
       // Child checks its own context after grandchild completes
       childSeenAfterGrandchild = MessageContextAccessor.CurrentContext?.TenantId;

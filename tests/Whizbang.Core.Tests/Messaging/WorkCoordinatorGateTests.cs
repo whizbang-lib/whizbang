@@ -166,9 +166,7 @@ public class WorkCoordinatorGateTests {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
-      observed.Add(tags.ToArray());
-    });
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
     using (await gate.AcquireAsync(CancellationToken.None)) {
@@ -291,9 +289,7 @@ public class WorkCoordinatorGateTests {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => {
-      observed.Add(tags.ToArray());
-    });
+    listener.SetMeasurementEventCallback<double>((_, _, tags, _) => observed.Add(tags.ToArray()));
     listener.Start();
 
     var holding = await gate.AcquireAsync(CancellationToken.None);  // 1 observation when this disposes

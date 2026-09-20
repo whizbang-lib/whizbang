@@ -139,7 +139,7 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange
     var idleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: 2);
-    worker.OnWorkProcessingIdle += () => { idleFired.TrySetResult(); };
+    worker.OnWorkProcessingIdle += () => idleFired.TrySetResult();
 
     // Return work on first call only, then empty
     var streamId = Guid.NewGuid();

@@ -198,7 +198,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
     var registry = new SpyReceptorRegistry();
     var resolutionCount = 0;
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(o => { o.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => {
@@ -274,7 +274,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
 
     var recordingLogger = new RecordingLogger<ServiceBusConsumerWorker>();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(o => { o.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(o => o.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));

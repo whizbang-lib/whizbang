@@ -68,9 +68,7 @@ public class WhizbangIdProviderRegistryTests {
   public async Task RegisterDICallback_WithValidCallback_RegistersSuccessfullyAsync() {
     // Arrange
     var callbackInvoked = false;
-    WhizbangIdProviderRegistry.RegisterDICallback((services, provider) => {
-      callbackInvoked = true;
-    });
+    WhizbangIdProviderRegistry.RegisterDICallback((services, provider) => callbackInvoked = true);
 
     // Act
     var services = new ServiceCollection();

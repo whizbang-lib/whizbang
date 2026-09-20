@@ -81,9 +81,7 @@ public class ReceptorInvocationTrackingTests {
     });
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
-    services.Configure<WhizbangOptions>(o => {
-      configureGuardrails?.Invoke(o.Guardrails);
-    });
+    services.Configure<WhizbangOptions>(o => configureGuardrails?.Invoke(o.Guardrails));
     var provider = services.BuildServiceProvider();
     var collector = provider.GetFakeLogCollector();
 

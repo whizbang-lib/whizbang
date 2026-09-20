@@ -367,9 +367,7 @@ public class ImmediateDetachedDrainerTests {
     using var cts = new CancellationTokenSource();
 
     // Cancel after first invocation
-    var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
-      cts.Cancel();
-    });
+    var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => cts.Cancel());
 
     drainer.Enqueue(_createEnvelope(new TestMessage("first")));
     drainer.Enqueue(_createEnvelope(new TestMessage("second")));
@@ -446,9 +444,7 @@ public class ImmediateDetachedDrainerTests {
   public async Task DrainAsync_InvokerThrows_PropagatesExceptionAsync() {
     // Arrange
     var drainer = new ImmediateDetachedDrainer();
-    var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
-      throw new InvalidOperationException("Receptor failed");
-    });
+    var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => throw new InvalidOperationException("Receptor failed"));
 
     drainer.Enqueue(_createEnvelope(new TestMessage("test")));
 

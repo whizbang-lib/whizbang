@@ -115,9 +115,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_initiating_context_receptor_{stage}",
-      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
-        return ValueTask.FromResult<object?>(null);
-      }
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();

@@ -250,8 +250,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains(ownedDomains));
     var sp = services.BuildServiceProvider();
 
     var instanceProvider = new StubServiceInstanceProvider(serviceName);

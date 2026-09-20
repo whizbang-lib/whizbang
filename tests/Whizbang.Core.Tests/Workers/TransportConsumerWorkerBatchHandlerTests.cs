@@ -74,7 +74,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var worker = _createWorkerWithScope(transport, options, sp.GetRequiredService<IServiceScopeFactory>());
@@ -117,7 +117,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var worker = _createWorkerWithScope(transport, options, sp.GetRequiredService<IServiceScopeFactory>());
@@ -161,8 +161,8 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    services.Configure<RoutingOptions>(opts => { opts.OwnDomains([ownedNamespace]); });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains([ownedNamespace]));
     var sp = services.BuildServiceProvider();
 
     var worker = new TransportConsumerWorker(
@@ -217,7 +217,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var worker = _createWorkerWithScope(transport, options, sp.GetRequiredService<IServiceScopeFactory>());
@@ -262,7 +262,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var worker = _createWorkerWithScope(transport, options, sp.GetRequiredService<IServiceScopeFactory>());

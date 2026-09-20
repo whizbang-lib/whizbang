@@ -99,9 +99,7 @@ public class PostSerializeHookChainTests {
       cts.Cancel();
       return PostSerializeResult.PassThrough();
     });
-    var second = new _testHook(order: 200, onRun: _ => {
-      throw new InvalidOperationException("second hook must not run after cancellation");
-    });
+    var second = new _testHook(order: 200, onRun: _ => throw new InvalidOperationException("second hook must not run after cancellation"));
     var chain = new PostSerializeHookChain([first, second]);
     var ctx = _buildContext("hello"u8.ToArray());
 

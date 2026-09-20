@@ -160,9 +160,7 @@ public class SecurityContextHelperInitiatingContextTests {
     var capturingMessageAccessor = new CapturingMessageContextAccessor();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.AllowAnonymous = true;
-    });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
 

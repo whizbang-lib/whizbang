@@ -229,9 +229,7 @@ public class ReceptorInvokerTagScopePropagationTests {
     var receptorRegistry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestTaggedEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestTaggedEvent)));
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddSingleton(hook);
     services.AddSingleton<IMessageTagProcessor>(sp =>
@@ -276,9 +274,7 @@ public class ReceptorInvokerTagScopePropagationTests {
     var receptorRegistry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestTaggedEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestTaggedEvent)));
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddTransient<AccessorInjectedHook>();
     services.AddSingleton<IMessageTagProcessor>(sp =>

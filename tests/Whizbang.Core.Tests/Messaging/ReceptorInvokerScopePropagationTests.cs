@@ -102,9 +102,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture what GetSecurityFromAmbient returns during cascade
     SecurityContext? capturedAmbientContext = null;
-    var cascader = new TestEventCascader(onCascade: () => {
-      capturedAmbientContext = CascadeContext.GetSecurityFromAmbient();
-    });
+    var cascader = new TestEventCascader(onCascade: () => capturedAmbientContext = CascadeContext.GetSecurityFromAmbient());
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -155,9 +153,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture the message context that gets set
     IMessageContext? capturedMessageContext = null;
-    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => {
-      capturedMessageContext = ctx;
-    });
+    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => capturedMessageContext = ctx);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);

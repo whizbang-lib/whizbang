@@ -134,7 +134,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
@@ -191,7 +191,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var compileTimeRegistry = new FakeReceptorRegistry(hasAnyConsumer: false);
@@ -247,7 +247,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var registry = new FakeReceptorRegistry(hasAnyConsumer: true);
@@ -314,7 +314,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var compositeEnvelopeType =

@@ -43,9 +43,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
     // Capture the scope passed to ProcessTagsAsync
     IScopeContext? capturedScope = null;
-    var tagProcessor = new TestTagProcessor(onProcessTags: scope => {
-      capturedScope = scope;
-    });
+    var tagProcessor = new TestTagProcessor(onProcessTags: scope => capturedScope = scope);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -87,9 +85,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
     // Capture the scope passed to ProcessTagsAsync
     IScopeContext? capturedScope = null;
-    var tagProcessor = new TestTagProcessor(onProcessTags: scope => {
-      capturedScope = scope;
-    });
+    var tagProcessor = new TestTagProcessor(onProcessTags: scope => capturedScope = scope);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);

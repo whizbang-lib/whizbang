@@ -112,9 +112,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_msg_context_receptor_{stage}",
-      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
-        return ValueTask.FromResult<object?>(null);
-      }
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();
@@ -216,9 +214,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_initiating_receptor_{stage}",
-      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
-        return ValueTask.FromResult<object?>(null);
-      }
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();

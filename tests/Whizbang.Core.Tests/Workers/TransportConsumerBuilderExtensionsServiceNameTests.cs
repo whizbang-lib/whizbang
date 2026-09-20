@@ -78,14 +78,10 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
-    builder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-key"));
-    });
+    builder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-key")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -113,9 +109,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
     var whizbangBuilder = new WhizbangBuilder(services);
-    whizbangBuilder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    whizbangBuilder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -147,9 +141,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
     services.AddLogging();
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -171,9 +163,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
     services.AddLogging();
 
     var whizbangBuilder = new WhizbangBuilder(services);
-    whizbangBuilder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    whizbangBuilder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 

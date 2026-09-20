@@ -616,7 +616,7 @@ public class ReceptorInvokerTests {
     var contextEstablishedBeforeReceptor = false;
 
     var securityProvider = new TestSecurityContextProvider(
-        onEstablish: () => { contextEstablished = true; });
+        onEstablish: () => contextEstablished = true);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -627,7 +627,7 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptorWithCallback<TestMessage>(
         "SecureReceptor",
         LifecycleStage.PostInboxInline,
-        callback: () => { contextEstablishedBeforeReceptor = contextEstablished; });
+        callback: () => contextEstablishedBeforeReceptor = contextEstablished);
 
     // Security provider is resolved from the service provider
     var invoker = new ReceptorInvoker(registry, provider, null);
@@ -733,7 +733,7 @@ public class ReceptorInvokerTests {
     IMessageEnvelope? receivedEnvelope = null;
     var securityProvider = new TestSecurityContextProvider(
         onEstablish: () => { },
-        captureEnvelope: env => { receivedEnvelope = env; });
+        captureEnvelope: env => receivedEnvelope = env);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);

@@ -567,7 +567,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var compileTimeRegistry = new FakeReceptorRegistryQuery(hasReceptors: (_, _) => false);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(runtimeRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(runtimeRegistry, sp));
@@ -645,7 +645,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -724,7 +724,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -802,7 +802,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -890,7 +890,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     ]);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(receptorRegistry, sp));

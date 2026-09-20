@@ -212,7 +212,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var accessorWasSet = false;
 
     var scopeContextAccessor = new TestScopeContextAccessor(
-      onSet: () => { accessorWasSet = true; });
+      onSet: () => accessorWasSet = true);
 
     var securityProvider = new TestSecurityContextProvider(
       returnsNull: true,

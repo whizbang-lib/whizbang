@@ -186,7 +186,7 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
         NullLogger<PoisonMessageDetector>.Instance,
         new Meter("Whizbang.Core.Tests.TransportConsumerPoison")));
     }
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();

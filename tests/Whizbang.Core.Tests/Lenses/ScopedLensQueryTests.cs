@@ -317,9 +317,7 @@ public class ScopedLensQueryTests {
     var provider = services.BuildServiceProvider();
     var scopedQuery = provider.GetRequiredService<IScopedLensQuery<TestModel>>();
 
-    await Assert.That(async () => {
-      await scopedQuery.ExecuteAsync<int>(null!);
-    }).Throws<ArgumentNullException>();
+    await Assert.That(async () => await scopedQuery.ExecuteAsync<int>(null!)).Throws<ArgumentNullException>();
   }
 
   // Helper classes for testing
