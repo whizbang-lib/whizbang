@@ -15,12 +15,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// DI registration for the Postgres LISTEN/NOTIFY work-signal listener.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Auto-invoked by <c>.WithDriver.Postgres</c>; consumers don't need to call this directly.
 /// Idempotent — calling multiple times has no additional effect.
-///
+/// </para>
+/// <para>
 /// Configuration is bound from the <c>Whizbang:Database</c> section so consumers can
 /// bake the convention into appsettings + environment variables and never have to think
 /// about wiring:
+/// </para>
 ///
 /// <code>
 /// {

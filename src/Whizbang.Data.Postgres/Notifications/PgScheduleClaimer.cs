@@ -62,7 +62,7 @@ public sealed partial class PgScheduleClaimer(
       Value = DateTimeOffset.UtcNow.AddSeconds(_leaseSeconds)
     });
     cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = _partitionCount });
-    cmd.Parameters.Add(new NpgsqlParameter("limit", NpgsqlDbType.Integer) { Value = limit });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(limit), NpgsqlDbType.Integer) { Value = limit });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     var claimed = result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
     if (claimed > 0) {

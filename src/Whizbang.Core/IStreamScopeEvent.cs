@@ -30,5 +30,4 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>fundamentals/security/scoping#stream-scope-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Scoping/IStreamScopeEventTests.cs</tests>
-public interface IStreamScopeEvent : IScopeEvent {
-}
+public interface IStreamScopeEvent : IScopeEvent;

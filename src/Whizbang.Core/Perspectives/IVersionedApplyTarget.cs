@@ -38,5 +38,4 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:StaleEventWrite_OnVersionedTarget_DoesNotRegressTerminalRowAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:NewerEventWrite_OnVersionedTarget_AdvancesRowAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:IdempotentReapply_OnVersionedTarget_DoesNotBumpVersionAsync</tests>
-public interface IVersionedApplyTarget {
-}
+public interface IVersionedApplyTarget;

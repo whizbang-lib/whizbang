@@ -31,5 +31,4 @@ public sealed class EventMint(ICompositeFactory composites, ICollectiveMint coll
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
-public sealed class CollectiveMint : ICollectiveMint {
-}
+public sealed class CollectiveMint : ICollectiveMint;

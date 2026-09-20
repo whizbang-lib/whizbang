@@ -29,6 +29,6 @@ public sealed class EmptyStreamIdException(System.Guid messageId, string message
 
   private static string _format(System.Guid messageId, string messageType) =>
     $"Producer attempted to write {messageType} (message_id={messageId}) with stream_id=Guid.Empty (00000000-0000-0000-0000-000000000000). " +
-    $"Empty stream_id is rejected under EmptyStreamIdPolicy.Reject — pass null for singleton-stream messages or a real stream identity. " +
-    $"See operations/configuration/empty-stream-id-policy for migration guidance.";
+    "Empty stream_id is rejected under EmptyStreamIdPolicy.Reject — pass null for singleton-stream messages or a real stream identity. " +
+    "See operations/configuration/empty-stream-id-policy for migration guidance.";
 }

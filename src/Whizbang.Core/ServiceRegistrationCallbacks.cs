@@ -205,8 +205,8 @@ public static class ServiceRegistrationCallbacks {
   /// </summary>
   /// <remarks>
   /// When fired, the callback sets <c>BaseUpsertStrategy.PathOnePersistenceOptionsProvider</c>
-  /// to a delegate returning <c>PerspectivePersistenceJsonContext.CreateOptions(
-  /// MessageJsonContext.Default, InfrastructureJsonContext.Default)</c>. After this point,
+  /// to a delegate returning <code>PerspectivePersistenceJsonContext.CreateOptions(
+  /// MessageJsonContext.Default, InfrastructureJsonContext.Default)</code>. After this point,
   /// every <c>UpsertPerspectiveRowAsync</c> call routes through the atomic
   /// <c>INSERT…ON CONFLICT DO UPDATE</c> path instead of the slice-19 retry loop —
   /// structurally eliminating the 23505 dup-key storm.

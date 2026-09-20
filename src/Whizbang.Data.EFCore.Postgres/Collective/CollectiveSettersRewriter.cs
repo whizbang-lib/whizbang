@@ -165,7 +165,7 @@ internal static class CollectiveSettersRewriter {
         return (new CollectiveComputedComparison(comparedProperty, op), _evaluateValue(_stripConvert(bin.Right)));
       }
       throw new NotSupportedException(
-        $"CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
+        "CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
         $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
 

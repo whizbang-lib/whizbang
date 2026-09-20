@@ -12,14 +12,13 @@ namespace Whizbang.Core.Temporal;
 /// </remarks>
 public sealed class CronRecurrenceRule(string expression, TimeZoneInfo? timeZone = null) : IRecurrenceRule {
   private readonly CronExpression _cron = CronExpression.Parse(expression);
-  private readonly TimeZoneInfo _timeZone = timeZone ?? TimeZoneInfo.Utc;
 
   /// <summary>The cron text this rule was built from (for diagnostics / round-tripping to the DB).</summary>
   public string Expression { get; } = expression;
 
   /// <summary>The timezone cron fields are evaluated in.</summary>
-  public TimeZoneInfo TimeZone => _timeZone;
+  public TimeZoneInfo TimeZone { get; } = timeZone ?? TimeZoneInfo.Utc;
 
   /// <inheritdoc />
-  public DateTimeOffset? NextFireAfter(DateTimeOffset after) => _cron.NextFireAfter(after, _timeZone);
+  public DateTimeOffset? NextFireAfter(DateTimeOffset after) => _cron.NextFireAfter(after, TimeZone);
 }

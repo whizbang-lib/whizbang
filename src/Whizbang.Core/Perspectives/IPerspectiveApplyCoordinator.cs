@@ -27,8 +27,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// Registered as a singleton in <c>AddWhizbangCore</c>. The semaphores are
-/// allocated lazily per stream + perspective via <c>ConcurrentDictionary
-/// .GetOrAdd</c> and are never explicitly removed — production deployments
+/// allocated lazily per stream + perspective via <code>ConcurrentDictionary
+/// .GetOrAdd</code> and are never explicitly removed — production deployments
 /// have bounded active-stream counts; if a future workload needs eviction,
 /// add an expiry sweep here without changing the public surface.
 /// </para>

@@ -410,8 +410,8 @@ public interface IDispatcher {
   /// </returns>
   /// <remarks>
   /// <para>
-  /// Use this in preference to a read-then-check pattern (<c>SELECT … WHERE
-  /// already_emitted</c> followed by <c>PublishAsync</c>) when two or more
+  /// Use this in preference to a read-then-check pattern (<code>SELECT … WHERE
+  /// already_emitted</code> followed by <c>PublishAsync</c>) when two or more
   /// concurrent callers may attempt the same logical emission. Atomicity is
   /// enforced at the storage layer through <see cref="IClaimedEmissionStore"/>
   /// — no SELECT-then-INSERT window exists.

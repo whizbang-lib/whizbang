@@ -114,7 +114,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
         // (sp => ...) is the overwhelmingly common registration form, and the conventional name is
         // the only signal available without resolving the enclosing invocation.
         var typeText = p.Type?.ToString();
-        if (typeText is not null && typeText.EndsWith("IServiceProvider", System.StringComparison.Ordinal)) {
+        if (typeText?.EndsWith("IServiceProvider", System.StringComparison.Ordinal) == true) {
           return true;
         }
         if (p.Type is null && p.Identifier.ValueText is "sp" or "provider" or "serviceProvider") {

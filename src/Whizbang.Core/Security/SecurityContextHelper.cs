@@ -527,7 +527,7 @@ public static partial class SecurityContextHelper {
     } catch (TimeoutException) {
       if (establishTask is not null) {
         _ = establishTask.ContinueWith(
-          static t => { _ = t.Exception; },
+          static t => _ = t.Exception,
           CancellationToken.None,
           TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
           TaskScheduler.Default);

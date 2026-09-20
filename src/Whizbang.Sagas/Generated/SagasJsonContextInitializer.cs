@@ -40,6 +40,7 @@ public static class SagasJsonContextInitializer {
   /// consumer events.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Wire-name lookup: every <c>GetTypeInfoByName</c> call site
   /// (<c>Dispatcher._serializeToJsonEnvelope</c>, <c>TransportConsumerWorker.PublishBulk</c>,
   /// <c>ServiceBusConsumerWorker</c>, <c>JsonLifecycleMessageDeserializer</c>,
@@ -47,13 +48,15 @@ public static class SagasJsonContextInitializer {
   /// assembly-qualified type name; the registry strips Version/Culture/PublicKeyToken via
   /// <c>EventTypeMatchingHelper.NormalizeTypeName</c>, so the short "Full.Name, Asm" form
   /// matches every variant.
-  ///
+  /// </para>
+  /// <para>
   /// Polymorphic dispatch: <c>GetPolymorphicTypeInfo&lt;TBase&gt;</c> builds a
   /// <c>JsonTypeInfo&lt;TBase&gt;</c> that knows about each registered derived type as a
   /// polymorphic alternative — required for reads of <c>MessageEnvelope&lt;IEvent&gt;</c>
   /// or <c>MessageEnvelope&lt;IMessage&gt;</c> (event-store polymorphic reads, certain
   /// lifecycle paths). Discriminator matches the consumer-side generator convention
   /// (full namespace-qualified type name, no assembly).
+  /// </para>
   /// </remarks>
   private static void _registerEventRoutes<TEvent>(string fullName) where TEvent : class, IEvent {
     JsonContextRegistry.RegisterTypeName(

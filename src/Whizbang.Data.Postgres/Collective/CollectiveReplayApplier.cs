@@ -88,7 +88,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var tenantId = streamEvents[0].GetCurrentScope()?.Scope?.TenantId;
     // The event store persists EventType via TypeNameFormatter ("Namespace.TypeName, AssemblyName"), not
     // Type.FullName — match that format so the filter finds the collective streams.
-    var typeNames = collectiveTypes.Select(TypeNameFormatter.Format).ToList();
+    var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);
 
     var streamIds = await _toListAsync(
       _eventStoreQuery.Query

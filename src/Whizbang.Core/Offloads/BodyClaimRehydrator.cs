@@ -118,7 +118,7 @@ public static class BodyClaimRehydrator {
     if (rehydrated is null) {
       return RehydrateResult.DeadLetter(
         MessageFailureReason.SerializationError,
-        $"Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.");
+        "Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.");
     }
 
     // Observe the rehydration (bounded dimensions: message type + namespace — never message IDs).

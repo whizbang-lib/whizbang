@@ -301,11 +301,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
+            IsFullHistory: isFullHistory
+,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec,
-            IsFullHistory: isFullHistory
-        ),
+            StreamGroupSpec: streamGroupSpec),
         Warning: null
     );
   }
@@ -833,8 +833,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         .GroupBy(x => x.fqn)
         .Select(g => g.First())
         .ToList();
-    var eventTypes = allEvents.Select(x => x.fqn).ToList();
-    var eventTypeSymbols = allEvents.Select(x => x.symbol).ToList();
+    var eventTypes = allEvents.ConvertAll(x => x.fqn);
+    var eventTypeSymbols = allEvents.ConvertAll(x => x.symbol);
 
     return (eventTypes, eventTypeSymbols);
   }

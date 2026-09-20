@@ -49,13 +49,13 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Error,
     isEnabledByDefault: true,
-    customTags: [WellKnownDiagnosticTags.CompilationEnd],
     description: "One service owns each command type (single-handler command semantics). Under "
       + "per-namespace command inboxes, every inbox receptor's service subscribes to the "
       + "command namespace's inbox entity — a second receptor class for the same command means "
       + "a second claim on that entity, and every command would be delivered and handled twice. "
       + "Cross-service duplicates are caught at runtime by the provisioning topology-drift "
-      + "check; this rule catches the duplicate registration units visible at build time.");
+      + "check; this rule catches the duplicate registration units visible at build time.",
+    customTags: [WellKnownDiagnosticTags.CompilationEnd]);
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>

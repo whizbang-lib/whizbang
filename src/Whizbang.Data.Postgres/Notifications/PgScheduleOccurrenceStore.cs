@@ -36,7 +36,7 @@ public sealed class PgScheduleOccurrenceStore(
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_defer_occurrence(@id, @until)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = occurrenceId });
-    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlDbType.TimestampTz) { Value = until });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(until), NpgsqlDbType.TimestampTz) { Value = until });
     _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
   }
 
@@ -51,8 +51,8 @@ public sealed class PgScheduleOccurrenceStore(
     cmd.CommandText = "SELECT wh_log_schedule_run(@sid, @oid, @status, @note)";
     cmd.Parameters.Add(new NpgsqlParameter("sid", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("oid", NpgsqlDbType.Uuid) { Value = occurrenceId });
-    cmd.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Smallint) { Value = status });
-    cmd.Parameters.Add(new NpgsqlParameter("note", NpgsqlDbType.Text) { Value = (object?)note ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(status), NpgsqlDbType.Smallint) { Value = status });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(note), NpgsqlDbType.Text) { Value = (object?)note ?? DBNull.Value });
     _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
   }
 

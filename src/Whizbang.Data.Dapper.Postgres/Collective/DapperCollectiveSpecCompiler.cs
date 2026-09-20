@@ -64,8 +64,8 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// parameter dictionary it binds. The fragment is a single
   /// expression intended to substitute the entire <c>SET</c> body —
   /// callers prepend their own <c>UPDATE … SET </c> prefix and append
-  /// any additional column writes (e.g. <c>last_collective_event_id =
-  /// @evt_id</c>) and the <c>WHERE</c> clause.
+  /// any additional column writes (e.g. <code>last_collective_event_id =
+  /// @evt_id</code>) and the <c>WHERE</c> clause.
   /// </summary>
   public sealed record CompiledSetClause(
     string SqlFragment,

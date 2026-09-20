@@ -98,7 +98,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // silent-disable this method exists to make impossible"). Stores that CAN report get the gate;
     // stores that cannot get a loud one-line warning and the old behavior.
     var measurable = backlog is not null;
-    var settled = backlog is null || backlog.IsSettled;
+    var settled = backlog?.IsSettled != false;
     if (!measurable) {
       LogSettlednessUnmeasurable(logger, message.OriginServiceName);
     }

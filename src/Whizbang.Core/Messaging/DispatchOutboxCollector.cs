@@ -59,16 +59,15 @@ public sealed class DispatchOutboxCollector {
 
   /// <summary>Disposable handle for an open collector. Disposing restores the previously-active collector.</summary>
   public readonly struct CollectingScope : IDisposable {
-    private readonly DispatchOutboxCollector _collector;
     private readonly DispatchOutboxCollector? _previous;
 
     internal CollectingScope(DispatchOutboxCollector collector, DispatchOutboxCollector? previous) {
-      _collector = collector;
+      Collector = collector;
       _previous = previous;
     }
 
     /// <summary>The collector this scope opened.</summary>
-    public DispatchOutboxCollector Collector => _collector;
+    public DispatchOutboxCollector Collector { get; }
 
     /// <inheritdoc />
     public void Dispose() => _current.Value = _previous;

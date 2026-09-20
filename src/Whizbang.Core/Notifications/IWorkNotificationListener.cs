@@ -31,14 +31,17 @@ public enum WorkSignalCategory {
 /// Phase D of work-pump decomposition.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Implementations open a long-lived direct connection (one per pod) that bypasses
 /// pgbouncer (LISTEN doesn't survive transaction-pooling). When notifications arrive,
 /// fire <see cref="OnSignal"/>; subscribers (typically <c>ClaimWorker.RequestImmediatePoll</c>)
 /// wake immediately. <see cref="IsHealthy"/> reflects connection state — when unhealthy,
 /// claim workers should fall back to fast polling cadence.
-///
+/// </para>
+/// <para>
 /// A NoOp implementation is bound when no <c>DirectConnectionString</c> is configured;
 /// the system runs polling-only in that mode.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public interface IWorkNotificationListener {

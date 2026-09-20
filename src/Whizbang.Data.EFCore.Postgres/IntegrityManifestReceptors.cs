@@ -416,7 +416,7 @@ public sealed partial class IntegrityManifestReceptor(
     // legacy burst path remains behind RepairDrainEnabled=false for engines without a
     // drain-capable coordinator.
     if (options.RepairDrainEnabled && deficitIndexes.Count > 0 && message.ComputedThrough is long stampUntil) {
-      var stampKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      var stampKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
       var stampCoordinator = services.GetService<IWorkCoordinator>();
       if (stampCoordinator is not null) {
         await stampCoordinator.IntegrityStampRepairWindowsAsync(
@@ -427,7 +427,7 @@ public sealed partial class IntegrityManifestReceptor(
       && !options.RepairDrainEnabled;
     IReadOnlyList<bool> repairFlags = [];
     if (repairEligible && deficitIndexes.Count > 0) {
-      var deficitKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      var deficitKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
       repairFlags = await ledger.TryBeginRepairBatchAsync(
         deficitKeys, now, backoff, options.MaxRepairAttemptsPerBucket, repairBudget, cancellationToken).ConfigureAwait(false);
     }
@@ -708,8 +708,8 @@ public sealed partial class IntegrityManifestReceptor(
       var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
       var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
       var keys = bulkCandidates
-        .Select(c => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, c.Origin.TenantScope, c.Origin.EventType, Guid.Empty))
-        .ToList();
+        .ConvertAll(c => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, c.Origin.TenantScope, c.Origin.EventType, Guid.Empty))
+;
       // Report before repair: the durable ledger only grants repairs for KNOWN divergences, and
       // the report row is the operator-facing record of the type-level deficit itself.
       var observations = new IntegrityReportObservation[bulkCandidates.Count];

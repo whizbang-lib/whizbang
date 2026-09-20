@@ -381,9 +381,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate PERSPECTIVE_ASSOCIATIONS_TYPED region (Phase 3: Delegates)
     var typedAssociations = _generateTypedAssociations(perspectives, assemblyName);
-    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ASSOCIATIONS_TYPED", typedAssociations);
-
-    return result;
+    return TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ASSOCIATIONS_TYPED", typedAssociations);
   }
 
   /// <summary>

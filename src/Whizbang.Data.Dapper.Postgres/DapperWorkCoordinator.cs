@@ -613,7 +613,7 @@ public partial class DapperWorkCoordinator(
     var param = (NpgsqlParameter)command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = handledTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(handledTypeNames);
+    param.Value = handledTypeNames is string[] arr ? arr : handledTypeNames.ToArray();
     command.Parameters.Add(param);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);

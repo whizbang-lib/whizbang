@@ -21,18 +21,22 @@ public sealed class PostgresTableStatisticsProvider(
 
   /// <inheritdoc />
   /// <remarks>
+  /// <para>
   /// Heap bytes per live row over the width those rows should need. The expected width comes
   /// from <c>pg_stats.avg_width</c> (planner statistics, already maintained by autoanalyze) plus
   /// per-tuple overhead, so this costs nothing beyond a catalog read — unlike pgstattuple, which
   /// is exact but scans the table and needs an extension that managed Postgres may not allow.
-  ///
+  /// </para>
+  /// <para>
   /// Around 1.0 means the heap is about the size its rows need. A sustained large multiple means
   /// space that cannot be used: dead tuples awaiting vacuum, or — the case autovacuum can never
   /// fix — bytes left behind by a dropped column, which persist in every row written before the
   /// drop until the table is rewritten.
-  ///
+  /// </para>
+  /// <para>
   /// Small tables are excluded: with few rows the per-row average is dominated by page overhead
   /// and reports alarming ratios for tables measured in kilobytes.
+  /// </para>
   /// </remarks>
   public async Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, double>();

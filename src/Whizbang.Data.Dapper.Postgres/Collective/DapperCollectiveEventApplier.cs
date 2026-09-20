@@ -136,7 +136,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var storeColumns = hookPlan.StoreColumns;
     var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
       hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
-    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope;
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 
     var total = 0;

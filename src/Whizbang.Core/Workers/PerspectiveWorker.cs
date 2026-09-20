@@ -1584,7 +1584,7 @@ public partial class PerspectiveWorker(
     using var timer = new PeriodicTimer(interval, _timeProvider);
     // Cancellation disposes the timer, which completes a pending tick with false and ends the loop on
     // its normal path: no exception to catch, and a token already canceled ends it before the first tick.
-    using var stop = ct.Register(static state => ((PeriodicTimer)state!).Dispose(), timer);
+    await using var stop = ct.Register(static state => ((PeriodicTimer)state!).Dispose(), timer);
     while (await timer.WaitForNextTickAsync(CancellationToken.None).ConfigureAwait(false)) {
       ReportLongAffinityHolds();
     }

@@ -181,7 +181,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
           a.AttributeClass is not null
           && TypeNameUtilities.FullyQualified(a.AttributeClass)
               == "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute");
-      if (conventionAttr is not null && conventionAttr.ConstructorArguments.Length > 0) {
+      if (conventionAttr?.ConstructorArguments.Length > 0) {
         var rawValue = conventionAttr.ConstructorArguments[0].Value;
         if (rawValue is int intValue) {
           return (AttributeArgNamingConvention)intValue;

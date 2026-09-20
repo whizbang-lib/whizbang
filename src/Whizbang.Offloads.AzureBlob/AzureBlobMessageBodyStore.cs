@@ -109,7 +109,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
     }
     uploadOptions.Metadata["whizbang_content_hash"] = hash;
 
-    using var stream = _toReadOnlyStream(body);
+    await using var stream = _toReadOnlyStream(body);
     await blobClient.UploadAsync(stream, uploadOptions, cancellationToken);
 
     return new MessageBodyClaim(

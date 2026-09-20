@@ -1914,7 +1914,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
       // The library version as a VALUE (zero reflection): the same constant the migration ledger
       // records, so instance rows and the ledger can never disagree about what this binary runs.
-      sb.AppendLine($"    services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+      sb.AppendLine("    services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
       sb.AppendLine($"      new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
       sb.AppendLine();
       sb.AppendLine("    return services;");
@@ -2056,7 +2056,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
     sb.AppendLine("      services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
-    sb.AppendLine($"      services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+    sb.AppendLine("      services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
     sb.AppendLine($"        new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
@@ -2253,8 +2253,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates code for migration tuples to embed in generated file.
   /// SQL files physically live in <c>Whizbang.Data.Postgres/Migrations/</c> and are linked into
-  /// this generator's embedded resources at build time via <c>&lt;EmbeddedResource Include=...
-  /// Link="Templates\Migrations\..."/&gt;</c> in the .csproj. There is exactly ONE physical
+  /// this generator's embedded resources at build time via <code>&lt;EmbeddedResource Include=...
+  /// Link="Templates\Migrations\..."/&gt;</code> in the .csproj. There is exactly ONE physical
   /// source of truth for the SQL files — no manual sync required.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>

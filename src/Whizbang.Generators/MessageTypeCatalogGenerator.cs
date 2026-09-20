@@ -111,8 +111,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.PINNED_ID_ATTRIBUTE);
 
     string? pinnedId = null;
-    if (pinnedIdAttribute is not null &&
-        pinnedIdAttribute.ConstructorArguments.Length > 0 &&
+    if (pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
         pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
         !string.IsNullOrWhiteSpace(pinnedIdValue)) {
       pinnedId = pinnedIdValue;

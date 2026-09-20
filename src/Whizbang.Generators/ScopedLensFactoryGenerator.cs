@@ -105,8 +105,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
 
     return [.. modelType.GetMembers()
         .OfType<IPropertySymbol>()
-        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
-        .Where(p => scopePropertyNames.Contains(p.Name))
+        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic && scopePropertyNames.Contains(p.Name))
         .Select(p => p.Name)];
   }
 

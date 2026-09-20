@@ -330,6 +330,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static PropertyInfo[] _mergeSagaEventProperties(SagaEventShape shape, PropertyInfo[] baseProperties) {
     // Enumerable.Reverse, spelled out: the instance-method form would bind to Array.Reverse and
     // reorder the shared static shape table in place.
+    //
+    // RCS1196 ("call extension method as instance method") rewrites this to
+    // shape.Properties.Reverse() and is wrong here for exactly the reason above. It is disabled
+    // rather than merely reverted because an automated sweep reapplies it on every run: this time
+    // the receiver was an array so it failed loudly as CS0023 (Array.Reverse returns void), but on
+    // a List<T> the same rewrite compiles and silently reorders shared state.
+#pragma warning disable RCS1196
     var declared = Enumerable.Reverse(shape.Properties)
         .Select(p => new PropertyInfo(
             Name: p.Name,
@@ -338,6 +345,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             IsInitOnly: false,
             CanWrite: true))
         .ToArray();
+#pragma warning restore RCS1196
 
     var declaredNames = new HashSet<string>(declared.Select(p => p.Name), StringComparer.Ordinal);
     return [.. baseProperties.Where(p => !declaredNames.Contains(p.Name)), .. declared];
@@ -484,11 +492,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // This handles the case where TModel is a plain record with no base types/attributes
       // that would otherwise be filtered out by the syntactic predicate
       var perspectiveModelInfo = _extractPerspectiveModelFromPerspectiveClass(typeSymbol);
-      if (perspectiveModelInfo is not null) {
-        return perspectiveModelInfo;
-      }
-
-      return null;
+      return perspectiveModelInfo;
     }
 
     var fullyQualifiedName = TypeNameUtilities.FullyQualified(typeSymbol);
@@ -2423,8 +2427,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var converters = allTypes
         .SelectMany(type => type.Properties)
-        .Where(property => !_isPrimitiveOrFrameworkType(property.Type))
-        .Where(property => _extractElementType(property.Type) == null)
+        .Where(property => !_isPrimitiveOrFrameworkType(property.Type) && _extractElementType(property.Type) == null)
         .Select(property => {
           // Extract simple type name from fully qualified name
           // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
@@ -3721,7 +3724,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _isConcretePublicType(string typeName, Compilation compilation) {
     var symbol = _tryGetTypeSymbolByName(typeName, compilation);
-    return symbol is not null && !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
+    return symbol?.IsAbstract == false && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>
