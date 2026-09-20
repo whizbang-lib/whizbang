@@ -63,7 +63,9 @@ jobs:
         run: dotnet tool install -g roslynator.dotnet.cli --version 0.12.0
 
       - name: Restore
-        run: dotnet restore ${{ inputs.project }}
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: dotnet restore "$PROJECT"
 
       - name: Apply fixes, one diagnostic at a time
         env:
@@ -93,10 +95,14 @@ jobs:
       - name: Build the swept project
         id: verify
         continue-on-error: true
-        run: dotnet build "${{ inputs.project }}" -c Release -v q --nologo
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
 
       - name: Revert const conversions that break TUnit
         if: steps.verify.outcome == 'failure'
+        env:
+          PROJECT: ${{ inputs.project }}
         run: |
           # RCS1118 turns a local into a const, which trips TUnitAssertions0005 wherever that local is
           # then read by an assertion. It is statically detectable — the name appears in an Assert.That
@@ -116,9 +122,13 @@ jobs:
               if touched: p.write_text("\n".join(lines))
           print(f"reverted {n} const declarations")
           PY
-          dotnet build "${{ inputs.project }}" -c Release -v q --nologo
+          dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
 
       - name: Commit and push
+        env:
+          PROJECT: ${{ inputs.project }}
+          DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
         run: |
           set -euo pipefail
           if git diff --quiet; then
@@ -130,25 +140,30 @@ jobs:
           # Explicit -u: staging a directory would sweep the untracked .whizbang generator
           # artifacts that sit inside several test project folders.
           git add -u
-          git commit -m "test(quality): analyzer fixes for $(basename $(dirname '${{ inputs.project }}'))
+          git commit -m "test(quality): analyzer fixes for $(basename "$(dirname "$PROJECT")")
 
           Applied by the Analyzer Sweep workflow, one diagnostic at a time. This project cannot be
           swept on a developer machine: Roslynator's working set scales with project size times
           analyzer count, and here even a single diagnostic exceeded 8 GB locally.
 
-          Diagnostics: ${{ inputs.diagnostics }}
+          Diagnostics: $DIAGS
 
           Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-          git push origin HEAD:"${{ inputs.branch }}"
+          git push origin HEAD:"$BRANCH"
 
       - name: Summary
         if: always()
+        env:
+          PROJECT: ${{ inputs.project }}
+          DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
+          VERIFY: ${{ steps.verify.outcome }}
         run: |
           {
             echo "## Analyzer Sweep"
             echo ""
-            echo "- **Project**: \`${{ inputs.project }}\`"
-            echo "- **Diagnostics**: \`${{ inputs.diagnostics }}\`"
-            echo "- **Branch**: \`${{ inputs.branch }}\`"
-            echo "- **Build after fixes**: ${{ steps.verify.outcome }}"
+            echo "- **Project**: \`$PROJECT\`"
+            echo "- **Diagnostics**: \`$DIAGS\`"
+            echo "- **Branch**: \`$BRANCH\`"
+            echo "- **Build after fixes**: $VERIFY"
           } >> "$GITHUB_STEP_SUMMARY"
