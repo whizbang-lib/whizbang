@@ -28,6 +28,13 @@
 -- same precaution 091 took for fetch_inbox_batch.
 DROP FUNCTION IF EXISTS __SCHEMA__.fetch_outbox_batch(UUID[], UUID, INTEGER);
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('fetch_outbox_batch');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_outbox_batch(
   p_stream_ids UUID[],
   p_instance_id UUID,

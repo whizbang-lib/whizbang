@@ -20,12 +20,19 @@ public class ClaimWorkOutstandingCoalesceTests : EFCoreTestBase {
   private static async Task _seedLeasedInboxAsync(NpgsqlConnection conn, Guid instanceId, int rows) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number, instance_id, lease_expiry, failure_reason)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 1,
-             NOW(), gen_random_uuid(), 0, @inst, NOW() + INTERVAL '5 minutes', 99
-      FROM generate_series(1, @n)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW(), gen_random_uuid()
+        FROM generate_series(1, @n)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 1,
+             0, @inst, NOW() + INTERVAL '5 minutes', 99
+      FROM m";
     ins.Parameters.AddWithValue("inst", instanceId);
     ins.Parameters.AddWithValue("n", rows);
     await ins.ExecuteNonQueryAsync();

@@ -300,11 +300,21 @@ public class GovernanceInteractionTests {
 
   [Test]
   public async Task CleanupRunsOnceTheWidthControlsHaveReleasedEverythingAsync() {
-    var housekeeping = new HousekeepingCoordinator();
+    // The production defaults, deliberately: the settled dwell is exactly the mechanism that could
+    // turn "cleanup waits for quiet" into "cleanup never runs", so pinning it to zero here would pass
+    // while dodging the question this case exists to answer.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+      new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var settings = new HousekeepingCoordinator.Settings();
+    var housekeeping = new HousekeepingCoordinator(settings, clock);
+    var empty = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
 
-    var decision = housekeeping.TryBegin(
-      HousekeepingCoordinator.Activity.Maintenance,
-      new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 });
+    // The first empty reading may be a trough between bursts; the pipeline has genuinely emptied once
+    // it has stayed empty for the dwell.
+    housekeeping.Observe(empty);
+    clock.Advance(settings.SettledCooldown);
+
+    var decision = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, empty);
 
     await Assert.That(decision.Granted).IsTrue()
       .Because("the composition must still resolve to 'run' when the pipeline genuinely empties, "

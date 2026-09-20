@@ -72,8 +72,13 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     await using var cmd = new NpgsqlCommand("""
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at)
-      VALUES (@messageId, 'TestHandler', 'TestType', '{}'::jsonb, '{}'::jsonb, 1, 0, NOW())
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at)
+        VALUES (@messageId, 'TestHandler', 'TestType', '{}'::jsonb, '{}'::jsonb, NOW())
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0 FROM m
       """, connection);
     cmd.Parameters.AddWithValue("messageId", Guid.CreateVersion7());
     await cmd.ExecuteNonQueryAsync();

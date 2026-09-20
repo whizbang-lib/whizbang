@@ -130,12 +130,19 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       SELECT gen_random_uuid(), 'topic', 'TestEvent', jsonb_build_object('pad', repeat('x', 1500)), '{{}}',
              0, 0, NOW(), gen_random_uuid(), 0, @holder, {lease}
       FROM generate_series(1, @n);
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, instance_id, lease_expiry)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', jsonb_build_object('pad', repeat('x', 1500)), '{{}}',
-             0, 0, NOW(), gen_random_uuid(), 0, @holder, {lease}
-      FROM generate_series(1, @n);
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', jsonb_build_object('pad', repeat('x', 1500)), '{{}}',
+               NOW(), gen_random_uuid()
+        FROM generate_series(1, @n)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 0, 0, 0, @holder, {lease}
+      FROM m;
       INSERT INTO wh_perspective_events
         (stream_id, perspective_name, event_id, status, attempts, created_at, instance_id, lease_expiry)
       SELECT gen_random_uuid(), 'TestPerspective', gen_random_uuid(), 0, 0, NOW(), @holder, {lease}
@@ -317,15 +324,23 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       ),
       inserted AS (
         INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, is_event, priority)
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event, priority)
         SELECT rows.message_id, 'TestHandler', 'TestEvent',
                jsonb_build_object('pad', repeat('x', 1500)), '{}',
-               0, 1, NOW() - (rows.ordinal * INTERVAL '1 millisecond') + (rows.seq * INTERVAL '1 microsecond'),
-               rows.stream_id, rows.ordinal % 10, @holder, NOW() + INTERVAL '5 minutes', TRUE,
+               NOW() - (rows.ordinal * INTERVAL '1 millisecond') + (rows.seq * INTERVAL '1 microsecond'),
+               rows.stream_id, TRUE,
                CASE rows.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
         FROM rows
-        RETURNING message_id, stream_id, received_at
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      ),
+      state AS (
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry)
+        SELECT i.message_id, i.stream_id, i.received_at, i.priority, i.is_event, 0, 1,
+               rows.ordinal % 10, @holder, NOW() + INTERVAL '5 minutes'
+        FROM inserted i JOIN rows ON rows.message_id = i.message_id
       )
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
@@ -556,16 +571,22 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       -- and leaving it work to do on every poll would price the window by the fill instead.
       WITH inserted AS (
         INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, is_event, priority, chain_emitted_at)
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event, priority)
         SELECT gen_random_uuid(), 'TestHandler', 'TestEvent',
                jsonb_build_object('pad', repeat('x', 1500)), '{}',
-               0, 0, NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
-               st.stream_id, compute_partition(st.stream_id), st.holder,
-               CASE WHEN st.holder IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END,
-               (st.ordinal % 4) <> 0, st.priority, NOW()
+               NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
+               st.stream_id, (st.ordinal % 4) <> 0, st.priority
         FROM _import_streams st CROSS JOIN generate_series(1, @per_stream) r
-        RETURNING message_id, stream_id, received_at, is_event)
+        RETURNING message_id, stream_id, received_at, priority, is_event),
+      state AS (
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, chain_emitted_at)
+        SELECT i.message_id, i.stream_id, i.received_at, i.priority, i.is_event, 0, 0,
+               compute_partition(i.stream_id), st.holder,
+               CASE WHEN st.holder IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END, NOW()
+        FROM inserted i JOIN _import_streams st ON st.stream_id = i.stream_id)
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at,
          commit_sequence)
@@ -607,8 +628,8 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       WHERE message_id IN (SELECT message_id FROM wh_outbox
                            WHERE processed_at IS NULL AND instance_id = @id
                            ORDER BY created_at LIMIT @n);
-      UPDATE wh_inbox SET processed_at = NOW()
-      WHERE message_id IN (SELECT message_id FROM wh_inbox
+      UPDATE wh_inbox_state SET processed_at = NOW()
+      WHERE message_id IN (SELECT message_id FROM wh_inbox_state
                            WHERE processed_at IS NULL AND instance_id = @id
                            ORDER BY received_at LIMIT @n);
       UPDATE wh_perspective_events SET processed_at = NOW()

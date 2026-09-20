@@ -53,19 +53,26 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
-      entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
-      entity.Property(e => e.Attempts).HasColumnName("attempts");
-      entity.Property(e => e.Error).HasColumnName("error");
       entity.Property(e => e.ReceivedAt).HasColumnName("received_at").IsRequired();
-      entity.Property(e => e.ProcessedAt).HasColumnName("processed_at");
-      entity.Property(e => e.InstanceId).HasColumnName("instance_id");
-      entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
       entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID);
-      entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
-      entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
-      entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
 
-      entity.HasIndex(e => e.StatusFlags);
+      // 162: the work-state columns moved to wh_inbox_state, so this entity must stop claiming
+      // them or the model describes a shape the database does not have. They are ignored rather
+      // than removed from InboxRecord, which is a public type: the record still carries them for
+      // callers that build one, and EF simply does not map them. Nothing queries this entity
+      // through EF today (there is no DbSet<InboxRecord> and no Set<InboxRecord>() anywhere) so
+      // this is a correctness repair to a declaration rather than a change to a live read path,
+      // and it is made so the declaration cannot mislead the next reader.
+      entity.Ignore(e => e.StatusFlags);
+      entity.Ignore(e => e.Attempts);
+      entity.Ignore(e => e.Error);
+      entity.Ignore(e => e.ProcessedAt);
+      entity.Ignore(e => e.InstanceId);
+      entity.Ignore(e => e.LeaseExpiry);
+      entity.Ignore(e => e.PartitionNumber);
+      entity.Ignore(e => e.FailureReason);
+      entity.Ignore(e => e.ScheduledFor);
+
       entity.HasIndex(e => e.ReceivedAt);
     });
   }

@@ -347,7 +347,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(
-      "UPDATE wh_inbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
     var rows = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
@@ -369,7 +369,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(@"
-      UPDATE wh_inbox
+      UPDATE wh_inbox_state
       SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', error = 'handler blew up'
       WHERE message_id = @m",
       new { i = instanceId, m = msgId });
@@ -787,11 +787,17 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(@"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, scheduled_for)
-      VALUES (@mid, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 0, 1, NOW() - INTERVAL '2 minutes',
-              @sid, 0, TRUE, NOW() - INTERVAL '1 minute')",
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        VALUES (@mid, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, NOW() - INTERVAL '2 minutes',
+                @sid, TRUE)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, scheduled_for)
+      SELECT message_id, stream_id, received_at, priority, is_event, 0, 1, 0, NOW() - INTERVAL '1 minute' FROM m",
       new { mid = (Guid)TrackedGuid.NewMedo(), sid = (Guid)TrackedGuid.NewMedo() });
 
     var n = await c.NotifyScheduledRetryDueAsync();

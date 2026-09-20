@@ -10,27 +10,62 @@ CREATE INDEX IF NOT EXISTS idx_outbox_unprocessed_claiming
 ON __SCHEMA__.wh_outbox (partition_number, instance_id, lease_expiry)
 WHERE processed_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_unprocessed_claiming
-ON __SCHEMA__.wh_inbox (partition_number, instance_id, lease_expiry)
-WHERE processed_at IS NULL;
+-- 162 moves instance_id, lease_expiry, partition_number, processed_at to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_unprocessed_claiming
+    ON __SCHEMA__.wh_inbox (partition_number, instance_id, lease_expiry)
+    WHERE processed_at IS NULL;
+  END IF;
+END $$;
 
--- Stream-pending indexes: support NOT EXISTS ordering subqueries in claim functions
-CREATE INDEX IF NOT EXISTS idx_outbox_stream_pending
-ON __SCHEMA__.wh_outbox (stream_id)
-WHERE (status & 4) != 4;
+-- The outbox half of this pair is gone. It was partial on "(status & 4) != 4", and once the outbox
+-- moved to processed_at no query could reach it: a planner proves partial-index applicability
+-- textually, and "processed_at IS NULL" implies nothing about a status bit. 160 measured exactly
+-- that, named this index as the one the emptiness probe could not use, and added
+-- idx_outbox_stream_unpublished beside it -- so this one has been unreachable and still maintained
+-- on every outbox write since. 164 drops it where it already landed.
 
-CREATE INDEX IF NOT EXISTS idx_inbox_stream_pending
-ON __SCHEMA__.wh_inbox (stream_id)
-WHERE (status & 2) != 2;
+-- 162 moves status to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'status' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_stream_pending
+    ON __SCHEMA__.wh_inbox (stream_id)
+    WHERE (status & 2) != 2;
+  END IF;
+END $$;
 
 -- Instance ID indexes: support Phase 7 return queries filtering on instance_id
 CREATE INDEX IF NOT EXISTS idx_outbox_instance_id
 ON __SCHEMA__.wh_outbox (instance_id)
 WHERE instance_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_instance_id
-ON __SCHEMA__.wh_inbox (instance_id)
-WHERE instance_id IS NOT NULL;
+-- 162 moves instance_id to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'instance_id' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_instance_id
+    ON __SCHEMA__.wh_inbox (instance_id)
+    WHERE instance_id IS NOT NULL;
+  END IF;
+END $$;
 
 -- Receptor claiming index: support receptor return + claim_orphaned_receptor_work queries
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_claim
@@ -43,9 +78,20 @@ CREATE INDEX IF NOT EXISTS idx_outbox_stream_blocked
 ON __SCHEMA__.wh_outbox (stream_id, created_at)
 WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_stream_blocked
-ON __SCHEMA__.wh_inbox (stream_id, received_at)
-WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
+-- 162 moves processed_at, scheduled_for to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_stream_blocked
+    ON __SCHEMA__.wh_inbox (stream_id, received_at)
+    WHERE processed_at IS NULL AND scheduled_for IS NOT NULL;
+  END IF;
+END $$;
 
 -- Perspective events processed index: support cleanup/anti-join queries
 CREATE INDEX IF NOT EXISTS idx_perspective_events_processed

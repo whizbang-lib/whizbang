@@ -233,7 +233,7 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
     // store_inbox_messages stores UNLEASED (immediately claimable); lease it to this instance — as
     // claim_orphaned_inbox does in production — so the inbox emit chain's scan picks it up.
     await using (var lease = connection.CreateCommand()) {
-      lease.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
       lease.Parameters.AddWithValue("inst", instanceId);
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();

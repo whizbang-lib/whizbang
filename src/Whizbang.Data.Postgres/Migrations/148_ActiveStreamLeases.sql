@@ -16,6 +16,13 @@
 -- Objects: claim_orphaned_inbox, claim_orphaned_outbox, claim_orphaned_perspective_events, renew_leases
 -- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
+
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_inbox: last word 145_BoundedAcquisitionRewrite.sql, plus the stream lease.
 -- ---------------------------------------------------------------------------------------------
@@ -378,6 +385,13 @@ COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox(UUID, INTEGER, INTEGER, TIME
   'rationale, 138 for the total order). 145: ownership is decided per stream from two hashed sets built once per '
   'call 148: pinning a stream leases it (lease_expiry = p_lease_expiry) and the owner''s renewal renews it, so the stream-level guards are live (#731).';
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_outbox');
+
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_outbox: last word 115_TagBoundCoalescing.sql, plus the stream lease.
 -- ---------------------------------------------------------------------------------------------
@@ -557,6 +571,13 @@ COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox(UUID, INTEGER, INTEGER, TIM
   'Acquires unowned/abandoned pending outbox rows for an instance (see 024 for the ownership rationale, 115 for the '
   'coalesce-aware selection). 148: pinning a stream leases it (lease_expiry = p_lease_expiry) and the owner''s renewal '
   'renews it, so the stream-level guards are live (#731).';
+
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_perspective_events');
 
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_perspective_events: last word 140_LockFreeDoorbellProbes.sql, plus the stream lease.

@@ -27,13 +27,21 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid instanceId, int streams, int attempts, string ageOffset) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number, instance_id, lease_expiry)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, @attempts,
-             NOW() + @age::interval + (s * INTERVAL '1 millisecond'), gen_random_uuid(), 0,
-             @inst, NOW() + INTERVAL '5 minutes'
-      FROM generate_series(1, @n) AS s";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata,
+           received_at, stream_id)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}',
+               NOW() + @age::interval + (s * INTERVAL '1 millisecond'), gen_random_uuid()
+        FROM generate_series(1, @n) AS s
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, partition_number, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, @attempts, 0, @inst, NOW() + INTERVAL '5 minutes'
+      FROM m";
     ins.Parameters.AddWithValue("inst", instanceId);
     ins.Parameters.AddWithValue("n", streams);
     ins.Parameters.AddWithValue("attempts", attempts);
@@ -48,7 +56,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     foreach (var streamId in batch.InboxStreamIds) {
       await using var q = conn.CreateCommand();
       // Head row's attempts — the class the stream claims under.
-      q.CommandText = "SELECT attempts FROM wh_inbox WHERE stream_id = @id ORDER BY received_at LIMIT 1";
+      q.CommandText = "SELECT attempts FROM wh_inbox_state WHERE stream_id = @id ORDER BY received_at LIMIT 1";
       q.Parameters.AddWithValue("id", streamId);
       var attempts = (int)(await q.ExecuteScalarAsync() ?? 0);
       if (attempts == 0) { fresh++; } else { retry++; }
@@ -141,14 +149,25 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     // as retry, and the fresh row must not be claimable ahead of its own head.
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-           received_at, stream_id, partition_number, instance_id, lease_expiry)
-        VALUES
-          (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 2,
-           NOW() - INTERVAL '1 hour', @sid, 0, @inst, NOW() + INTERVAL '5 minutes'),
-          (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0,
-           NOW(), @sid, 0, @inst, NOW() + INTERVAL '5 minutes')";
+        WITH src (message_id, received_at, attempts) AS (
+          VALUES
+            (gen_random_uuid(), NOW() - INTERVAL '1 hour', 2),
+            (gen_random_uuid(), NOW(), 0)
+        ),
+        m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata,
+             received_at, stream_id)
+          SELECT message_id, 'TestHandler', 'TestEvent', '{}', '{}', received_at, @sid
+          FROM src
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, partition_number, instance_id, lease_expiry)
+        SELECT m.message_id, m.stream_id, m.received_at, m.priority, m.is_event,
+               1, src.attempts, 0, @inst, NOW() + INTERVAL '5 minutes'
+        FROM m JOIN src USING (message_id)";
       ins.Parameters.AddWithValue("sid", streamId);
       ins.Parameters.AddWithValue("inst", instanceId);
       await ins.ExecuteNonQueryAsync();
@@ -167,13 +186,21 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     var streamId = Guid.NewGuid();
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number, instance_id, lease_expiry)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0,
-             NOW() + @age::interval + (s * INTERVAL '1 millisecond'), @stream, 0,
-             @inst, CASE WHEN @inst IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END
-      FROM generate_series(1, @n) AS s";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata,
+           received_at, stream_id)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}',
+               NOW() + @age::interval + (s * INTERVAL '1 millisecond'), @stream
+        FROM generate_series(1, @n) AS s
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, partition_number, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, 0, 0, @inst, CASE WHEN @inst IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END
+      FROM m";
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.Add(new NpgsqlParameter("inst", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)instanceId ?? DBNull.Value });
     ins.Parameters.AddWithValue("n", rows);

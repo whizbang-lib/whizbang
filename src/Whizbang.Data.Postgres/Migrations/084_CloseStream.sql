@@ -20,6 +20,13 @@
 -- Dependencies: 046 (wh_event_store.version), 009 (wh_perspective_events), 032 (wh_settings/debug_mode),
 --               072/077 (wh_event_body)
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('close_stream');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.close_stream(p_stream_id UUID, p_through_version BIGINT)
 RETURNS TABLE(close_status TEXT, events_truncated BIGINT) AS $$
 DECLARE

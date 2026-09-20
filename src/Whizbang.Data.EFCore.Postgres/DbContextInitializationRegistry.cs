@@ -90,12 +90,24 @@ public static class DbContextInitializationRegistry {
       DbContextInitializationLog.StartingInitialization(logger, count);
     }
 
-    foreach (var initializer in initializersCopy) {
-      var dbContextName = initializer.DbContextType.Name;
-      if (logger is not null) {
-        DbContextInitializationLog.InitializingDbContext(logger, dbContextName);
+    try {
+      foreach (var initializer in initializersCopy) {
+        var dbContextName = initializer.DbContextType.Name;
+        if (logger is not null) {
+          DbContextInitializationLog.InitializingDbContext(logger, dbContextName);
+        }
+        await initializer.Callback(serviceProvider, logger, cancellationToken);
       }
-      await initializer.Callback(serviceProvider, logger, cancellationToken);
+    } catch {
+      // The flag is claimed BEFORE the callbacks run so two concurrent callers cannot both
+      // initialize, but a FAILED attempt must not keep it: the caller's retry loop treats this
+      // method returning as success and opens the schema-ready gate on the strength of it. Left
+      // latched, the next attempt takes the "already initialized" exit above, returns having done
+      // nothing, and the gate opens over a database whose migration threw — which is how a service
+      // came up reporting "recovered", a release behind, its workers querying a table the failed
+      // migration was supposed to create. Releasing the claim makes the retry a real retry.
+      Volatile.Write(ref state.Done, 0);
+      throw;
     }
 
     if (logger is not null) {

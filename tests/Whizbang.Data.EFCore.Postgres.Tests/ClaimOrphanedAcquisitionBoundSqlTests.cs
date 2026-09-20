@@ -48,12 +48,19 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
     // Distinct stream ids: same-stream rows would collapse onto one active-streams owner and could
     // mask an unbounded claim behind per-stream ordering rather than the row bound under test.
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW() - (g || ' seconds')::INTERVAL,
-             gen_random_uuid(), 0, NULL, NULL, NULL, 99
-      FROM generate_series(1, @n) AS g";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW() - (g || ' seconds')::INTERVAL,
+               gen_random_uuid()
+        FROM generate_series(1, @n) AS g
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, 0, NULL, NULL, NULL, 99
+      FROM m";
     ins.Parameters.AddWithValue("n", count);
     await ins.ExecuteNonQueryAsync();
   }
@@ -72,7 +79,7 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
   private static async Task<int> _leasedCountAsync(NpgsqlConnection conn, Guid instanceId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-      SELECT count(*) FROM wh_inbox
+      SELECT count(*) FROM wh_inbox_state
       WHERE instance_id = @inst AND processed_at IS NULL AND lease_expiry > NOW()";
     cmd.Parameters.AddWithValue("inst", instanceId);
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
@@ -152,7 +159,7 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
     }
 
     await using var count = conn.CreateCommand();
-    count.CommandText = "SELECT count(*) FROM wh_inbox WHERE attempts > 0";
+    count.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE attempts > 0";
     var charged = Convert.ToInt32(await count.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
 
     await Assert.That(charged).IsLessThanOrEqualTo(LIMIT)

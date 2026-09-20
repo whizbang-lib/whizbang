@@ -56,7 +56,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     var pendingOutbox = await _countAsync(connection,
       "SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
     var pendingInbox = await _countAsync(connection,
-      "SELECT COUNT(*) FROM wh_inbox WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
+      "SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
     await Assert.That(pendingOutbox).IsEqualTo(3L);
     await Assert.That(pendingInbox).IsEqualTo(1L);
   }
@@ -504,14 +504,12 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid? streamId,
       DateTimeOffset? scheduledFor = null, DateTimeOffset? processedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = """
-
+    ins.CommandText = @"
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, scheduled_for, processed_at)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
-              NOW(), @stream, 0, @scheduled, @processed)
-""";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
+              NOW(), @stream, 0, @scheduled, @processed)";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);
     ins.Parameters.Add(new NpgsqlParameter("scheduled", NpgsqlDbType.TimestampTz) { Value = (object?)scheduledFor ?? DBNull.Value });
@@ -523,14 +521,18 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, string messageType, Guid? streamId,
       Guid? instanceId = null, DateTimeOffset? scheduledFor = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = """
-
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number, scheduled_for)
-      VALUES (@msg, 'TestHandler', @type, '{"payload":1}', '{"hop":1}', 1, 0, NOW(),
-              @inst, @lease, @stream, 0, @scheduled)
-""";
+    ins.CommandText = @"
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number, scheduled_for)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @inst::uuid, @lease, 0, @scheduled FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);

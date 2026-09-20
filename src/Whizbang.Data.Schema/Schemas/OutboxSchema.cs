@@ -147,6 +147,11 @@ public static class OutboxSchema {
         DefaultValue: DefaultValue.Integer(150)
       )
     ),
+    // Nothing partial on a status bitmask. The outbox discriminates claimable and completed rows
+    // with processed_at, and a planner cannot reach a "(status & 4) <> 4" index from
+    // "processed_at IS NULL" -- the implication is textual, not arithmetic. Three such indexes were
+    // declared here and reached zero scans through an entire bulk import on a deployed fleet while
+    // being maintained on every write the outbox took. Migration 164 drops them where they landed.
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_outbox_status_created_at",
@@ -162,24 +167,9 @@ public static class OutboxSchema {
         WhereClause: "lease_expiry IS NOT NULL"
       ),
       new IndexDefinition(
-        Name: "idx_outbox_status_lease",
-        Columns: [Columns.STATUS, Columns.LEASE_EXPIRY],
-        WhereClause: "(status & 32768) = 0 AND (status & 4) != 4"
-      ),
-      new IndexDefinition(
-        Name: "idx_outbox_failure_reason",
-        Columns: [Columns.FAILURE_REASON],
-        WhereClause: "(status & 32768) = 32768"
-      ),
-      new IndexDefinition(
         Name: "idx_outbox_scheduled_for",
         Columns: [Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.CREATED_AT],
         WhereClause: "scheduled_for IS NOT NULL"
-      ),
-      new IndexDefinition(
-        Name: "idx_outbox_partition_claiming",
-        Columns: [Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.CREATED_AT],
-        WhereClause: "(status & 4) != 4 AND (status & 32768) = 0"
       ),
       new IndexDefinition(
         Name: "idx_outbox_instance_lease",

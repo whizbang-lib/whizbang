@@ -280,6 +280,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   // initializer), NOT an empty list. So any code that touches the newly-added nested collection on a
   // pre-existing row throws NullReferenceException until the row is rewritten. This is the schema-evolution
   // hazard behind the incident, and it still reproduces on the latest Whizbang / EF Core 10.0.2.
+  // CANARY: the fix is proposed in https://github.com/dotnet/efcore/pull/39014. When an EF Core bump makes this
+  // test go RED (the absent field reads back as [] instead of null), the fix has shipped: remove the workaround
+  // (grep "WORKAROUND(dotnet/efcore#38625)") and flip this assertion to an empty collection.
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   [Test]
   [Timeout(120000)]
@@ -333,8 +336,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     // over an old-shape row throws InvalidOperationException in PrepareToSave because a complex collection
     // materialized as null (here the framework's PerspectiveScope.Extensions). This is NOT a Whizbang code path —
     // Whizbang's upsert (Tests 2/3) avoids it by never load-mutating the tracked graph and excluding Scope from
-    // the UPDATE (ComplexProperty(Scope).IsModified = false). If a future EF/Whizbang release fixes this, flip
-    // this assertion to IsNull() and drop the workaround.
+    // the UPDATE (ComplexProperty(Scope).IsModified = false). CANARY: the fix is proposed in
+    // https://github.com/dotnet/efcore/pull/39014; when an EF Core bump makes this test go RED, flip this assertion
+    // to IsNull() and drop the workaround (grep "WORKAROUND(dotnet/efcore#38625)").
     await Assert.That(saveError).IsNotNull()
       .Because("the underlying EF Core 10.0.2 PrepareToSave null-complex-property defect (the incident's mechanism) must still reproduce on the raw tracked-save path — this test guards that Whizbang's upsert workaround stays load-bearing.");
     await Assert.That(saveError).IsTypeOf<InvalidOperationException>();

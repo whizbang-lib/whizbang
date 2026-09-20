@@ -47,12 +47,21 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
       rows.Add(id);
       await using var ins = conn.CreateCommand();
       ins.CommandText = """
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason, priority)
-        VALUES (@id, 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
-                NOW() - @age + (@seq * INTERVAL '1 second'),
-                @sid, 0, @isEvent, NULL, NULL, NULL, 99, @priority)
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at,
+             stream_id, is_event, priority)
+          VALUES (@id, 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
+                  NOW() - @age + (@seq * INTERVAL '1 second'),
+                  @sid, @isEvent, @priority)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, error, failure_reason)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               0, NULL::uuid, NULL::timestamptz, NULL::text, 99
+        FROM m
         """;
       ins.Parameters.AddWithValue("id", id);
       ins.Parameters.AddWithValue(nameof(age), age);

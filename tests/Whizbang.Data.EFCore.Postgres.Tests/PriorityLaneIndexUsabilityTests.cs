@@ -36,17 +36,25 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   private static async Task _seedEveryBandAsync(NpgsqlConnection conn) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason, priority)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
-             NOW() - (g * INTERVAL '1 second'), gen_random_uuid(), 0, TRUE, NULL, NULL, NULL, 99,
-             CASE g % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
-      FROM generate_series(1, 600) g
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event, priority)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
+               NOW() - (g * INTERVAL '1 second'), gen_random_uuid(), TRUE,
+               CASE g % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
+        FROM generate_series(1, 600) g
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, 0, NULL, NULL, NULL, 99
+      FROM m
       """;
     await ins.ExecuteNonQueryAsync();
     await using var analyze = conn.CreateCommand();
-    analyze.CommandText = "ANALYZE wh_inbox";
+    analyze.CommandText = "ANALYZE wh_inbox, wh_inbox_state";
     await analyze.ExecuteNonQueryAsync();
   }
 
@@ -65,7 +73,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"""
       EXPLAIN SELECT i.stream_id, i.received_at, i.message_id
-      FROM wh_inbox i
+      FROM wh_inbox_state i
       WHERE i.processed_at IS NULL
         AND (i.instance_id IS NULL OR i.lease_expiry < NOW())
         AND (i.scheduled_for IS NULL OR i.scheduled_for <= NOW())
@@ -81,6 +89,48 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// The shape the claim actually issues, not a lane predicate written for the test.
+  /// </summary>
+  /// <remarks>
+  /// Every other case here builds its own <c>priority &gt; 199</c> style predicate and proves the index is usable BY
+  /// THAT QUERY. That is a property of the index, not of the claim, and the two came apart: the claim selects a band
+  /// by comparing a CASE expression to a bucket column joined in from a VALUES list, and Postgres cannot prove
+  /// <c>CASE ... END = b.bucket</c> implies <c>priority &lt;= 99</c> when the bucket is a join column rather than a
+  /// constant. The partial indexes are then unusable, the lanes fall back to scanning the whole pending set once per
+  /// bucket, and the indexes stay on the table costing every claim write and earning nothing. Measured on 300k rows:
+  /// 11,102 buffers and 5,249ms against 5 buffers and under 20ms -- measured with the held-lane index present, the
+  /// only fair comparison, since the old shape reached THAT index and read the whole unowned set per bucket rather
+  /// than reaching no index at all. The deployed fleet showed the three band indexes at zero scans across a whole
+  /// bulk import while the table carried them.
+  /// </remarks>
+  [Test]
+  public async Task TheClaimsLaneSelection_IsWrittenSoAnIndexCanMatchIt_NotAsAComputedBucketAsync() {
+    // Read from the shipped migration, never copied: a copy of the claim's shape is a second shape, and it
+    // passes happily once the real one moves. Identity substitution leaves the corpus verbatim. The bounds
+    // are compared against WorkPriority, so the claim and the framework cannot drift apart.
+    var claim = new Whizbang.Data.Postgres.PostgresMigrationProvider(
+        typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__")
+      .GetMigrations()
+      .Single(m => m.Name.StartsWith("162_", StringComparison.Ordinal)).Sql;
+
+    var start = claim.IndexOf("claimable AS MATERIALIZED", StringComparison.Ordinal);
+    await Assert.That(start).IsGreaterThan(-1)
+      .Because("the CTE this rule is about has to be findable, or the rule asserts nothing.");
+    var cte = claim[start..(start + 4000)];
+
+    await Assert.That(cte).DoesNotContain("= b.bucket")
+      .Because("selecting a band by comparing a CASE expression to a bucket column joined in from a VALUES "
+        + "list is not provable against any partial index predicate, because the bucket is a join column and "
+        + "not a constant. Every band index is then unusable and each lane reads the whole pending set.");
+
+    await Assert.That(cte).Contains($"i.priority <= {_interactiveBandEnd}")
+      .Because("the interactive lane has to name its bound as a literal the planner can match to the index.");
+    await Assert.That(cte).Contains($"i.priority <= {_standardBandEnd}");
+    await Assert.That(cte).Contains($"i.priority > {_standardBandEnd}");
+  }
+
+
+  /// <summary>
   /// The background lane. Its query says "greater than the standard band end" and its index must say the same, or
   /// the index it exists for is never consulted and the lane reads the whole pending set through a broader index.
   /// </summary>
@@ -94,7 +144,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.is_event = TRUE AND i.priority > {_standardBandEnd}",
       "i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_arrival_background")
+    await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_background")
       .Because($"the background lane is where a bulk load's rows sit; an index it cannot use leaves the claim filtering and sorting every pending row. Plan was:\n{plan}");
   }
 
@@ -108,7 +158,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.is_event = TRUE AND i.priority BETWEEN {_interactiveBandEnd + 1} AND {_standardBandEnd}",
       "i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_arrival_standard").Because($"plan was:\n{plan}");
+    await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_standard").Because($"plan was:\n{plan}");
   }
 
   [Test]
@@ -121,7 +171,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.priority <= {_interactiveBandEnd}",
       "i.stream_id, i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_interactive").Because($"plan was:\n{plan}");
+    await Assert.That(plan).Contains("idx_inbox_state_pending_interactive").Because($"plan was:\n{plan}");
   }
 
   /// <summary>
@@ -137,7 +187,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
       SELECT indexname, substring(indexdef from position('WHERE' in indexdef))
-      FROM pg_indexes WHERE tablename = 'wh_inbox' AND indexname LIKE 'idx_inbox_pending_%'
+      FROM pg_indexes WHERE tablename = 'wh_inbox_state' AND indexname LIKE 'idx_inbox_state_pending_%'
       """;
     var predicates = new Dictionary<string, string>(StringComparer.Ordinal);
     await using (var reader = await cmd.ExecuteReaderAsync()) {
@@ -146,11 +196,11 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       }
     }
 
-    await Assert.That(predicates["idx_inbox_pending_arrival_background"]).Contains($"priority > {_standardBandEnd}")
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_background"]).Contains($"priority > {_standardBandEnd}")
       .Because("claim_orphaned_inbox's background lane filters with 'priority > c_standard_band_end'; an index declaring the same set as 'priority >= 200' cannot be matched to it");
-    await Assert.That(predicates["idx_inbox_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
-    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
-    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
+    await Assert.That(predicates["idx_inbox_state_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
   }
 
   /// <summary>

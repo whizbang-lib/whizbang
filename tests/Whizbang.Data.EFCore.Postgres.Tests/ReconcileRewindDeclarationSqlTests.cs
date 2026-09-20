@@ -86,7 +86,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
       while (await r.ReadAsync()) { /* drain */ }
     }
     await using (var lease = conn.CreateCommand()) {
-      lease.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
       lease.Parameters.AddWithValue("inst", instanceId);
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();

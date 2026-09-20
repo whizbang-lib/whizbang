@@ -40,8 +40,11 @@ public static class InboxRedeliveryObservationSql {
     "wh_message_deduplication d LEFT JOIN ";
 
   /// <summary>Tail of the observation query, following the second schema-qualified table name.</summary>
+  // 162: attempts is work state, so the join is to wh_inbox_state. The LEFT join keeps its
+  // meaning exactly: a message with no state row (never stored, or processed and removed with its
+  // state row cascaded) still yields null rather than a fabricated zero.
   public const string OBSERVATION_QUERY_SUFFIX =
-    "wh_inbox i ON i.message_id = d.message_id "
+    "wh_inbox_state i ON i.message_id = d.message_id "
     + "WHERE d.observation_count > 1 AND d.message_id = ANY(@observedIds)";
 #pragma warning restore CA1707
 

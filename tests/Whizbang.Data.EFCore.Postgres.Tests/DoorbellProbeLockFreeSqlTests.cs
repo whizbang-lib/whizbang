@@ -39,7 +39,7 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
 
     // A commit batch completing the stream's only pending row, still uncommitted.
     await using var tx = await holder.BeginTransactionAsync();
-    await _execAsync(holder, "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @m", ("m", first), tx);
+    await _execAsync(holder, "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @m", ("m", first), tx);
 
     await _setStatementTimeoutAsync(prober);
     var second = (Guid)TrackedGuid.NewMedo();
