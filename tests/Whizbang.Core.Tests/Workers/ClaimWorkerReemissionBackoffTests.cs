@@ -16,8 +16,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// Locks <see cref="ClaimWorker"/>'s cadence against a RE-EMITTED work set.
 ///
 /// <para>
-/// <c>claim_work</c>'s eligible CTEs filter <c>instance_id = me AND lease_expiry &gt; NOW() AND
-/// processed_at IS NULL</c>, so every leased-but-uncompleted row is re-emitted on EVERY poll —
+/// <c>claim_work</c>'s eligible CTEs filter <code>instance_id = me AND lease_expiry &gt; NOW() AND
+/// processed_at IS NULL</code>, so every leased-but-uncompleted row is re-emitted on EVERY poll —
 /// deliberately, because the alternative (an in-memory in-flight filter) proved unrecoverable in
 /// production when a drain died before clearing its flag. Emission must therefore stay unconditional.
 /// </para>
