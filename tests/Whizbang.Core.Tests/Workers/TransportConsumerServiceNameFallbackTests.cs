@@ -71,7 +71,7 @@ public class TransportConsumerServiceNameFallbackTests {
 
   private static List<string> _subscriberNames(TransportConsumerOptions options) =>
     [.. options.Destinations
-      .Where(d => d.Metadata is not null && d.Metadata.ContainsKey("SubscriberName"))
+      .Where(d => d.Metadata?.ContainsKey("SubscriberName") == true)
       .Select(d => d.Metadata!["SubscriberName"].GetString() ?? string.Empty)];
 
   [Test]

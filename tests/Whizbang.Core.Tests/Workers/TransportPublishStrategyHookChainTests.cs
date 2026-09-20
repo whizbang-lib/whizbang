@@ -130,7 +130,7 @@ public class TransportPublishStrategyHookChainTests {
     await Assert.That(transport.LastBulkItems!.Count).IsEqualTo(2);
     await Assert.That(transport.LastBulkItems.All(i => i.PreSerializedBytes is not null)).IsTrue()
       .Because("Every item in the batch MUST carry its own pre-serialized bytes — the bulk path is JIT-after-serialize per item, identical contract to single-publish.");
-    await Assert.That(transport.LastBulkItems.All(i => i.PerItemMetadata is not null && i.PerItemMetadata.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY))).IsTrue()
+    await Assert.That(transport.LastBulkItems.All(i => i.PerItemMetadata?.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY) == true)).IsTrue()
       .Because("Per-item whizbang.body-size is the load-bearing observability signal — bulk path MUST stamp it just like single publish.");
   }
 
