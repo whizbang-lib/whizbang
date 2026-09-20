@@ -45,8 +45,7 @@ public class DispatcherSyncModeContractTests {
     //      Making it explicit at the callsite surfaces intent — and prevents a future
     //      refactor from silently flipping a default that callers depend on.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
-      .SingleOrDefault();
+      .SingleOrDefault(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode));
 
     await Assert.That(method).IsNotNull()
       .Because("The W4 LocalInvokeAndSyncAsync<TMessage>(message, SyncMode, CancellationToken) overload MUST exist on IDispatcher.");
@@ -61,8 +60,7 @@ public class DispatcherSyncModeContractTests {
     // The W4 cleanup's core complaint: the timeout-shaped API encourages timing-based defenses
     // where signal-based should be enough. The new method MUST be CT-only.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
-      .Single();
+      .Single(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode));
 
     var hasTimeSpan = method.GetParameters().Any(p => p.ParameterType == typeof(TimeSpan?) || p.ParameterType == typeof(TimeSpan));
     await Assert.That(hasTimeSpan).IsFalse()
@@ -99,8 +97,7 @@ public class DispatcherSyncModeContractTests {
     // target). The old timeout-based methods return Task<SyncResult> — that's part of the
     // legacy surface we're moving away from. Locks the new shape.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
-      .Single();
+      .Single(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode));
 
     await Assert.That(method.ReturnType).IsEqualTo(typeof(ValueTask))
       .Because("The W4 method returns ValueTask (no SyncResult struct — perspective health is observable elsewhere). Consistent with LocalInvokeAsync's ValueTask return.");

@@ -55,7 +55,7 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
       + "a second claim on that entity, and every command would be delivered and handled twice. "
       + "Cross-service duplicates are caught at runtime by the provisioning topology-drift "
       + "check; this rule catches the duplicate registration units visible at build time.",
-    customTags: [WellKnownDiagnosticTags.CompilationEnd]);
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>

@@ -14,18 +14,26 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// Uses the same direct-connection resolution as the claimer and manager.
 /// </summary>
 /// <docs>fundamentals/temporal/pre-fire-hook</docs>
-/// <remarks>Constructor.</remarks>
-public sealed class PgScheduleOccurrenceStore(
-  IOptions<WhizbangNotificationOptions> options,
-  IConfiguration configuration,
-  ILogger<PgScheduleOccurrenceStore> logger,
-  INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null) : IScheduleOccurrenceStore {
-  private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
-  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly ILogger<PgScheduleOccurrenceStore> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+public sealed class PgScheduleOccurrenceStore : IScheduleOccurrenceStore {
+  private readonly WhizbangNotificationOptions _options;
+  private readonly IConfiguration _configuration;
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource;
+  private readonly ILogger<PgScheduleOccurrenceStore> _logger;
+
+  /// <summary>Constructor.</summary>
+  public PgScheduleOccurrenceStore(
+    IOptions<WhizbangNotificationOptions> options,
+    IConfiguration configuration,
+    ILogger<PgScheduleOccurrenceStore> logger,
+    INotificationConnectionStringFallback? connectionStringFallback = null,
+    INotificationDataSource? notificationDataSource = null) {
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _connectionStringFallback = connectionStringFallback;
+    _notificationDataSource = notificationDataSource;
+  }
 
   /// <inheritdoc />
   public async Task DeferAsync(Guid occurrenceId, DateTimeOffset until, CancellationToken cancellationToken = default) {
@@ -36,7 +44,7 @@ public sealed class PgScheduleOccurrenceStore(
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_defer_occurrence(@id, @until)";
     cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = occurrenceId });
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(until), NpgsqlDbType.TimestampTz) { Value = until });
+    cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlDbType.TimestampTz) { Value = until });
     _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
   }
 
@@ -51,8 +59,8 @@ public sealed class PgScheduleOccurrenceStore(
     cmd.CommandText = "SELECT wh_log_schedule_run(@sid, @oid, @status, @note)";
     cmd.Parameters.Add(new NpgsqlParameter("sid", NpgsqlDbType.Uuid) { Value = scheduleId });
     cmd.Parameters.Add(new NpgsqlParameter("oid", NpgsqlDbType.Uuid) { Value = occurrenceId });
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(status), NpgsqlDbType.Smallint) { Value = status });
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(note), NpgsqlDbType.Text) { Value = (object?)note ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Smallint) { Value = status });
+    cmd.Parameters.Add(new NpgsqlParameter("note", NpgsqlDbType.Text) { Value = (object?)note ?? DBNull.Value });
     _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
   }
 

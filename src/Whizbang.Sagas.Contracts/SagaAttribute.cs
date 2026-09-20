@@ -16,12 +16,16 @@ namespace Whizbang.Sagas;
 /// implementation). Consumers with their own event hierarchy supply
 /// it via <see cref="SagaAttribute{TEventBase}"/>.
 /// </remarks>
-/// <remarks>Constructs the attribute with the saga's name.</remarks>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class SagaAttribute(string sagaName) : Attribute {
+public sealed class SagaAttribute : Attribute {
+
+  /// <summary>Constructs the attribute with the saga's name.</summary>
+  public SagaAttribute(string sagaName) {
+    SagaName = sagaName;
+  }
 
   /// <summary>Saga name (matches the value emitted as the <c>SagaName</c> const on the marked class).</summary>
-  public string SagaName { get; } = sagaName;
+  public string SagaName { get; }
 
   /// <summary>When false, the generator omits <c>HookStartedEvent</c> / <c>HookCompletedEvent</c> and stubs the hook factory overrides to throw.</summary>
   public bool IncludeHooks { get; init; } = true;
@@ -43,12 +47,16 @@ public sealed class SagaAttribute(string sagaName) : Attribute {
 /// it and add the <see cref="ISagaEvent"/>-family interface properties
 /// they need.
 /// </typeparam>
-/// <remarks>Constructs the attribute with the saga's name.</remarks>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class SagaAttribute<TEventBase>(string sagaName) : Attribute where TEventBase : class, IEvent {
+public sealed class SagaAttribute<TEventBase> : Attribute where TEventBase : class, IEvent {
+
+  /// <summary>Constructs the attribute with the saga's name.</summary>
+  public SagaAttribute(string sagaName) {
+    SagaName = sagaName;
+  }
 
   /// <summary>Saga name (matches the value emitted as the <c>SagaName</c> const on the marked class).</summary>
-  public string SagaName { get; } = sagaName;
+  public string SagaName { get; }
 
   /// <summary>When false, the generator omits <c>HookStartedEvent</c> / <c>HookCompletedEvent</c> and stubs the hook factory overrides to throw.</summary>
   public bool IncludeHooks { get; init; } = true;

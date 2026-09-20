@@ -557,7 +557,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var now = DateTimeOffset.UtcNow;
     var burstWindow = TimeSpan.FromMinutes(Math.Max(1, options.AuditIntervalMinutes));
-    var (Pages, Last) = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
+    var (Pages, _) = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
       ? seen
       : (Pages: 0, Last: now);
     if (Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {

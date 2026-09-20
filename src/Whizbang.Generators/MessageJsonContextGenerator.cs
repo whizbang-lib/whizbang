@@ -203,7 +203,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var attribute = context.Attributes.FirstOrDefault();
     if (attribute is null) {
-      return [];
+      return ImmutableArray<SagaSynthesizedEvent>.Empty;
     }
 
     var includeHooks = true;
@@ -3155,7 +3155,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return results.Count > 0 ? results.ToImmutable() : default;
+    return results.Count > 0 ? results.ToImmutable() : [];
   }
 
   /// <summary>

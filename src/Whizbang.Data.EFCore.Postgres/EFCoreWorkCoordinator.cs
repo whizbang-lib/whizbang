@@ -4719,7 +4719,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
 #pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streamIds is Guid[] arr ? arr : streamIds.ToArray()
+      Value = streamIds is Guid[] arr ? arr : [.. streamIds]
     });
 #pragma warning restore RCS1130
     cmd.Parameters.Add(new NpgsqlParameter("p_max_attempts", maxAttempts));
@@ -5200,7 +5200,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var param = (Npgsql.NpgsqlParameter)command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = handledTypeNames is string[] arr ? arr : handledTypeNames.ToArray();
+    param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];
     command.Parameters.Add(param);
 
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);

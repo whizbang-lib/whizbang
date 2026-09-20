@@ -167,7 +167,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     var attribute = context.Attributes.FirstOrDefault();
     if (attribute is null) {
-      return [];
+      return ImmutableArray<ReceptorInfo>.Empty;
     }
 
     foreach (var namedArgument in attribute.NamedArguments) {

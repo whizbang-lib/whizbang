@@ -848,7 +848,7 @@ public class ServiceCollectionExtensionsTests {
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.PerspectiveServices = (_, options) => callbackInvoked = true;
+    ServiceRegistrationCallbacks.PerspectiveServices = (_, _) => callbackInvoked = true;
 
     try {
       // Act
