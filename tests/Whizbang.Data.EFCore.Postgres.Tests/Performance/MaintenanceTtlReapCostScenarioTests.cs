@@ -77,7 +77,7 @@ public class MaintenanceTtlReapCostScenarioTests : EFCoreTestBase {
         id UUID PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
         expires_at TIMESTAMPTZ, version INTEGER NOT NULL)");
-      await _execAsync(conn, $@"TRUNCATE {t}");
+      await _execAsync(conn, $"TRUNCATE {t}");
       // Nothing expired: expires_at is NULL on a perspective that declares no lifetime, which is
       // exactly the case the sweep spends all its time proving empty.
       await _execAsync(conn, $@"
