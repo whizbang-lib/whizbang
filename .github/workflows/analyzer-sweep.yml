@@ -78,6 +78,11 @@ jobs:
           DIAGS: ${{ inputs.diagnostics }}
           BRANCH: ${{ inputs.branch }}
         run: |
+          # GitHub runs `run:` under `bash -e`; `set -uo pipefail` does NOT clear that. Without
+          # the `|| true` on the capture below, a rule whose output carries no "N diagnostics
+          # fixed" line makes grep return non-zero, pipefail propagates it, and -e kills the whole
+          # run -- losing every rule after it. That is exactly how the RCS1163 run died silently.
+          set +e
           set -uo pipefail
           # The analyzer assemblies ship inside the Roslynator.Analyzers package the project already
           # references. Roslynator's own Roslyn is older than this repo's, so it cannot run the source
@@ -104,7 +109,7 @@ jobs:
             n=$(roslynator fix "$PROJECT" --supported-diagnostics "$d" -a "$A" \
                   --fix-scope document --batch-size 200 \
                   --ignore-compiler-errors --verbosity minimal 2>&1 \
-                | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1)
+                | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1 || true)
             echo "$d: ${n:-0} fixed"
             if [ -n "${n:-}" ] && [ "$n" -gt 0 ] && ! git diff --quiet; then
               # Build BEFORE committing. Pushing per rule means a run that dies later leaves this
