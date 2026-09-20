@@ -39,7 +39,7 @@ public class InboxMessageFlagsSerializationTests {
     using var doc = JsonDocument.Parse(json);
     var row = doc.RootElement[0];
     await Assert.That(row.TryGetProperty("Flags", out var flags)).IsTrue()
-      .Because($"the store SQL reads elem->>'Flags' — if the key is renamed or omitted the row " +
+      .Because("the store SQL reads elem->>'Flags' — if the key is renamed or omitted the row " +
                $"persists flags=0 silently. Actual JSON: {json[..Math.Min(json.Length, 600)]}");
     var readable = flags.ValueKind == JsonValueKind.Number
       || (flags.ValueKind == JsonValueKind.String && (flags.GetString()?.Contains("Collective", StringComparison.OrdinalIgnoreCase) ?? false));

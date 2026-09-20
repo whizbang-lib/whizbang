@@ -19,8 +19,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// compare incoming events against any cursor, and forwards everything to
 /// <c>RunWithEventsAsync</c>. The runner's own idempotency filter then reads the
 /// persisted <c>metadata.EventId</c> (which IS current) and drops any event whose
-/// id is lexically less than it. The drop is silent — <c>wh_perspective_events
-/// .processed_at</c> gets stamped and the event_work_id is gone forever.
+/// id is lexically less than it. The drop is silent — <code>wh_perspective_events
+/// .processed_at</code> gets stamped and the event_work_id is gone forever.
 ///
 /// The two checks (inversion detector + runner filter) use different truth
 /// sources: the detector consults the in-memory cache; the filter consults the

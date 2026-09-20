@@ -49,8 +49,7 @@ public class AuditOutboxMessageBuilderCoverageTests {
       .IsTrue()
       .Because("silently dropping the audit decision would make a renamed or removed event type "
              + "look exactly like one that was deliberately configured not to be audited");
-    await Assert.That(logger.Entries.Any(e => e.Message is not null
-        && e.Message.Contains("not-a-version", StringComparison.Ordinal))).IsTrue()
+    await Assert.That(logger.Entries.Any(e => e.Message?.Contains("not-a-version", StringComparison.Ordinal) == true)).IsTrue()
       .Because("the log has to name the offending type, or an operator has a warning and no way "
              + "to find which stored row produced it");
   }

@@ -1202,10 +1202,10 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
-    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
-    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
-    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
-    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; } = [];
+    public MessageFailure[] LastOutboxFailures { get; } = [];
+    public MessageFailure[] LastInboxFailures { get; } = [];
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,

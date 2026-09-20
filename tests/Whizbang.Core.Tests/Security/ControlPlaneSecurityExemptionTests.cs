@@ -130,8 +130,7 @@ public class ControlPlaneSecurityExemptionTests {
   public async Task EveryFrameworkMintedComposite_CarriesTheControlPlaneMarkerAsync() {
     var frameworkComposites = typeof(IControlPlaneMessage).Assembly
       .GetTypes()
-      .Where(t => !t.IsAbstract && !t.IsInterface)
-      .Where(t => typeof(ICompositeEvent).IsAssignableFrom(t))
+      .Where(t => !t.IsAbstract && !t.IsInterface && typeof(ICompositeEvent).IsAssignableFrom(t))
       .ToList();
 
     await Assert.That(frameworkComposites).IsNotEmpty()

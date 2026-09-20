@@ -266,7 +266,7 @@ public class HousekeepingCoordinatorTests {
   [Test]
   public async Task TheContainerRegistersItSoTheGateIsOnByDefaultAsync() {
     var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-    Whizbang.Core.Workers.WorkerPipelineExtensions.AddWhizbangWorkers(services);
+    services.AddWhizbangWorkers();
     var provider = services.BuildServiceProvider();
 
     var first = provider.GetService<HousekeepingCoordinator>();

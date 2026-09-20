@@ -14,8 +14,8 @@ namespace Whizbang.Core.Tests.Configuration;
 /// </summary>
 /// <remarks>
 /// Motivation: a production forensic investigation — a consumer's producer wrote a
-/// <c>RemoveUserCommand</c> outbox row with <c>stream_id =
-/// 00000000-0000-0000-0000-000000000000</c> (zero-UUID, not NULL). The C#
+/// <c>RemoveUserCommand</c> outbox row with <code>stream_id =
+/// 00000000-0000-0000-0000-000000000000</code> (zero-UUID, not NULL). The C#
 /// coordinator's <c>r.StreamId ?? r.WorkId</c> fallback only catches NULL; Empty
 /// slipped through and was filtered by the <c>Where(g => g != Guid.Empty)</c>
 /// guard. ClaimWorker bumped attempts every cycle (repeatedly) but never wrote to the

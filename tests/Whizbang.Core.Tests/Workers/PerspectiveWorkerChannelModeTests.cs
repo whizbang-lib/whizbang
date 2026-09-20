@@ -137,7 +137,7 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
     public int ClaimWorkAsyncCallCount { get; private set; }
-    public int CommitHandlerResultCallCount { get; private set; }
+    public int CommitHandlerResultCallCount { get; }
     public int GetStreamEventsCallCount { get; private set; }
     public Guid? LastStreamEventsRequestedFor { get; private set; }
 

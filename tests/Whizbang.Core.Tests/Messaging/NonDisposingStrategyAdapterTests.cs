@@ -200,7 +200,7 @@ public class NonDisposingStrategyAdapterTests {
     public int FlushAsyncCalls { get; private set; }
     public int FlushAndGetBatchCalls { get; private set; }
     public WorkBatchOptions LastFlushFlags { get; private set; }
-    public bool DisposeCalled { get; private set; }
+    public bool DisposeCalled { get; }
     public WorkBatch BatchToReturn { get; } = new() {
       OutboxWork = [],
       InboxWork = [],

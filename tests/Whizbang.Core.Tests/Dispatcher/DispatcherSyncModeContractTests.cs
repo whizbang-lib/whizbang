@@ -45,9 +45,7 @@ public class DispatcherSyncModeContractTests {
     //      Making it explicit at the callsite surfaces intent — and prevents a future
     //      refactor from silently flipping a default that callers depend on.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync")
-      .Where(m => m.GetParameters().Length == 3)
-      .Where(m => m.GetParameters()[1].ParameterType == typeof(SyncMode))
+      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
       .SingleOrDefault();
 
     await Assert.That(method).IsNotNull()
@@ -63,9 +61,7 @@ public class DispatcherSyncModeContractTests {
     // The W4 cleanup's core complaint: the timeout-shaped API encourages timing-based defenses
     // where signal-based should be enough. The new method MUST be CT-only.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync")
-      .Where(m => m.GetParameters().Length == 3)
-      .Where(m => m.GetParameters()[1].ParameterType == typeof(SyncMode))
+      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
       .Single();
 
     var hasTimeSpan = method.GetParameters().Any(p => p.ParameterType == typeof(TimeSpan?) || p.ParameterType == typeof(TimeSpan));
@@ -81,8 +77,7 @@ public class DispatcherSyncModeContractTests {
     // Pin that the timeout-shaped overloads continue to carry [Obsolete] so consumers
     // migrating to the new shape see compiler warnings pointing at it.
     var oldOverloads = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync")
-      .Where(m => m.GetParameters().Any(p => p.ParameterType == typeof(TimeSpan?)))
+      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Any(p => p.ParameterType == typeof(TimeSpan?)))
       .ToList();
 
     await Assert.That(oldOverloads.Count).IsGreaterThanOrEqualTo(3)
@@ -104,9 +99,7 @@ public class DispatcherSyncModeContractTests {
     // target). The old timeout-based methods return Task<SyncResult> — that's part of the
     // legacy surface we're moving away from. Locks the new shape.
     var method = typeof(IDispatcher).GetMethods()
-      .Where(m => m.Name == "LocalInvokeAndSyncAsync")
-      .Where(m => m.GetParameters().Length == 3)
-      .Where(m => m.GetParameters()[1].ParameterType == typeof(SyncMode))
+      .Where(m => m.Name == "LocalInvokeAndSyncAsync" && m.GetParameters().Length == 3 && m.GetParameters()[1].ParameterType == typeof(SyncMode))
       .Single();
 
     await Assert.That(method.ReturnType).IsEqualTo(typeof(ValueTask))
