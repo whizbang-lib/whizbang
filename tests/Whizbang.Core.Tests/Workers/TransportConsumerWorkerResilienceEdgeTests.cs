@@ -194,9 +194,9 @@ public class TransportConsumerWorkerResilienceEdgeTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: routingOptions,
       serviceInstanceProvider: instanceProvider ?? new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: routingOptions);
   }
 
   private static TransportConsumerOptions _oneDestination(string address = "edge-topic") {

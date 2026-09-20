@@ -175,9 +175,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>(),
       serviceInstanceProvider: new StubServiceInstanceProvider(serviceName),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

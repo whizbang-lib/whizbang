@@ -285,8 +285,8 @@ public class StartupReadyCompositeTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: gate);
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");
@@ -314,8 +314,8 @@ public class StartupReadyCompositeTests {
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("servicebus-consumer");

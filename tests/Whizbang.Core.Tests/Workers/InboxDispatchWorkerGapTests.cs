@@ -1250,8 +1250,8 @@ public class InboxDispatchWorkerGapTests {
       logger,
       integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: store,
-      dlqMetrics: metrics,
-      generationProvider: new FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);

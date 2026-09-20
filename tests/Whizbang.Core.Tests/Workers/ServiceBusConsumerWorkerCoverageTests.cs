@@ -47,8 +47,8 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
-      options: workerOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: workerOptions);
 
     // Act & Assert — subscribing happens in the background now (behind the schema gate), so the
     // failure surfaces through SubscriptionsReady rather than StartAsync. A waiter must fault,
@@ -83,8 +83,8 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
-      options: workerOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: workerOptions);
 
     // Act - Start then stop (triggers OperationCanceledException in ExecuteAsync)
     using var cts = new CancellationTokenSource();
@@ -354,9 +354,9 @@ public class ServiceBusConsumerWorkerCoverageTests {
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
-      lifecycleMessageDeserializer: lifecycleMessageDeserializer,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer);
   }
 
   private static MessageEnvelope<JsonElement> _buildJsonEnvelope(MessageId messageId, Guid streamId) {

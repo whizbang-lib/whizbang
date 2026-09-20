@@ -163,14 +163,14 @@ public class ServiceBusConsumerWorkerDropGateTests {
       jsonOptions: jsonOptions,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
       },
       envelopeSerializer: envelopeSerializer,
       receptorRegistry: registry,
       runtimeReceptorRegistry: runtimeRegistry,
-      eventMarkerResolver: eventMarkerResolver,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      eventMarkerResolver: eventMarkerResolver);
 
     return (worker, transport, strategy, sp);
   }

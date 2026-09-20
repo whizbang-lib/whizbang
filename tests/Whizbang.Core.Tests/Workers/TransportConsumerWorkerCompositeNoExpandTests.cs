@@ -139,9 +139,9 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new AlwaysConsumedRegistry(),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new AlwaysConsumedRegistry());
 
     await using (sp) {
       using var cts = new CancellationTokenSource();

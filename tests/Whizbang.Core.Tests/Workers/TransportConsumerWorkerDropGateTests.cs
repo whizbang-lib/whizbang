@@ -148,9 +148,9 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -211,10 +211,10 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: compileTimeRegistry,
-      runtimeReceptorRegistry: runtimeRegistry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: compileTimeRegistry,
+      runtimeReceptorRegistry: runtimeRegistry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -261,9 +261,9 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -330,10 +330,10 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
-      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
+      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

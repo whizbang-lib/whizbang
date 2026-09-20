@@ -79,8 +79,8 @@ public class DispatcherUncoveredPathsTests {
       envelopeRegistry: envelopeRegistry,
       outboxRoutingStrategy: outboxRoutingStrategy,
       streamIdExtractor: streamIdExtractor,
-      scopedEventTracker: scopedEventTracker,
-      receptorRegistry: receptorRegistry) {
+      receptorRegistry: receptorRegistry,
+      scopedEventTracker: scopedEventTracker) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
     private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
     private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;

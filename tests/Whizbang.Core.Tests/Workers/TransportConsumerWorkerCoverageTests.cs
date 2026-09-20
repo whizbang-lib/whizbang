@@ -1298,9 +1298,9 @@ public class TransportConsumerWorkerCoverageTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new CoverageAlwaysConsumedRegistry(),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new CoverageAlwaysConsumedRegistry());
 
     using var cts = new CancellationTokenSource();
     await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
@@ -1360,10 +1360,10 @@ public class TransportConsumerWorkerCoverageTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: logger,
-      receptorRegistry: new CoverageAlwaysConsumedRegistry(),
-      eventMarkerResolver: new Whizbang.Core.EventMarkerResolver(new CoverageEmptyCatalog()),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new CoverageAlwaysConsumedRegistry(),
+      eventMarkerResolver: new Whizbang.Core.EventMarkerResolver(new CoverageEmptyCatalog()));
 
     using var cts = new CancellationTokenSource();
     await _startAndWaitForSubscriptionsAsync(worker, cts.Token);

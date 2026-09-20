@@ -134,10 +134,10 @@ public class TransportConsumerWorkerFlagDerivationTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()));
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
