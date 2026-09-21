@@ -28,7 +28,7 @@ public class LensQueryFactoryTests {
 
     var services = new ServiceCollection();
 
-    services.AddScoped<ILensQuery<TestModel>>(sp => {
+    services.AddScoped<ILensQuery<TestModel>>(_ => {
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModel(expectedModel);
       return mockQuery;

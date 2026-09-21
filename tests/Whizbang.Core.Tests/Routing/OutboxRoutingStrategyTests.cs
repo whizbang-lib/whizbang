@@ -54,7 +54,7 @@ public class OutboxRoutingStrategyTests {
   public async Task DomainTopicOutboxStrategy_GetDestination_WithCustomTopicResolver_UsesResolverAsync() {
     // Arrange
     var strategy = new DomainTopicOutboxStrategy(new NamespaceRoutingStrategy(
-      type => "custom-domain"
+      _ => "custom-domain"
     ));
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
