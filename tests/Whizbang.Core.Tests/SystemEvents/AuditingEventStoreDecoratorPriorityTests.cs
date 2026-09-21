@@ -14,17 +14,23 @@ using Microsoft.Extensions.Configuration;
 namespace Whizbang.Core.Tests.SystemEvents;
 
 /// <summary>
-/// Priority step 1, background work: the audit record the decorator queues is catch-up work nobody waits on. It
-/// declares <see cref="WorkPriority.BACKGROUND"/> by construction, on the row the store reads and on the envelope
-/// the wire carries, whatever number the audited event or the ambient handling carried. A record left at the
-/// standard number sits in the outbox ahead of live work, which is exactly what a flood of them did.
+/// The audit record the decorator queues is work nobody waits on. It declares the audit band by
+/// construction -- the idle band unless the application says otherwise -- on the row the store
+/// reads and on the envelope the wire carries, whatever number the audited event or the ambient
+/// handling carried. A record left at the standard number sits in the outbox ahead of live work,
+/// which is exactly what a flood of them did.
 /// </summary>
-/// <docs>fundamentals/messaging/message-priority#background-work</docs>
+/// <remarks>
+/// The row and the envelope are asserted separately on purpose. They are stamped at three
+/// different places in one method, and a record that travels at one band and lands at another is
+/// the defect this pair of assertions exists to catch.
+/// </remarks>
+/// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
 /// <code-under-test>src/Whizbang.Core/SystemEvents/AuditingEventStoreDecorator.cs</code-under-test>
 [Category("SystemEvents")]
 public class AuditingEventStoreDecoratorPriorityTests {
   [Test]
-  public async Task AppendAsync_WithEnvelope_QueuesTheAuditRecordAsBackground_OnTheRowAndTheEnvelopeAsync() {
+  public async Task AppendAsync_WithEnvelope_QueuesTheAuditRecordOnTheAuditBand_OnTheRowAndTheEnvelopeAsync() {
     var (decorator, channel) = _createDecorator();
     var source = _createTestEnvelope(new _auditedEvent { Name = "interactive-source" });
     source.Priority = WorkPriority.INTERACTIVE;
@@ -32,22 +38,22 @@ public class AuditingEventStoreDecoratorPriorityTests {
     await decorator.AppendAsync(Guid.NewGuid(), source);
 
     var queued = channel.QueuedMessages.Single();
-    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.IDLE)
       .Because("the outbox row's number is what the store keeps and the drain claims by; audit records never compete with the work they describe");
-    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.IDLE)
       .Because("the envelope's number crosses the wire; the consumer's audit projection must arrive declared background");
   }
 
   [Test]
-  public async Task AppendAsync_WithBareMessage_QueuesTheAuditRecordAsBackgroundAsync() {
+  public async Task AppendAsync_WithBareMessage_QueuesTheAuditRecordOnTheAuditBandAsync() {
     var (decorator, channel) = _createDecorator();
 
     await decorator.AppendAsync(Guid.NewGuid(), new _auditedEvent { Name = "bare" });
 
     var queued = channel.QueuedMessages.Single();
-    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.IDLE)
       .Because("the message overload builds its own audit record; both append paths declare the same band");
-    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND);
+    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.IDLE);
   }
 
   [Test]
@@ -63,7 +69,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
   }
 
   [Test]
-  public async Task AppendAsync_InsideAnInteractiveHandling_TheAuditRecordStaysBackgroundAsync() {
+  public async Task AppendAsync_InsideAnInteractiveHandling_TheAuditRecordStaysOnTheAuditBandAsync() {
     var (decorator, channel) = _createDecorator();
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
@@ -71,9 +77,9 @@ public class AuditingEventStoreDecoratorPriorityTests {
     }
 
     var queued = channel.QueuedMessages.Single();
-    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(queued.Priority).IsEqualTo(WorkPriority.IDLE)
       .Because("the decorator builds the record by hand, outside the dispatcher's inheritance; the ambient parent must not leak into it");
-    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND);
+    await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.IDLE);
   }
 
   private static (AuditingEventStoreDecorator Decorator, _captureChannel Channel) _createDecorator() {

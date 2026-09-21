@@ -111,9 +111,11 @@ public static partial class AuditOutboxMessageBuilder {
       Payload = auditJson,
       Hops = sourceHops,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-      // Priority step 1: an audit record is background by construction, whatever number the audited event
-      // carried. It never competes with the work it records, and a digest folded from these is background too.
-      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND
+      // An audit record is written on the audit band, whatever number the audited event carried. It
+      // never competes with the work it records. The band is SystemEventOptions.AuditPriority,
+      // idle by default, and read from there rather than restated so the record, this envelope and
+      // the queue row below cannot disagree about it.
+      Priority = options.AuditPriority
     };
 
     // No floor stamping here: the sliding-ship safety floor (ScheduledFor = now + MaxDelay) and
@@ -131,7 +133,7 @@ public static partial class AuditOutboxMessageBuilder {
         Hops = auditEnvelope.Hops?.ToList() ?? []
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
-      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
+      Priority = options.AuditPriority,
       StreamId = auditEvent.Id,
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
       Scope = eventMessage.Scope,

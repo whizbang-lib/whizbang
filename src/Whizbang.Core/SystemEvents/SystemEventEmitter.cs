@@ -179,7 +179,10 @@ public sealed class SystemEventEmitter(
 
     // Create envelope for the system event
     var envelope = new MessageEnvelope<TSystemEvent> {
-      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
+      // Per type, not one band for all of them. Audit follows SystemEventOptions.AuditPriority,
+      // which is the idle band by default; a security record never does, because the idle band is
+      // withheld exactly when a security record matters most. See SystemEventPriorities.
+      Priority = SystemEventPriorities.For(typeof(TSystemEvent), _options),
       MessageId = MessageId.New(),
       Payload = systemEvent,
       Hops = [

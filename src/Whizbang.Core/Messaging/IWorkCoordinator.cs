@@ -69,9 +69,36 @@ public sealed record ServiceBacklog {
   /// </remarks>
   public long PendingPerspectiveRows { get; init; }
 
-  /// <summary>True when nothing is queued on any work table and no instance holds a live lease.</summary>
+  /// <summary>
+  /// Idle-band rows queued across the work tables (bounded count), counted apart from the three
+  /// figures above rather than included in them.
+  /// </summary>
+  /// <remarks>
+  /// The idle band is drained when the service reads settled, so idle work cannot be allowed to
+  /// make the service read unsettled: a band counted as backlog would hold the gate that exists to
+  /// release it closed, and the work it withheld would never run. Counting it apart is what keeps
+  /// that from being a deadlock. The three counts above therefore mean "work someone is waiting
+  /// for", which is the question every caller of <see cref="IsSettled"/> was already asking.
+  /// </remarks>
+  public long PendingIdleRows { get; init; }
+
+  /// <summary>
+  /// True when no work anyone waits for is queued and no instance holds a live lease. Idle-band
+  /// rows are deliberately not counted; see <see cref="PendingIdleRows"/>.
+  /// </summary>
   public bool IsSettled =>
     UnprocessedInboxRows == 0 && ActiveLeasedRows == 0 && PendingOutboxRows == 0 && PendingPerspectiveRows == 0;
+
+  /// <summary>
+  /// True when the service is settled AND its idle band is empty: nothing is left to run at all.
+  /// </summary>
+  /// <remarks>
+  /// This, not <see cref="IsSettled"/>, is what a maintenance sweep waits for. Settled is the
+  /// signal that admits the idle drain, so a sweep admitted on the same signal would compete with
+  /// the drain it just released for the same backends -- and maintenance is the one caller that
+  /// can afford to wait, because its own deferral budget already bounds how long it will.
+  /// </remarks>
+  public bool IsQuiescent => IsSettled && PendingIdleRows == 0;
 }
 
 

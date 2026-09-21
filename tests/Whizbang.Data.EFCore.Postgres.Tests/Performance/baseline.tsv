@@ -195,3 +195,46 @@ maintenance.ttl_reap.catalog_sweep.tables_scanned_per_cycle	24	tables/cycle		rec
 maintenance.ttl_reap.catalog_sweep.tuples_read_per_cycle	12000	tuples/cycle		recorded, not gated: every row of every table, to prove nothing was expired
 maintenance.ttl_reap.registry.tables_scanned_per_cycle	2	tables/cycle	4	GATED: a design property. The reap reads the registry, so it touches only the perspectives that declare a row lifetime; a return toward 24 is the catalog sweep coming back
 maintenance.ttl_reap.registry.tuples_read_per_cycle	1000	tuples/cycle	3000	GATED: the declaring tables are still read in full, since expires_at is unindexed. The ceiling fails a sweep of the non-declaring ones without pretending the residual scan is free
+
+# --- Outbox claim, an urgent row behind a bulk backlog -----------------------------------------
+# 5,000 bulk rows across 500 streams, all leased by the instance and queued an hour earlier, then
+# one interactive row queued last. Arrival order alone would return the urgent row 5,001st, so it
+# would never be claimed while the backlog lasted -- which is the symptom this fix exists for: a
+# reply someone is waiting for published behind whatever bulk work was queued before it.
+#
+# The corpus rule asserts the ORDER BY exists, which is a property of the text. This measures the
+# OUTCOME, because an ORDER BY can be present and still not be honoured if a plan or an index
+# changes underneath it.
+#
+# The gate is POSITION, and it is a design property: an interactive row is the most urgent thing the
+# instance holds, so it comes first. There is no tolerance to give -- second place means the
+# ordering is in the text and not in the plan.
+#
+# Blocks and scans are RECORDED and NOT gated, deliberately. The cost property -- that a poll is
+# priced by the batch rather than by what the instance holds -- belongs to
+# ClaimWorkPlanShapeTests, which fixes row width and holdings for that purpose and which caught
+# this very change regressing to 1,272 blocks against its 1,200 ceiling on the first attempt. Two
+# ceilings on one property would drift apart, and a ceiling here would be measured against a
+# fixture chosen to demonstrate ordering rather than cost.
+outbox_priority.urgent_row_position	1	position	1	GATED: a design property. An interactive row is the most urgent thing the instance holds; arrival order alone would place it 5001st
+outbox_priority.claim.blocks_per_call	51	blocks/call		recorded, not gated: the cost gate is ClaimWorkPlanShapeTests, which fixes width and holdings for it
+outbox_priority.claim.seq_scans_per_call	1	scans/call		recorded, not gated: same reason
+
+# --- Idle band, busy poll behind a withheld backlog -----------------------------------------
+# 20,000 fresh idle-band rows behind 500 ordinary pending rows, polled as a BUSY service, so not
+# one idle row may be taken. The band adds a fourth bucket and an admission probe to a function
+# every instance calls several times a second; if either reads the band, the feature charges the
+# whole fleet for the size of the backlog it is withholding, and does so more the better it works.
+#
+# The absolute block counts are recorded without a ceiling: they move with page fill and with what
+# the fixture left behind, which is exactly the kind of number this file says not to gate on. The
+# DIFFERENCE between the two polls is a property of the design, and carries the ceiling.
+#
+# Measured: 2 sequential tuples, not 20,000 -- the probe is answered by walking an index to the
+# first qualifying entry. The withheld band cost 125 blocks, against the ~3,700 a poll costs
+# anyway.
+idle_band.busy_poll.blocks_per_call	3838	blocks/call		absolute cost moves with the machine; the delta below is the gate
+idle_band.control_poll.blocks_per_call	3713	blocks/call		the same poll with no idle band at all
+idle_band.busy_poll.seq_scans_per_call	2	scans/call	10	a sequential scan of wh_inbox_state on the claim path is a plan defect on any machine
+idle_band.busy_poll.seq_tuples_per_call	2	tuples/call	500	THE gate here, verified to fire: reverting the probe to MAX(an expression) read 20,502 and failed the run
+idle_band.withheld_backlog.extra_blocks_per_call	125	blocks/call	800	what a withheld band of 20,000 rows adds to a poll refusing to touch it; a loose backstop only -- the same regression reached 398 and stayed under it, which is why the tuple count above is the real gate
