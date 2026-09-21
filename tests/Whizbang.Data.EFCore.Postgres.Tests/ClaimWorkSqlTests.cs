@@ -63,11 +63,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     var args = (string?)await command.ExecuteScalarAsync();
 
     await Assert.That(args).IsNotNull();
-    await Assert.That(args!).Contains("p_instance_id uuid");
-    await Assert.That(args!).Contains("p_service_name text");
-    await Assert.That(args!).Contains("p_max_streams integer");
-    await Assert.That(args!).Contains("p_partition_count integer");
-    await Assert.That(args!).Contains("p_lease_seconds integer");
+    await Assert.That(args).Contains("p_instance_id uuid");
+    await Assert.That(args).Contains("p_service_name text");
+    await Assert.That(args).Contains("p_max_streams integer");
+    await Assert.That(args).Contains("p_partition_count integer");
+    await Assert.That(args).Contains("p_lease_seconds integer");
   }
 
   /// <summary>
@@ -993,12 +993,13 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await using var ins = connection.CreateCommand();
       // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
       // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
-      ins.CommandText = @"
+      ins.CommandText = """
+
         WITH m AS (
           INSERT INTO wh_inbox
             (message_id, handler_name, message_type, event_data, metadata, scope,
              stream_id, is_event, received_at)
-          VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
+          VALUES (@msg, 'TestHandler', 'Test', '{"p": {}}'::jsonb, '{}'::jsonb, NULL,
                   @stream, true, NOW())
           RETURNING message_id, stream_id, received_at, priority, is_event
         )
@@ -1007,7 +1008,8 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
            instance_id, lease_expiry, processed_at, status, attempts, partition_number)
         SELECT message_id, stream_id, received_at, priority, is_event,
                NULL::uuid, NULL::timestamptz, NULL::timestamptz,
-               0, 0, 1 FROM m";
+               0, 0, 1 FROM m
+""";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();

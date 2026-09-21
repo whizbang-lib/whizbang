@@ -53,7 +53,7 @@ public sealed class NotifySubscriptionRegistry {
   /// </summary>
   public bool Remove(INotifySubscription subscription) {
     ArgumentNullException.ThrowIfNull(subscription);
-    var wasLast = false;
+    const bool wasLast = false;
     while (_byChannel.TryGetValue(subscription.ChannelName, out var existing)) {
       var idx = existing.IndexOf(subscription);
       if (idx < 0) {

@@ -78,7 +78,13 @@ internal static class NpgsqlTestExtensions {
     if (result is T typed) {
       return typed;
     }
+    // The null-forgiving operator is load-bearing here. ExecuteScalarAsync returns object?,
+    // the `is T typed` test above does not narrow it on this path, and Convert.ChangeType's
+    // first parameter is non-nullable, so removing it is CS8600 plus CS8603. RCS1249 judges it
+    // unnecessary and strips it on every sweep, hence the fence rather than a bare revert.
+#pragma warning disable RCS1249
     return (T)Convert.ChangeType(result!, typeof(T), CultureInfo.InvariantCulture);
+#pragma warning restore RCS1249
   }
 
   /// <summary>

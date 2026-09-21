@@ -55,12 +55,14 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     }
 
     await using (var ins = conn.CreateCommand()) {
-      ins.CommandText = @"
+      ins.CommandText = """
+
         INSERT INTO wh_outbox
           (message_id, destination, message_type, envelope_type, event_data, metadata, scope, status, attempts,
            created_at, stream_id, partition_number, instance_id, lease_expiry, is_event)
-        VALUES (@msg, 'topic-x', 'MyType', 'MyEnvelope', '{""p"":1}', '{""h"":1}', '{""t"":""tenant""}',
-                3, 0, NOW(), @stream, 7, @inst, NOW() + INTERVAL '5 minutes', true)";
+        VALUES (@msg, 'topic-x', 'MyType', 'MyEnvelope', '{"p":1}', '{"h":1}', '{"t":"tenant"}',
+                3, 0, NOW(), @stream, 7, @inst, NOW() + INTERVAL '5 minutes', true)
+""";
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("inst", instanceId);
@@ -118,12 +120,13 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     }
 
     await using (var ins = conn.CreateCommand()) {
-      ins.CommandText = @"
+      ins.CommandText = """
+
         WITH m AS (
           INSERT INTO wh_inbox
             (message_id, handler_name, message_type, event_data, metadata, scope, received_at,
              stream_id, is_event)
-          VALUES (@msg, 'MyHandler', 'MyType', '{""p"":1}', '{""h"":1}', '{""t"":""tenant""}',
+          VALUES (@msg, 'MyHandler', 'MyType', '{"p":1}', '{"h":1}', '{"t":"tenant"}',
                   NOW(), @stream, true)
           RETURNING message_id, stream_id, received_at, priority, is_event
         )
@@ -131,7 +134,8 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
           (message_id, stream_id, received_at, priority, is_event,
            status, attempts, instance_id, lease_expiry, partition_number)
         SELECT message_id, stream_id, received_at, priority, is_event,
-               3, 0, @inst, NOW() + INTERVAL '5 minutes', 9 FROM m";
+               3, 0, @inst, NOW() + INTERVAL '5 minutes', 9 FROM m
+""";
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("inst", instanceId);

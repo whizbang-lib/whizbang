@@ -134,7 +134,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // signal types. They run alongside NOTIFY: when the push transport is healthy the poll adds
     // latency-relaxed correctness checks; when NOTIFY is unavailable they carry the wake load.
     // TimeProvider is resolved from DI so tests can inject a FakeTimeProvider.
-    services.TryAddSingleton<TimeProvider>(sp => TimeProvider.System);
+    services.TryAddSingleton<TimeProvider>(_ => TimeProvider.System);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
