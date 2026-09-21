@@ -96,6 +96,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Audit records are now written on the idle band by default, not the background band.** Audit is
+  durable rather than real-time, it is most of what a bulk load generates, and it is read days
+  later if at all -- so it no longer competes with the work a person is waiting on. The idle band
+  is withheld while the service is busy, and withholding is bounded by TIME rather than by the
+  service happening to go quiet: a busy service still takes a bounded slice of the band once the
+  oldest record passes 30 minutes, and clears the band whole once it passes 4 hours, however busy
+  it is. An idle record is therefore delayed, never dropped.
+  - *One switch, one place:* `SystemEventOptions.AuditPriority`. Every writer of an audit record
+    reads it, so the record, the envelope it travels in and the queue row it lands on cannot
+    disagree. Set it to `WorkPriority.BACKGROUND` to restore the previous behavior -- do that if
+    something downstream reads the trail on a deadline, such as a live compliance feed.
+  - *Security events did NOT move.* A denial, a permission change or a scope establishment stays on
+    the background band, because a band that exists to be withheld under load is the wrong place
+    for the record of a load that looks like an attack. A system event nobody has classified also
+    stays on background, so a type added later is never silently withheld.
+  - *Where the band means what:* the inbox event lanes and the perspective lanes WITHHOLD idle work
+    as described above. The outbox does not withhold; it orders by priority, so an audit record
+    publishes behind everything else rather than being held back. Inbox commands are not withheld
+    either, their lane being unbounded above the interactive band.
 - **Per-namespace command inboxes are now the DEFAULT transport topology, and the legacy catch-all
   `inbox` topic is retired out of the box.** A service configured with `AddWhizbang().WithRouting(…)`
   and no inbox/outbox call subscribes to one `inbox.<contract-namespace>` entity per command
