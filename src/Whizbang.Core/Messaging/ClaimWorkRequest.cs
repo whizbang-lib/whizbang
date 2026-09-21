@@ -37,6 +37,22 @@ namespace Whizbang.Core.Messaging;
 /// <paramref name="MaxStreams"/>; zero means "lease no new perspective work this cycle" while the
 /// drain channel is above its cap (#719). Re-emission of work already held is unaffected.
 /// </param>
+/// <param name="IdleSettled">
+/// Whether the SERVICE reads settled, which admits the idle band at full width. The caller owns
+/// this because it already measures it for housekeeping; deciding it inside the claim would mean
+/// counting the service-wide backlog on every poll.
+/// </param>
+/// <param name="IdleTrickleAfter">
+/// How long an idle row may wait before a busy service takes it anyway. Null leaves the store's
+/// own default in force.
+/// </param>
+/// <param name="IdleTrickleSlice">
+/// How many idle rows one claim may take while the service is busy. Null leaves the store default.
+/// </param>
+/// <param name="IdleForceAfter">
+/// How long the band may go without a full drain before one happens regardless of activity. Null
+/// leaves the store default.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
@@ -50,4 +66,8 @@ public sealed record ClaimWorkRequest(
   double FreshWorkShare = 0.5,
   int? MaxAcquireRows = null,
   bool AllowSteal = false,
-  int? MaxPerspectiveStreams = null);
+  int? MaxPerspectiveStreams = null,
+  bool IdleSettled = false,
+  TimeSpan? IdleTrickleAfter = null,
+  int? IdleTrickleSlice = null,
+  TimeSpan? IdleForceAfter = null);

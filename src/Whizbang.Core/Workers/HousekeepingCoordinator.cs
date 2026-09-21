@@ -147,6 +147,13 @@ public sealed class HousekeepingCoordinator {
   // than the time since the first one ever seen.
   private DateTimeOffset? _settledSince;
 
+  // The LOOSER reading, kept for the idle band: whether the last measurement showed no work anyone
+  // waits for, with the idle band itself excluded. Separate from _settledSince, which is the
+  // quiescent dwell that gates sweeps -- the band must be admitted while it still holds rows, and
+  // the dwell by construction never is.
+  private bool _serviceReadsSettled;
+  private DateTimeOffset? _serviceSettledReadAt;
+
   /// <summary>
   /// Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class with default
   /// tuning. This is the constructor container registration uses; a host wanting different tuning
@@ -197,7 +204,14 @@ public sealed class HousekeepingCoordinator {
     if (backlog is null) {
       return;
     }
-    if (!backlog.IsSettled) {
+    _serviceReadsSettled = backlog.IsSettled;
+    _serviceSettledReadAt = _timeProvider.GetUtcNow();
+    // Quiescent, not merely settled (167). Settled is the signal that ADMITS the idle drain, so a
+    // sweep gated on it would start at the moment the drain does and compete with it for the same
+    // backends -- the very pile-up the gate exists to prevent. Maintenance is the one caller that
+    // can afford to queue behind the idle band, because MaxConsecutiveDeferrals already bounds how
+    // long it will wait before forcing a pass through anyway.
+    if (!backlog.IsQuiescent) {
       _settledSince = null;
       return;
     }
@@ -211,6 +225,29 @@ public sealed class HousekeepingCoordinator {
     }
     return _settledSince is { } since
       && _timeProvider.GetUtcNow() - since >= _settings.SettledCooldown;
+  }
+
+  /// <summary>
+  /// Whether the latest service-wide reading showed the service settled, provided that reading is
+  /// no older than <paramref name="maxAge"/>. This is the signal that admits the idle band at full
+  /// width.
+  /// </summary>
+  /// <param name="maxAge">
+  /// How stale a reading may be and still be acted on. Readings arrive on the maintenance cadence,
+  /// not the claim's, so an unbounded answer would drain the band at full width off a measurement
+  /// taken before the load that is running now.
+  /// </param>
+  /// <remarks>
+  /// Deliberately the looser <see cref="ServiceBacklog.IsSettled"/> and not
+  /// <see cref="ServiceBacklog.IsQuiescent"/>: the band is admitted BECAUSE it still holds rows,
+  /// so a signal that required them to be gone could never admit it.
+  /// </remarks>
+  public bool ServiceReadsSettled(TimeSpan maxAge) {
+    lock (_gate) {
+      return _serviceReadsSettled
+        && _serviceSettledReadAt is { } at
+        && _timeProvider.GetUtcNow() - at <= maxAge;
+    }
   }
 
   /// <summary>Requests permission to start <paramref name="activity"/>.</summary>
@@ -293,7 +330,10 @@ public sealed class HousekeepingCoordinator {
     }
 
     Verdict reason;
-    if (!backlog.IsSettled) {
+    // IsQuiescent is what IsSettled meant before 167 -- every count at zero, the idle band
+    // included. Sweeps keep that meaning exactly; only the idle drain itself runs on the looser
+    // signal, or it could never be admitted.
+    if (!backlog.IsQuiescent) {
       reason = Verdict.ServiceBusy;
     } else if (!_cooldownElapsed()) {
       reason = Verdict.ServiceCoolingDown;
