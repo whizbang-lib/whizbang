@@ -744,7 +744,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .Because($"the metadata filter must select the seeded row. SQL was: {metadataSql}");
 
     await Assert.That(scopePlan).Contains("idx_gin_probe_scope", StringComparison.Ordinal)
-      .Because($"the scope GIN index is CAPABLE of answering a containment test, which is what makes "
+      .Because("the scope GIN index is CAPABLE of answering a containment test, which is what makes "
         + $"the gap below a missed opportunity rather than an impossibility. Plan was:\n{scopePlan}");
     await Assert.That(metadataPlan).Contains("idx_gin_probe_metadata", StringComparison.Ordinal)
       .Because($"same for metadata. Plan was:\n{metadataPlan}");
@@ -760,7 +760,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     // name. A rewrite that used the property name would match nothing and return no rows, which is
     // worse than the missed index it set out to fix -- hence the row counts asserted above.
     await Assert.That(scopeSql).Contains("@>", StringComparison.Ordinal)
-      .Because($"a scope filter is the tenant-isolation predicate on every perspective read, so this "
+      .Because("a scope filter is the tenant-isolation predicate on every perspective read, so this "
         + $"is the one that had to reach its index. SQL was:\n{scopeSql}");
     await Assert.That(scopeSql).Contains("'t'", StringComparison.Ordinal)
       .Because($"built from the stored key, not the property name. SQL was:\n{scopeSql}");
