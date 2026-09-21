@@ -61,16 +61,16 @@ public class AuditOutboxMessageBuilderCoverageTests {
   /// outbox during a bulk import.
   /// </summary>
   [Test]
-  public async Task TryBuildAuditMessage_DeclaresTheAuditEventBackgroundAsync() {
+  public async Task TryBuildAuditMessage_DeclaresTheAuditEventOnTheAuditBandAsync() {
     var options = new SystemEventOptions().EnableEventAudit();
     var source = _outboxEventWithMessageType(typeof(PerspectiveCoverageGapDetected).AssemblyQualifiedName!);
 
     var built = AuditOutboxMessageBuilder.TryBuildAuditMessage(source, options, new CapturingLogger());
 
     await Assert.That(built).IsNotNull();
-    await Assert.That(built!.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.BACKGROUND)
+    await Assert.That(built!.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.IDLE)
       .Because("the row's number is what the claim and the drain read");
-    await Assert.That(built.Envelope.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.BACKGROUND)
+    await Assert.That(built.Envelope.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.IDLE)
       .Because("the wire envelope is what every consumer of the audit stream reads");
   }
 
