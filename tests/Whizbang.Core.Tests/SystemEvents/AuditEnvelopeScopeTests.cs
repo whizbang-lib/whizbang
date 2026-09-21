@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -47,7 +48,7 @@ public class AuditEnvelopeScopeTests {
   private static (SystemEventEmitter Emitter, _captureStore Store) _build() {
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider()), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance), store);
   }
 
   private static MessageEnvelope<_auditedEvent> _scopedSource(string tenantId, string userId) => new() {
@@ -141,7 +142,7 @@ public class AuditEnvelopeScopeTests {
     // identified, so every record looks equally untraceable.
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, instanceProvider: new _fixedInstance());
+    var emitter = new SystemEventEmitter(options, store, instanceProvider: new _fixedInstance(), logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 
@@ -157,7 +158,7 @@ public class AuditEnvelopeScopeTests {
     // audit records. Losing the audit entirely would be a far worse failure than an unknown writer.
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
+    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance, logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 

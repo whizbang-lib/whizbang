@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -22,7 +23,7 @@ public class TableStatisticsCollectorTests {
     var worker = new TableStatisticsCollector(
   scopeFactory: new AlwaysDisposedScopeFactory(),
   metrics: metrics,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -85,7 +86,7 @@ public class TableStatisticsCollectorTests {
     var worker = new TableStatisticsCollector(
   scopeFactory: new SingleProviderScopeFactory(provider),
   metrics: metrics,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     double? ratioWhenSignalled = null;

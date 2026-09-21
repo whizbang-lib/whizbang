@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Testing.Async;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -47,7 +48,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_SignalCheckpointUpdated_NotifiesSubscribersAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -101,7 +102,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_SignalCheckpointUpdated_OnlyNotifiesMatchingSubscribersAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var receivedCount = 0;
 
     using var subscription = signaler.Subscribe(typeof(PerspectiveA), _ => Interlocked.Increment(ref receivedCount));
@@ -117,7 +118,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_MultipleSubscribers_AllReceiveSignalAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
     var signal1Received = new TaskCompletionSource<PerspectiveCursorSignal>();
     var signal2Received = new TaskCompletionSource<PerspectiveCursorSignal>();
@@ -148,7 +149,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_Subscribe_ReturnsDisposableAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
 
     var subscription = signaler.Subscribe(typeof(TestPerspective), _ => { });
 
@@ -159,7 +160,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_DisposeSubscription_StopsReceivingSignalsAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
     var signalsReceived = 0;
 
@@ -193,7 +194,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_Dispose_CanBeCalledMultipleTimesAsync() {
-    var signaler = new LocalSyncSignaler();
+    var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
 
     signaler.Dispose();
     signaler.Dispose(); // Should not throw
@@ -213,7 +214,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_AfterDispose_SignalingDoesNotThrowAsync() {
-    var signaler = new LocalSyncSignaler();
+    var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     signaler.Dispose();
 
     // Should not throw, just silently do nothing

@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -19,7 +20,7 @@ public class LocalSyncSignalerCoverageTests {
     // must not have the second Dispose() rebuild/corrupt the handler bag for every OTHER live
     // subscriber on the same perspective type — that's a shared ConcurrentBag, so a buggy second
     // pass here would risk dropping a sibling subscriber's handler.
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(string);
     var receivedCount = 0;
 
@@ -35,7 +36,7 @@ public class LocalSyncSignalerCoverageTests {
 
   [Test]
   public async Task Subscription_DisposedTwice_SiblingSubscriberOnSamePerspectiveStillReceivesSignalsAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(int);
     var siblingReceived = 0;
 

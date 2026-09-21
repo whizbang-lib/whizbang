@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -27,7 +28,7 @@ public class OrphanInboxJanitorCoverageTests {
     var gate = new SchemaReadyGate();   // never marked ready
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();

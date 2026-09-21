@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -36,7 +37,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
@@ -60,7 +61,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -90,7 +91,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

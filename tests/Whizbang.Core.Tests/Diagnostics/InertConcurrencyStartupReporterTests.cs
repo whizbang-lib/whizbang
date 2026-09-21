@@ -37,7 +37,7 @@ public class InertConcurrencyStartupReporterTests {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      services: null,
+      services: new ServiceCollection().BuildServiceProvider(),
       coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = false }),
       orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = false }),
       outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
@@ -58,7 +58,7 @@ public class InertConcurrencyStartupReporterTests {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      services: null,
+      services: new ServiceCollection().BuildServiceProvider(),
       coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = true }),
       orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = true }),
       outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
@@ -72,7 +72,15 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task StartupNeverFailsOnAccountOfThisDiagnosticAsync() {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
-    var reporter = new InertConcurrencyStartupReporter(logger);   // no options configured at all
+    // "Nothing configured" as DI actually presents it: an empty provider and default option
+    // instances, which is what IOptions<T> yields when no Configure call ran.
+    var reporter = new InertConcurrencyStartupReporter(
+      logger,
+      services: new ServiceCollection().BuildServiceProvider(),
+      coordinator: Options.Create(new WorkCoordinatorOptions()),
+      orderedStream: Options.Create(new OrderedStreamProcessorOptions()),
+      outboxDrain: Options.Create(new OutboxDrainWorkerOptions()),
+      inboxDispatch: Options.Create(new InboxDispatchWorkerOptions()));
 
     Exception? captured = null;
     try { await reporter.StartAsync(CancellationToken.None); } catch (Exception ex) { captured = ex; }

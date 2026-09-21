@@ -8,6 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -80,7 +81,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
     var decorator = new AuditingEventStoreDecorator(
       new _inertStore(), channel, Options.Create(options),
       new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance);
+      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
     return (decorator, channel);
   }
 

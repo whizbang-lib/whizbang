@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -22,7 +23,7 @@ public class DispatcherEventCascaderTests {
   [Test]
   public async Task DispatcherEventCascader_Constructor_NullServiceProvider_ThrowsAsync() {
     // Act & Assert
-    await Assert.That(() => new DispatcherEventCascader(null!))
+    await Assert.That(() => new DispatcherEventCascader(null!, logger: NullLogger<DispatcherEventCascader>.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -33,7 +34,7 @@ public class DispatcherEventCascaderTests {
     var provider = services.BuildServiceProvider();
 
     // Act
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     // Assert
     await Assert.That(cascader).IsNotNull();
@@ -117,7 +118,7 @@ public class DispatcherEventCascaderTests {
     // Register dispatcher after cascader is created
     services.AddSingleton<IDispatcher>(dispatcher);
     var provider = services.BuildServiceProvider();
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     var testEvent = new TestCascadeEvent { Id = "test-123" };
 
@@ -136,7 +137,7 @@ public class DispatcherEventCascaderTests {
     services.AddSingleton<IDispatcher>(dispatcher);
 
     var provider = services.BuildServiceProvider();
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     return (cascader, dispatcher);
   }

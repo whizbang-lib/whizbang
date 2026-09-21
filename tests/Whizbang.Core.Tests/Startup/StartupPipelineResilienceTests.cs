@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Startup;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -163,7 +164,7 @@ public class StartupPipelineResilienceTests {
     // A step depending on a name nothing declares cannot be ordered.
     var unorderable = new _unorderableStep();
     var runner = new StartupPipelineRunner([unorderable]);
-    var worker = new StartupPipelineWorker(runner);
+    var worker = new StartupPipelineWorker(runner, logger: NullLogger<StartupPipelineWorker>.Instance);
 
     // Captured explicitly rather than through a throws-nothing assertion over an async lambda:
     // BackgroundService.StartAsync only hands back the execute task when it has ALREADY faulted,

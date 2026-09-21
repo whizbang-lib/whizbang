@@ -11,6 +11,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -45,7 +46,7 @@ public class OrphanInboxJanitorTests {
     await Assert.That(() => new OrphanInboxJanitor(
   services: null!,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -55,7 +56,7 @@ public class OrphanInboxJanitorTests {
     await Assert.That(() => new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: null!,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -101,7 +102,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -120,7 +121,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -146,7 +147,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -201,7 +202,7 @@ public class OrphanInboxJanitorTests {
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -218,7 +219,7 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -241,7 +242,7 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None);
     await Task.Delay(300);

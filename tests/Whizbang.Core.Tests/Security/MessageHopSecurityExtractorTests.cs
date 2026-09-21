@@ -23,7 +23,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task Priority_ReturnsDefaultPriority_100Async() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
 
     // Act
     var priority = extractor.Priority;
@@ -39,7 +39,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithSecurityContextInHop_ReturnsExtractionAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant-123",
       UserId = "user-456"
@@ -60,7 +60,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithOnlyTenantId_ReturnsExtractionWithTenantAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant-only"
     };
@@ -79,7 +79,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithOnlyUserId_ReturnsExtractionWithUserAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       UserId = "user-only"
     };
@@ -98,7 +98,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNoSecurityContext_ReturnsNullAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var envelope = _createEnvelopeWithoutSecurityContext();
     var options = new MessageSecurityOptions();
 
@@ -112,7 +112,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithEmptySecurityContext_ReturnsNullAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext(); // No TenantId or UserId
     var envelope = _createEnvelopeWithSecurityContext(securityContext);
     var options = new MessageSecurityOptions();
@@ -131,7 +131,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithMultipleHops_ReturnsMostRecentSecurityContextAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var firstHop = new MessageHop {
@@ -167,7 +167,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_IgnoresCausationHops_OnlyExtractsFromCurrentHopsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var causationHop = new MessageHop {
@@ -207,7 +207,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNoCollections_ReturnsEmptyRolesAsync() {
     // Arrange - ScopeDelta with only Values (no Collections)
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant",
       UserId = "user"
@@ -226,7 +226,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNoCollections_ReturnsEmptyPermissionsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant",
       UserId = "user"
@@ -245,7 +245,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNoCollections_ReturnsEmptySecurityPrincipalsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant",
       UserId = "user"
@@ -264,7 +264,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNoCollections_ReturnsEmptyClaimsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant",
       UserId = "user"
@@ -287,7 +287,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithRolesInScopeDelta_ExtractsRolesAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
     var envelope = _createEnvelopeWithScopeAndRoles("user-1", "tenant-1", ["Admin", "User"]);
 
@@ -305,7 +305,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithPermissionsInScopeDelta_ExtractsPermissionsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
     var envelope = _createEnvelopeWithScopeAndPermissions("user-1", "tenant-1", ["orders.read", "orders.write"]);
 
@@ -322,7 +322,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithMultipleHops_MergesRolesFromAllHopsAsync() {
     // Arrange - first hop sets roles, second hop adds more
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = "tenant-1", u = "user-1" });
@@ -376,7 +376,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithActualAndEffectivePrincipal_ExtractsPrincipalsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = "tenant-1", u = "user-1" });
@@ -422,7 +422,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var securityContext = new SecurityContext {
       TenantId = "tenant",
       UserId = "user"
@@ -445,7 +445,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     // Act & Assert
@@ -457,7 +457,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var envelope = _createEnvelopeWithoutSecurityContext();
 
     // Act & Assert
@@ -473,7 +473,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithNullHops_ReturnsNullAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -492,7 +492,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithEmptyHops_ReturnsNullAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -515,7 +515,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithHopScopeNull_ReturnsNullAsync() {
     // Arrange - Current hop with Scope = null
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var hop = new MessageHop {
@@ -542,7 +542,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithHopScopeNoChanges_ReturnsNullAsync() {
     // Arrange - Current hop with ScopeDelta that has no changes (HasChanges = false)
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var hop = new MessageHop {
@@ -569,7 +569,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithMixedNullAndValidScopes_ExtractsFromValidAsync() {
     // Arrange - Multiple hops: one with null scope, one with no changes, one with valid scope
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var nullScopeHop = new MessageHop {
@@ -747,7 +747,7 @@ public class MessageHopSecurityExtractorTests {
   [Test]
   public async Task ExtractAsync_WithOnlyNonCurrentHops_ReturnsNullAsync() {
     // Arrange - All hops are Causation type
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var hop = new MessageHop {

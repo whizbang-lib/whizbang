@@ -3,6 +3,10 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Diagnostics;
 
@@ -22,7 +26,11 @@ public class InertConcurrencyStartupReporterCoverageTests {
     // would turn a harmless startup diagnostic into a failure that blocks graceful shutdown.
     var reporter = new InertConcurrencyStartupReporter(
       NullLogger<InertConcurrencyStartupReporter>.Instance,
-      services: null);
+      services: new ServiceCollection().BuildServiceProvider(),
+      coordinator: Options.Create(new WorkCoordinatorOptions()),
+      orderedStream: Options.Create(new OrderedStreamProcessorOptions()),
+      outboxDrain: Options.Create(new OutboxDrainWorkerOptions()),
+      inboxDispatch: Options.Create(new InboxDispatchWorkerOptions()));
     using var cts = new CancellationTokenSource();
     cts.Cancel();
 

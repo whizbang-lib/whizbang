@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -29,7 +30,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -40,7 +41,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -51,7 +52,7 @@ public class AuditingEventStoreDecoratorTests {
     var channel = new MockDeferredOutboxChannel();
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -498,7 +499,7 @@ public class AuditingEventStoreDecoratorTests {
     configure?.Invoke(options);
     var inner = new MockEventStore();
     var channel = new MockDeferredOutboxChannel();
-    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance);
+    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
     return (decorator, inner, channel);
   }
 

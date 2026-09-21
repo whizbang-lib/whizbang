@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Temporal;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Temporal;
 
@@ -19,7 +20,7 @@ public class ScheduleTimerTests {
   private static (ScheduleTimer Timer, FakeTimeProvider Clock, Func<int> Fired) _create() {
     var clock = new FakeTimeProvider(_t0);
     var count = 0;
-    var timer = new ScheduleTimer(clock, () => { _ = Interlocked.Increment(ref count); return ValueTask.CompletedTask; });
+    var timer = new ScheduleTimer(clock, () => { _ = Interlocked.Increment(ref count); return ValueTask.CompletedTask; }, logger: NullLogger<ScheduleTimer>.Instance);
     return (timer, clock, () => Volatile.Read(ref count));
   }
 

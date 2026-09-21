@@ -7,6 +7,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Security.Extractors;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Security;
 
@@ -31,7 +32,7 @@ public class MessageSecurityIntegrationTests {
       callbackContext = ctx;
     });
 
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var provider = new DefaultMessageSecurityContextProvider(
@@ -64,7 +65,7 @@ public class MessageSecurityIntegrationTests {
   [Test]
   public async Task EndToEnd_MessageWithoutSecurityContext_AllowAnonymousTrue_ReturnsNullAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions { AllowAnonymous = true };
 
     var provider = new DefaultMessageSecurityContextProvider(
@@ -86,7 +87,7 @@ public class MessageSecurityIntegrationTests {
   [Test]
   public async Task EndToEnd_MessageWithoutSecurityContext_AllowAnonymousFalse_ThrowsAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions { AllowAnonymous = false };
 
     var provider = new DefaultMessageSecurityContextProvider(
@@ -194,7 +195,7 @@ public class MessageSecurityIntegrationTests {
     var callback2 = new TestSecurityContextCallback(_ => callbackOrder.Add("callback2"));
     var callback3 = new TestSecurityContextCallback(_ => callbackOrder.Add("callback3"));
 
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var provider = new DefaultMessageSecurityContextProvider(
@@ -223,7 +224,7 @@ public class MessageSecurityIntegrationTests {
     var callbackInvoked = false;
     var callback = new TestSecurityContextCallback(_ => callbackInvoked = true);
 
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions {
       AllowAnonymous = false // Would normally throw
     };
@@ -253,7 +254,7 @@ public class MessageSecurityIntegrationTests {
   [Test]
   public async Task ImmutableScopeContext_ContainsCorrectMetadataAsync() {
     // Arrange
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions { PropagateToOutgoingMessages = true };
 
     var provider = new DefaultMessageSecurityContextProvider(
@@ -290,7 +291,7 @@ public class MessageSecurityIntegrationTests {
     // Arrange
     Whizbang.Core.SystemEvents.Security.ScopeContextEstablished? capturedEvent = null;
 
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions { EnableAuditLogging = true };
 
     var provider = new DefaultMessageSecurityContextProvider(

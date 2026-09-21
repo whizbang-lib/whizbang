@@ -8,6 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Security;
 
@@ -56,7 +57,7 @@ public class MessageHopSecurityExtractorCoverageTests {
       Hops = [hop],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
 
     var result = await extractor.ExtractAsync(envelope, new MessageSecurityOptions(), CancellationToken.None);
 

@@ -100,7 +100,7 @@ public class SchemaGateShutdownCoverageTests {
     await using var inner = new ServiceCollection().BuildServiceProvider();
     var watched = new ScopeWatchingProvider(inner);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SchemaGateShutdownCoverageTests)]);
-    var janitor = new OrphanInboxJanitor(watched, snapshot, schemaReadyGate: gate);
+    var janitor = new OrphanInboxJanitor(watched, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);

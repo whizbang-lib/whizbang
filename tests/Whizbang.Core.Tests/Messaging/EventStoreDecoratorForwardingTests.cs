@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.SystemEvents;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -24,7 +25,7 @@ public class EventStoreDecoratorForwardingTests {
   public static IEnumerable<Func<IEventStore>> Decorators() => [
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
     () => new AppendAndWaitEventStoreDecorator(new ProbeAwareStore(), new NoopSyncAwaiter()),
-    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
     () => new SyncTrackingEventStoreDecorator(new ProbeAwareStore()),
     () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
   ];

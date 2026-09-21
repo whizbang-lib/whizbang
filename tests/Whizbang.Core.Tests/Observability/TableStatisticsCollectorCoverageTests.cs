@@ -4,6 +4,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -40,7 +41,7 @@ public class TableStatisticsCollectorCoverageTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: new TableStatisticsMetrics(new WhizbangMetrics()),
-      schemaReadyGate: gate);
+      schemaReadyGate: gate, logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
