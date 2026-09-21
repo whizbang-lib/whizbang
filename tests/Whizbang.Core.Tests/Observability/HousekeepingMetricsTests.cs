@@ -116,7 +116,7 @@ public class HousekeepingMetricsTests {
         l.EnableMeasurementEvents(inst);
       }
     };
-    listener.SetMeasurementEventCallback<double>((__, value, tags, _) => {
+    listener.SetMeasurementEventCallback<double>((_, value, tags, _) => {
       string? src = null;
       foreach (var t in tags) { if (t.Key == "last_source") { src = t.Value?.ToString(); } }
       lock (got) { got.Add((value, src)); }
