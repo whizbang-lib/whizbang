@@ -85,7 +85,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("The genuinely attributed handler must still be discovered.");
     await Assert.That(code).DoesNotContain("NotAHandler")
       .Because("A method whose only attribute is unrelated to [CollectiveApplyFor] must not be treated as a collective handler.");
@@ -131,7 +131,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("The handler returning the real, correctly-namespaced ICollectiveSpec<T> must be discovered.");
     await Assert.That(code).DoesNotContain("WrongNamespaceHandler")
       .Because("A same-named ICollectiveSpec<T> from the wrong namespace must be rejected — bare name matching is not enough.");
@@ -177,7 +177,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("The 1-arity ICollectiveSpec<TModel> handler must still be discovered.");
     await Assert.That(code).DoesNotContain("WrongArityHandler")
       .Because("A same-name, same-namespace ICollectiveSpec overload with the wrong number of type arguments must be rejected.");
@@ -222,7 +222,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("A correctly-shaped single-parameter handler must still be discovered.");
     await Assert.That(code).DoesNotContain("ZeroParamHandler")
       .Because("A handler with no parameters has no event to dispatch on and must be rejected.");
@@ -266,7 +266,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("A handler whose first parameter implements ICollectiveEvent must be discovered.");
     await Assert.That(code).DoesNotContain("NonEventParamHandler")
       .Because("A handler whose first parameter does not implement ICollectiveEvent must be rejected.");
@@ -308,7 +308,7 @@ public class CollectiveApplyDiscoveryGeneratorCoverageTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RealHandler")
+    await Assert.That(code).Contains("RealHandler")
       .Because("A handler whose second parameter implements ICollectiveQuery must be discovered.");
     await Assert.That(code).DoesNotContain("BadQueryHandler")
       .Because("A handler whose second parameter is neither ICollectiveQuery nor implements it must be rejected entirely, not just have its query context dropped.");

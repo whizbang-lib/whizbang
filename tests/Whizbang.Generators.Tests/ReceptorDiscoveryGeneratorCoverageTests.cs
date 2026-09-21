@@ -926,8 +926,8 @@ public class RawReceptorDiscoveryGeneratorCoverageTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "RawReceptors.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
-    await Assert.That(code!).DoesNotContain("NotARawReceptor");
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
+    await Assert.That(code).DoesNotContain("NotARawReceptor");
   }
 
 }

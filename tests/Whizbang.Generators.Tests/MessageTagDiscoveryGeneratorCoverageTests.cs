@@ -34,9 +34,9 @@ public class MessageTagDiscoveryGeneratorCoverageTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("PublicOnlyEvent")
+    await Assert.That(code).Contains("PublicOnlyEvent")
       .Because("the public tagged type must still register normally.");
-    await Assert.That(code!).DoesNotContain("InternalOnlyEvent")
+    await Assert.That(code).DoesNotContain("InternalOnlyEvent")
       .Because("a non-public tagged type must never reach the generated (public) registry.");
   }
 
@@ -66,9 +66,9 @@ public class MessageTagDiscoveryGeneratorCoverageTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("visible-heartbeat")
+    await Assert.That(code).Contains("visible-heartbeat")
       .Because("the sibling attribute instance without Exclude must still register.");
-    await Assert.That(code!).DoesNotContain("silent-heartbeat")
+    await Assert.That(code).DoesNotContain("silent-heartbeat")
       .Because("Exclude = true must drop that specific tag attribute instance from the registry.");
   }
 }

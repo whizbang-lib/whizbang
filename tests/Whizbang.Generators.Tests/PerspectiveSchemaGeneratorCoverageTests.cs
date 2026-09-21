@@ -175,9 +175,9 @@ public class PerspectiveSchemaGeneratorCoverageTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("vector(1536)")
+    await Assert.That(sql).Contains("vector(1536)")
       .Because("an explicit no-index request is not a request to drop the column");
-    await Assert.That(sql!).DoesNotContain("_vec")
+    await Assert.That(sql).DoesNotContain("_vec")
       .Because("VectorIndexType.None must produce no index statement even when Indexed itself is left at its true default");
   }
 
@@ -198,9 +198,9 @@ public class PerspectiveSchemaGeneratorCoverageTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("USING ivfflat")
+    await Assert.That(sql).Contains("USING ivfflat")
       .Because("indexing is still on by default even though the distance metric could not be named");
-    await Assert.That(sql!).Contains("vector_cosine_ops")
+    await Assert.That(sql).Contains("vector_cosine_ops")
       .Because("an unrecognized distance metric must fall back to cosine ops rather than emit no operator class at all");
   }
 

@@ -83,7 +83,7 @@ namespace Receptors.Domain {
     // Assert — receptor namespace included and rendered as a receptor namespace field.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "EventNamespaceSource.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("receptors.domain")
+    await Assert.That(code).Contains("receptors.domain")
       .Because("IReceptor<TEvent> event namespaces must be included in the routing registry (lowercased)");
     await Assert.That(code).Contains("1 receptor namespace(s)")
       .Because("the summary comment reflects the discovered receptor namespace count");
@@ -120,7 +120,7 @@ namespace Commands.Domain {
     // Assert — no receptor namespace discovered.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "EventNamespaceSource.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("0 receptor namespace(s)")
+    await Assert.That(code).Contains("0 receptor namespace(s)")
       .Because("a receptor over a non-event message contributes no event namespace");
     await Assert.That(code).DoesNotContain("commands.domain")
       .Because("non-event receptor namespaces must not enter the routing registry");
@@ -158,7 +158,7 @@ namespace Generic.Domain {
     // Assert — the open-generic class is skipped by the generic-type guard.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "EventNamespaceSource.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("0 receptor namespace(s)")
+    await Assert.That(code).Contains("0 receptor namespace(s)")
       .Because("open-generic receptor definitions are skipped before namespace extraction");
   }
 
@@ -210,7 +210,7 @@ namespace Shared.Events {
     // Assert — namespace present, counted once in perspective + once in receptor set.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "EventNamespaceSource.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("shared.events")
+    await Assert.That(code).Contains("shared.events")
       .Because("the shared namespace must appear in the registry");
     await Assert.That(code).Contains("1 perspective namespace(s) and 1 receptor namespace(s)")
       .Because("each side contributes the namespace exactly once");

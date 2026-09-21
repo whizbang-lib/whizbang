@@ -47,7 +47,7 @@ namespace MyApp {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("AbstractTaggedNotice")
+    await Assert.That(generated).DoesNotContain("AbstractTaggedNotice")
       .Because("an abstract type can never be the concrete runtime type of a dispatched message and must not be registered as a consumer just because it carries [NotificationTag]");
   }
 

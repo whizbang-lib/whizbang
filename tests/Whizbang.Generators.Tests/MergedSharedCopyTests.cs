@@ -780,14 +780,14 @@ public class MergedSharedCopyTests {
     var named = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Tags");
     await Assert.That(named).IsNotNull();
-    await Assert.That(named!).Contains("public");
-    await Assert.That(named!).Contains("v2");
+    await Assert.That(named).Contains("public");
+    await Assert.That(named).Contains("v2");
 
     var positional = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "channels");
     await Assert.That(positional).IsNotNull()
       .Because("the constructor parameter is matched by name, case-insensitively");
-    await Assert.That(positional!).Contains("orders");
+    await Assert.That(positional).Contains("orders");
 
     var absent = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Missing");

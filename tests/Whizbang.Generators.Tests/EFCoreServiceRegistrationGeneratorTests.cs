@@ -121,9 +121,9 @@ public class EFCoreServiceRegistrationGeneratorTests {
       .Split('\n')
       .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
     await Assert.That(registryLine).IsNotNull();
-    await Assert.That(registryLine!).Contains("TestApp.Owner+Model")
+    await Assert.That(registryLine).Contains("TestApp.Owner+Model")
       .Because("the registry key is the CLR form, '+' for the nesting, the form the runtime looks up");
-    await Assert.That(registryLine!).DoesNotContain("TestApp.Owner.Model")
+    await Assert.That(registryLine).DoesNotContain("TestApp.Owner.Model")
       .Because("a display-string key matches nothing at runtime (issue #697)");
   }
 

@@ -77,7 +77,7 @@ public class PlainService : IMarker {
     // Assert — empty invoker still produced with the "no perspectives" routing marker
     var code = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveInvoker.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("No perspectives discovered")
+    await Assert.That(code).Contains("No perspectives discovered")
       .Because("with no perspectives, _generateEmptyInvoker emits the empty-routing marker");
     await Assert.That(code).Contains("TestAssembly.Generated")
       .Because("the empty invoker uses the assembly-specific namespace");
@@ -119,7 +119,7 @@ public abstract class AbstractPerspective : IPerspectiveFor<AbstractModel, Abstr
     // Assert — abstract class ignored, so the empty-invoker path is taken.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveInvoker.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("No perspectives discovered")
+    await Assert.That(code).Contains("No perspectives discovered")
       .Because("abstract perspectives are not instantiable and must be excluded from routing");
   }
 
@@ -151,7 +151,7 @@ public class MarkerOnlyPerspective : IPerspectiveFor<MarkerModel> {
     // Assert — no event-bearing perspective, so empty invoker is generated.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveInvoker.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("No perspectives discovered")
+    await Assert.That(code).Contains("No perspectives discovered")
       .Because("a class implementing only the marker IPerspectiveFor<TModel> exposes no events to route");
   }
 }

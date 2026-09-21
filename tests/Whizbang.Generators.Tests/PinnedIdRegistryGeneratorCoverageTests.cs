@@ -51,9 +51,9 @@ public class PinnedIdRegistryGeneratorCoverageTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.PublicPinnedEvent)")
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.PublicPinnedEvent)")
       .Because("the public pinned event must still be registered");
-    await Assert.That(registryCode!).DoesNotContain("InternalPinnedEvent")
+    await Assert.That(registryCode).DoesNotContain("InternalPinnedEvent")
       .Because("a non-public type must never be exposed through the generated (public) pinned-id registry");
   }
 
@@ -86,9 +86,9 @@ public class PinnedIdRegistryGeneratorCoverageTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.ValidPinnedEvent)")
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.ValidPinnedEvent)")
       .Because("a type with a genuinely non-blank pinned id must still be registered");
-    await Assert.That(registryCode!).DoesNotContain("BlankPinnedEvent")
+    await Assert.That(registryCode).DoesNotContain("BlankPinnedEvent")
       .Because("a whitespace-only [PinnedId] value carries no usable identity and must be treated as unpinned");
   }
 

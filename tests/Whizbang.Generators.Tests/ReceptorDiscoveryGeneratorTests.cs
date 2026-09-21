@@ -96,7 +96,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
     await Assert.That(registrations).Contains("TryAddEnumerable")
       .Because("one lookup per assembly, deduped by generated type");
-    await Assert.That(registrations!).Contains("IReceptorLookup, GeneratedDispatcher");
+    await Assert.That(registrations).Contains("IReceptorLookup, GeneratedDispatcher");
   }
 
   [Test]

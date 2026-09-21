@@ -36,11 +36,11 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains(": IPinnedIdRegistry");
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.OrderPlacedEvent)");
-    await Assert.That(registryCode!).Contains("\"11111111-2222-3333-4444-555555555555\"");
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.OrderShippedEvent)");
-    await Assert.That(registryCode!).Contains("\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"");
+    await Assert.That(registryCode).Contains(": IPinnedIdRegistry");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.OrderPlacedEvent)");
+    await Assert.That(registryCode).Contains("\"11111111-2222-3333-4444-555555555555\"");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.OrderShippedEvent)");
+    await Assert.That(registryCode).Contains("\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"");
   }
 
   [Test]
@@ -64,8 +64,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Commands.PlaceOrderCommand)");
-    await Assert.That(registryCode!).Contains("\"cccccccc-1111-2222-3333-444444444444\"");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Commands.PlaceOrderCommand)");
+    await Assert.That(registryCode).Contains("\"cccccccc-1111-2222-3333-444444444444\"");
   }
 
   [Test]
@@ -95,8 +95,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Views.OrderPerspective)");
-    await Assert.That(registryCode!).Contains("\"deadbeef-1111-2222-3333-444444444444\"");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Views.OrderPerspective)");
+    await Assert.That(registryCode).Contains("\"deadbeef-1111-2222-3333-444444444444\"");
   }
 
   [Test]
@@ -127,8 +127,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Views.ActionsOrderPerspective)");
-    await Assert.That(registryCode!).Contains("\"c0ffee00-1111-2222-3333-444444444444\"");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Views.ActionsOrderPerspective)");
+    await Assert.That(registryCode).Contains("\"c0ffee00-1111-2222-3333-444444444444\"");
   }
 
   [Test]
@@ -155,8 +155,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.PinnedEvent)");
-    await Assert.That(registryCode!).DoesNotContain("UnpinnedEvent");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.PinnedEvent)");
+    await Assert.That(registryCode).DoesNotContain("UnpinnedEvent");
   }
 
   [Test]
@@ -183,8 +183,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).DoesNotContain("BaseEvent");
-    await Assert.That(registryCode!).Contains("typeof(global::MyApp.Events.ConcreteEvent)");
+    await Assert.That(registryCode).DoesNotContain("BaseEvent");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.ConcreteEvent)");
   }
 
   [Test]
@@ -223,8 +223,8 @@ public class PinnedIdRegistryGeneratorTests {
 
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("AddPinnedIdRegistry");
-    await Assert.That(registryCode!).Contains("AddSingleton<IPinnedIdRegistry");
+    await Assert.That(registryCode).Contains("AddPinnedIdRegistry");
+    await Assert.That(registryCode).Contains("AddSingleton<IPinnedIdRegistry");
   }
 
   [Test]
@@ -245,9 +245,9 @@ public class PinnedIdRegistryGeneratorTests {
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
 
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
-    await Assert.That(registryCode!).Contains("ServiceRegistrationCallbacks.PinnedIdRegistry");
-    await Assert.That(registryCode!).Contains("AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>");
+    await Assert.That(registryCode).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registryCode).Contains("ServiceRegistrationCallbacks.PinnedIdRegistry");
+    await Assert.That(registryCode).Contains("AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>");
   }
 
   [Test]
@@ -270,7 +270,7 @@ public class PinnedIdRegistryGeneratorTests {
     var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
 
     await Assert.That(registryCode).IsNotNull();
-    await Assert.That(registryCode!).Contains("public string? GetPinnedId(Type type)");
-    await Assert.That(registryCode!).Contains("return null;");
+    await Assert.That(registryCode).Contains("public string? GetPinnedId(Type type)");
+    await Assert.That(registryCode).Contains("return null;");
   }
 }
