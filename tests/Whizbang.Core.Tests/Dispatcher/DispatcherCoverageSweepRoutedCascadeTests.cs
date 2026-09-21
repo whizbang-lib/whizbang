@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,7 +15,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures.

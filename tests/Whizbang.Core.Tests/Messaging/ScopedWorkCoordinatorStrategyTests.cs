@@ -1,7 +1,9 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,8 +13,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Messaging;
 

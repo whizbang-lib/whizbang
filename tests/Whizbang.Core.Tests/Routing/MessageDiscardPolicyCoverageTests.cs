@@ -1,12 +1,12 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
-using Microsoft.Extensions.Options;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Routing;
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -5,7 +6,6 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Generated;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

@@ -11,9 +11,9 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Tracing;
 using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Observability;

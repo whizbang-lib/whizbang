@@ -1,8 +1,8 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lifecycle;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 

@@ -1,11 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Tags;
-using Microsoft.Extensions.Options;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
 

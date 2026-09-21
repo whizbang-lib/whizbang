@@ -5,10 +5,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
-using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres.Notifications;
 

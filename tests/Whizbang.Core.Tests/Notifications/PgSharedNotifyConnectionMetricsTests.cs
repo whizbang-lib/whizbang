@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -10,7 +11,6 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Data.Postgres.Notifications;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Notifications;
 

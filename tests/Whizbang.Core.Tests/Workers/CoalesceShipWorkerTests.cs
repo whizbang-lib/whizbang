@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -15,8 +17,6 @@ using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 

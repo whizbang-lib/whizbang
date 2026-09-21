@@ -4,13 +4,13 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
 using LogEventId = Microsoft.Extensions.Logging.EventId;
 
 namespace Whizbang.Core.Tests.Messaging;

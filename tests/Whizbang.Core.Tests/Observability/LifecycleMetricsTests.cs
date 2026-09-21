@@ -1,7 +1,7 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
-using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 

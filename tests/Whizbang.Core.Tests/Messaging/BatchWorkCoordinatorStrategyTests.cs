@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -9,10 +10,9 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
-using System.Diagnostics.Metrics;
-using Whizbang.Core.Tracing;
 using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;

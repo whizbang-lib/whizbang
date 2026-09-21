@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,7 +11,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

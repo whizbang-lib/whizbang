@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,7 +11,6 @@ using Whizbang.Core.RunControl;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

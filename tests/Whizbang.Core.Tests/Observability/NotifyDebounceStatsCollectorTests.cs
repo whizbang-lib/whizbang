@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +10,6 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 

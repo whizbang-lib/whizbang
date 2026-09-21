@@ -1,14 +1,14 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
 using Whizbang.Core.Signals;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 

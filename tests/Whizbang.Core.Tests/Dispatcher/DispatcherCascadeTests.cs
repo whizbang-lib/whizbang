@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -7,7 +8,6 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

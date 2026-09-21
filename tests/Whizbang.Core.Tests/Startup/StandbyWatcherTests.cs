@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,7 +10,6 @@ using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 

@@ -14,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
@@ -24,7 +25,6 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 

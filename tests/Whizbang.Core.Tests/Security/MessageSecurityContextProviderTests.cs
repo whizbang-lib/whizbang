@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -7,7 +8,6 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Security;
 

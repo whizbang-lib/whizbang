@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -16,7 +17,6 @@ using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Workers;
 

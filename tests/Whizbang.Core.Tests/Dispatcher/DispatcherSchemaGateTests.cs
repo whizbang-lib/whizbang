@@ -1,9 +1,9 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

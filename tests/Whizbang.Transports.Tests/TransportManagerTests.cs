@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
@@ -5,7 +6,6 @@ using Whizbang.Core.Policies;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.Tests.Generated;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Transports.Tests;
 

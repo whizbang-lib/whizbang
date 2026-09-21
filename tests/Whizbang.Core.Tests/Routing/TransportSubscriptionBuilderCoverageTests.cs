@@ -3,10 +3,10 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Routing;
-using Whizbang.Core.Messaging;
-using Whizbang.Testing.Workers;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 

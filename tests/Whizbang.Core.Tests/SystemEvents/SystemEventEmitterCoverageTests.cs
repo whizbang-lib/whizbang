@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,8 +13,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,7 +12,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Integration.Tests;
 

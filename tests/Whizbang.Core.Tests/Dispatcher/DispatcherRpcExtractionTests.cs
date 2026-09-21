@@ -1,8 +1,8 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Tests.Generated;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

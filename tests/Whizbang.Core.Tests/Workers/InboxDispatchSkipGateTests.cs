@@ -1,13 +1,13 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-using Whizbang.Core;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;

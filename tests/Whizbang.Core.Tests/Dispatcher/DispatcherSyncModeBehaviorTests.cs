@@ -1,11 +1,11 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Generated;
-using Microsoft.Extensions.Configuration;
 
 // Reuse the existing VoidCommand + VoidCommandReceptor declared by
 // DispatcherLocalInvokeAndSyncTests so the source-generated AddReceptors() registry

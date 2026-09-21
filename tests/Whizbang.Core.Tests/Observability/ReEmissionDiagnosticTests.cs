@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -6,8 +8,6 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 

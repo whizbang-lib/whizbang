@@ -4,9 +4,9 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

@@ -1,12 +1,12 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
-using Whizbang.Core.Tags;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
 

@@ -1,10 +1,10 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Transports.Tests;
 

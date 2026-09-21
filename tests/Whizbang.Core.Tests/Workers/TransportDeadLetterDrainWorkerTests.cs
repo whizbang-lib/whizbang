@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,7 +9,6 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Workers;
 

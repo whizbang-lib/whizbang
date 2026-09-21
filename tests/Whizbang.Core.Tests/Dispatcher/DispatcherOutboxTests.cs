@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,7 +11,6 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

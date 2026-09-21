@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -58,7 +59,7 @@ public class DispatcherCascadeStoresCauseBeforeEffectTests {
   /// cannot show it, which is why the original case needed a receptor cascade to reproduce.
   /// </summary>
   private sealed class _orderRecordingDispatcher(IServiceProvider sp)
-      : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+      : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     public List<string> Stored { get; } = [];
 
     protected override Task CascadeToEventStoreOnlyAsync(

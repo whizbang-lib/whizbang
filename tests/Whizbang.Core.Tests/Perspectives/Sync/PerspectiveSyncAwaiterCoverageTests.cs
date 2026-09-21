@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Diagnostics;
-using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 

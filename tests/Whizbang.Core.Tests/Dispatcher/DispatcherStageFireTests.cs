@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -12,7 +13,6 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 

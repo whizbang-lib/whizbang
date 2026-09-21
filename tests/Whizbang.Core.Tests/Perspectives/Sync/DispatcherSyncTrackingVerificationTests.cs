@@ -2,10 +2,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 

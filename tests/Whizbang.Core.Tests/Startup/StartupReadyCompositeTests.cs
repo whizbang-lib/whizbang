@@ -1,16 +1,16 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
-using Whizbang.Core;
-using Whizbang.Core.Routing;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Startup;

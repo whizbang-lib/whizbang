@@ -11,6 +11,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Configuration;
@@ -19,16 +21,14 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Hosting.RabbitMQ;
 using Whizbang.Testing.Lifecycle;
-using Whizbang.Transports.RabbitMQ;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-using Whizbang.Core.Routing;
 using Whizbang.Testing.Workers;
+using Whizbang.Transports.RabbitMQ;
 
 namespace ECommerce.Lifecycle.Integration.Tests.Fixtures;
 

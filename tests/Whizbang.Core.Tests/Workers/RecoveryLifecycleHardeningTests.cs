@@ -7,9 +7,9 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Notifications;
 
 #pragma warning disable CA1707 // test method underscores
 

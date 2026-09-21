@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Resilience;
-using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 

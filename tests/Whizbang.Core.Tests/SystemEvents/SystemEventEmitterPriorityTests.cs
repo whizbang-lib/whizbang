@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -9,8 +11,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -68,7 +68,7 @@ public class SystemEventEmitterPriorityTests {
     var options = Options.Create(new SystemEventOptions { AuditPriority = WorkPriority.BACKGROUND }
       .EnableEventAudit().EnableCommandAudit());
     var store = new _captureStore();
-    var emitter = new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var emitter = new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _source());
 

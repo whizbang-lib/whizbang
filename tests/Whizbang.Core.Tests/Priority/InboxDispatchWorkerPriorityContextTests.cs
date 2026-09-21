@@ -13,9 +13,9 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
+using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Whizbang.Core.Routing;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Priority;

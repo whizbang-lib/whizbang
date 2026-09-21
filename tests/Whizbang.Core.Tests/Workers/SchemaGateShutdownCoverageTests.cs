@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -6,18 +7,17 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
-using Whizbang.Core;
-using Whizbang.Core.Minting;
-using Whizbang.Core.Routing;
-using Whizbang.Core.Tracing;
 using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
 

@@ -1,10 +1,10 @@
 #pragma warning disable CA1707
 
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
-using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 

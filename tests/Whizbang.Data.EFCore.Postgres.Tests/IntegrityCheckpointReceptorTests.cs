@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -20,7 +21,6 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using System.Diagnostics.Metrics;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

@@ -11,22 +11,22 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Signals;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Notifications;
-using Whizbang.Testing.Workers;
-using Whizbang.Core.Execution;
-using Whizbang.Core.Perspectives;
-using Whizbang.Core.Perspectives.Sync;
-using Whizbang.Core.Signals;
-using Whizbang.Core.Tracing;
 using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

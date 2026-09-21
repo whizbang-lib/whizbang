@@ -1,4 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -9,12 +13,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
-using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Whizbang.Core.Tracing;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;

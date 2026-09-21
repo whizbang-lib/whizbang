@@ -3,11 +3,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 

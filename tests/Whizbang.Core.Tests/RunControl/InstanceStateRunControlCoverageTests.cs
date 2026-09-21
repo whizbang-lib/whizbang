@@ -4,8 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.RunControl;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Tests.RunControl;
 

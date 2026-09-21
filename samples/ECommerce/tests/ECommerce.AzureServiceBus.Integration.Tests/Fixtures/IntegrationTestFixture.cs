@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
@@ -20,7 +21,6 @@ using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
 using Whizbang.Transports.AzureServiceBus;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 

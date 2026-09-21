@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -7,7 +8,6 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

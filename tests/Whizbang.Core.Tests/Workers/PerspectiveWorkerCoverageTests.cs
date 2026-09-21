@@ -1,11 +1,15 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
@@ -14,12 +18,8 @@ using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Logging.Abstractions;
-using Whizbang.Core.Execution;
-using Whizbang.Core.Notifications;
 using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 

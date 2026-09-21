@@ -1,8 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Whizbang.Core.Observability;
 using Whizbang.Core;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Signals;
 

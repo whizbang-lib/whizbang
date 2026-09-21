@@ -1,11 +1,11 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 

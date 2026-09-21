@@ -6,6 +6,7 @@
 // regression lock for the legacy API until the next major removal.
 #pragma warning disable CS0618
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,7 +14,6 @@ using Whizbang.Core;
 using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Integration.Tests;
 

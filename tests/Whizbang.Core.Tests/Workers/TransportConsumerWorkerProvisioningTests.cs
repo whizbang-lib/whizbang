@@ -1,17 +1,17 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
-using Whizbang.Core;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;

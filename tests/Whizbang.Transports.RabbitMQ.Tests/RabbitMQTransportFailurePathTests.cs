@@ -2,18 +2,18 @@ using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
-using Microsoft.Extensions.Options;
-using Whizbang.Core;
 
 namespace Whizbang.Transports.RabbitMQ.Tests;
 

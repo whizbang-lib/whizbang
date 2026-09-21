@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -10,7 +11,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Priority;
 

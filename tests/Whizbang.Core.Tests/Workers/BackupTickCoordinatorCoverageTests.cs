@@ -3,8 +3,8 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Workers;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 

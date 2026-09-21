@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Attributes;
@@ -29,7 +30,6 @@ using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
 using Whizbang.Testing.Lifecycle;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 

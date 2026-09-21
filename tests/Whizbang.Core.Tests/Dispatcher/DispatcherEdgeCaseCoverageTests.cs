@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -12,7 +13,6 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
-using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 

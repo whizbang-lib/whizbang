@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -7,8 +9,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.SystemEvents;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Messaging;
 
