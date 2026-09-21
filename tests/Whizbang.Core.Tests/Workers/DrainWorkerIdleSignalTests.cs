@@ -19,16 +19,19 @@ namespace Whizbang.Core.Tests.Workers;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Verifies <see cref="OutboxDrainWorker.IsIdle"/> + <see cref="OutboxDrainWorker.OnWorkProcessingIdle"/>
 /// and the sibling <see cref="InboxDrainWorker"/> contract that integration-test fixtures
 /// rely on to wait for the drain pipeline to quiesce before truncating tables.
-///
+/// </para>
+/// <para>
 /// Regression context: before this contract existed, the ECommerce RabbitMQ fixture's
 /// <c>_waitForWorkersReadyAsync</c> only polled <c>OutboxPublishWorker</c> (which Phase H
 /// step 4b defaults to disabled and reports IsIdle=true instantly) and
 /// <c>PerspectiveWorker</c>. The fixture truncated the database while the actual drain
 /// workers were still mid-flight, producing the 3-minute timeouts on
 /// <c>DistributeStages_MultipleCommands_AllStagesFireForEachAsync</c> and friends.
+/// </para>
 /// </summary>
 /// <docs>operations/workers/publisher-worker</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]

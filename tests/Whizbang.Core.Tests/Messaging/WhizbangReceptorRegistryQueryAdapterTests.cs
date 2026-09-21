@@ -10,19 +10,23 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Adapter tests for <see cref="WhizbangReceptorRegistryQueryAdapter"/> — the
 /// instance-API shim that delegates each call to the source-generated
 /// <c>Whizbang.Core.Generated.WhizbangReceptorRegistryQuery</c> static class.
-///
+/// </para>
+/// <para>
 /// The adapter exists ONLY so DI consumers can resolve <see cref="IReceptorRegistryQuery"/>
 /// (test code can substitute a fake; production binds to this implementation).
 /// The tests below pin the delegation: each instance method returns the same value
 /// as the corresponding static, for every shape of input.
-///
+/// </para>
+/// <para>
 /// Cache pollution risk: the static caches contributions across the AppDomain.
 /// We query for type names the test owns (a freshly-declared `_NoSuchType`) which
 /// can never be registered — the result is always false, regardless of what other
 /// tests registered. No mutation of the static state, no flake.
+/// </para>
 /// </summary>
 /// <docs>internals/receptor-registry-query</docs>
 public class WhizbangReceptorRegistryQueryAdapterTests {

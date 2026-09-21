@@ -446,16 +446,19 @@ public class OutboxDrainWorkerTests {
   }
 
   /// <summary>
+  /// <para>
   /// Production follow-up — a consumer's bulk import ran at a fraction of expected
   /// throughput with many streams pending in the outbox, root-caused to a serial cross-stream foreach in
   /// <c>OutboxDrainWorker.ExecuteAsync</c>. Per-stream FIFO is required; cross-stream
   /// FIFO is NOT — different streams can and must drain in parallel.
-  ///
+  /// </para>
+  /// <para>
   /// This test locks the invariant: with N streams in a single drain batch and a publish
   /// strategy that mutually-blocks until all N publishes are concurrently in flight, the
   /// drainer MUST run them in parallel. A serial drainer deadlocks (only 1 ever in flight)
   /// and the test times out. A parallel drainer (capped at <c>MaxConcurrentStreams</c>)
   /// reaches the gate and all complete promptly.
+  /// </para>
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_MultipleStreamsInOneBatch_DrainsConcurrentlyAcrossStreamsAsync() {
@@ -530,20 +533,24 @@ public class OutboxDrainWorkerTests {
   }
 
   /// <summary>
+  /// <para>
   /// The drainer must fetch a whole drain batch with ONE multi-stream call, not one call per
   /// stream. <c>fetch_outbox_batch</c> is built for this — it takes <c>p_stream_ids UUID[]</c>,
   /// ranks with <c>PARTITION BY o.stream_id</c>, and caps <c>p_max_per_stream</c> per stream.
   /// <c>InboxDrainWorker</c> already batches its mirror call for exactly this reason.
-  ///
+  /// </para>
+  /// <para>
   /// Fanning out costs more than N round-trips: there is no index on <c>wh_outbox(stream_id)</c>,
   /// so every per-stream call scans all unpublished rows and discards the ~99% belonging to
   /// other streams. Draining N streams then costs N full scans of the same working set to
   /// return N rows, plus N query plans.
-  ///
+  /// </para>
+  /// <para>
   /// Deterministic by construction: all stream_ids are written BEFORE the worker starts, so the
   /// batcher's first read sees the whole set — no reliance on a sliding-window race. The
   /// assertion is on batch SHAPE (some call carried more than one id) rather than an exact call
   /// count, so it stays honest if the batcher legitimately splits a window.
+  /// </para>
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_MultipleStreamsInOneBatch_IssuesOneMultiStreamFetchAsync() {

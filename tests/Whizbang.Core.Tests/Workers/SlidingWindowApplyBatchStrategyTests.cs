@@ -212,6 +212,7 @@ public class SlidingWindowApplyBatchStrategyTests {
   }
 
   /// <summary>
+  /// <para>
   /// The idle sweep evicts a stream buffer in two steps — remove from the active map, then
   /// complete its writer. <c>AppendAsync</c> reads the map and then writes, so a caller can be
   /// holding a buffer the sweep completes in between, and the write throws
@@ -219,10 +220,12 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// perspective apply path, not a test artifact: it surfaced as an intermittent CI failure in
   /// this class's own idle-sweep test, where a 20ms sweep interval made the window easy to hit
   /// under load.
-  ///
+  /// </para>
+  /// <para>
   /// Append must survive it — a stream being evicted for idleness is a normal, expected event
   /// and must never fail the append that raced it. Deterministic: the seam completes a still-
   /// mapped writer, exactly the state the sweep produces, with no sleeps or scheduling luck.
+  /// </para>
   /// </summary>
   [Test]
   public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync() {

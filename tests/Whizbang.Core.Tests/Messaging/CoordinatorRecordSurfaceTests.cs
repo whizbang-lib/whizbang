@@ -13,12 +13,14 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Surface tests for six records that show 0% coverage but ride hot paths
 /// (claim_work, the work pump, partition rebalancing, completion flushing,
 /// rewind-on-cursor-inversion). Each test pins ctor / property shape + value
 /// equality so a future refactor that drops or reorders a property breaks
 /// here instead of silently changing a SQL marshaller.
-///
+/// </para>
+/// <para>
 /// Targets:
 ///   - PartitionRecomputeResult — counts from RecomputePartitionNumbersAsync.
 ///   - WorkCoordinatorStatistics — observability gauge snapshot.
@@ -27,6 +29,7 @@ namespace Whizbang.Core.Tests.Messaging;
 ///     drain prefetch (Phase H step 7).
 ///   - OrphanedLifecycleEvent — orphan-event reconciliation tuple.
 ///   - FlushCompletionsRequest + CategoryFailures — composite flusher payload.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public class CoordinatorRecordSurfaceTests {

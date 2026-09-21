@@ -30,15 +30,18 @@ public class PerspectiveWorkerDedupTests {
   /// Liveness backstop for the completion signals in this file — NOT a pace assertion.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Every wait here is gated on a <c>TaskCompletionSource</c> that the runner/coordinator
   /// completes, so a healthy worker satisfies it immediately regardless of this value. The bound
   /// exists only so a genuinely broken worker fails instead of hanging the suite forever.
-  ///
+  /// </para>
+  /// <para>
   /// It was 5 seconds, which is long enough in isolation and not long enough under a full-suite
   /// run: <c>Worker_DifferentWorkIds_BothProcessedAsync</c> failed at 5s 003ms in CI while the
   /// invariant it asserts held perfectly. A backstop that trips on scheduler pressure reports
   /// "the worker did not process the work" for what was really "the machine was busy", which is
   /// worse than useless — it trains people to re-run red builds.
+  /// </para>
   /// </remarks>
   private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(60);
 

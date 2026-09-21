@@ -57,16 +57,19 @@ public class TableStatisticsCollectorTests {
   }
 
   /// <summary>
+  /// <para>
   /// A table that occupies far more space than its live rows need costs on every read: index
   /// heap-fetches pull emptier pages and the buffer cache holds fewer useful rows. The usual
   /// cause is dead tuples awaiting vacuum; the invisible one is a dropped column, whose bytes
   /// Postgres keeps in every pre-existing row until the table is rewritten — autovacuum never
   /// returns them. Either way the operator has no way to see it without going looking, which is
   /// exactly how a table ends up several times its necessary size unnoticed.
-  ///
+  /// </para>
+  /// <para>
   /// So the collector must actually PUBLISH the ratio, not merely be able to compute it. This
   /// asserts the value reaches the metric, because a gauge that is wired but never fed reports
   /// a healthy silence indistinguishable from a healthy system.
+  /// </para>
   ///
   /// <para>
   /// Waits on <c>CycleCompleted</c>, which fires after the caches are written. An earlier version

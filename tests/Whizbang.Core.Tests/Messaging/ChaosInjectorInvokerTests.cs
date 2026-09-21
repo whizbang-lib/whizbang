@@ -11,15 +11,18 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for <see cref="ChaosInjectorInvoker"/> — the small indirection
 /// workers use to gate IChaosInjector calls behind the production-safe
 /// EnableChaosHooks flag. The invariant: in production, with the flag off, the
 /// invoker MUST short-circuit without touching the injector — even if one is
 /// registered. This guarantees zero cost on the hot path.
-///
+/// </para>
+/// <para>
 /// Coverage report showed 0/11 lines — workers exercise it indirectly but no
 /// direct test pinned the two short-circuit paths (flag off, injector null) or
 /// the active path (flag on + injector present).
+/// </para>
 /// </summary>
 /// <docs>operations/testing/chaos-injection</docs>
 public class ChaosInjectorInvokerTests {

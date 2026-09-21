@@ -12,12 +12,15 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
+/// <para>
 /// Tests for the split IWorkCoordinatorStrategy flush API:
 ///   FlushAsync(flags, ct) : Task            — fire-and-forget, strategy decides when to flush
 ///   FlushAndGetBatchAsync(flags, ct) : Task&lt;WorkBatch&gt; — force flush, bypass batching window
-///
+/// </para>
+/// <para>
 /// Replaces the old FlushMode-based API with two explicit methods so callers cannot accidentally
 /// force synchronous flushes against an Interval or Batch strategy.
+/// </para>
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
 [Category("Core")]

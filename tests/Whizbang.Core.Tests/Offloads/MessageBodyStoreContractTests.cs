@@ -7,12 +7,14 @@ using Whizbang.Core.Offloads;
 namespace Whizbang.Core.Tests.Offloads;
 
 /// <summary>
+/// <para>
 /// Locks the Whizbang.Core.Offloads contract surface — the abstractions
 /// the body-offload (claim-check) feature builds on. These types live in
 /// Whizbang.Core so concrete provider projects (Whizbang.Offloads.InMemory,
 /// Whizbang.Offloads.AzureBlob, etc.) can depend on them without pulling
 /// Whizbang.Core into provider-specific transitive dependency graphs.
-///
+/// </para>
+/// <para>
 /// What gets locked here:
 ///   - <see cref="MessageBodyClaim"/> record shape: every field load-bearing
 ///     (StorageKey + ContentHash drive integrity check on download; Size +
@@ -24,6 +26,7 @@ namespace Whizbang.Core.Tests.Offloads;
 ///   - <see cref="IMessageBodyStore"/> contract: a non-abstract impl
 ///     compiles, ProviderName surfaces, and the three methods reach
 ///     their override
+/// </para>
 /// </summary>
 /// <docs>fundamentals/offloads/message-body-store</docs>
 public class MessageBodyStoreContractTests {

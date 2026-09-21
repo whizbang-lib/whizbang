@@ -11,17 +11,20 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Locks the two default-interface-method behaviors on
 /// <see cref="IPerspectiveRunner"/>. Generated runners override these; legacy
 /// runners + test fakes get the defaults. If a refactor changes them,
 /// every uplift path silently behaves differently.
-///
+/// </para>
+/// <para>
 /// Defaults under test:
 ///   1. RunWithEventsAsync returns Completion(Status=None, LastEventId=lastProcessedEventId)
 ///      — the no-op runner pattern used by test doubles that don't override drain mode.
 ///   2. RewindAndRunAsync(streamId, perspectiveName, triggeringEventId,
 ///      triggeringCommitSequence, ct) delegates to the 3-arg overload —
 ///      legacy runners that don't know about commit_sequence keep working.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/perspective-runner</docs>
 public class IPerspectiveRunnerDefaultsTests {

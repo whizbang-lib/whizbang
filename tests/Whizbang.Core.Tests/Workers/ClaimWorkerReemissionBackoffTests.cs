@@ -160,16 +160,19 @@ public class ClaimWorkerReemissionBackoffTests {
   }
 
   /// <summary>
+  /// <para>
   /// The production half. The wake permit short-circuits the loop's wait, and the system's own
   /// completion traffic keeps setting it — publishes complete, completions signal, the permit is
   /// released. So an empty-poll streak alone cannot slow the loop down when signals keep
   /// arriving: the streak stretches the timeout, but a pending permit means the wait returns
   /// immediately anyway.
-  ///
+  /// </para>
+  /// <para>
   /// Here every claim pulls the wake lever, standing in for that feedback path. With the same
   /// work re-offered each time, the loop must STILL space its claims out. Without the pre-wait
   /// spacing this pins to back-to-back claims regardless of the streak, which is why the streak
   /// increment needed to be verified separately from the spacing that acts on it.
+  /// </para>
   /// </summary>
   [Test]
   public async Task RepeatedWorkSet_UnderConstantWakeSignals_StillSpacesClaimsAsync() {

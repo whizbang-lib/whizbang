@@ -11,15 +11,18 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Pins the default-interface-method delegation on <see cref="IPerspectiveStore{TModel}"/>.
 /// Custom implementations (test doubles, third-party stores like Marten) only need to
 /// override the "shortest" overloads; the richer overloads — with scope, forceUpdateScope,
 /// metadata, physical fields — fall through to the canonical short form via default impls.
-///
+/// </para>
+/// <para>
 /// If a future refactor reorders parameters in the default-impl chain, every existing
 /// test fake silently drops scope / metadata / physical fields. These tests lock the
 /// fan-in: a minimal fake records ONLY the short overloads; calling the rich overloads
 /// must still land on the short ones, in the same order, with the same values.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 public class IPerspectiveStoreDefaultsTests {

@@ -535,16 +535,19 @@ public class InboxDrainWorkerTests {
   }
 
   /// <summary>
+  /// <para>
   /// A non-routable inbox row is looked up by message_id, and the SQL treats BOTH a NULL and a
   /// <see cref="Guid.Empty"/> stream_id that way — migration 040's WHERE clause reads
   /// <c>(i.stream_id IS NULL OR i.stream_id = '00000000-...') AND i.message_id = ANY(p_stream_ids)</c>,
   /// mirroring the outbox function. Guid.Empty occurs where a producer writes the default instead
   /// of NULL.
-  ///
+  /// </para>
+  /// <para>
   /// The batched fetch grouped by <c>StreamId ?? MessageId</c>, which covers NULL but NOT
   /// Guid.Empty: such a row was fetched, filed under Guid.Empty, then looked up by its message_id
   /// and missed. Because the miss is deterministic it repeats every cycle, so the row is not
   /// merely delayed — it is never dispatched by the batched path at all.
+  /// </para>
   /// </summary>
   [Test]
   public async Task InboxDrainWorker_EmptyGuidStreamId_IsDrainedUnderItsMessageIdAsync() {

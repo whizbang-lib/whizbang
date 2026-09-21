@@ -6,14 +6,17 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
+/// <para>
 /// The claim loop hands a batch to the channel and immediately claims again, while leases live for
 /// LeaseSeconds regardless. Outstanding claimed work therefore accumulates across cycles until the
 /// entire backlog is held — measured at 21,512 of 21,622 pending rows leased at once. Bounding the
 /// per-batch size cannot fix that: at any batch size a fast loop still accumulates everything, it
 /// only changes how long it takes.
-///
+/// </para>
+/// <para>
 /// This budget bounds OUTSTANDING work instead, in ROWS (the unit leases are held in), so the loop
 /// never holds more than it can plausibly drain inside the lease window.
+/// </para>
 /// </summary>
 public class AdaptiveOutstandingBudgetTests {
 

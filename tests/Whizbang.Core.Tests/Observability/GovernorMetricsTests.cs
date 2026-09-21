@@ -33,14 +33,17 @@ public class GovernorMetricsTests {
   /// Starts a listener scoped to ONE governor series.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The listener can only subscribe by meter NAME, and every <see cref="GovernorMetrics"/>
   /// instance publishes under the same one. Under parallel execution that means
   /// <c>RecordObservableInstruments</c> polls the gauges of every other live instance too, and a
   /// test reading "the first width measurement" can read a sibling test's governor. That is a real
   /// cross-test leak, not a flake: it failed only in CI, where these tests actually overlap.
-  ///
+  /// </para>
+  /// <para>
   /// Each test therefore registers under its own series name and the callback drops measurements
   /// tagged for anything else, so a test observes only what it created.
+  /// </para>
   /// </remarks>
   private static (GovernorMetrics Metrics, MeterListener Listener, List<(string Name, long Value, string? Direction)> Captured) _listen(string series) {
     var captured = new List<(string, long, string?)>();

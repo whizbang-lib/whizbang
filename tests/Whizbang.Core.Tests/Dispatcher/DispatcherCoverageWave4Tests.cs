@@ -25,6 +25,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 public sealed record Wave4DynamicEvent([property: StreamId] Guid Id) : IEvent;
 
 /// <summary>
+/// <para>
 /// Wave 4 coverage tests for Dispatcher.cs targeting specific uncovered lines identified in the
 /// 2026-09-05 coverage report:
 /// - _lookupReceptorDefaultRouting: own-routing hit and foreign-lookup-exhausted fallback (231, 237)
@@ -33,10 +34,12 @@ public sealed record Wave4DynamicEvent([property: StreamId] Guid Id) : IEvent;
 ///   guard, and the non-IHasStreamId SetStreamId fallback (4004-4005, 4013-4014, 4033, 4039-4040)
 /// - _sendToOutboxViaScopeAsync (generic and non-generic) and _sendManyToOutboxAsync: sync scope dispose
 ///   when the resolved IServiceScope is not IAsyncDisposable (4312-4313, 4397-4398, 4452-4453)
-///
+/// </para>
+/// <para>
 /// Several other lines from the same report were confirmed, by reading the surrounding call graph,
 /// to be unreachable through any current caller (see the class-level remarks below for the specific
 /// lines and reasoning) and are intentionally left without a test rather than exercised via reflection.
+/// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Dispatcher")]

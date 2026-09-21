@@ -13,12 +13,14 @@ namespace Whizbang.Core.Tests.Observability;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for <see cref="WhizbangStartupLogger"/> — the IHostedService that
 /// fires once at host startup to print the banner + log the framework version.
 /// Coverage report showed 0/18 lines; the class only runs in the full DI host path
 /// (sample apps) so the StartAsync logic — config-vs-options precedence, the
 /// banner enable/disable, the version log line — was untested directly.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 ///   1. StartAsync logs Whizbang version + service name regardless of banner setting.
 ///   2. WhizbangCoreOptions.ShowBanner = false suppresses the banner.
@@ -26,6 +28,7 @@ namespace Whizbang.Core.Tests.Observability;
 ///   4. Bad appsettings value (non-bool) silently falls back to the code option.
 ///   5. Null configuration leaves the code option authoritative (no crash).
 ///   6. StopAsync is a no-op returning a completed task.
+/// </para>
 /// </summary>
 /// <docs>operations/observability/logging#startup</docs>
 public class WhizbangStartupLoggerTests {
