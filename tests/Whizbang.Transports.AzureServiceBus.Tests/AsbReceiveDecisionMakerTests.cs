@@ -130,7 +130,7 @@ public class AsbReceiveDecisionMakerTests {
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
     // Local registry says: no local consumer for THIS payload type.
-    bool _isHandledLocally(Type t) => false;
+    bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 
@@ -147,7 +147,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    bool _isHandledLocally(Type t) => true;
+    bool _isHandledLocally(Type _) => true;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 
@@ -182,7 +182,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    static bool _isHandledLocally(Type t) => false; // no local consumer
+    static bool _isHandledLocally(Type _) => false; // no local consumer
     var absorbed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System.Text.Json" };
 
     var decision = decider.Decide(
@@ -217,7 +217,7 @@ public class AsbReceiveDecisionMakerTests {
       ContentHash: "sha256-deadbeef",
       ContentType: "application/json",
       UploadedAt: DateTimeOffset.UtcNow);
-    var originalEnvelopeType =
+    const string originalEnvelopeType =
       "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.BigCommand, MyApp.Contracts]], Whizbang.Core";
 
     var envelope = new MessageEnvelope<BodyClaimEnvelopePayload> {
@@ -273,7 +273,7 @@ public class AsbReceiveDecisionMakerTests {
     // produces a typeInfo that successfully deserializes the body.
     var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var envelope = _makeEnvelope();
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]], Whizbang.Core";
     var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
@@ -332,7 +332,7 @@ public class AsbReceiveDecisionMakerTests {
 
   [Test]
   public async Task Decide_TypeInfoMisses_RawReceptorRegistered_ReturnsInvokeRawReceptorAsync() {
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
     var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
     var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
     var decider = new AsbReceiveDecisionMaker();
@@ -488,7 +488,7 @@ public class AsbReceiveDecisionMakerTests {
       "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
 
     // Faithful to every real service: nothing consumes the composite type itself.
-    static bool _isHandledLocally(Type t) => false;
+    static bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => compositeTypeInfo, combinedOptions, _isHandledLocally);
 
@@ -509,7 +509,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    static bool _isHandledLocally(Type t) => false;
+    static bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 

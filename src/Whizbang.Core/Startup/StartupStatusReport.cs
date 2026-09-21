@@ -96,7 +96,7 @@ public static class StartupStatusReporter {
     // Degrade honestly: no pipeline registered, or registered but not yet begun, is "not started"
     // — never an empty step list, because an empty list and a pipeline that has not begun must
     // not serialize identically.
-    if (state is null || !state.HasRunStarted) {
+    if (state?.HasRunStarted != true) {
       return new InstanceStatusSection(
         instanceProvider?.InstanceId, instanceProvider?.ServiceName,
         Started: false, CurrentStep: null,

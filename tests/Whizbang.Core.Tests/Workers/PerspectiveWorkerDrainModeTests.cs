@@ -84,6 +84,7 @@ public class PerspectiveWorkerDrainModeTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: null,
@@ -91,8 +92,7 @@ public class PerspectiveWorkerDrainModeTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -147,14 +147,14 @@ public class PerspectiveWorkerDrainModeTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = 10,
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

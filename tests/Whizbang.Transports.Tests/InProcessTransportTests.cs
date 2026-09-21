@@ -120,7 +120,7 @@ public class InProcessTransportTests {
     var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           receivedEnvelope = msg.Envelope;
         }
@@ -157,7 +157,7 @@ public class InProcessTransportTests {
     for (int i = 0; i < subscriberCount; i++) {
       var index = i;
       await transport.SubscribeBatchAsync(
-        async (batch, ct) => {
+        async (batch, _) => {
           foreach (var msg in batch) {
             invocations.Add(index);
           }
@@ -206,7 +206,7 @@ public class InProcessTransportTests {
     var topic1Handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           topic1Invoked = true;
         }
@@ -217,7 +217,7 @@ public class InProcessTransportTests {
     );
 
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           topic2Invoked = true;
         }
@@ -249,7 +249,7 @@ public class InProcessTransportTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      async (batch, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
@@ -269,7 +269,7 @@ public class InProcessTransportTests {
 
     // Act & Assert
     await Assert.That(async () => await transport.SubscribeBatchAsync(
-      async (batch, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cts.Token
@@ -306,7 +306,7 @@ public class InProcessTransportTests {
     var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription = await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           handlerInvoked = true;
         }
@@ -390,7 +390,7 @@ public class InProcessTransportTests {
 
     var handlerInvoked = false;
     var subscription = await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           handlerInvoked = true;
         }
@@ -508,7 +508,7 @@ public class InProcessTransportTests {
     var allHandled = new SemaphoreSlim(0, concurrentPublishes);
 
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           invocations.Add(msg.Envelope.MessageId);
         }
@@ -555,7 +555,7 @@ public class InProcessTransportTests {
     // Act - Subscribe concurrently
     var subscribeTasks = Enumerable.Range(0, concurrentSubscriptions)
       .Select(index => transport.SubscribeBatchAsync(
-        async (batch, ct) => {
+        async (batch, _) => {
           foreach (var msg in batch) {
             invocations.Add(index);
           }
@@ -590,7 +590,7 @@ public class InProcessTransportTests {
     var tasks = Enumerable.Range(0, 50)
       .Select(async _ => {
         var subscription = await transport.SubscribeBatchAsync(
-          async (batch, ct) => { },
+          async (_, _) => { },
           destination,
           new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
         );
@@ -625,7 +625,7 @@ public class InProcessTransportTests {
     var handlerSucceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (_, _) => {
         var attempt = Interlocked.Increment(ref handlerCallCount);
         if (attempt == 1) {
           // First attempt fails — batch collector re-queues for retry

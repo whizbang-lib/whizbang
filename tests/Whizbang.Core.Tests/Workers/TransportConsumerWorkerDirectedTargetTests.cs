@@ -149,9 +149,9 @@ public class TransportConsumerWorkerDirectedTargetTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       serviceInstanceProvider: serviceName is null ? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance : new StubServiceInstanceProvider(serviceName),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>());
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

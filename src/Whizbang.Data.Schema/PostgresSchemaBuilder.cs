@@ -71,7 +71,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       columnDefinitions.Add(_buildColumnDefinition(column, suppressInlinePrimaryKey: hasCompositePrimaryKey));
     }
 
-    sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
+    sb.AppendJoin(",\n", columnDefinitions.Select(c => $"  {c}")).AppendLine();
 
     // Add composite primary key constraint after columns
     if (hasCompositePrimaryKey) {

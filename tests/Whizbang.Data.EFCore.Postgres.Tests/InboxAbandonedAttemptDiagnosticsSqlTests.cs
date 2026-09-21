@@ -61,7 +61,7 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
 
     await Assert.That(row.Error).IsNotNull()
       .Because("the row must say WHAT consumed the attempt, not merely that one was consumed");
-    await Assert.That(row.Error!).Contains(deadInstance.ToString())
+    await Assert.That(row.Error).Contains(deadInstance.ToString())
       .Because("naming the instance that held the lease is what distinguishes a crash-looping host "
              + "from a failing handler");
   }

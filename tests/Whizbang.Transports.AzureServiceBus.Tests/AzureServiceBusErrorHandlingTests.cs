@@ -13,16 +13,19 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Unit tests for AzureServiceBusTransport's receive-pipeline error handling and lifecycle
 /// paths: _handleMessageProcessingErrorAsync, _handleSessionMessageProcessingErrorAsync,
 /// _handleProcessorErrorAsync, _invokeRecoveryHandlerAsync, the _safeAbandonAsync /
 /// _safeDeadLetterAsync swallow policy, DisposeAsync, and the SendAsync / PublishAsync
 /// error branches.
-///
+/// </para>
+/// <para>
 /// No broker is used: the Azure SDK's documented mocking surface is exercised instead —
 /// mockable ServiceBusClient / ServiceBusProcessor subclasses raise OnProcessMessageAsync /
 /// OnProcessErrorAsync directly, and settlement calls are captured by fake receivers.
 /// Every raise is awaited inline, so assertions are deterministic without timing waits.
+/// </para>
 /// </summary>
 [Timeout(10_000)]
 public class AzureServiceBusErrorHandlingTests {
@@ -209,7 +212,7 @@ public class AzureServiceBusErrorHandlingTests {
     var receiver = new FakeReceiver();
 
     await client.LastProcessor!.RaiseMessageAsync(
-      _messageArgs(_rawMessage("{{{not-json", typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!), receiver));
+      _messageArgs(_rawMessage("{{{not-json", typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName), receiver));
 
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(handlerInvoked).IsFalse();
@@ -680,7 +683,7 @@ public class AzureServiceBusErrorHandlingTests {
   private static ServiceBusReceivedMessage _envelopeMessage(MessageEnvelope<TestMessage> envelope, int deliveryCount = 1) {
     var typeInfo = _combinedOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
-    return _rawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount);
+    return _rawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName, deliveryCount);
   }
 
   /// <summary>Builds a broker message with an arbitrary body and optional EnvelopeType property.</summary>
@@ -692,8 +695,8 @@ public class AzureServiceBusErrorHandlingTests {
     return ServiceBusModelFactory.ServiceBusReceivedMessage(
       body: BinaryData.FromString(body),
       messageId: Guid.CreateVersion7().ToString(),
-      deliveryCount: deliveryCount,
-      properties: properties);
+      properties: properties,
+      deliveryCount: deliveryCount);
   }
 
   private static ProcessMessageEventArgs _messageArgs(ServiceBusReceivedMessage message, FakeReceiver receiver) =>
@@ -811,8 +814,7 @@ public class AzureServiceBusErrorHandlingTests {
 
     public Task RaiseErrorAsync(ProcessErrorEventArgs args) => OnProcessErrorAsync(args);
 
-    private sealed class InnerFakeProcessor : ServiceBusProcessor {
-    }
+    private sealed class InnerFakeProcessor : ServiceBusProcessor;
   }
 
   /// <summary>

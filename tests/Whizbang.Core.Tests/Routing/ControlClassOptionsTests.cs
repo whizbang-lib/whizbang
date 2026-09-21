@@ -134,7 +134,7 @@ public class ControlClassOptionsTests {
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<ControlClassOptions>>().Value;
     await Assert.That(options.Enabled).IsFalse();
@@ -149,7 +149,7 @@ public class ControlClassOptionsTests {
   public async Task Options_NoConfiguration_KeepDefaultsAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var options = provider.GetRequiredService<IOptions<ControlClassOptions>>().Value;
     await Assert.That(options.Enabled).IsTrue();

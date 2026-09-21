@@ -26,41 +26,33 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusDeadLetterDrainerTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/AsbDeadLetterImportSeamIntegrationTests.cs</tests>
-public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrainer, IAsyncDisposable {
-  private readonly ServiceBusClient _client;
-  private readonly string _topicName;
-  private readonly string _subscriptionName;
-  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync;
-  private readonly ILogger<AzureServiceBusDeadLetterDrainer> _logger;
+/// <remarks>
+/// Creates a drainer bound to a single ASB subscription.
+/// </remarks>
+/// <param name="client">Shared ServiceBusClient. Lifetime owned by DI; not disposed here.</param>
+/// <param name="topicName">Topic that owns the subscription.</param>
+/// <param name="subscriptionName">Subscription whose DLQ to drain.</param>
+/// <param name="importAsync">Custody seam — typically wraps
+///   <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>. Returns <c>true</c> when a custody row
+///   was created, <c>false</c> for a duplicate (already imported — still safe to settle), and
+///   THROWS on failure so the message is abandoned and re-offered next pass.</param>
+/// <param name="logger">Logger.</param>
+public sealed class AzureServiceBusDeadLetterDrainer(
+  ServiceBusClient client,
+  string topicName,
+  string subscriptionName,
+  Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
+  ILogger<AzureServiceBusDeadLetterDrainer> logger) : ITransportDeadLetterDrainer, IAsyncDisposable {
+  private readonly ServiceBusClient _client = client ?? throw new ArgumentNullException(nameof(client));
+  private readonly string _topicName = !string.IsNullOrWhiteSpace(topicName) ? topicName
+      : throw new ArgumentException("Topic name required", nameof(topicName));
+  private readonly string _subscriptionName = !string.IsNullOrWhiteSpace(subscriptionName) ? subscriptionName
+      : throw new ArgumentException("Subscription name required", nameof(subscriptionName));
+  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
+  private readonly ILogger<AzureServiceBusDeadLetterDrainer> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusDeadLetterDrainer>.Instance;
   private ServiceBusReceiver? _receiver;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;
-
-  /// <summary>
-  /// Creates a drainer bound to a single ASB subscription.
-  /// </summary>
-  /// <param name="client">Shared ServiceBusClient. Lifetime owned by DI; not disposed here.</param>
-  /// <param name="topicName">Topic that owns the subscription.</param>
-  /// <param name="subscriptionName">Subscription whose DLQ to drain.</param>
-  /// <param name="importAsync">Custody seam — typically wraps
-  ///   <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>. Returns <c>true</c> when a custody row
-  ///   was created, <c>false</c> for a duplicate (already imported — still safe to settle), and
-  ///   THROWS on failure so the message is abandoned and re-offered next pass.</param>
-  /// <param name="logger">Logger.</param>
-  public AzureServiceBusDeadLetterDrainer(
-    ServiceBusClient client,
-    string topicName,
-    string subscriptionName,
-    Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
-    ILogger<AzureServiceBusDeadLetterDrainer> logger) {
-    _client = client ?? throw new ArgumentNullException(nameof(client));
-    _topicName = !string.IsNullOrWhiteSpace(topicName) ? topicName
-      : throw new ArgumentException("Topic name required", nameof(topicName));
-    _subscriptionName = !string.IsNullOrWhiteSpace(subscriptionName) ? subscriptionName
-      : throw new ArgumentException("Subscription name required", nameof(subscriptionName));
-    _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusDeadLetterDrainer>.Instance;
-  }
 
   /// <inheritdoc />
   public string TransportName => $"asb:{_topicName}/{_subscriptionName}";

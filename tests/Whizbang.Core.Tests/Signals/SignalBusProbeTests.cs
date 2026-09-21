@@ -69,7 +69,7 @@ public class SignalBusProbeTests {
     await Assert.That(state.WireRouteVerified).IsEqualTo(false);
     var report = state.Report();
     await Assert.That(report.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(report.Detail!).Contains("DeadTransport");
+    await Assert.That(report.Detail).Contains("DeadTransport");
   }
 
   /// <summary>Delivers its first probe (loops back like the in-memory transport), then goes dead —

@@ -12,13 +12,9 @@ namespace Whizbang.Core.Observability;
 /// singleton is lazy-constructed and the global hooks may not be in place when the first
 /// abandoned-Task exception happens.
 /// </summary>
-public sealed class UnobservedExceptionDiagnosticsWarmUp : IHostedService {
-  private readonly UnobservedExceptionDiagnostics _diagnostics;
-
-  /// <summary>Constructor — taking the diagnostics dependency triggers its construction.</summary>
-  public UnobservedExceptionDiagnosticsWarmUp(UnobservedExceptionDiagnostics diagnostics) {
-    _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
-  }
+/// <remarks>Constructor — taking the diagnostics dependency triggers its construction.</remarks>
+public sealed class UnobservedExceptionDiagnosticsWarmUp(UnobservedExceptionDiagnostics diagnostics) : IHostedService {
+  private readonly UnobservedExceptionDiagnostics _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
 
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {

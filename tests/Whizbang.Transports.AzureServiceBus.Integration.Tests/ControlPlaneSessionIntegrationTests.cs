@@ -68,9 +68,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var receivedChannel = Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (received, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(received.MessageId.Value, ct);
-      },
+      async (received, _, ct) => await receivedChannel.Writer.WriteAsync(received.MessageId.Value, ct),
       new TransportDestination("topic-fifo-01", "sub-fifo-session")
     );
 
@@ -132,7 +130,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var received = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (env, _, ct) => { await received.Writer.WriteAsync(env.MessageId.Value, ct); },
+      async (env, _, ct) => await received.Writer.WriteAsync(env.MessageId.Value, ct),
       new TransportDestination("topic-filtered-01", "sub-filtered-session"));
 
     try {

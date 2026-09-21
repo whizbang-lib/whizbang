@@ -42,7 +42,7 @@ public class DbContextNotificationConnectionStringFallbackCoverageTests {
   public async Task GetSearchPath_CalledTwice_SecondCallReturnsTheCachedSchemaAsync() {
     var services = new ServiceCollection();
     services.AddDbContext<_SchemaTestDbContext>(o => o.UseNpgsql("Host=schema-cache.local;Database=db"));
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_SchemaTestDbContext));
 
     var first = fallback.GetSearchPath();
@@ -61,7 +61,7 @@ public class DbContextNotificationConnectionStringFallbackCoverageTests {
   public async Task GetSearchPath_NoProviderConfigured_TreatsItAsNoSchemaKnownAsync() {
     var services = new ServiceCollection();
     services.AddDbContext<_FallbackTestDbContext>(_ => { });
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
 
     var result = fallback.GetSearchPath();

@@ -63,7 +63,7 @@ public sealed partial class CoalesceShipWorker(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    if (_coalesceResolver is null || !_coalesceResolver.HasEnabledBindings) {
+    if (_coalesceResolver?.HasEnabledBindings != true) {
       // No enabled coalesce binding — the feature is unused in this host. Park (keep
       // ExecuteTask alive, the MaintenanceWorker killswitch idiom) rather than exit, so a
       // health probe never mistakes "unused" for "crashed".

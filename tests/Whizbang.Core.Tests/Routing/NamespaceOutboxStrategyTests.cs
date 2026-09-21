@@ -434,7 +434,7 @@ public class NamespaceOutboxStrategyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.CommandNamespacesToInbox).Contains("myapp.orders.commands");
@@ -453,7 +453,7 @@ public class NamespaceOutboxStrategyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.AllCommandNamespacesRouteToInbox).IsTrue();
@@ -467,7 +467,7 @@ public class NamespaceOutboxStrategyTests {
     var services = new ServiceCollection();
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.CommandNamespacesToInbox).IsEmpty()
@@ -488,7 +488,7 @@ public class NamespaceOutboxStrategyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var strategy = provider.GetRequiredService<IOutboxRoutingStrategy>();
     var destination = strategy.GetDestination(
       typeof(OutboxTestTypes.Orders.Commands.CreateOrder), _noDomains, MessageKind.Command);
@@ -510,7 +510,7 @@ public class NamespaceOutboxStrategyTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var strategy = provider.GetRequiredService<IOutboxRoutingStrategy>();
     var destination = strategy.GetDestination(
       typeof(OutboxTestTypes.Orders.Commands.CreateOrder), _noDomains, MessageKind.Command);

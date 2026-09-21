@@ -70,7 +70,7 @@ public class DbUpsertStrategyDefaultsTests {
   public async Task UpsertPerspectiveRowAsync_ForceUpdateScopeDefault_ForwardsToBaseOverloadAsync() {
     var strategy = new RecordingUpsertStrategy();
     IDbUpsertStrategy sut = strategy;
-    using var context = new StubDbContext();
+    await using var context = new StubDbContext();
     var id = Guid.CreateVersion7();
 
     await sut.UpsertPerspectiveRowAsync(
@@ -91,7 +91,7 @@ public class DbUpsertStrategyDefaultsTests {
   public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync_ForceUpdateScopeDefault_ForwardsToBaseOverloadAsync() {
     var strategy = new RecordingUpsertStrategy();
     IDbUpsertStrategy sut = strategy;
-    using var context = new StubDbContext();
+    await using var context = new StubDbContext();
     var id = Guid.CreateVersion7();
     var physicalFields = new Dictionary<string, object?> { ["total"] = 42 };
 
@@ -114,7 +114,7 @@ public class DbUpsertStrategyDefaultsTests {
   public async Task ForceUpdateScopeDefaults_DoNotCrossWireTheTwoOverloadsAsync() {
     var strategy = new RecordingUpsertStrategy();
     IDbUpsertStrategy sut = strategy;
-    using var context = new StubDbContext();
+    await using var context = new StubDbContext();
 
     await sut.UpsertPerspectiveRowAsync(
         context,

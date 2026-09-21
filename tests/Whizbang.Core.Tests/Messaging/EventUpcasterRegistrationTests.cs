@@ -22,7 +22,7 @@ public class EventUpcasterRegistrationTests {
 
     await Assert.That(returned).IsSameReferenceAs(services); // fluent
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var upcasters = sp.GetServices<IEventUpcaster>().ToList();
     await Assert.That(upcasters.Count).IsEqualTo(2);
@@ -41,7 +41,7 @@ public class EventUpcasterRegistrationTests {
   public async Task AddEventUpcaster_RegistersAsSingletonAsync() {
     var services = new ServiceCollection();
     services.AddEventUpcaster<FirstUpcaster>();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var a = sp.GetServices<IEventUpcaster>().Single();
     var b = sp.GetServices<IEventUpcaster>().Single();

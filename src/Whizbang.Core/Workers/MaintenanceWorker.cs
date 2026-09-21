@@ -543,7 +543,7 @@ public sealed partial class MaintenanceWorker(
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
-        var refs = batch.Select(t => new Whizbang.Core.Lifecycle.PerspectiveRowRef(t.TableName, t.RowId)).ToList();
+        var refs = batch.ConvertAll(t => new Whizbang.Core.Lifecycle.PerspectiveRowRef(t.TableName, t.RowId));
         var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
           refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
           _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
@@ -656,7 +656,7 @@ public sealed partial class MaintenanceWorker(
             throw;
           } catch (Exception ex) {
             anyDeferred = true;
-            var refs = rowIds.Select(id => new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, id)).ToList();
+            var refs = rowIds.ConvertAll(id => new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, id));
             var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
               refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
               _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
@@ -672,7 +672,7 @@ public sealed partial class MaintenanceWorker(
       if (anyDeferred) {
         var reseed = seeds
           .Where(s => tableByType.ContainsKey(s.Item1))
-          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.Item2))
+          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.RowId))
           .ToList();
         await coordinator.RequeueRowEvictionsAsync(reseed, ct).ConfigureAwait(false);
       }

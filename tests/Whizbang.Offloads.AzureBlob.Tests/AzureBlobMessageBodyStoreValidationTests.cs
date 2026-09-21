@@ -141,6 +141,5 @@ public class AzureBlobMessageBodyStoreValidationTests {
   /// Uses the Azure SDK's protected mocking ctor. Any actual member call
   /// would throw — the guard tests must fail before touching the client.
   /// </summary>
-  private sealed class FakeBlobContainerClient : BlobContainerClient {
-  }
+  private sealed class FakeBlobContainerClient : BlobContainerClient;
 }

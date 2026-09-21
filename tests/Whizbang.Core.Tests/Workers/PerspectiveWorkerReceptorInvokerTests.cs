@@ -78,7 +78,7 @@ public class PerspectiveWorkerReceptorInvokerTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveLifecycleEvent),
       ReceptorId: $"test_perspective_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         invoked = true;
         return ValueTask.FromResult<object?>(null);
       }

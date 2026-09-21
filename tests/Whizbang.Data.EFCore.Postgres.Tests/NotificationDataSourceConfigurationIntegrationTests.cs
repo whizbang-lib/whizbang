@@ -16,8 +16,7 @@ using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// End-to-end proof of a consumer's SCRAM-SHA-256 fix.
@@ -78,9 +77,7 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
       new Whizbang.Core.Observability.ServiceInstanceProvider(
         new ConfigurationBuilder().Build()));
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
-    services.AddOptions<WhizbangNotificationOptions>().Configure(o => {
-      o.SignalingMode = WorkSignalingMode.ListenNotify;
-    });
+    services.AddOptions<WhizbangNotificationOptions>().Configure(o => o.SignalingMode = WorkSignalingMode.ListenNotify);
     services.AddOptions<CommitOrderStamperOptions>().Configure(o => {
       o.PollingInterval = TimeSpan.FromMilliseconds(100);
       o.LeaderElectionRetry = TimeSpan.FromMilliseconds(100);
@@ -167,9 +164,7 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
 
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(config));
-    services.AddOptions<WhizbangNotificationOptions>().Configure(o => {
-      o.SignalingMode = WorkSignalingMode.ListenNotify;
-    });
+    services.AddOptions<WhizbangNotificationOptions>().Configure(o => o.SignalingMode = WorkSignalingMode.ListenNotify);
     services.AddOptions<CommitOrderStamperOptions>().Configure(o => {
       o.PollingInterval = TimeSpan.FromMilliseconds(100);
       o.LeaderElectionRetry = TimeSpan.FromMilliseconds(100);
@@ -218,8 +213,8 @@ public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBas
   /// a fresh <see cref="NpgsqlConnection"/> from either
   /// <see cref="NpgsqlConnection.ConnectionString"/> or
   /// <see cref="NpgsqlDataSource.ConnectionString"/> raises
-  /// <c>"No password has been provided but the backend requires one
-  /// (in SASL/SCRAM-SHA-256)"</c>. This locks the failure mode so anyone
+  /// <code>"No password has been provided but the backend requires one
+  /// (in SASL/SCRAM-SHA-256)"</code>. This locks the failure mode so anyone
   /// removing the fix sees the production error in CI before deploy.
   /// </summary>
   [Test]

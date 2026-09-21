@@ -61,9 +61,7 @@ public static partial class SecurityContextHelper {
 
     if (securityContext is not null) {
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      if (accessor is not null) {
-        accessor.Current = securityContext;
-      }
+      accessor?.Current = securityContext;
     }
 
     return securityContext;
@@ -128,9 +126,7 @@ public static partial class SecurityContextHelper {
     // CRITICAL: Set InitiatingContext on IScopeContextAccessor — establishes IMessageContext as the SOURCE OF
     // TRUTH for security context. AsyncLocal carries a REFERENCE to this IMessageContext, not a copy.
     var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
-    if (scopeContextAccessor is not null) {
-      scopeContextAccessor.InitiatingContext = messageContext;
-    }
+    scopeContextAccessor?.InitiatingContext = messageContext;
 
     return messageContext;
   }
@@ -180,9 +176,7 @@ public static partial class SecurityContextHelper {
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (for GetSecurityFromAmbient)
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      if (accessor is not null) {
-        accessor.Current = immutableScope;
-      }
+      accessor?.Current = immutableScope;
     }
 
     // Step 4: Set message context with the resolved scope
@@ -533,7 +527,7 @@ public static partial class SecurityContextHelper {
     } catch (TimeoutException) {
       if (establishTask is not null) {
         _ = establishTask.ContinueWith(
-          static t => { _ = t.Exception; },
+          static t => _ = t.Exception,
           CancellationToken.None,
           TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
           TaskScheduler.Default);

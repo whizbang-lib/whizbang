@@ -17,18 +17,13 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </remarks>
 /// <docs>operations/observability/metrics#traffic-classes</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbTrafficClassOpsRateSourceTests.cs</tests>
-public sealed class AsbTrafficClassOpsRateSource : ITrafficClassOpsRateSource {
-  private readonly ITransport _transport;
-  private readonly TagOptions? _tagOptions;
-
-  /// <summary>Creates the source over the host's transport.</summary>
-  /// <param name="transport">The registered transport (routing peer or single instance).</param>
-  /// <param name="tagOptions">Tag options, so a namespace carries the class routed to it.</param>
-  /// <exception cref="ArgumentNullException">Thrown when transport is null.</exception>
-  public AsbTrafficClassOpsRateSource(ITransport transport, TagOptions? tagOptions = null) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _tagOptions = tagOptions;
-  }
+/// <remarks>Creates the source over the host's transport.</remarks>
+/// <param name="transport">The registered transport (routing peer or single instance).</param>
+/// <param name="tagOptions">Tag options, so a namespace carries the class routed to it.</param>
+/// <exception cref="ArgumentNullException">Thrown when transport is null.</exception>
+public sealed class AsbTrafficClassOpsRateSource(ITransport transport, TagOptions? tagOptions = null) : ITrafficClassOpsRateSource {
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly TagOptions? _tagOptions = tagOptions;
 
   /// <inheritdoc />
   public string TransportName => "asb";

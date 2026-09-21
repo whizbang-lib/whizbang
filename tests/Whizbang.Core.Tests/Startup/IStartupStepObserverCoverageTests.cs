@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -67,6 +68,10 @@ public class IStartupStepObserverCoverageTests {
   /// </summary>
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task StepWaitingNotification_ObserverWithoutOverride_DoesNotStallTheDutyWaitAsync(CancellationToken testToken) {
     var elector = new ContendedThenGrantedElector();
     var observer = new MinimalObserver();

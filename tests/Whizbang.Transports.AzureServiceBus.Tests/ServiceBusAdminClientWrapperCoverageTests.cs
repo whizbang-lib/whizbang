@@ -18,8 +18,8 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// </summary>
 /// <remarks>
 /// Structurally this method is identical to <c>GetRulesAsync</c> (already covered in the sibling
-/// suite): it forwards to <c>ServiceBusAdministrationClient.GetSubscriptionsAsync(string,
-/// CancellationToken)</c>, which is <c>public virtual</c> on the SDK type -- the same documented
+/// suite): it forwards to <code>ServiceBusAdministrationClient.GetSubscriptionsAsync(string,
+/// CancellationToken)</code>, which is <c>public virtual</c> on the SDK type -- the same documented
 /// mocking seam (protected parameterless constructor + virtual methods) the sibling suite's
 /// <c>FakeAdminClient</c> already relies on. None of the target lines require a live namespace: the
 /// wrapper never talks to the admin plane itself, it only forwards to whatever
@@ -112,8 +112,8 @@ public class ServiceBusAdminClientWrapperCoverageTests {
       LastCancellationToken = cancellationToken;
       // One subscription per page so callers exercise multi-page enumeration.
       var pages = Subscriptions
-        .Select(subscription => Page<SubscriptionProperties>.FromValues([subscription], null, _rawResponse))
-        .ToList();
+        .ConvertAll(subscription => Page<SubscriptionProperties>.FromValues([subscription], null, _rawResponse))
+;
       return AsyncPageable<SubscriptionProperties>.FromPages(pages);
     }
   }

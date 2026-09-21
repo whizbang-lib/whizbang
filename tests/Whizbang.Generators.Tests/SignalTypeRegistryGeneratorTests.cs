@@ -53,16 +53,18 @@ namespace App {
     await Assert.That(errors.IsEmpty).IsTrue();
   }
 
-  private const string WIRE_NAME_SIGNAL_SOURCE = @"
+  private const string WIRE_NAME_SIGNAL_SOURCE = """
+
 using Whizbang.Core.Signals;
 
 namespace App.Signals {
-  [WireName(""outbox"")]
+  [WireName("outbox")]
   public readonly record struct WorkOutboxAvailable : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
     public static SignalTargeting Targeting => SignalTargeting.Targeted;
   }
-}";
+}
+""";
 
   [Test]
   public async Task Generator_WireNameAttribute_OverridesDefaultWireNameAsync() {

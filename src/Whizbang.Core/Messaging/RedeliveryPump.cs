@@ -82,33 +82,24 @@ public sealed class RedeliveryPumpOptions {
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryPumpTests.cs</tests>
-public sealed class RedeliveryPump {
-  private readonly ITransport _transport;
-  private readonly IEnvelopeSerializer _envelopeSerializer;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly RedeliveryPumpOptions _options;
-  private readonly TimeProvider _time;
-  private readonly ICompositeFactory _compositeFactory;
-
-  /// <summary>
-  /// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
-  /// for composites — and because the children ride as raw JSON, serializing the bundle needs type
-  /// metadata only for <see cref="RedeliveryComposite"/> itself, never for any consumer payload.
-  /// </summary>
-  public RedeliveryPump(
-      ITransport transport,
-      IEnvelopeSerializer envelopeSerializer,
-      IServiceInstanceProvider instanceProvider,
-      RedeliveryPumpOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ICompositeFactory? compositeFactory = null) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
-    _instanceProvider = instanceProvider;
-    _options = options ?? new RedeliveryPumpOptions();
-    _time = timeProvider ?? TimeProvider.System;
-    _compositeFactory = compositeFactory ?? new CompositeFactory();
-  }
+/// <remarks>
+/// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
+/// for composites — and because the children ride as raw JSON, serializing the bundle needs type
+/// metadata only for <see cref="RedeliveryComposite"/> itself, never for any consumer payload.
+/// </remarks>
+public sealed class RedeliveryPump(
+    ITransport transport,
+    IEnvelopeSerializer envelopeSerializer,
+    IServiceInstanceProvider instanceProvider,
+    RedeliveryPumpOptions? options = null,
+    TimeProvider? timeProvider = null,
+    ICompositeFactory? compositeFactory = null) {
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
+  private readonly RedeliveryPumpOptions _options = options ?? new RedeliveryPumpOptions();
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
 
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.

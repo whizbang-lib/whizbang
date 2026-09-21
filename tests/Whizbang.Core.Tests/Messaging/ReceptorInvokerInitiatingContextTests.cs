@@ -132,9 +132,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestReceptor",
-        InvokeAsync: (provider, message, envelope, callerInfo, ct) => {
-          return ValueTask.FromResult<object?>(null);
-        }
+        InvokeAsync: (_, message, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
       ),
       LifecycleStage.LocalImmediateInline);
 
@@ -215,9 +213,7 @@ public class ReceptorInvokerInitiatingContextTests {
     var registry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.AllowAnonymous = true;
-    });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -261,7 +257,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestScopedContextReceptor",
-        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
+        InvokeAsync: async (provider, _, envelope, callerInfo, ct) => {
           // Get ScopedMessageContext from DI - this is what real receptors do
           var scopedMessageContext = provider.GetRequiredService<IMessageContext>();
 
@@ -328,7 +324,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestPriorityReceptor",
-        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
+        InvokeAsync: async (provider, _, envelope, callerInfo, ct) => {
           // First, set a conflicting IScopeContext (should NOT be used)
           var scopeAccessor = provider.GetRequiredService<IScopeContextAccessor>();
           var extraction = new SecurityExtraction {

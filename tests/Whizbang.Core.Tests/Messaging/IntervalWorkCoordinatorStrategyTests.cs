@@ -607,7 +607,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => { await sut.FlushAsync(WorkBatchOptions.None); })
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -756,10 +756,10 @@ public class IntervalWorkCoordinatorStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
-    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
-    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
-    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
-    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; } = [];
+    public MessageFailure[] LastOutboxFailures { get; } = [];
+    public MessageFailure[] LastInboxFailures { get; } = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     /// <summary>

@@ -441,7 +441,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           // sp is the scoped service provider (not used in tests)
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
@@ -467,7 +467,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(returnValue);
         }
@@ -496,7 +496,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, envelope, callerInfo, ct) => {
+          (_, msg, envelope, callerInfo, ct) => {
             callback();
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -520,7 +520,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, envelope, callerInfo, ct) => {
+          (sp, _, envelope, callerInfo, ct) => {
             checkCallback(sp);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -545,7 +545,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, envelope, callerInfo, ct) => {
+          (_, msg, envelope, callerInfo, ct) => {
             callOrderCallback?.Invoke([$"ReceptorInvoked:{receptorId}"]);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -616,7 +616,7 @@ public class ReceptorInvokerTests {
     var contextEstablishedBeforeReceptor = false;
 
     var securityProvider = new TestSecurityContextProvider(
-        onEstablish: () => { contextEstablished = true; });
+        onEstablish: () => contextEstablished = true);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -627,7 +627,7 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptorWithCallback<TestMessage>(
         "SecureReceptor",
         LifecycleStage.PostInboxInline,
-        callback: () => { contextEstablishedBeforeReceptor = contextEstablished; });
+        callback: () => contextEstablishedBeforeReceptor = contextEstablished);
 
     // Security provider is resolved from the service provider
     var invoker = new ReceptorInvoker(registry, provider, null);
@@ -733,7 +733,7 @@ public class ReceptorInvokerTests {
     IMessageEnvelope? receivedEnvelope = null;
     var securityProvider = new TestSecurityContextProvider(
         onEstablish: () => { },
-        captureEnvelope: env => { receivedEnvelope = env; });
+        captureEnvelope: env => receivedEnvelope = env);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -1276,7 +1276,7 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "CaptureReceptor",
-            (sp, msg, envelope, callerInfo, ct) => {
+            (_, msg, envelope, callerInfo, ct) => {
               ReceivedMessage = msg;
               return ValueTask.FromResult<object?>(null);
             })];
@@ -1538,7 +1538,7 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessageWithStreamId),
             _receptorId,
-            (sp, msg, envelope, callerInfo, ct) => {
+            (_, msg, envelope, callerInfo, ct) => {
               // Try to get SyncContext from accessor (AsyncLocal pattern)
               _contextCallback(SyncContextAccessor.CurrentContext);
               return ValueTask.FromResult<object?>(null);
@@ -1809,7 +1809,7 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "ThrowingReceptor",
-            (sp, msg, envelope, callerInfo, ct) => throw new InvalidOperationException("Test exception"))];
+            (_, msg, envelope, callerInfo, ct) => throw new InvalidOperationException("Test exception"))];
       }
       return [];
     }

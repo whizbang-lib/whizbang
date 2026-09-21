@@ -65,8 +65,7 @@ public sealed class NotifySubscriptionRegistry {
         // "first subscribe" against a stale empty array.
         if (((ICollection<KeyValuePair<string, ImmutableArray<INotifySubscription>>>)_byChannel)
             .Remove(new KeyValuePair<string, ImmutableArray<INotifySubscription>>(subscription.ChannelName, existing))) {
-          wasLast = true;
-          return wasLast;
+          return true;
         }
         // Lost the race against a concurrent mutation — retry.
         continue;

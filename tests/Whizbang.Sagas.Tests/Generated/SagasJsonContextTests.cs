@@ -56,7 +56,7 @@ public class SagasJsonContextTests {
   [Test]
   public async Task SagasJsonContext_ResolvesBareTickEventViaGetTypeInfoByNameAsync() {
     // The wire-name form that wh_outbox.message_type stores (no Version/Culture/PublicKeyToken).
-    var name = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas";
+    const string name = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent, Whizbang.Sagas";
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(name, options);

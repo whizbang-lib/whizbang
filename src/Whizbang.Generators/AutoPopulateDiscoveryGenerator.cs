@@ -175,7 +175,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_TIMESTAMP,
         SpecificKind: $"TimestampKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod is not null && !property.SetMethod.IsInitOnly
+        IsSettable: property.SetMethod?.IsInitOnly == false
     );
   }
 
@@ -204,7 +204,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_CONTEXT,
         SpecificKind: $"ContextKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod is not null && !property.SetMethod.IsInitOnly
+        IsSettable: property.SetMethod?.IsInitOnly == false
     );
   }
 
@@ -235,7 +235,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_SERVICE,
         SpecificKind: $"ServiceKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod is not null && !property.SetMethod.IsInitOnly
+        IsSettable: property.SetMethod?.IsInitOnly == false
     );
   }
 
@@ -266,7 +266,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_IDENTIFIER,
         SpecificKind: $"IdentifierKind.{kindName}",
         IsRecord: isRecord,
-        IsSettable: property.SetMethod is not null && !property.SetMethod.IsInitOnly
+        IsSettable: property.SetMethod?.IsInitOnly == false
     );
   }
 
@@ -290,7 +290,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PopulateKind: POPULATE_KIND_HEADER,
         SpecificKind: headerName,
         IsRecord: isRecord,
-        IsSettable: property.SetMethod is not null && !property.SetMethod.IsInitOnly
+        IsSettable: property.SetMethod?.IsInitOnly == false
     );
   }
 

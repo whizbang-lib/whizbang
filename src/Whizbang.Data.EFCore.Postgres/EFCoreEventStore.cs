@@ -61,6 +61,11 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Projects a (filtered, ordered) pointer query into body-aware rows via LEFT JOIN on
   /// <c>wh_event_body</c>. Apply Where/OrderBy on the pointer query BEFORE calling this.
   /// </summary>
+  // IDE0031 (use null propagation) is off across this projection: it is an EF Core expression
+  // tree, where `b?.Metadata` is a compile error (CS8072, "an expression tree lambda may not
+  // contain a null propagating operator"). The explicit null check is the only legal spelling,
+  // and `dotnet format style` rewrites it to the illegal one on every run without this.
+#pragma warning disable IDE0031
   private IQueryable<EventRow> _bodyAwareRows(IQueryable<EventStoreRecord> pointers) =>
     from e in pointers
     join body in _context.Set<EventBodyRecord>().AsNoTracking()
@@ -79,6 +84,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       EventData = b != null ? (JsonElement?)b.EventData : null,
       Metadata = b != null ? b.Metadata : null,
     };
+#pragma warning restore IDE0031
 
   /// <summary>
   /// Appends an event to the specified stream.

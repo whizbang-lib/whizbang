@@ -29,7 +29,7 @@ public class RabbitMQBatchSubscribeTests {
     // Act & Assert — transport NOT initialized
     await Assert.ThrowsAsync<InvalidOperationException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         new TransportDestination("test-topic"),
         new TransportBatchOptions()
       )
@@ -67,7 +67,7 @@ public class RabbitMQBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         null!,
         new TransportBatchOptions()
       )
@@ -86,7 +86,7 @@ public class RabbitMQBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         new TransportDestination("test-topic"),
         null!
       )
@@ -106,7 +106,7 @@ public class RabbitMQBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         new TransportDestination("test-topic"),
         new TransportBatchOptions()
       )

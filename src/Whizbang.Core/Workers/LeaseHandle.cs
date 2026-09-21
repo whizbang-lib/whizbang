@@ -36,11 +36,6 @@ public sealed class LeaseHandle : IDisposable {
   private readonly int _maxRenewals;
   private readonly CancellationTokenSource _deadlineCts;
   private readonly CancellationTokenSource _linkedCts;
-  // Cache the linked token at construction so post-Dispose reads of Token still work
-  // (CancellationToken is a struct that holds a reference to the source — IsCancellationRequested
-  // remains queryable even after the source is disposed). Without this cache,
-  // _linkedCts.Token would throw ObjectDisposedException after Dispose.
-  private readonly CancellationToken _linkedToken;
   private readonly Lock _gate = new();
   private int _renewalCount;
   private bool _disposed;
@@ -92,7 +87,7 @@ public sealed class LeaseHandle : IDisposable {
       }
       _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(sources);
     }
-    _linkedToken = _linkedCts.Token;
+    Token = _linkedCts.Token;
   }
 
   /// <summary>Identifier of the work item this lease covers.</summary>
@@ -102,7 +97,7 @@ public sealed class LeaseHandle : IDisposable {
   public WorkCategory Category { get; }
 
   /// <summary>Cancellation token that fires at deadline, on shutdown, or on dispose.</summary>
-  public CancellationToken Token => _linkedToken;
+  public CancellationToken Token { get; }
 
   /// <summary>Number of successful <see cref="TryExtendDeadline"/> calls.</summary>
   public int RenewalCount {

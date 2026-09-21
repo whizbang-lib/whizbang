@@ -231,7 +231,7 @@ public record PanelConfigHolder : ICommand {
         [PinnedId("11111111-2222-3333-4444-555555555555")]
         public record OrderPlacedEvent : IEvent;
         """;
-    var ledger = """
+    const string ledger = """
       { "version": 1, "types": [
         { "pinnedId": "99999999-8888-7777-6666-555555555555",
           "clrTypeName": "OtherAssembly.ShipmentDispatchedEvent",

@@ -80,6 +80,7 @@ public sealed partial class StartupPipelineWorker : BackgroundService {
 
   /// <inheritdoc />
   /// <remarks>
+  /// <para>
   /// Nothing that happens inside the pipeline may stop the host. This is a
   /// <see cref="BackgroundService"/>, so anything escaping here meets the default
   /// <c>HostOptions.BackgroundServiceExceptionBehavior</c> of <c>StopHost</c> and terminates the
@@ -87,12 +88,14 @@ public sealed partial class StartupPipelineWorker : BackgroundService {
   /// an orderly shutdown. A host destroyed this way is indistinguishable, to anything watching
   /// exit codes or restart reasons, from one that was asked to stop. It can recur indefinitely
   /// while every crash signal stays clean.
-  ///
+  /// </para>
+  /// <para>
   /// Not stopping is also the more informative outcome, because the pipeline is fail-closed: a
   /// run that did not complete leaves the availability filter refusing writes, so the service
   /// stays up and reports unready with the reason in its logs. The runner already handles the
   /// failures it can classify; this is the backstop for everything it cannot — order resolution,
   /// for one, throws before any step runs.
+  /// </para>
   /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {

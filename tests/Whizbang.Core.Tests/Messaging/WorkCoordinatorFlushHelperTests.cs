@@ -144,7 +144,7 @@ public class WorkCoordinatorFlushHelperTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -163,7 +163,7 @@ public class WorkCoordinatorFlushHelperTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -184,7 +184,7 @@ public class WorkCoordinatorFlushHelperTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -204,7 +204,7 @@ public class WorkCoordinatorFlushHelperTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IInboxChannelWriter>(inboxWriter);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -224,7 +224,7 @@ public class WorkCoordinatorFlushHelperTests {
     var coordinator = new CapturingWorkCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var batch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       _ctx(
@@ -256,7 +256,7 @@ public class WorkCoordinatorFlushHelperTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddOptions<ClaimWorkerOptions>().Configure(o => o.PartitionCount = 42);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var options = new WorkCoordinatorOptions { PartitionCount = 9999 };
 
@@ -312,7 +312,7 @@ public class WorkCoordinatorFlushHelperTests {
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
     services.AddSingleton<IFailureChannel>(failureChannel);
     services.AddSingleton<IInboxChannelWriter>(inboxWriter);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       _ctx(

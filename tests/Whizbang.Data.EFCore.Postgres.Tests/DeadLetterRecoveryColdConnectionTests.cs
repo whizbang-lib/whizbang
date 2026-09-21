@@ -49,13 +49,15 @@ public class DeadLetterRecoveryColdConnectionTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(ct);
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_dead_letters
         (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason,
          attempts_when_dlq, dead_lettered_at, recovery_status, generation, error_fingerprint,
          error_fingerprint_version)
-      VALUES (@id, 'wh_inbox', @src, 'Test.Event', '{""p"":1}'::jsonb, 5, 3,
-              NOW() - INTERVAL '1 hour', 0, 'cold/1', 'fp-cold', 1)";
+      VALUES (@id, 'wh_inbox', @src, 'Test.Event', '{"p":1}'::jsonb, 5, 3,
+              NOW() - INTERVAL '1 hour', 0, 'cold/1', 'fp-cold', 1)
+""";
     ins.Parameters.AddWithValue("id", id);
     ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
     await ins.ExecuteNonQueryAsync(ct);

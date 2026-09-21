@@ -817,7 +817,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // disappearing at GC time.
         if (publishTask is not null) {
           _ = publishTask.ContinueWith(
-            static t => { _ = t.Exception; },
+            static t => _ = t.Exception,
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
@@ -934,7 +934,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     } catch (TimeoutException) {
       if (publishTask is not null) {
         _ = publishTask.ContinueWith(
-          static t => { _ = t.Exception; },
+          static t => _ = t.Exception,
           CancellationToken.None,
           TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
           TaskScheduler.Default);

@@ -47,8 +47,6 @@ public static class SagaItemStreams {
   /// </summary>
   public static readonly Guid DefaultNamespace = Guid.Parse("acb2e0cf-92d5-4f1b-8c5e-2d7f4a5e8b3a");
 
-  private static Guid _appDefaultNamespace = DefaultNamespace;
-
   /// <summary>
   /// The namespace UUID currently in effect for the
   /// <see cref="Of(Guid, string)"/> no-override path. Settable once at
@@ -60,10 +58,7 @@ public static class SagaItemStreams {
   /// this value at runtime re-derives every per-item stream id and
   /// orphans existing projection rows.
   /// </remarks>
-  public static Guid AppDefaultNamespace {
-    get => _appDefaultNamespace;
-    internal set => _appDefaultNamespace = value;
-  }
+  public static Guid AppDefaultNamespace { get; internal set; } = DefaultNamespace;
 
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /
@@ -72,7 +67,7 @@ public static class SagaItemStreams {
   /// <c>AddWhizbangSagas(opts =&gt; opts.PerItemStreamNamespace = …)</c>).
   /// </summary>
   public static Guid Of(Guid sagaId, string itemIdentifier) =>
-    Of(_appDefaultNamespace, sagaId, itemIdentifier);
+    Of(AppDefaultNamespace, sagaId, itemIdentifier);
 
   /// <summary>
   /// Derives the per-item stream id for <paramref name="sagaId"/> /

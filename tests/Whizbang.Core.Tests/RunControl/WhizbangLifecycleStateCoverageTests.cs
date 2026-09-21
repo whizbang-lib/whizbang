@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -71,6 +72,10 @@ public class WhizbangLifecycleStateCoverageTests {
   /// </summary>
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task FaultAsync_ParticipantThrowsOnBroadcast_StillReachesHaltedAsync(CancellationToken testToken) {
     var time = new FakeTimeProvider();
     var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };

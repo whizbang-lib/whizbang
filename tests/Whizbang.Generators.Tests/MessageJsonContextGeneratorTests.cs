@@ -6197,7 +6197,8 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync() {
     // Arrange — Perspective using only IPerspectiveWithActionsFor (Purge pattern)
-    const string source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -6211,14 +6212,15 @@ namespace TestApp {
   public record PurgeModel {
     [StreamId]
     public Guid Id { get; init; }
-    public string Name { get; init; } = """";
+    public string Name { get; init; } = "";
   }
 
   public class PurgePerspective : IPerspectiveWithActionsFor<PurgeModel, PurgeEvent> {
     public ApplyResult<PurgeModel> Apply(PurgeModel current, PurgeEvent @event)
       => ApplyResult<PurgeModel>.Purge();
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);

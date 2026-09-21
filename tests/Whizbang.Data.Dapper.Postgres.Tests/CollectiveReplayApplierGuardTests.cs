@@ -47,7 +47,7 @@ public class CollectiveReplayApplierGuardTests {
 
   private sealed record PlainEvent([property: StreamId] Guid Id) : IEvent;
 
-  private sealed class ProbeHandler { }
+  private sealed class ProbeHandler;
 
   private sealed class RecordingExecutor : ICollectiveInMemoryExecutor {
     public Type ModelType => typeof(ProbeModel);

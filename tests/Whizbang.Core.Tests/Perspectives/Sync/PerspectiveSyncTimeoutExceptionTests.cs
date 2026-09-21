@@ -97,9 +97,7 @@ public class PerspectiveSyncTimeoutExceptionTests {
     const string message = "Test timeout";
 
     // Act & Assert
-    await Assert.That(() => {
-      throw new PerspectiveSyncTimeoutException(perspectiveType, timeout, message);
-    }).ThrowsExactly<PerspectiveSyncTimeoutException>();
+    await Assert.That(() => throw new PerspectiveSyncTimeoutException(perspectiveType, timeout, message)).ThrowsExactly<PerspectiveSyncTimeoutException>();
   }
 
   [Test]

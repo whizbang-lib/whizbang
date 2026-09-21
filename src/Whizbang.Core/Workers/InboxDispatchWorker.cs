@@ -636,7 +636,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           // Dead-lettered rather than expanded. The DLQ is recoverable, so this defers the work for
           // an operator instead of discarding it — and it keeps one message from burying a consumer.
           _compositeMetrics?.ChildrenRefused.Add(result.Children.Count);
-          var overReason = Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded;
+          const MessageFailureReason overReason = Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded;
           LogCompositeFanoutFailed(_logger, work.MessageId, overReason.ToString(),
             $"consumer budget {_options.MaxCompositeChildrenPerExpansion} exceeded by {result.Children.Count} children");
           await _deadLetterCompositeAsync(work, overReason,

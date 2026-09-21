@@ -220,7 +220,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     var step = plan.Steps.Single(s => s.Name == "perspective:DestructivePerspective");
     await Assert.That(step.Action).IsEqualTo(MigrationAction.BlueGreenEventReplay);
     await Assert.That(step.RemovedColumns).IsNotNull();
-    await Assert.That(step.RemovedColumns!).Contains("extra");
+    await Assert.That(step.RemovedColumns).Contains("extra");
     await Assert.That(step.AddedColumns).IsNull();
 
     await initializer.InitializeSchemaAsync();
@@ -279,7 +279,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     var step = plan.Steps.Single(s => s.Name == "perspective:DroppedPerspective");
     await Assert.That(step.Action).IsEqualTo(MigrationAction.Update);
     await Assert.That(step.AddedColumns).IsNotNull();
-    await Assert.That(step.AddedColumns!).Contains("extra");
+    await Assert.That(step.AddedColumns).Contains("extra");
   }
 
   // --- Perspective failure path ---

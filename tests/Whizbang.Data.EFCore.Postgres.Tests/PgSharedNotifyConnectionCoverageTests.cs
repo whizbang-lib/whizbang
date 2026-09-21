@@ -268,7 +268,7 @@ public class PgSharedNotifyConnectionBackoffCoverageTests {
     // Deliberately-unresolvable host, same technique as the reconnect-diagnostics regression
     // lock: guarantees the connect attempt fails at the network layer within milliseconds, on
     // every attempt, without needing a real database.
-    var badDirect = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
+    const string badDirect = "Host=__whizbang-nonexistent-host__;Database=x;Username=u;Password=p;Timeout=2;Command Timeout=2";
     var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:test-db-direct"] = badDirect,
     }).Build();

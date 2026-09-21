@@ -53,7 +53,7 @@ public class InstanceStateRunControlCoverageTests {
     var coordinator = new _throwingCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var logger = new _recordingLogger();
     var control = new InstanceStateRunControl(

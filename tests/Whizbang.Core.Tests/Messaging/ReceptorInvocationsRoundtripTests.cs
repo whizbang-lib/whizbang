@@ -79,7 +79,7 @@ public partial class ReceptorInvocationsRoundtripTests {
 
     // Assert: invocation records roundtripped.
     await Assert.That(rehydrated.ReceptorInvocations).IsNotNull();
-    await Assert.That(rehydrated.ReceptorInvocations!).Count().IsEqualTo(2);
+    await Assert.That(rehydrated.ReceptorInvocations).Count().IsEqualTo(2);
 
     var first = rehydrated.ReceptorInvocations![0];
     await Assert.That(first.ReceptorId).IsEqualTo("ReceptorA");

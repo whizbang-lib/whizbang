@@ -134,8 +134,8 @@ public sealed class HousekeepingCoordinator {
 
   private readonly Settings _settings;
   private readonly TimeProvider _timeProvider;
-  private Observability.HousekeepingMetrics? _metrics;
-  private readonly object _gate = new();
+  private readonly Observability.HousekeepingMetrics? _metrics;
+  private readonly Lock _gate = new();
   private bool _dlqRunning;
   private bool _integrityRunning;
   private bool _maintenanceRunning;

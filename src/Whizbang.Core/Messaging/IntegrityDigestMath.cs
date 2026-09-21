@@ -16,7 +16,7 @@ public static class IntegrityDigestMath {
   /// counts. Valid because stream buckets partition the type's events. Recomputed inputs carry no
   /// update times, so the roll-ups don't either.</summary>
   public static IReadOnlyList<StreamDigest> RollUpToTypes(IReadOnlyList<StreamDigest> streamDigests) =>
-    streamDigests
+    [.. streamDigests
       .GroupBy(d => (d.TenantScope, d.EventType))
       .Select(g => new StreamDigest {
         TenantScope = g.Key.TenantScope,
@@ -26,8 +26,7 @@ public static class IntegrityDigestMath {
         DigestHi = g.Aggregate(0L, (acc, d) => acc ^ d.DigestHi),
         EventCount = g.Sum(d => d.EventCount),
       })
-      .OrderBy(d => d.TenantScope, StringComparer.Ordinal).ThenBy(d => d.EventType, StringComparer.Ordinal)
-      .ToList();
+      .OrderBy(d => d.TenantScope, StringComparer.Ordinal).ThenBy(d => d.EventType, StringComparer.Ordinal)];
 
   /// <summary>True when either side's bucket changed inside the settle window — the table-driven
   /// equivalent of the recompute's created-at settle filter: an in-flight delivery must never

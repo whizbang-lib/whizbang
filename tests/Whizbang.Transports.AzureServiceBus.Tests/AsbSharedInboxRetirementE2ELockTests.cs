@@ -88,7 +88,7 @@ public class AsbSharedInboxRetirementE2ELockTests {
           new TransportDestination(topic, $"{SERVICE_NAME}-{topic}")));
       }
 
-      var processorTopics = consumerClient.CreatedProcessors.Select(p => p.Topic).ToList();
+      var processorTopics = consumerClient.CreatedProcessors.ConvertAll(p => p.Topic);
       await Assert.That(processorTopics).Contains(flippedEntity);
       await Assert.That(processorTopics).Contains(CommandInboxNaming.SystemBroadcastTopic);
       await Assert.That(processorTopics).DoesNotContain(SHARED_INBOX)

@@ -16,7 +16,7 @@ public class CategoryBatchCoverageTests {
   [Test]
   public async Task GetDisplayName_UndefinedCategory_FallsBackToEnumToStringAsync() {
     // Arrange
-    var undefinedCategory = (MigrationCategory)999;
+    const MigrationCategory undefinedCategory = (MigrationCategory)999;
 
     // Act
     var displayName = CategoryBatch.GetDisplayName(undefinedCategory);

@@ -51,7 +51,7 @@ public class OrphanInboxJanitorTests {
 
   [Test]
   public async Task Constructor_NullSnapshot_ThrowsAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     await Assert.That(() => new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: null!,
@@ -65,7 +65,7 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_NoWorkCoordinator_ReturnsCleanlyAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var logger = new _CapturingLogger();
     var janitor = new OrphanInboxJanitor(
@@ -96,7 +96,7 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_NoHandledTypes_SkipsPurgeAsync() {
     var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -115,7 +115,7 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_WithHandledTypes_NoPurge_LogsAndExitsAsync() {
     var coordinator = new _RecordingCoordinator();  // default empty result
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -141,7 +141,7 @@ public class OrphanInboxJanitorTests {
         new PurgedOrphanInboxRow(Guid.NewGuid(), "B", "h2"),
       ],
     };
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -160,7 +160,7 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_CoordinatorThrows_DoesNotPropagateAsync() {
     var coordinator = new _RecordingCoordinator { ThrowOnPurge = true };
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var logger = new _CapturingLogger();
     var janitor = new OrphanInboxJanitor(
@@ -196,7 +196,7 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator();
     var perspectives = new _StaticPerspectiveRegistry(new List<Type> { typeof(int) });
     var raw = new _StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
-    using var sp = _buildProviderWith(coordinator, perspectives, raw);
+    await using var sp = _buildProviderWith(coordinator, perspectives, raw);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
@@ -216,7 +216,7 @@ public class OrphanInboxJanitorTests {
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
     var gate = new SchemaReadyGate();   // NOT ready — the sweep cannot even begin
     var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
 
@@ -239,7 +239,7 @@ public class OrphanInboxJanitorTests {
   public async Task Sweep_DoesNotPurgeWhileTheGateIsClosedAsync() {
     var gate = new SchemaReadyGate();
     var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
+    await using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
 

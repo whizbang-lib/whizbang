@@ -346,9 +346,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -407,9 +405,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -490,9 +486,7 @@ public class ServiceCollectionExtensionsTests {
     services.AddScoped(_ => existingHook); // Pre-register
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert - TryAddScoped should not override existing registration
@@ -536,14 +530,10 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act - First call registers notification hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call registers telemetry hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>());
 
     var provider = services.BuildServiceProvider();
 
@@ -566,13 +556,9 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act - Both calls register the same hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     var provider = services.BuildServiceProvider();
 
@@ -591,9 +577,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act - First call registers hooks
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call without hooks
     _ = services.AddWhizbang();
@@ -616,9 +600,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Assert - Verify ImplementationInstance is set correctly
     // This is critical for the multiple-call merge logic to work
@@ -637,9 +619,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act - First call with hooks
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call without hooks (should find existing via ImplementationInstance)
     services.AddWhizbang();
@@ -768,9 +748,7 @@ public class ServiceCollectionExtensionsTests {
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act - Programmatic defaults get set, then IConfiguration overrides
-    _ = services.AddWhizbang(options => {
-      options.Tracing.Verbosity = TraceVerbosity.Normal;
-    });
+    _ = services.AddWhizbang(options => options.Tracing.Verbosity = TraceVerbosity.Normal);
     var provider = services.BuildServiceProvider();
 
     // Assert - IConfiguration should win
@@ -844,7 +822,7 @@ public class ServiceCollectionExtensionsTests {
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+    ServiceRegistrationCallbacks.LensServices = (_, options) => {
       callbackInvoked = true;
       receivedOptions = options;
     };
@@ -870,9 +848,7 @@ public class ServiceCollectionExtensionsTests {
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.PerspectiveServices = (s, options) => {
-      callbackInvoked = true;
-    };
+    ServiceRegistrationCallbacks.PerspectiveServices = (_, _) => callbackInvoked = true;
 
     try {
       // Act
@@ -893,9 +869,7 @@ public class ServiceCollectionExtensionsTests {
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.Dispatcher = s => {
-      callbackInvoked = true;
-    };
+    ServiceRegistrationCallbacks.Dispatcher = _ => callbackInvoked = true;
 
     try {
       // Act
@@ -916,15 +890,11 @@ public class ServiceCollectionExtensionsTests {
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
-      receivedOptions = options;
-    };
+    ServiceRegistrationCallbacks.LensServices = (_, options) => receivedOptions = options;
 
     try {
       // Act
-      _ = services.AddWhizbang(options => {
-        options.Services.IncludeSelfRegistration = false;
-      });
+      _ = services.AddWhizbang(options => options.Services.IncludeSelfRegistration = false);
 
       // Assert
       await Assert.That(receivedOptions).IsNotNull();
@@ -1010,9 +980,7 @@ public class ServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Services.IncludeSelfRegistration = false;
-    });
+    _ = services.AddWhizbang(options => options.Services.IncludeSelfRegistration = false);
     var provider = services.BuildServiceProvider();
 
     // Assert

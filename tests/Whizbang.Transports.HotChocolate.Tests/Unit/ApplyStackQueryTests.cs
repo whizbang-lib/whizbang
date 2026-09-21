@@ -100,7 +100,7 @@ public class ApplyStackQueryTests {
     var json = result.ToJson();
     await Assert.That(json).Contains("\"available\": true");
     await Assert.That(json).Contains("00000000-0000-0000-0000-000000000042");
-    await Assert.That(query.SeenPath!).IsEquivalentTo(["Created", "Updated+", "Closed"])
+    await Assert.That(query.SeenPath).IsEquivalentTo(["Created", "Updated+", "Closed"])
       .Because("the drill-in passes the exact collapsed path — the field adds nothing");
   }
 }

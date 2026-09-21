@@ -159,7 +159,7 @@ public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
 
       await Assert.That(gate.LastFailureReason).IsNotNull()
         .Because("a probe that cannot round-trip has to say so; silence would leave operators with a connection that looks fine and delivers nothing");
-      await Assert.That(gate.LastFailureReason!).Contains("probe")
+      await Assert.That(gate.LastFailureReason).Contains("probe")
         .Because("the recorded reason must name the self-test probe as the thing that failed — an Npgsql connection error here would mean the fixture never reached the probe at all, and the test would be proving nothing");
       await Assert.That(gate.IsAvailable).IsFalse()
         .Because("a connection whose pg_notify round-trip does not arrive must never be published as available — consumers stop polling when it is");

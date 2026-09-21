@@ -250,9 +250,7 @@ public class DispatcherRpcExtractionTests {
 
     // Act & Assert - Request PaymentInitiated from receptor that returns (OrderConfirmation, InventoryReserved)
     // This should throw because PaymentInitiated is not in the tuple
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await dispatcher.LocalInvokeAsync<PaymentInitiated>(command);
-    });
+    await Assert.ThrowsAsync<InvalidOperationException>(async () => await dispatcher.LocalInvokeAsync<PaymentInitiated>(command));
   }
 
   [Test]

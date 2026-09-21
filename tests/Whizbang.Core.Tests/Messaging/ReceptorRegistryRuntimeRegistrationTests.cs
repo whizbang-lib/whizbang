@@ -119,7 +119,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
 
     // Act - invoke the delegate stored in the registry
     // Use a scoped provider since ILifecycleContextAccessor is registered as scoped
-    using var sp = _createServiceProvider();
+    await using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
     await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
@@ -199,7 +199,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     var testMessage = new RuntimeRegistrationTestCommand("test-data");
 
     // Act
-    using var sp = _createServiceProvider();
+    await using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
     var result = await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
@@ -275,7 +275,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
       StreamId = Guid.CreateVersion7()
     };
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var scopedProvider = scope.ServiceProvider;
 

@@ -82,7 +82,7 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
       .Because("discarding must settle the row as Recovered so it ages out through retention -- "
         + "never left mid-flight, and never picked up for another attempt");
     await Assert.That(notes).IsNotNull();
-    await Assert.That(notes!).Contains("subsystem disabled");
+    await Assert.That(notes).Contains("subsystem disabled");
   }
 
   // ===== Helpers =====
@@ -149,13 +149,15 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
     }
     var dlqId = (Guid)TrackedGuid.NewMedo();
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_dead_letters
         (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason,
          attempts_when_dlq, dead_lettered_at, recovery_status, generation, error_fingerprint,
          error_fingerprint_version)
-      VALUES (@id, 'wh_inbox', @src, 'Test.Event', '{""p"":1}'::jsonb, 5, 3,
-              NOW() - INTERVAL '1 hour', 0, 'v0.coverage', 'fp-coverage', 1)";
+      VALUES (@id, 'wh_inbox', @src, 'Test.Event', '{"p":1}'::jsonb, 5, 3,
+              NOW() - INTERVAL '1 hour', 0, 'v0.coverage', 'fp-coverage', 1)
+""";
     ins.Parameters.AddWithValue("id", dlqId);
     ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
     await ins.ExecuteNonQueryAsync();

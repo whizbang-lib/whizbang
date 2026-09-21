@@ -48,9 +48,9 @@ public class PostgresDeadlockRetryLoggingTests {
     var retryLine = logger.Entries.SingleOrDefault(e => e.Level == LogLevel.Warning);
     await Assert.That(retryLine.Message).IsNotNull()
       .Because("a silent retry leaves a thrashing database indistinguishable from a healthy one");
-    await Assert.That(retryLine.Message!).Contains("40P01")
+    await Assert.That(retryLine.Message).Contains("40P01")
       .Because("without the SQL state an operator cannot tell a lock-ordering deadlock from a serialization failure");
-    await Assert.That(retryLine.Message!).Contains("1/3")
+    await Assert.That(retryLine.Message).Contains("1/3")
       .Because("the attempt number is what says whether this was a blip or nearly the last chance");
   }
 
@@ -78,7 +78,7 @@ public class PostgresDeadlockRetryLoggingTests {
       .Because("exhaustion is the alertable event; logging it at Warning would bury it among ordinary retries");
     await Assert.That(exhausted.Exception).IsNotNull()
       .Because("an alert with no exception attached gives whoever answers it nothing to work from");
-    await Assert.That(exhausted.Message!).Contains("40P01");
+    await Assert.That(exhausted.Message).Contains("40P01");
   }
 
   [Test]

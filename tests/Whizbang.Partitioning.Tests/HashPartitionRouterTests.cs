@@ -128,8 +128,8 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     }
 
     // Assert - Each partition should get roughly equal share (±20%)
-    var expectedPerPartition = streamCount / partitionCount; // 1000
-    var tolerance = expectedPerPartition * 0.20; // ±200
+    const int expectedPerPartition = streamCount / partitionCount; // 1000
+    const double tolerance = expectedPerPartition * 0.20; // ±200
 
     for (int i = 0; i < partitionCount; i++) {
       var count = partitionCounts[i];

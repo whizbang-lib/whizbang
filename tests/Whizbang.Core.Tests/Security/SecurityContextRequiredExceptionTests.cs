@@ -80,9 +80,7 @@ public class SecurityContextRequiredExceptionTests {
   [Test]
   public async Task Exception_CanBeCaughtAsExceptionAsync() {
     // Act & Assert
-    await Assert.That(() => {
-      throw new SecurityContextRequiredException();
-    }).ThrowsExactly<SecurityContextRequiredException>();
+    await Assert.That(() => throw new SecurityContextRequiredException()).ThrowsExactly<SecurityContextRequiredException>();
   }
 
   // ========================================

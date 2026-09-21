@@ -116,9 +116,9 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     await Assert.That(rows[0].EventType).IsEqualTo("TestType");
     await Assert.That(rows[0].EventData).Contains("\"payload\"");
     await Assert.That(rows[0].Metadata).IsNotNull();
-    await Assert.That(rows[0].Metadata!).Contains("\"hop\"");
+    await Assert.That(rows[0].Metadata).Contains("\"hop\"");
     await Assert.That(rows[0].Scope).IsNotNull();
-    await Assert.That(rows[0].Scope!).Contains("\"tenant\"");
+    await Assert.That(rows[0].Scope).Contains("\"tenant\"");
   }
 
   // --- helpers ---

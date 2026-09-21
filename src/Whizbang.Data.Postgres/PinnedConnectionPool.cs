@@ -136,13 +136,9 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   }
 
   /// <summary>Borrow handle for an eligible worker; <see cref="Connection"/> is the borrowed Npgsql conn; dispose returns it to the pool.</summary>
-  private sealed class _activeBorrow : IBorrowedConnection {
-    private readonly NpgsqlConnection _conn;
+  private sealed class _activeBorrow(NpgsqlConnection conn) : IBorrowedConnection {
+    private readonly NpgsqlConnection _conn = conn;
     private bool _disposed;
-
-    public _activeBorrow(NpgsqlConnection conn) {
-      _conn = conn;
-    }
 
     public DbConnection? Connection => _conn;
 

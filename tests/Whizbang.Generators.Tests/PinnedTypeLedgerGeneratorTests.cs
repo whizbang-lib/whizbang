@@ -74,7 +74,7 @@ public class PinnedTypeLedgerGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ExistingLedgerWithFormerName_PreservesHistoryAndAddsNewAsync() {
     // Committed ledger already tracks the event (with a former name) but NOT the projection.
-    var existing = """
+    const string existing = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-1111-1111-1111-111111111111",
           "clrTypeName": "TestApp.OrderPlacedEvent",
@@ -105,7 +105,7 @@ public class PinnedTypeLedgerGeneratorTests {
         [PinnedId("11111111-1111-1111-1111-111111111111")]
         public record OrderPlacedEvent : IEvent;
         """;
-    var existing = """
+    const string existing = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-1111-1111-1111-111111111111",
           "clrTypeName": "TestApp.OrderCreatedEvent",

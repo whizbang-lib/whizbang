@@ -32,7 +32,7 @@ public class CoordinatorConnectionScopeTests {
     // No pin in context. The Dapper path should construct a fresh conn from
     // the fresh-string and try to open it — both succeeding (which we can't
     // verify in unit) or failing against the unreachable host (which we CAN).
-    var freshUnreachable = $"Host=127.0.0.99;Port=1;Database=fresh-sentinel;Username=x;Password=x;Timeout=1;ApplicationName=FRESH_PATH_SENTINEL";
+    const string freshUnreachable = "Host=127.0.0.99;Port=1;Database=fresh-sentinel;Username=x;Password=x;Timeout=1;ApplicationName=FRESH_PATH_SENTINEL";
 
     NpgsqlException? thrown = null;
     try {

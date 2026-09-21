@@ -39,8 +39,8 @@ public class TopologyDriftStateTests {
     var health = await source.ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
-    await Assert.That(health.Detail!).Contains("inbox.myapp.orders.commands");
-    await Assert.That(health.Detail!).Contains("other-service-inbox.myapp.orders.commands");
+    await Assert.That(health.Detail).Contains("inbox.myapp.orders.commands");
+    await Assert.That(health.Detail).Contains("other-service-inbox.myapp.orders.commands");
   }
 
   [Test]

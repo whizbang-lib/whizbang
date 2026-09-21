@@ -9,5 +9,5 @@ public sealed class WhizbangCorrelationOptions {
   /// <summary>
   /// The request header names to read, in priority order. Defaults to a single <c>X-Correlation-ID</c> entry.
   /// </summary>
-  public IList<string> HeaderNames { get; } = new List<string> { "X-Correlation-ID" };
+  public IList<string> HeaderNames { get; } = ["X-Correlation-ID"];
 }

@@ -101,7 +101,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // IsQuiescent, not IsSettled: since 167 the latter ignores the idle band, and a gap check that
     // ran while idle work was still queued could call a row missing that is merely not yet run.
     // IsQuiescent is the pre-167 meaning of IsSettled, so this gate is unchanged.
-    var settled = backlog is null || backlog.IsQuiescent;
+    var settled = backlog?.IsQuiescent != false;
     if (!measurable) {
       LogSettlednessUnmeasurable(logger, message.OriginServiceName);
     }

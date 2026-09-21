@@ -53,8 +53,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <c>InfrastructureJsonContext.Default</c>. The chain MUST place a context that
   /// returns object-mode <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
   /// for <c>[WhizbangId]</c> structs first, so EF Core 10's nested-object byte format
-  /// is matched (otherwise reads through EF will throw <c>InvalidOperationException:
-  /// Invalid token type</c>).
+  /// is matched (otherwise reads through EF will throw <code>InvalidOperationException:
+  /// Invalid token type</code>).
   /// </para>
   /// <para>
   /// Setting this hook is process-wide and shared by every <see cref="BaseUpsertStrategy"/>
@@ -554,7 +554,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         // When forceUpdateScope is true (IScopeEvent), scope IS included in UPDATE.
         // Guard: only mark as unmodified when Scope is mapped as a complex property.
         var entityType = context.Entry(row).Metadata;
-        if (entityType.FindComplexProperty(nameof(PerspectiveRow<TModel>.Scope)) != null) {
+        if (entityType.FindComplexProperty(nameof(PerspectiveRow<>.Scope)) != null) {
           context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
         }
       }

@@ -65,7 +65,7 @@ public class DispatcherPostLifecycleCoverageTests {
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(PostLifecycleCommand)) {
-        return msg => {
+        return _ => {
           _track("async-void");
           return ValueTask.CompletedTask;
         };
@@ -75,7 +75,7 @@ public class DispatcherPostLifecycleCoverageTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
@@ -88,7 +88,7 @@ public class DispatcherPostLifecycleCoverageTests {
 
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(PostLifecycleSyncCommand)) {
-        return msg => _track("sync-void");
+        return _ => _track("sync-void");
       }
 
       return null;
@@ -120,7 +120,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "test_post_lifecycle_async",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-async");
           return ValueTask.FromResult<object?>(null);
         }
@@ -128,7 +128,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleSyncCommand),
         ReceptorId: "test_post_lifecycle_async_sync",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-async-for-sync");
           return ValueTask.FromResult<object?>(null);
         }
@@ -136,7 +136,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleWithResultCommand),
         ReceptorId: "test_post_lifecycle_async_result",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-async-result");
           return ValueTask.FromResult<object?>(null);
         }
@@ -147,7 +147,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "test_post_lifecycle_inline",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-inline");
           return ValueTask.FromResult<object?>(null);
         }
@@ -155,7 +155,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
         MessageType: typeof(PostLifecycleSyncCommand),
         ReceptorId: "test_post_lifecycle_inline_sync",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-inline-for-sync");
           return ValueTask.FromResult<object?>(null);
         }
@@ -163,7 +163,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
         MessageType: typeof(PostLifecycleWithResultCommand),
         ReceptorId: "test_post_lifecycle_inline_result",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("post-lifecycle-inline-result");
           return ValueTask.FromResult<object?>(null);
         }
@@ -356,7 +356,7 @@ public class DispatcherPostLifecycleCoverageTests {
     registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
       MessageType: typeof(PostLifecycleCommand),
       ReceptorId: "test_unreachable",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         _track("should-not-fire");
         return ValueTask.FromResult<object?>(null);
       }
@@ -391,14 +391,14 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "coord_post_lifecycle_async",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("coord-post-lifecycle-async");
           return ValueTask.FromResult<object?>(null);
         }));
       registry.AddReceptor(LifecycleStage.PostLifecycleDetached, new ReceptorInfo(
         MessageType: typeof(PostLifecycleSyncCommand),
         ReceptorId: "coord_post_lifecycle_async_sync",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("coord-post-lifecycle-async-for-sync");
           return ValueTask.FromResult<object?>(null);
         }));
@@ -408,7 +408,7 @@ public class DispatcherPostLifecycleCoverageTests {
       registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
         MessageType: typeof(PostLifecycleCommand),
         ReceptorId: "coord_post_lifecycle_inline",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _track("coord-post-lifecycle-inline");
           return ValueTask.FromResult<object?>(null);
         }));

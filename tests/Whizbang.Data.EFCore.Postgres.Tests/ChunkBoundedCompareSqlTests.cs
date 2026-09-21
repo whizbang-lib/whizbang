@@ -78,8 +78,8 @@ public class ChunkBoundedCompareSqlTests : EFCoreTestBase {
       origin, [inChunkA, inChunkB], sinceSequence: null, untilSequence: null, TimeSpan.FromHours(1));
 
     await Assert.That(digests).IsNotNull();
-    await Assert.That(digests!.Select(d => d.StreamId).OrderBy(s => s).ToList())
-      .IsEquivalentTo(new[] { inChunkA, inChunkB }.OrderBy(s => s).ToList())
+    await Assert.That(digests!.Select(d => d.StreamId).Order().ToList())
+      .IsEquivalentTo(new[] { inChunkA, inChunkB }.Order().ToList())
       .Because("the local side of a chunk comparison needs the chunk's streams and nothing else");
   }
 

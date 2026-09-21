@@ -35,9 +35,7 @@ public class EmptyStreamIdGuardTests {
     Guid messageId = TrackedGuid.NewMedo();
     var messageType = "Consumer.Contracts.Auth.RemoveUserCommand, Consumer.Contracts";
 
-    var ex = await Assert.That(() => {
-      EmptyStreamIdGuard.ThrowIfEmpty(messageId, messageType, Guid.Empty, EmptyStreamIdPolicy.Reject);
-    }).ThrowsExactly<EmptyStreamIdException>();
+    var ex = await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(messageId, messageType, Guid.Empty, EmptyStreamIdPolicy.Reject)).ThrowsExactly<EmptyStreamIdException>();
 
     await Assert.That(ex!.MessageId).IsEqualTo(messageId)
       .Because("Producer debugging via stack trace needs the exact message_id of the offending row to look it up in their write-side context.");
@@ -54,9 +52,7 @@ public class EmptyStreamIdGuardTests {
   [Arguments(EmptyStreamIdPolicy.DeadLetter)]
   [Arguments(EmptyStreamIdPolicy.Purge)]
   public async Task ThrowIfEmpty_NonRejectPolicies_DoesNotThrowAsync(EmptyStreamIdPolicy policy) {
-    await Assert.That(() => {
-      EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", Guid.Empty, policy);
-    }).ThrowsNothing()
+    await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", Guid.Empty, policy)).ThrowsNothing()
       .Because("Storage-time Reject is the only policy that fails at write time; the other policies allow the row to land so coordinator/drainer behavior can apply per the policy intent.");
   }
 
@@ -65,9 +61,7 @@ public class EmptyStreamIdGuardTests {
   /// </summary>
   [Test]
   public async Task ThrowIfEmpty_RealStreamIdUnderReject_DoesNotThrowAsync() {
-    await Assert.That(() => {
-      EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", TrackedGuid.NewMedo(), EmptyStreamIdPolicy.Reject);
-    }).ThrowsNothing()
+    await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", TrackedGuid.NewMedo(), EmptyStreamIdPolicy.Reject)).ThrowsNothing()
       .Because("The guard only fires on Guid.Empty — real UUIDs pass through.");
   }
 
@@ -77,9 +71,7 @@ public class EmptyStreamIdGuardTests {
   /// </summary>
   [Test]
   public async Task ThrowIfEmpty_NullStreamIdUnderReject_DoesNotThrowAsync() {
-    await Assert.That(() => {
-      EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", streamId: null, EmptyStreamIdPolicy.Reject);
-    }).ThrowsNothing()
+    await Assert.That(() => EmptyStreamIdGuard.ThrowIfEmpty(Guid.NewGuid(), "Sample.Type", streamId: null, EmptyStreamIdPolicy.Reject)).ThrowsNothing()
       .Because("NULL stream_id is the documented marker for event-store-only / singleton-stream messages. The production forensic bug was Empty masquerading as 'valid stream' through the `??` coalesce — NULL never had that problem.");
   }
 }

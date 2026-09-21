@@ -375,7 +375,7 @@ public class PoisonMessageDetectorTests {
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
     await Assert.That(source.Component).IsEqualTo("poison-detection");
     await Assert.That(health.Detail).IsNotNull();
-    await Assert.That(health.Detail!).Contains("inbox.orders");
+    await Assert.That(health.Detail).Contains("inbox.orders");
   }
 
   #endregion

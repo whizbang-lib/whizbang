@@ -109,7 +109,7 @@ public class CompleteOutboxPublishedSqlTests : EFCoreTestBase {
 
     // claim_work should NOT return the row — published_at filter excludes it.
     await using var claim = connection.CreateCommand();
-    claim.CommandText = @"SELECT count(*) FROM claim_work(@inst, 'test-svc', 'test-host', 1, 1000, 10000, 300) WHERE source = 'outbox' AND work_id = @id";
+    claim.CommandText = "SELECT count(*) FROM claim_work(@inst, 'test-svc', 'test-host', 1, 1000, 10000, 300) WHERE source = 'outbox' AND work_id = @id";
     claim.Parameters.AddWithValue("inst", instanceId);
     claim.Parameters.AddWithValue("id", messageId);
     var rowsClaimed = (long)(await claim.ExecuteScalarAsync())!;

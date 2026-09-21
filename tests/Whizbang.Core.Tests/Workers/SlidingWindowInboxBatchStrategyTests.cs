@@ -28,7 +28,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushedSignal = new TaskCompletionSource();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         captured.Add(msgs);
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
@@ -139,7 +139,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushedSignal = new TaskCompletionSource();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         captured.Add(msgs);
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
@@ -208,8 +208,8 @@ public class SlidingWindowInboxBatchStrategyTests {
     var batches = captured.ToArray();
     await Assert.That(batches.Length).IsEqualTo(2);
     // Each batch is single-stream. Find each by examining the StreamId of its first message.
-    var batchA = System.Linq.Enumerable.Single(batches, b => b[0].StreamId == streamA);
-    var batchB = System.Linq.Enumerable.Single(batches, b => b[0].StreamId == streamB);
+    var batchA = batches.Single(b => b[0].StreamId == streamA);
+    var batchB = batches.Single(b => b[0].StreamId == streamB);
     await Assert.That(batchA.Length).IsEqualTo(2);
     await Assert.That(batchB.Length).IsEqualTo(1);
   }
@@ -360,7 +360,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (_, _) => {
         var n = Interlocked.Increment(ref attempts);
         if (n == 1) {
           firstFlush.TrySetResult();
@@ -404,7 +404,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (_, _) => {
         failed.TrySetResult();
         return Task.FromException(new InvalidOperationException("database unavailable"));
       },

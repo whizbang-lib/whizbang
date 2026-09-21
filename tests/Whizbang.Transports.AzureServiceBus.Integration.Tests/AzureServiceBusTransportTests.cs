@@ -269,7 +269,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -298,7 +298,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     var destination = new TransportDestination("topic-00", "sub-00-a");
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -330,7 +330,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     var destination = new TransportDestination("topic-00", "sub-00-a");
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 

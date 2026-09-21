@@ -137,7 +137,7 @@ public sealed partial class PgDutyElector(
       await using (var record = connection.CreateCommand()) {
         record.CommandText = "SELECT record_capability(@id, @duty)";
         record.Parameters.AddWithValue("id", _instanceProvider.InstanceId);
-        record.Parameters.AddWithValue("duty", duty);
+        record.Parameters.AddWithValue(nameof(duty), duty);
         var recorded = await record.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (recorded is not true) {
           await using (var unlock = connection.CreateCommand()) {

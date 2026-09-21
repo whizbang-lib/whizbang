@@ -26,7 +26,7 @@ public class AddWhizbangAspNetTurnkeyTests {
       d.ServiceType == typeof(IStartupFilter) && d.ImplementationType == typeof(WhizbangAvailabilityStartupFilter));
     await Assert.That(hasGateFilter).IsTrue();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var registrations = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
     await Assert.That(registrations.Any(r => r.Name == "whizbang-ready")).IsTrue();
     await Assert.That(registrations.Any(r => r.Name == "whizbang-live")).IsTrue();
@@ -38,7 +38,7 @@ public class AddWhizbangAspNetTurnkeyTests {
     services.AddWhizbangAspNet();
     services.AddWhizbangAspNet();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var registrations = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
     await Assert.That(registrations.Count(r => r.Name == "whizbang-ready")).IsEqualTo(1);
     await Assert.That(registrations.Count(r => r.Name == "whizbang-live")).IsEqualTo(1);

@@ -172,7 +172,7 @@ public class BatchFlusherTests {
     var release = new TaskCompletionSource();
 
     var flusher = new BatchFlusher<int>(
-      flush: async (items, ct) => {
+      flush: async (_, ct) => {
         inFlush.TrySetResult();
         // Parks until the drain gives up and cancels, which is the path under test.
         await release.Task.WaitAsync(ct);

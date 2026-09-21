@@ -40,18 +40,18 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     var now = DateTimeOffset.UtcNow;
 
     var first = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k)).ToList(), now, TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k)), now, TimeSpan.FromMinutes(60));
     await Assert.That(first).IsNotNull();
     await Assert.That(first!.All(granted => granted)).IsTrue()
       .Because("first sighting of every bucket reports — exactly the single-key rule");
 
     var second = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k)).ToList(), now.AddMinutes(1), TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k)), now.AddMinutes(1), TimeSpan.FromMinutes(60));
     await Assert.That(second!.All(granted => !granted)).IsTrue()
       .Because("an unchanged signature inside the cooldown suppresses — cadence, not news");
 
     var changed = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k, lo: 99)).ToList(), now.AddMinutes(2), TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k, lo: 99)), now.AddMinutes(2), TimeSpan.FromMinutes(60));
     await Assert.That(changed!.All(granted => granted)).IsTrue()
       .Because("a moved digest is progress or fresh damage — always news, exactly like the single");
   }
@@ -65,7 +65,7 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     var now = DateTimeOffset.UtcNow;
     // Seed ledger rows (repair consults only known divergences).
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k)).ToList(), now, TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k)), now, TimeSpan.FromMinutes(60));
 
     var flags = await coordinator.IntegrityTryBeginRepairBatchAsync(
       origin, keys, now, TimeSpan.FromSeconds(300), maxAttempts: 8, maxGrants: 2);
@@ -91,13 +91,13 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     var keys = Enumerable.Range(0, 3).Select(_ => _key(origin, Guid.NewGuid())).ToList();
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k)).ToList(), now, TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k)), now, TimeSpan.FromMinutes(60));
 
     var handled = await coordinator.IntegrityMarkHealedBatchAsync(origin, keys);
     await Assert.That(handled).IsTrue();
 
     var after = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(k => _obs(k)).ToList(), now.AddMinutes(1), TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(k => _obs(k)), now.AddMinutes(1), TimeSpan.FromMinutes(60));
     await Assert.That(after!.All(granted => granted)).IsTrue()
       .Because("a healed bucket is forgotten — the same signature minutes later is a brand-new incident");
   }

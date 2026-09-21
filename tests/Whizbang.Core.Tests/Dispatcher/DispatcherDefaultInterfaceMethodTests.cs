@@ -185,9 +185,7 @@ public class DispatcherDefaultInterfaceMethodTests {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());
 
-    await Assert.That(async () => {
-      await dispatcher.LocalInvokeAndSyncAsync<TestMessage, int>(message);
-    }).ThrowsExactly<NotSupportedException>();
+    await Assert.That(async () => await dispatcher.LocalInvokeAndSyncAsync<TestMessage, int>(message)).ThrowsExactly<NotSupportedException>();
   }
 
   [Test]
@@ -195,9 +193,7 @@ public class DispatcherDefaultInterfaceMethodTests {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());
 
-    await Assert.That(async () => {
-      await dispatcher.LocalInvokeAndSyncAsync<TestMessage>(message);
-    }).ThrowsExactly<NotSupportedException>();
+    await Assert.That(async () => await dispatcher.LocalInvokeAndSyncAsync<TestMessage>(message)).ThrowsExactly<NotSupportedException>();
   }
 
   [Test]
@@ -205,9 +201,7 @@ public class DispatcherDefaultInterfaceMethodTests {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());
 
-    await Assert.That(async () => {
-      await dispatcher.LocalInvokeAndSyncAsync<TestMessage, int, TestPerspective>(message);
-    }).ThrowsExactly<NotSupportedException>();
+    await Assert.That(async () => await dispatcher.LocalInvokeAndSyncAsync<TestMessage, int, TestPerspective>(message)).ThrowsExactly<NotSupportedException>();
   }
 
 #pragma warning restore CS0618
@@ -217,9 +211,7 @@ public class DispatcherDefaultInterfaceMethodTests {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());
 
-    await Assert.That(async () => {
-      await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<TestMessage, TestPerspective>(message);
-    }).ThrowsExactly<NotSupportedException>();
+    await Assert.That(async () => await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<TestMessage, TestPerspective>(message)).ThrowsExactly<NotSupportedException>();
   }
 
   [Test]
@@ -229,8 +221,6 @@ public class DispatcherDefaultInterfaceMethodTests {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());
 
-    await Assert.That(async () => {
-      await dispatcher.LocalInvokeAndSyncAsync(message, mode);
-    }).ThrowsExactly<NotSupportedException>();
+    await Assert.That(async () => await dispatcher.LocalInvokeAndSyncAsync(message, mode)).ThrowsExactly<NotSupportedException>();
   }
 }

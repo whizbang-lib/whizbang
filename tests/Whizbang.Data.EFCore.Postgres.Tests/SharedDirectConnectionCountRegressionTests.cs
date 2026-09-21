@@ -83,7 +83,7 @@ public class SharedDirectConnectionCountRegressionTests : EFCoreTestBase {
     var listeningPids = await _countListeningSessionsAsync(
       $"wh_work_i_{instanceProvider.InstanceId:D}",
       "wh_committed",
-      $"wh_app_test_topic");
+      "wh_app_test_topic");
 
     // EXPECTED: exactly 1 session (the shared conn) holds LISTEN on all three channels.
     // Pre-slice-33 design would have shown ≥3 here — one per listener.

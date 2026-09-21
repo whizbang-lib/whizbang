@@ -318,7 +318,7 @@ public class CollectiveDispatcherTests {
     public string ScopeKind => kind;
     public bool AcceptsPerspective<TModel>() where TModel : class => true;
     public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
-      where TModel : class => row => true;
+      where TModel : class => _ => true;
     public IDisposable EnterContext(ICollectiveScope scope) => new _disposable();
     private sealed class _disposable : IDisposable { public void Dispose() { } }
   }
@@ -382,7 +382,7 @@ public class CollectiveDispatcherTests {
       MethodName: "Apply",
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (handler, evt, query) => handler); // dispatcher tests don't exercise the invoker shape
+      Invoker: static (handler, _, query) => handler); // dispatcher tests don't exercise the invoker shape
 
   private static CollectiveDispatcher _build(
       IReadOnlyList<CollectiveApplyEntry> entries,

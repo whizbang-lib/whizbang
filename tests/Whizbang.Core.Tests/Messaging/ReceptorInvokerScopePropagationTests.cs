@@ -102,9 +102,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture what GetSecurityFromAmbient returns during cascade
     SecurityContext? capturedAmbientContext = null;
-    var cascader = new TestEventCascader(onCascade: () => {
-      capturedAmbientContext = CascadeContext.GetSecurityFromAmbient();
-    });
+    var cascader = new TestEventCascader(onCascade: () => capturedAmbientContext = CascadeContext.GetSecurityFromAmbient());
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -155,9 +153,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture the message context that gets set
     IMessageContext? capturedMessageContext = null;
-    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => {
-      capturedMessageContext = ctx;
-    });
+    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => capturedMessageContext = ctx);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -331,7 +327,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null); // Return null (no cascade)
         }));
@@ -351,7 +347,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TCommand),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(eventFactory()); // Return event for cascading
         }));

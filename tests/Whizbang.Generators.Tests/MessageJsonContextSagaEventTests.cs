@@ -69,12 +69,14 @@ namespace Whizbang.Sagas {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSagaDeclaration_GeneratesJsonTypeInfoForEveryEmittedEventAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -97,12 +99,14 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSagaDeclaration_GeneratesEnvelopeFactoryForSagaEventsAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -117,12 +121,14 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSagaDeclaration_RegistersSagaEventsForPolymorphicDispatchAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -136,12 +142,14 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithSagaDeclaration_IncludesEventBasePropertiesAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -160,7 +168,8 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCustomEventBase_UsesThatBasesPropertiesAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 using System;
 using Whizbang.Core;
 
@@ -169,12 +178,13 @@ namespace ConsumerApp.Sagas;
 public class TenantSagaEventBase : IEvent {
   public Guid MessageId { get; set; }
   public DateTimeOffset OccurredAt { get; set; }
-  public string TenantSlug { get; set; } = """";
+  public string TenantSlug { get; set; } = "";
 }
 
-[Whizbang.Sagas.Saga<TenantSagaEventBase>(""landing"")]
+[Whizbang.Sagas.Saga<TenantSagaEventBase>("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -190,12 +200,14 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithHooksDisabled_OmitsHookEventsAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"", IncludeHooks = false)]
+[Whizbang.Sagas.Saga("landing", IncludeHooks = false)]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -210,12 +222,14 @@ public partial class LandingSaga { }
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonPublicSaga_SkipsSynthesisAsync() {
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 internal partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -240,12 +254,14 @@ internal partial class LandingSaga { }
     // The marker interfaces only exist in the compilation when the consumer references the
     // contracts assembly; when they do not resolve the generator simply records no relationship,
     // which is why every other test here never reached this path.
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -279,12 +295,14 @@ public partial class LandingSaga { }
     // compile. Skipping is the only correct answer, and it has to be a SKIP rather than a throw:
     // one generic saga must not take down metadata generation for every other message in the
     // assembly.
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga<TPayload> where TPayload : class { }
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
@@ -302,16 +320,18 @@ public partial class LandingSaga<TPayload> where TPayload : class { }
   [RequiresAssemblyFiles()]
   public async Task Generator_WithAGenericSaga_LeavesOtherMessagesIntactAsync() {
     // The blast-radius half: skipping the saga must not skip the assembly.
-    var source = _withSagaSurface(@"
+    var source = _withSagaSurface("""
+
 using Whizbang.Core;
 
 namespace ConsumerApp.Sagas;
 
-[Whizbang.Sagas.Saga(""landing"")]
+[Whizbang.Sagas.Saga("landing")]
 public partial class LandingSaga<TPayload> where TPayload : class { }
 
 public record CreateOrder(string OrderId) : ICommand;
-");
+
+""");
 
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");

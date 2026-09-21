@@ -139,7 +139,7 @@ public class AsbTrafficClassOpsRateSourceTests {
 
     await transport.InitializeAsync();
     await transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, _) => Task.CompletedTask,
       new TransportDestination("inbox") { RoutingKey = "ops-rate-sub" },
       new TransportBatchOptions());
 

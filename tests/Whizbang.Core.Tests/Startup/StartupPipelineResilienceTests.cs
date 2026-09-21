@@ -126,7 +126,7 @@ public class StartupPipelineResilienceTests {
       .Because("retrying a standing outage forever is the OTHER way to be silently broken — "
              + "issue #494's rule is that boot failing loudly beats boot hanging quietly");
     await Assert.That(results[0].Reason).IsNotNull();
-    await Assert.That(results[0].Reason!).Contains("Timeout during reading attempt")
+    await Assert.That(results[0].Reason).Contains("Timeout during reading attempt")
       .Because("the operator needs the underlying failure, not just the fact that a bound was "
              + "reached — the report is the only record that survives");
     await Assert.That(step.Executions).IsEqualTo(0)

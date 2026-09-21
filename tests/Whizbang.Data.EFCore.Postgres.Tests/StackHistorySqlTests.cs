@@ -111,8 +111,8 @@ public class StackHistorySqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
     var svc = _svc(ctx);
     // First: two distinct stacks — both new.
-    var t1 = "System.Exception: n1\n   at My.App.One.RunAsync()";
-    var t2 = "System.Exception: n2\n   at My.App.Two.RunAsync()";
+    const string t1 = "System.Exception: n1\n   at My.App.One.RunAsync()";
+    const string t2 = "System.Exception: n2\n   at My.App.Two.RunAsync()";
     var first = new List<(Guid, StackIdentity)> {
       (await _seedAsync(conn, t1), StackNormalizer.Normalize(t1)!),
       (await _seedAsync(conn, t2), StackNormalizer.Normalize(t2)!),
@@ -122,7 +122,7 @@ public class StackHistorySqlTests : EFCoreTestBase {
       .Because("both failure shapes are seen for the first time — the new-failure-mode signal");
 
     // Second: one repeat of t1, one brand-new t3 — only ONE new.
-    var t3 = "System.Exception: n3\n   at My.App.Three.RunAsync()";
+    const string t3 = "System.Exception: n3\n   at My.App.Three.RunAsync()";
     var second = new List<(Guid, StackIdentity)> {
       (await _seedAsync(conn, t1), StackNormalizer.Normalize(t1)!),
       (await _seedAsync(conn, t3), StackNormalizer.Normalize(t3)!),

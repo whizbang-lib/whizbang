@@ -77,7 +77,6 @@ public static class EnvelopeTypeNameHelper {
       return false;
     }
     var inner = ExtractInnerTypeName(envelopeTypeName);
-    return inner is not null
-      && inner.Contains(nameof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload), StringComparison.Ordinal);
+    return inner?.Contains(nameof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload), StringComparison.Ordinal) == true;
   }
 }

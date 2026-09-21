@@ -274,14 +274,14 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
         PollingIntervalMilliseconds = 50,
         DrainLoopMaxIterations = 1
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: null,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     var lifecycleCoordinator = serviceProvider.GetRequiredService<ILifecycleCoordinator>();
     return (worker, coordinator, registry, eventStore, invoker, lifecycleCoordinator, harness);

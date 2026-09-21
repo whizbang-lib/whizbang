@@ -1,0 +1,237 @@
+name: Analyzer Sweep
+
+# Applies Roslynator's automated fixes to a test project and pushes the result to a branch.
+#
+# This exists because one project cannot be swept on a developer machine. Roslynator holds the
+# whole compilation plus every requested analyzer's state in memory, and that working set scales
+# with BOTH the project size and the number of diagnostics. Whizbang.Core.Tests is 310k lines
+# across 1,273 files — roughly 2.4x the next-largest suite — and there:
+#
+#   24 diagnostics at once -> 57 GB, filled 32 GB of RAM and 32 GB of swap, load average 140
+#   1 diagnostic           -> still exceeded 8 GB and had to be killed before it fixed anything
+#
+# Every other test project completes locally in well under a gigabyte. A hosted runner has 16 GB
+# and is disposable, so a run that dies costs a job rather than someone's machine.
+#
+# One diagnostic per invocation, always, AND --fix-scope document: together they bound the
+# working set. Do not "optimize" this by passing the whole list or by dropping the fix scope.
+#
+# The fix scope is the part that is easy to get wrong. A memory trace taken immediately after a
+# completed rule showed the working set fully reclaimed (15 total / 0 used / 14 free), so the
+# runner deaths are not cumulative leakage and shutting down the build server does not address
+# them -- a single project-scoped FixAll is simply larger than the runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Test project to sweep'
+        required: true
+        default: 'tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj'
+        type: string
+      diagnostics:
+        description: 'Space-separated Roslynator rule ids, applied ONE AT A TIME'
+        required: true
+        default: 'RCS1249 RCS1261 RCS1021 RCS1205 RCS1251 RCS1015 RCS1222 RCS1077 RCS1226 RCS1266'
+        type: string
+      branch:
+        description: 'Branch to commit onto'
+        required: true
+        default: 'fix/tests-analyzer-findings'
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  sweep:
+    name: Sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Roslynator CLI
+        run: dotnet tool install -g roslynator.dotnet.cli --version 0.12.0
+
+      - name: Restore
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: dotnet restore "$PROJECT"
+
+      - name: Apply fixes, one diagnostic at a time
+        env:
+          PROJECT: ${{ inputs.project }}
+          DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          # GitHub runs `run:` under `bash -e`; `set -uo pipefail` does NOT clear that. Without
+          # the `|| true` on the capture below, a rule whose output carries no "N diagnostics
+          # fixed" line makes grep return non-zero, pipefail propagates it, and -e kills the whole
+          # run -- losing every rule after it. That is exactly how the RCS1163 run died silently.
+          set +e
+          set -uo pipefail
+          # The analyzer assemblies ship inside the Roslynator.Analyzers package the project already
+          # references. Roslynator's own Roslyn is older than this repo's, so it cannot run the source
+          # generators and reports phantom CS0103/CS0234 for generated symbols; --ignore-compiler-errors
+          # is required or it refuses to fix a project it believes is broken.
+          A=$(find ~/.nuget/packages/roslynator.analyzers -type d -name cs -path "*roslyn*" | sort | tail -1)
+          echo "analyzer assemblies: $A"
+          # COMMIT AFTER EACH DIAGNOSTIC. A 16 GB hosted runner completes one rule on the
+          # largest suite (RCS1249 fixed 67 in 13 minutes) and then dies partway through the
+          # next with exit 143, so a run that batches rules and commits once at the end loses
+          # everything it had already fixed. Pushing per rule means a killed runner costs the
+          # rule in flight, not the whole run.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TOTAL=0
+          for d in $DIAGS; do
+            echo "::group::$d"
+            # --fix-scope document is what makes this fit in a runner. The default, project
+            # scope, runs a FixAll across the whole compilation and holds every proposed change
+            # at once; on a 310k-line suite that exhausts 15 GB and the runner is killed at
+            # exit 143. Three runs died that way -- two during RCS1261, one during RCS1021 --
+            # while RCS1249 completed twice, so it is the size of the batch that decides it,
+            # not any single rule.
+            n=$(roslynator fix "$PROJECT" --supported-diagnostics "$d" -a "$A" \
+                  --fix-scope document --batch-size 200 \
+                  --ignore-compiler-errors --verbosity minimal 2>&1 \
+                | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1 || true)
+            echo "$d: ${n:-0} fixed"
+            if [ -n "${n:-}" ] && [ "$n" -gt 0 ] && ! git diff --quiet; then
+              # Build BEFORE committing. Pushing per rule means a run that dies later leaves this
+              # rule's commit on the branch permanently, so an unverified push is a broken branch
+              # rather than a wasted job. Several of these fixes can break the build legitimately:
+              # RCS1249 strips a null-forgiving operator that was load-bearing wherever no guard
+              # dominates the use, which surfaces as CS8600/CS8603. Revert the rule and carry on.
+              if ! dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo 2>&1 | tail -20; then
+                echo "::warning::$d broke the build; reverting it and continuing"
+                git checkout -- .
+                dotnet build-server shutdown >/dev/null 2>&1 || true
+                echo "::endgroup::"
+                continue
+              fi
+              git add -u
+              git commit -q -m "test(quality): $d fixes for $(basename "$(dirname "$PROJECT")") ($n)
+
+          Applied by the Analyzer Sweep workflow, one diagnostic per commit.
+
+          Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+              # Rebase before pushing. The branch is shared -- a person or another job can land a
+              # commit while a long sweep is mid-rule, and a plain push then fails non-fast-forward.
+              # Without this the loop keeps going and every later push fails the same way, which is
+              # the same "work completed but discarded" failure the per-rule commit exists to prevent.
+              for attempt in 1 2 3; do
+                if git push -q origin HEAD:"$BRANCH" 2>/dev/null; then
+                  echo "pushed $n fixes for $d"
+                  break
+                fi
+                echo "push rejected (attempt $attempt) -- rebasing onto origin/$BRANCH"
+                git fetch -q origin "$BRANCH"
+                if ! git rebase -q "origin/$BRANCH"; then
+                  git rebase --abort || true
+                  echo "::error::could not rebase $d onto origin/$BRANCH; stopping so nothing is lost"
+                  exit 1
+                fi
+              done
+              TOTAL=$((TOTAL + n))
+            fi
+            # Roslynator exits between rules but the build server does not: VBCSCompiler
+            # persists across invocations and has been measured at 7 GB in this repo, which
+            # is the likeliest reason a run survives its first rule and is killed during its
+            # second. Reclaim it before the next one starts.
+            dotnet build-server shutdown >/dev/null 2>&1 || true
+            free -g | head -2 | sed 's/^/          mem /'
+            echo "::endgroup::"
+          done
+          echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
+          echo "Applied $TOTAL fixes."
+
+      - name: Build the swept project
+        id: verify
+        continue-on-error: true
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
+
+      - name: Revert const conversions that break TUnit
+        if: steps.verify.outcome == 'failure'
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          # RCS1118 turns a local into a const, which trips TUnitAssertions0005 wherever that local is
+          # then read by an assertion. It is statically detectable — the name appears in an Assert.That
+          # call in the same file — so it needs no compilation to find.
+          python3 - <<'PY'
+          import re, subprocess, pathlib
+          changed = subprocess.run(["git","diff","--name-only"],capture_output=True,text=True).stdout.split()
+          n=0
+          for f in changed:
+              p=pathlib.Path(f)
+              if p.suffix!=".cs" or not p.exists(): continue
+              src=p.read_text(); lines=src.split("\n"); touched=False
+              for i,ln in enumerate(lines):
+                  m=re.match(r"^(\s*)const\s+\S+\s+(\w+)(\s*=.*)$", ln)
+                  if m and re.search(r"Assert\.That\(\s*"+re.escape(m.group(2))+r"\s*[,)]", src):
+                      lines[i]=f"{m.group(1)}var {m.group(2)}{m.group(3)}"; touched=True; n+=1
+              if touched: p.write_text("\n".join(lines))
+          print(f"reverted {n} const declarations")
+          PY
+          dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
+
+      - name: Commit and push
+        env:
+          PROJECT: ${{ inputs.project }}
+          DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Explicit -u: staging a directory would sweep the untracked .whizbang generator
+          # artifacts that sit inside several test project folders.
+          git add -u
+          git commit -m "test(quality): analyzer fixes for $(basename "$(dirname "$PROJECT")")
+
+          Applied by the Analyzer Sweep workflow, one diagnostic at a time. This project cannot be
+          swept on a developer machine: Roslynator's working set scales with project size times
+          analyzer count, and here even a single diagnostic exceeded 8 GB locally.
+
+          Diagnostics: $DIAGS
+
+          Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+          git push origin HEAD:"$BRANCH"
+
+      - name: Summary
+        if: always()
+        env:
+          PROJECT: ${{ inputs.project }}
+          DIAGS: ${{ inputs.diagnostics }}
+          BRANCH: ${{ inputs.branch }}
+          VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          {
+            echo "## Analyzer Sweep"
+            echo ""
+            echo "- **Project**: \`$PROJECT\`"
+            echo "- **Diagnostics**: \`$DIAGS\`"
+            echo "- **Branch**: \`$BRANCH\`"
+            echo "- **Build after fixes**: $VERIFY"
+          } >> "$GITHUB_STEP_SUMMARY"

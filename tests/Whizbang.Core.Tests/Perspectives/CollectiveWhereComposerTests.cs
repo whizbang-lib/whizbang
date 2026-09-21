@@ -109,7 +109,7 @@ public class CollectiveWhereComposerTests {
   [Test]
   public async Task NullScopeFilter_OnFramework_ThrowsArgumentNullAsync() {
     await Assert.That(() => CollectiveWhereComposer.Compose<_job>(
-        CollectiveScopeHandling.Framework, scopeFilter: null!, handlerWhere: null))
+        CollectiveScopeHandling.Framework, scopeFilter: null, handlerWhere: null))
       .Throws<ArgumentNullException>();
   }
 

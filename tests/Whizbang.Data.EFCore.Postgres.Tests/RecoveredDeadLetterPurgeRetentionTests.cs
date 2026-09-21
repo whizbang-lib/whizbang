@@ -24,15 +24,17 @@ public class RecoveredDeadLetterPurgeRetentionTests : EFCoreTestBase {
       string deadLetteredOffset, string? recoveredOffset) {
     var id = (Guid)TrackedGuid.NewMedo();
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_dead_letters
         (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason,
          attempts_when_dlq, dead_lettered_at, recovery_status, recovered_at, generation,
          error_fingerprint, error_fingerprint_version)
-      VALUES (@id, 'wh_inbox', @src, 'T.A', '{""p"":1}'::jsonb, 5, 3,
+      VALUES (@id, 'wh_inbox', @src, 'T.A', '{"p":1}'::jsonb, 5, 3,
               NOW() + @dl::interval, 3,
               CASE WHEN @rec IS NULL THEN NULL ELSE NOW() + @rec::interval END,
-              'seed/1', @fp, 1)";
+              'seed/1', @fp, 1)
+""";
     ins.Parameters.AddWithValue("id", id);
     ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
     ins.Parameters.AddWithValue("dl", deadLetteredOffset);

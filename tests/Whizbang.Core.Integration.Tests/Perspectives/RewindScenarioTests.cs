@@ -56,7 +56,7 @@ public class RewindScenarioTests {
     var event4Id = events[3].MessageId.Value;
     var event5Id = events[4].MessageId.Value;
 
-    var perspectiveName = "Test.RewindPerspective";
+    const string perspectiveName = "Test.RewindPerspective";
 
     // Cursor says: last processed was event 5, but a rewind is required because event 3 arrived late.
     var cursor = new PerspectiveCursorInfo {
@@ -149,7 +149,7 @@ public class RewindScenarioTests {
     var event6Id = events[5].MessageId.Value;
     var event7Id = events[6].MessageId.Value;
 
-    var perspectiveName = "Test.PostRewindPerspective";
+    const string perspectiveName = "Test.PostRewindPerspective";
 
     // Pre-rewind cursor: 1,2,4,5 processed, event 3 flagged out-of-order.
     var preRewindCursor = new PerspectiveCursorInfo {
@@ -349,8 +349,8 @@ public class RewindScenarioTests {
     // event being missed or spuriously rewound. Pinning the multiplicity turned a throughput
     // artifact into a correctness failure. Both real invariants below are STRICTER than a count:
     // a spurious rewind or a missed late arrival still fails, which is what this test exists for.
-    var triggers = runner.RewindTriggerEventIds.Distinct().OrderBy(g => g).ToList();
-    var expectedTriggers = lateIndices.Select(i => eventIds[i]).Distinct().OrderBy(g => g).ToList();
+    var triggers = runner.RewindTriggerEventIds.Distinct().Order().ToList();
+    var expectedTriggers = lateIndices.Select(i => eventIds[i]).Distinct().Order().ToList();
 
     await Assert.That(triggers).IsEquivalentTo(expectedTriggers)
       .Because("LOCK-IN: every rewind must be caused by a late arrival and every late arrival must "
@@ -851,14 +851,14 @@ public class RewindScenarioTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
     return (worker, harness);
   }
 

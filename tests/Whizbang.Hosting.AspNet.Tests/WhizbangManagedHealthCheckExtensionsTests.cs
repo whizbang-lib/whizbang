@@ -38,9 +38,9 @@ public class WhizbangManagedHealthCheckExtensionsTests {
 
   [Test]
   public async Task AddWhizbangManagedHealthChecks_RegistersLivenessAndReadinessAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
 
-    var names = _registrations(provider).Select(r => r.Name).ToList();
+    var names = _registrations(provider).ConvertAll(r => r.Name);
 
     await Assert.That(names).Contains("whizbang-live");
     await Assert.That(names).Contains("whizbang-ready");
@@ -48,7 +48,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
 
   [Test]
   public async Task AddWhizbangManagedHealthChecks_TagsEachProbeForItsEndpointAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registrations = _registrations(provider);
 
     var live = registrations.Single(r => r.Name == "whizbang-live");
@@ -62,7 +62,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
   public async Task LivenessFactory_ResolvesAgainstTheAggregatorAsync() {
     // The registration factories are only run when the health check is materialised;
     // resolving them here is what exercises the lambdas rather than just their registration.
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var live = _registrations(provider).Single(r => r.Name == "whizbang-live");
 
     var check = live.Factory(provider);
@@ -73,7 +73,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
 
   [Test]
   public async Task ReadinessFactory_ResolvesAgainstTheAggregatorAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var ready = _registrations(provider).Single(r => r.Name == "whizbang-ready");
 
     var check = ready.Factory(provider);
@@ -84,9 +84,9 @@ public class WhizbangManagedHealthCheckExtensionsTests {
 
   [Test]
   public async Task AddWhizbangManagedHealthChecks_HonoursCustomProbeNamesAsync() {
-    using var provider = _buildProvider(b => b.AddWhizbangManagedHealthChecks("live-x", "ready-x"));
+    await using var provider = _buildProvider(b => b.AddWhizbangManagedHealthChecks("live-x", "ready-x"));
 
-    var names = _registrations(provider).Select(r => r.Name).ToList();
+    var names = _registrations(provider).ConvertAll(r => r.Name);
 
     await Assert.That(names).Contains("live-x");
     await Assert.That(names).Contains("ready-x");

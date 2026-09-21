@@ -66,8 +66,7 @@ public class SessionRotationWiringTests {
     public Task RaiseSessionInitializingAsync(ProcessSessionEventArgs args) => OnSessionInitializingAsync(args);
     public Task RaiseSessionClosingAsync(ProcessSessionEventArgs args) => OnSessionClosingAsync(args);
 
-    private sealed class InnerFake : ServiceBusProcessor {
-    }
+    private sealed class InnerFake : ServiceBusProcessor;
   }
 
   private sealed class RecordingSessionReceiver : ServiceBusSessionReceiver {

@@ -101,7 +101,7 @@ public class CollectivePredicateSqlCompilerTests {
   public async Task Compile_CapturedEnumEquality_BindsUnderlyingNumberAsync() {
     // Enum equality inserts Convert nodes on both sides — the compiler must strip them, and the bound
     // value must be the UNDERLYING NUMBER ("1"), not the name, to match EF's jsonb enum storage.
-    var target = _statusEnum.Approved;
+    const _statusEnum target = _statusEnum.Approved;
     Expression<Func<PerspectiveRow<_enumModel>, bool>> filter = row => row.Data.Status == target;
 
     var result = CollectivePredicateSqlCompiler<_enumModel>.Compile(filter);

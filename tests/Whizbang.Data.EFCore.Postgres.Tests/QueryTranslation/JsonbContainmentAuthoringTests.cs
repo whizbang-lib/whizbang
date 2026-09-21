@@ -397,7 +397,7 @@ public class JsonbContainmentAuthoringTests {
     var sql = spelling switch {
       "array" => rows.Where(x => array.Contains(x.Data.Code)).ToQueryString(),
       "list" => rows.Where(x => list.Contains(x.Data.Code)).ToQueryString(),
-      "static Enumerable.Contains" => rows.Where(x => Enumerable.Contains(array, x.Data.Code)).ToQueryString(),
+      "static Enumerable.Contains" => rows.Where(x => array.Contains(x.Data.Code)).ToQueryString(),
       "guid values" => rows.Where(x => ids.Contains(x.Data.Owner)).ToQueryString(),
       _ => throw new InvalidOperationException(spelling),
     };

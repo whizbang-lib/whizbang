@@ -101,7 +101,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA, instanceB, instanceC],
       emit: async () => await _callNotifyInstanceOwnersAsync(conn, "outbox", pinnedStream, unclaimedStream));
 
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToHashSet();
+    var channels = received.Select(r => r.Channel).Order().ToHashSet();
     await Assert.That(channels).Contains($"wh_work_i_{instanceA}")
       .Because("Step 1 must still emit to the pinned owner.");
     await Assert.That(channels).Contains($"wh_work_i_{instanceB}")
@@ -215,7 +215,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
     var byChannel = received
       .GroupBy(r => r.Channel)
-      .ToDictionary(g => g.Key, g => g.Select(r => r.Payload).OrderBy(p => p).ToList());
+      .ToDictionary(g => g.Key, g => g.Select(r => r.Payload).Order().ToList());
 
     await Assert.That(byChannel.ContainsKey($"wh_work_i_{instanceA}")).IsTrue()
       .Because("Caller (instanceA) pins the stream, so Step 1 routes both notifies to the caller's channel.");
@@ -287,7 +287,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       conn,
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, firstJson));
-    var firstPayloads = firstReceived.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var firstPayloads = firstReceived.Select(r => r.Payload).Order().ToList();
     await Assert.That(firstPayloads).Contains("outbox");
     await Assert.That(firstPayloads).Contains("perspective");
 
@@ -357,7 +357,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, json));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("'outbox' notify must fire for non-event messages too — they still need transport pickup.");
     await Assert.That(payloads.Contains("perspective")).IsFalse()
@@ -429,7 +429,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var received = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]"));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("A store into a drained stream must re-arm transport pickup immediately.");
     await Assert.That(payloads).Contains("perspective")
@@ -602,7 +602,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, json));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("Transport pickup is still owed for the new outbox row.");
     await Assert.That(payloads.Contains("perspective")).IsFalse()

@@ -65,7 +65,7 @@ public class PinnedIdCodeFixProviderCoverageTests {
     var fixContext = new CodeFixContext(
       document,
       diagnostic,
-      (action, diagnostics) => actions.Add(action),
+      (action, _) => actions.Add(action),
       CancellationToken.None);
 
     // Act

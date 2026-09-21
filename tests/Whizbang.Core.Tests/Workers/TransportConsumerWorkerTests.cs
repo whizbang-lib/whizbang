@@ -33,7 +33,7 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2", "routing2"));
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
@@ -73,7 +73,7 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic1"));
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     serviceCollection.AddSingleton<ITransportReadinessCheck>(readinessCheck);
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -126,7 +126,7 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
@@ -174,7 +174,7 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
@@ -223,7 +223,7 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
+    serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();

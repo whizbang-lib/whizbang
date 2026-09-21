@@ -188,7 +188,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     var established = logger.Entries.SingleOrDefault(e => e.Level == LogLevel.Information);
     await Assert.That(established.Message).IsNotNull()
       .Because("the Information log is the only trace that the connection needed more than one attempt");
-    await Assert.That(established.Message!).Contains("after 2 attempts")
+    await Assert.That(established.Message).Contains("after 2 attempts")
       .Because("the attempt count is what tells an operator this was a one-off blip, not chronic instability");
   }
 
@@ -228,7 +228,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     var established = logger.Entries.SingleOrDefault(e => e.Level == LogLevel.Information);
     await Assert.That(established.Message).IsNotNull()
       .Because("the schema-ready recovery is as invisible to the caller as the connection recovery");
-    await Assert.That(established.Message!).Contains("after 2 attempts")
+    await Assert.That(established.Message).Contains("after 2 attempts")
       .Because("the attempt count is what tells an operator this was a one-off blip, not chronic instability");
   }
 
@@ -276,7 +276,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     var stillFailing = logger.Entries.LastOrDefault(e => e.Level == LogLevel.Warning
         && e.Message!.Contains("still failing", StringComparison.Ordinal));
     await Assert.That(stillFailing.Message).IsNotNull();
-    await Assert.That(stillFailing.Message!).Contains("still failing after 10 attempts")
+    await Assert.That(stillFailing.Message).Contains("still failing after 10 attempts")
       .Because("the attempt count is what tells an operator this has been retrying for a while, not just once");
   }
 

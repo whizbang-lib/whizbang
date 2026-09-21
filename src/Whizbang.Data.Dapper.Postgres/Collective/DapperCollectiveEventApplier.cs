@@ -97,7 +97,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var query = new DapperCollectiveQuery(siblingTables);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
@@ -136,7 +136,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var storeColumns = hookPlan.StoreColumns;
     var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
       hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
-    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope;
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 
     var total = 0;

@@ -78,7 +78,7 @@ public class ReceptorInvokerServiceRegistrationTests {
         new ReceptorInfo(
           MessageType: typeof(TestMessage),
           ReceptorId: "ScopedDependencyReceptor",
-          InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
             // This is the critical part: resolve a scoped dependency from the provider
             // If the provider is the root provider, this will throw for scoped services
             var scopedDep = sp.GetRequiredService<ScopedDependency>();
@@ -132,7 +132,7 @@ public class ReceptorInvokerServiceRegistrationTests {
     services.AddScoped<ScopedDependency>();
     services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
 
-    using var rootProvider = services.BuildServiceProvider();
+    await using var rootProvider = services.BuildServiceProvider();
     var message = new TestMessage("test");
 
     // Act - Create two separate scopes and invoke in each
@@ -170,7 +170,7 @@ public class ReceptorInvokerServiceRegistrationTests {
     services.AddScoped<ScopedDependency>();
     services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
 
-    using var rootProvider = services.BuildServiceProvider();
+    await using var rootProvider = services.BuildServiceProvider();
     var message = new TestMessage("test");
 
     // Act - Invoke multiple times within the same scope
@@ -203,13 +203,13 @@ public class ReceptorInvokerServiceRegistrationTests {
     services.AddSingleton<IReceptorRegistry, EmptyReceptorRegistry>();
     services.AddScoped<ScopedDependency>();
     // ValidateScopes = true ensures we get an exception when resolving scoped from root
-    using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
+    await using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
       ValidateScopes = true
     });
 
     // Register scoped invoker
     services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
-    using var provider = services.BuildServiceProvider(new ServiceProviderOptions {
+    await using var provider = services.BuildServiceProvider(new ServiceProviderOptions {
       ValidateScopes = true
     });
 
@@ -251,7 +251,7 @@ public class ReceptorInvokerServiceRegistrationTests {
       eventCascader: null
     ));
 
-    using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
+    await using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
       ValidateScopes = true
     });
 
@@ -284,7 +284,7 @@ public class ReceptorInvokerServiceRegistrationTests {
     // CORRECT: Register invoker as scoped
     services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
 
-    using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
+    await using var rootProvider = services.BuildServiceProvider(new ServiceProviderOptions {
       ValidateScopes = true
     });
 

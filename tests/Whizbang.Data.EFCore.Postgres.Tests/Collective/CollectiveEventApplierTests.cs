@@ -32,7 +32,7 @@ public class CollectiveEventApplierTests {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
     var evt = new _typeB(new _tenantScope("t"));
     var resolver = new _stubResolver("tenant");
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
@@ -45,7 +45,7 @@ public class CollectiveEventApplierTests {
     var entry = _entryFor<_typeA>(typeof(_otherModel), "Apply"); // mismatched TModel
     var evt = new _typeA(new _tenantScope("t"));
     var resolver = new _stubResolver("tenant");
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
@@ -58,7 +58,7 @@ public class CollectiveEventApplierTests {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
     var evt = new _typeA(new _tenantScope("t"));
     var resolver = new _stubResolver("workspace"); // wrong kind
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
@@ -71,7 +71,7 @@ public class CollectiveEventApplierTests {
   [Test]
   public async Task ApplyAsync_NullEntry_ThrowsArgumentNullAsync() {
     var evt = new _typeA(new _tenantScope("t"));
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         null!, new _handler(), evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
@@ -81,7 +81,7 @@ public class CollectiveEventApplierTests {
   public async Task ApplyAsync_NullHandlerInstance_ThrowsArgumentNullAsync() {
     var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
     var evt = new _typeA(new _tenantScope("t"));
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, null!, evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
@@ -143,7 +143,7 @@ public class CollectiveEventApplierTests {
     where TEvent : ICollectiveEvent {
     // Type-erased Invoker mirrors what the source generator (Slice 5) emits.
     Func<object, ICollectiveEvent, ICollectiveQuery, object> invoker =
-      (handler, evt, query) => ((_handler)handler).Apply((_typeA)(ICollectiveEvent)evt);
+      (handler, evt, _) => ((_handler)handler).Apply((_typeA)(ICollectiveEvent)evt);
     return new CollectiveApplyEntry(
       ModelType: modelType,
       EventType: typeof(TEvent),

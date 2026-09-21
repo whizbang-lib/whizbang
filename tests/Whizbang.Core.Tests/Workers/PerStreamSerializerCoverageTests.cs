@@ -40,7 +40,7 @@ public class PerStreamSerializerCoverageTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: x => x.StreamId,
-      processor: (item, ct) => {
+      processor: (item, _) => {
         lock (lockObj) {
           seen.Add(item.MessageId);
           if (seen.Count == 2) {

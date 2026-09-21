@@ -44,8 +44,8 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>
-  /// The versioned assembly-qualified form (<c>Ns.Type, Assembly, Version=..., Culture=...,
-  /// PublicKeyToken=...</c>) that the envelope-type wire header and a few storage paths carry.
+  /// The versioned assembly-qualified form (<code>Ns.Type, Assembly, Version=..., Culture=...,
+  /// PublicKeyToken=...</code>) that the envelope-type wire header and a few storage paths carry.
   /// Compare it with <see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper"/>, never with
   /// <c>==</c>: the version decoration changes across builds.
   /// </summary>

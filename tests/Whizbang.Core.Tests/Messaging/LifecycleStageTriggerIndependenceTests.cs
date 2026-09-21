@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Dispatch;
@@ -175,6 +176,10 @@ public class LifecycleStageTriggerIndependenceTests {
 
   [Test]
   [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task DisposalFlush_StillSkipsLifecycle_TheOneDeliberateExceptionAsync(CancellationToken cancellationToken) {
     var (strategy, invoker) = _build(batchSize: 100, debounceMs: 60000);
     strategy.QueueOutboxMessage(_outboxMessage());

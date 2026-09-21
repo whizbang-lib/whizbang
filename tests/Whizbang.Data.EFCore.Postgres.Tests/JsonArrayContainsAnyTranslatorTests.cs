@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -54,6 +55,10 @@ public class JsonArrayContainsAnyTranslatorTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task TheOperatorIsAppliedToTheExpressionItWasGivenAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
@@ -81,6 +86,10 @@ public class JsonArrayContainsAnyTranslatorTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task AMethodItDoesNotOwn_IsDeclinedRatherThanMistranslatedAsync(
       CancellationToken cancellationToken) {
     // The guard exists because every registered translator is offered every method call in the

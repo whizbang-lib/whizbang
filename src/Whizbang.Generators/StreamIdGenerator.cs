@@ -789,9 +789,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       }
       extractorsCode.Append(tryExtractorCode);
     }
-    template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", extractorsCode.ToString().TrimEnd());
-
-    return template;
+    return TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", extractorsCode.ToString().TrimEnd());
   }
 
   /// <summary>

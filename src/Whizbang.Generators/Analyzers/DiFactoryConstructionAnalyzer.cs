@@ -42,7 +42,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    ImmutableArray.Create(DiagnosticDescriptors.DiFactoryOmitsDependency);
+    [DiagnosticDescriptors.DiFactoryOmitsDependency];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -102,7 +102,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
   private static bool _isInsideServiceProviderFactory(SyntaxNode node) {
     for (var current = node.Parent; current is not null; current = current.Parent) {
       var parameters = current switch {
-        SimpleLambdaExpressionSyntax simple => new[] { simple.Parameter },
+        SimpleLambdaExpressionSyntax simple => [simple.Parameter],
         ParenthesizedLambdaExpressionSyntax paren => paren.ParameterList.Parameters.ToArray(),
         _ => null,
       };
@@ -114,7 +114,7 @@ public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
         // (sp => ...) is the overwhelmingly common registration form, and the conventional name is
         // the only signal available without resolving the enclosing invocation.
         var typeText = p.Type?.ToString();
-        if (typeText is not null && typeText.EndsWith("IServiceProvider", System.StringComparison.Ordinal)) {
+        if (typeText?.EndsWith("IServiceProvider", System.StringComparison.Ordinal) == true) {
           return true;
         }
         if (p.Type is null && p.Identifier.ValueText is "sp" or "provider" or "serviceProvider") {

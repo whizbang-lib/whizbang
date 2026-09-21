@@ -14,8 +14,8 @@ namespace Whizbang.Generators.Tests;
 /// <c>IPerspectiveBase</c>-named interface at all, and it actually exercises the earlier
 /// "<c>perspectiveInterfaces.Count == 0</c>" arm, not the "only the marker interface, no TEvent
 /// variant" arm a few lines later. This test reaches that later arm directly, by implementing the
-/// base marker <c>IPerspectiveBase&lt;TModel&gt;</c> itself (which <c>IPerspectiveFor&lt;TModel,
-/// TEvent&gt;</c> does extend, but the 1-arg form of it does not).
+/// base marker <c>IPerspectiveBase&lt;TModel&gt;</c> itself (which <code>IPerspectiveFor&lt;TModel,
+/// TEvent&gt;</code> does extend, but the 1-arg form of it does not).
 /// </summary>
 [Category("SourceGenerators")]
 public class PerspectiveInvokerGeneratorCoverageTests {

@@ -253,7 +253,7 @@ public static class TypeNameUtilities {
   /// renders that one as the literal <c>&lt;global namespace&gt;</c>, which is never a namespace).
   /// </summary>
   public static string NamespaceName(INamespaceSymbol? ns) =>
-    ns == null || ns.IsGlobalNamespace ? "" : ns.ToDisplayString();
+    ns?.IsGlobalNamespace != false ? "" : ns.ToDisplayString();
 
   /// <summary>
   /// Splits tuple parts respecting nested tuples and parentheses.

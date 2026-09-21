@@ -134,7 +134,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
@@ -148,9 +148,9 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -191,7 +191,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var compileTimeRegistry = new FakeReceptorRegistry(hasAnyConsumer: false);
@@ -211,10 +211,10 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: compileTimeRegistry,
-      runtimeReceptorRegistry: runtimeRegistry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: compileTimeRegistry,
+      runtimeReceptorRegistry: runtimeRegistry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -247,7 +247,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var registry = new FakeReceptorRegistry(hasAnyConsumer: true);
@@ -261,9 +261,9 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -314,7 +314,7 @@ public class TransportConsumerWorkerDropGateTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
 
     var compositeEnvelopeType =
@@ -330,10 +330,10 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
-      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
+      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

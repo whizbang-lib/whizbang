@@ -614,6 +614,7 @@ public class PerspectiveApplyExactlyOnceTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: registry,
@@ -626,8 +627,7 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 
@@ -968,6 +968,7 @@ public class PerspectiveApplyExactlyOnceTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: registry,
@@ -980,8 +981,7 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 

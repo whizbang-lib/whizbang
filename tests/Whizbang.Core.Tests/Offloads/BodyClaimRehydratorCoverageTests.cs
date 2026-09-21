@@ -30,7 +30,7 @@ public class BodyClaimRehydratorCoverageTests {
     var services = new ServiceCollection();
     var instance = new _inMemoryStore("memory");
     store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     return services.BuildServiceProvider();
   }
 
@@ -61,7 +61,7 @@ public class BodyClaimRehydratorCoverageTests {
       .Because("a body that resolves to null must never be treated as a successful rehydrate");
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("a null-but-not-throwing deserialize is a wrong-shape body, same family of failure as a JsonException, and must dead-letter the same way");
-    await Assert.That(result.FailureDescription!).Contains("null or wrong shape");
+    await Assert.That(result.FailureDescription).Contains("null or wrong shape");
   }
 
   /// <summary>Minimal store impl that captures bytes by claim's StorageKey.</summary>

@@ -22,8 +22,7 @@ namespace Whizbang.Hosting.AspNet;
 [JsonSerializable(typeof(IReadOnlyList<HeldCohort>))]
 [JsonSerializable(typeof(HeldCohort))]
 [JsonSerializable(typeof(DeadLetterOperatorEndpoints.CohortReleaseResult))]
-internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext {
-}
+internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Opt-in operator HTTP endpoints for the Whizbang internal DLQ. Wraps the SQL functions

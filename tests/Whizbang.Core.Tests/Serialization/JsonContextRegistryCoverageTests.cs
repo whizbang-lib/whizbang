@@ -232,7 +232,7 @@ public class JsonContextRegistryCoverageTests {
     var result = JsonSerializer.Deserialize("[]", listTypeInfo!);
 
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).IsEmpty();
+    await Assert.That(result).IsEmpty();
   }
 }
 

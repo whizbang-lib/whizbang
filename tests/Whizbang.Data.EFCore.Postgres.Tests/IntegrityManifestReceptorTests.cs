@@ -249,9 +249,9 @@ public class IntegrityManifestReceptorTests {
     var command = (RequestRedeliveryCommand)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-    await Assert.That(command.StreamIds!).IsEquivalentTo([mismatched])
+    await Assert.That(command.StreamIds).IsEquivalentTo([mismatched])
       .Because("audit repair is STREAM-scoped — exactly the divergent bucket, nothing broader.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo(["Contracts.TypeX"]);
+    await Assert.That(command.EventTypes).IsEquivalentTo(["Contracts.TypeX"]);
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(command.StateOnly).IsFalse()
       .Because("audit repair is REPAIR semantics — the delivery a live subscriber missed, receptors and all.");
@@ -656,7 +656,7 @@ public class IntegrityManifestReceptorTests {
       .Because("divergent streams of one (tenant, type) batch into ONE repair request — " +
                "per-stream commands multiplied every storm by the stream count.");
     var command = _deserializeRedelivery(transport.Published[0].Envelope);
-    await Assert.That(command.StreamIds!).IsEquivalentTo([s1, s2, s3]);
+    await Assert.That(command.StreamIds).IsEquivalentTo([s1, s2, s3]);
     await Assert.That(transport.Published[0].Destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never anywhere else.");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
@@ -1147,8 +1147,8 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(coordinator.ForChunkStreamsSeen).IsNotNull()
       .Because("the chunk-bounded fold is the ONLY acceptable local read at stream level");
-    await Assert.That(coordinator.ForChunkStreamsSeen!.OrderBy(s => s).ToList())
-      .IsEquivalentTo(new[] { s1, s2 }.OrderBy(s => s).ToList())
+    await Assert.That(coordinator.ForChunkStreamsSeen!.Order().ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.Order().ToList())
       .Because("exactly the chunk's streams — folding the lane to check a chunk is the OOM this fixes");
     await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(100L);
     await Assert.That(coordinator.ForChunkUntilSeen).IsEqualTo(300L)
@@ -1177,7 +1177,7 @@ public class IntegrityManifestReceptorTests {
 
     await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
 
-    await Assert.That(coordinator.ForChunkStreamsSeen!).IsEquivalentTo([stream]);
+    await Assert.That(coordinator.ForChunkStreamsSeen).IsEquivalentTo([stream]);
     await Assert.That(coordinator.ForChunkSinceSeen).IsNull()
       .Because("a legacy manifest has no window — full history, but only for the named streams");
     await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(0)

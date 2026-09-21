@@ -25,7 +25,7 @@ public class OrphanInboxJanitorCoverageTests {
   [Test]
   public async Task ExecuteAsync_SchemaGateWaitCanceled_CompletesWithoutFaultingAsync() {
     var gate = new SchemaReadyGate();   // never marked ready
-    using var sp = new ServiceCollection().BuildServiceProvider();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
     var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
 

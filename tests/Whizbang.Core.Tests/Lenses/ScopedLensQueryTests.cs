@@ -102,7 +102,7 @@ public class ScopedLensQueryTests {
     var scopedQuery = rootProvider.GetRequiredService<IScopedLensQuery<TestModel>>();
 
     // Act
-    var result = await scopedQuery.ExecuteAsync(async (query, ct) => {
+    var result = await scopedQuery.ExecuteAsync(async (query, _) => {
       var rows = query.Query.ToList();
       return rows.Select(r => r.Data).ToList();
     });
@@ -317,9 +317,7 @@ public class ScopedLensQueryTests {
     var provider = services.BuildServiceProvider();
     var scopedQuery = provider.GetRequiredService<IScopedLensQuery<TestModel>>();
 
-    await Assert.That(async () => {
-      await scopedQuery.ExecuteAsync<int>(null!);
-    }).Throws<ArgumentNullException>();
+    await Assert.That(async () => await scopedQuery.ExecuteAsync<int>(null!)).Throws<ArgumentNullException>();
   }
 
   // Helper classes for testing

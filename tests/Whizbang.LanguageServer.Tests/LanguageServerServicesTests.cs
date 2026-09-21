@@ -32,7 +32,7 @@ public class LanguageServerServicesTests {
   public async Task EveryHandler_IsResolvableAsync(Type handlerType) {
     // Each handler backs one editor capability. An unregistered one is not a crash -- the
     // request just goes unanswered, which reads to a user as the feature not existing.
-    using var provider = _build();
+    await using var provider = _build();
 
     await Assert.That(provider.GetService(handlerType)).IsNotNull()
       .Because($"{handlerType.Name} backs an editor capability that is dead without it");
@@ -45,7 +45,7 @@ public class LanguageServerServicesTests {
   [Arguments(typeof(TestCoverageService))]
   [Arguments(typeof(DebugSessionManager))]
   public async Task EverySupportingService_IsResolvableAsync(Type serviceType) {
-    using var provider = _build();
+    await using var provider = _build();
 
     await Assert.That(provider.GetService(serviceType)).IsNotNull();
   }
@@ -57,7 +57,7 @@ public class LanguageServerServicesTests {
     // These carry state across requests: DebugSessionManager holds live debug sessions, and
     // SearchService holds the built Lucene index. Registered per-request they would lose that
     // state on every call -- sessions would vanish and every search would rebuild the index.
-    using var provider = _build();
+    await using var provider = _build();
 
     var first = provider.GetService(serviceType);
     var second = provider.GetService(serviceType);

@@ -5,13 +5,16 @@ using TUnit.Core;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Unit tests for <see cref="ReceiveLivenessWatchdog"/> — the consume-liveness guard that
 /// detects a receiver that has gone silent while its subscription still has a backlog
 /// (a dropped session receiver link presents exactly this way: no errors, no receives,
 /// healthy process) and triggers subscription recovery.
-///
+/// </para>
+/// <para>
 /// All time flows through FakeTimeProvider and the backlog probe / recovery callbacks are
 /// counting fakes, so every test is deterministic — no real clocks, no broker.
+/// </para>
 /// </summary>
 [Timeout(10_000)]
 public class ReceiveLivenessWatchdogTests {

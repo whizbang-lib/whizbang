@@ -93,9 +93,9 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
 
     await Assert.That(received).Count().IsEqualTo(3)
       .Because("one orphan NOTIFY per live instance");
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToList();
+    var channels = received.Select(r => r.Channel).Order().ToList();
     var expected = new[] { live1, live2, live3 }
-      .Select(g => $"wh_work_i_{g}").OrderBy(c => c).ToList();
+      .Select(g => $"wh_work_i_{g}").Order().ToList();
     await Assert.That(channels).IsEquivalentTo(expected)
       .Because("one NOTIFY per LIVE instance — never on a dead-instance's channel");
   }

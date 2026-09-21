@@ -107,7 +107,7 @@ public class CheckpointMintTests {
     var services = new ServiceCollection();
     services.AddWhizbang();
     services.AddWhizbangWorkers();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var mint = provider.GetRequiredService<IEventMint>();
     var minted = mint.Checkpoints.Mint(new ControlMintRequest<ProbeControlSignal> {

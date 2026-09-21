@@ -137,8 +137,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options: null,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: null);
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
@@ -567,7 +567,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var compileTimeRegistry = new FakeReceptorRegistryQuery(hasReceptors: (_, _) => false);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(runtimeRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(runtimeRegistry, sp));
@@ -637,7 +637,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"deep_cov_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -645,7 +645,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -716,7 +716,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"postlc_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -724,7 +724,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -794,7 +794,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"fallback_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -802,7 +802,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -872,7 +872,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       receptorRegistry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"skip_postlc_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -890,7 +890,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     ]);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(receptorRegistry, sp));
@@ -1307,16 +1307,16 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: lifecycleMessageDeserializer,
       envelopeSerializer: envelopeSerializer,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: runtimeReceptorRegistry,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      runtimeReceptorRegistry: runtimeReceptorRegistry);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1340,7 +1340,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithAggregateId(MessageId messageId, Guid aggregateId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1364,7 +1364,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithoutMetadata(MessageId messageId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1386,7 +1386,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithTraceParent(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,

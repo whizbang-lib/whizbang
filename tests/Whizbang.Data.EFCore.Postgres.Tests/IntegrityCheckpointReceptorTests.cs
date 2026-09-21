@@ -162,7 +162,7 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(command.FromCommitSequence).IsEqualTo(10L);
     await Assert.That(command.ToCommitSequence).IsEqualTo(20L)
       .Because("the repair is scoped to EXACTLY the confirmed window.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo([_verifiedType]);
+    await Assert.That(command.EventTypes).IsEquivalentTo([_verifiedType]);
     await Assert.That(command.TenantScope).IsEqualTo("tenant-a");
     await Assert.That(command.RequesterService).IsEqualTo("consumer-svc")
       .Because("the requester names itself — it becomes the returned bundles' Target.");

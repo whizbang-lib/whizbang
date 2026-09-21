@@ -43,7 +43,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -78,7 +78,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_system_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -115,9 +115,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_initiating_context_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-        return ValueTask.FromResult<object?>(null);
-      }
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();
@@ -154,7 +152,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_fallback_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         capturedImmutable = capturedScope is ImmutableScopeContext;

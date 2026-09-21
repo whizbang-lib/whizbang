@@ -343,7 +343,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(2);
-    var tenants = digests.Select(d => d.TenantScope ?? "").OrderBy(t => t).ToList();
+    var tenants = digests.Select(d => d.TenantScope ?? "").Order().ToList();
     await Assert.That(tenants).IsEquivalentTo(["tenant-a", "tenant-b"]);
     await Assert.That(digests.Single(d => d.TenantScope == "tenant-a").EventCount).IsEqualTo(2);
     await Assert.That(digests.Single(d => d.TenantScope == "tenant-b").EventCount).IsEqualTo(1);

@@ -49,7 +49,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Create fake lifecycle invoker that captures the IMessageContext state when invoked
     // Capture the accessor directly to avoid static field pollution
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, ctx) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           // Capture the IMessageContext.UserId at the moment of invocation
           capturedUserId = messageContextAccessor.Current?.UserId;
@@ -96,14 +96,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -134,7 +134,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var lifecycleInvoked = false;
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
@@ -176,14 +176,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -212,7 +212,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var accessorWasSet = false;
 
     var scopeContextAccessor = new TestScopeContextAccessor(
-      onSet: () => { accessorWasSet = true; });
+      onSet: () => accessorWasSet = true);
 
     var securityProvider = new TestSecurityContextProvider(
       returnsNull: true,
@@ -254,14 +254,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -293,7 +293,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var messageContextAccessor = new TestMessageContextAccessor();
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PostPerspectiveInline) {
           capturedUserId = messageContextAccessor.Current?.UserId;
           postPerspectiveInlineInvoked.TrySetResult();
@@ -340,14 +340,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -438,14 +438,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -476,7 +476,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var lifecycleInvoked = false;
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
@@ -522,14 +522,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -580,7 +580,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // PrePerspectiveDetached (fires via Task.Run and may not complete before test cancellation).
     // Security context is established BEFORE all stages, so the context is already set.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
@@ -630,14 +630,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -680,7 +680,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Capture at PrePerspectiveInline (fires synchronously) rather than PrePerspectiveDetached
     // (fires via Task.Run). Security context is established before all stages.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
@@ -728,14 +728,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -774,7 +774,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Lifecycle invoker captures the InitiatingContext state during invocation
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (envelope, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedInitiatingContext = scopeContextAccessor.InitiatingContext;
           capturedScopeContextFromAccessor = scopeContextAccessor.Current;
@@ -823,14 +823,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -939,14 +939,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -1181,14 +1181,14 @@ public class PerspectiveWorkerSecurityContextTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     // Act
     using var cts = new CancellationTokenSource();

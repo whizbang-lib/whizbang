@@ -562,8 +562,8 @@ public class JsonMessageSerializerCoverageTests {
   public async Task MetadataConverter_Write_WithNestedObjectsAndArrays_ShouldSerializeAsync() {
     // Arrange - Complex metadata with nested objects and arrays to exercise WriteTo
     var converter = new MetadataConverter();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement> {
       ["obj"] = JsonSerializer.SerializeToElement(new { a = 1, b = "two" }),
       ["arr"] = JsonSerializer.SerializeToElement(new List<string> { "x", "y", "z" }),

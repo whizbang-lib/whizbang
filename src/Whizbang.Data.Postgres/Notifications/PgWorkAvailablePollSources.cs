@@ -14,7 +14,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// parameter bind, error logging) lives on <see cref="PgWorkAvailablePollSourceBase{TSignal}"/>.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-internal static class PgWorkAvailablePollSourcesOverview { }
+internal static class PgWorkAvailablePollSourcesOverview;
 
 /// <summary>Pull source for <see cref="WorkOutboxAvailableSignal"/>.</summary>
 public sealed class PgOutboxWorkAvailablePollSource(

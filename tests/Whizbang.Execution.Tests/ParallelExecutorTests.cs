@@ -81,7 +81,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act & Assert
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(42),
+      (_, ctx) => ValueTask.FromResult(42),
       context
     )).Throws<InvalidOperationException>();
   }
@@ -155,7 +155,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (_, ctx) => {
         handlerCalled = true;
         return ValueTask.FromResult(42);
       },
@@ -180,7 +180,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act
     var executeTask = executor.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => {
+      async (_, ctx) => {
         await tcs.Task;
         return 42;
       },
@@ -207,14 +207,14 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act & Assert
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => throw new InvalidOperationException("Test exception"),
+      (_, ctx) => throw new InvalidOperationException("Test exception"),
       context
     )).Throws<InvalidOperationException>();
 
     // Verify semaphore was released by executing another operation
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(99),
+      (_, ctx) => ValueTask.FromResult(99),
       context
     );
     await Assert.That(result).IsEqualTo(99);
@@ -242,7 +242,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     for (int i = 0; i < 10; i++) {
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, ctx) => {
           var current = Interlocked.Increment(ref concurrentCount);
 
           // Track max concurrency
@@ -366,7 +366,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     for (int i = 0; i < 5; i++) {
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, _) => {
           executionTimes.Add(DateTimeOffset.UtcNow);
           await Task.Delay(10); // Small delay
           return 42;
@@ -402,7 +402,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act - Fill the semaphore
     var blockingTask = executor.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => await tcs.Task,
+      async (_, _) => await tcs.Task,
       context
     ).AsTask();
 
@@ -412,7 +412,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Assert - Should throw OperationCanceledException
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(99),
+      (_, _) => ValueTask.FromResult(99),
       context,
       cts.Token
     )).Throws<OperationCanceledException>();

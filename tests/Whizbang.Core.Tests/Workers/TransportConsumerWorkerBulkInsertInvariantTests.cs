@@ -141,7 +141,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
@@ -157,9 +157,9 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     return (worker, transport, coordinator, sp);
   }
@@ -277,7 +277,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
     var countingFactory = new CountingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
 
@@ -294,9 +294,9 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      receptorRegistry: registry);
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

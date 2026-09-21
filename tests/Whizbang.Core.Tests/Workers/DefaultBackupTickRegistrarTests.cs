@@ -36,7 +36,7 @@ public class DefaultBackupTickRegistrarTests {
   public async Task StartAsync_RegistersScheduledRetryTickAsync() {
     var registry = new BackupTickRegistry();
     var services = new ServiceCollection();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var registrar = new DefaultBackupTickRegistrar(
       registry,
@@ -55,7 +55,7 @@ public class DefaultBackupTickRegistrarTests {
   public async Task RegisteredTick_IsEnabled_ReturnsTrueByDefaultAsync() {
     var registry = new BackupTickRegistry();
     var services = new ServiceCollection();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var registrar = new DefaultBackupTickRegistrar(
       registry,
@@ -74,7 +74,7 @@ public class DefaultBackupTickRegistrarTests {
   public async Task StopAsync_LeavesRegistrationsIntactAsync() {
     var registry = new BackupTickRegistry();
     var services = new ServiceCollection();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var registrar = new DefaultBackupTickRegistrar(
       registry,

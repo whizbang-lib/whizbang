@@ -272,7 +272,7 @@ public class BodyOffloadPostSerializeHookTests {
       Whizbang.Core.Messaging.IWorkCoordinator? coordinator = null) {
     var services = new ServiceCollection();
     var captureStore = new _captureStore("memory");
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => captureStore);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => captureStore);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(configure);
     if (coordinator is not null) {
       services.AddSingleton(coordinator);

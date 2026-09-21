@@ -70,10 +70,9 @@ public abstract class MarkerHookRegistryBase {
       // The one-time IsAssignableFrom scan for this model, memoized. Snapshot under the gate so a concurrent
       // Add can't tear the list mid-scan. Registration order is the list order.
       lock (self._gate) {
-        return self._registrations
+        return [.. self._registrations
           .Where(r => r.Marker.IsAssignableFrom(mt))
-          .Select(r => r.Producer)
-          .ToArray();
+          .Select(r => r.Producer)];
       }
     }, this);
   }

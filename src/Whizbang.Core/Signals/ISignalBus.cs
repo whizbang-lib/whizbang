@@ -29,5 +29,4 @@ public interface ISignalBus {
 
 /// <summary>Handle for an active subscription. Dispose to unsubscribe.</summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-public interface ISignalSubscription : IDisposable {
-}
+public interface ISignalSubscription : IDisposable;

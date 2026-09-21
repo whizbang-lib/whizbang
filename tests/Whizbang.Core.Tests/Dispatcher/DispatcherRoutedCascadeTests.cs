@@ -404,7 +404,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, envelope, ct) => {
+      return (evt, _, ct) => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };
@@ -979,7 +979,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, envelope, ct) => {
+      return (evt, _, ct) => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };

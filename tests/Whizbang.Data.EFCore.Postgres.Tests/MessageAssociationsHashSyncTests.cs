@@ -9,14 +9,17 @@ using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
+/// <para>
 /// Integration tests for the associations-set hash drift detection added to
 /// EnsureWhizbangDatabaseInitializedAsync. These lock in that adding or removing
 /// an Apply(TEvent) method on a perspective re-syncs wh_message_associations on
 /// the next startup, even when the perspective table DDL didn't change.
-///
+/// </para>
+/// <para>
 /// Tests simulate "code changed since last init" by mutating the stored hash row
 /// (or the wh_message_associations rows) directly, since C# perspectives in the
 /// test assembly are fixed at compile time.
+/// </para>
 /// </summary>
 [NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
@@ -42,7 +45,7 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
       .Because("First init must record a wh_schema_migrations row with owner='association' so subsequent startups can short-circuit");
     var dict = (IDictionary<string, object?>)row!;
     await Assert.That((string?)dict["owner"]).IsEqualTo("association");
-    await Assert.That(((string?)dict["content_hash"])!).IsNotEmpty();
+    await Assert.That((string?)dict["content_hash"]).IsNotEmpty();
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -103,7 +106,7 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
       VALUES
         ('GhostEventThatNoLongerExists', 'perspective',
          'Whizbang.Data.EFCore.Postgres.Tests.Perspectives.ActionTestPerspective',
-         '" + ServiceName + @"', NOW(), NOW())");
+         '" + ServiceName + "', NOW(), NOW())");
 
     var orphanBefore = await conn.QueryFirstOrDefaultAsync<dynamic>(
       "SELECT * FROM wh_message_associations WHERE message_type = 'GhostEventThatNoLongerExists'");
@@ -213,8 +216,8 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
         (message_type, association_type, target_name, service_name,
          normalized_message_type, created_at, updated_at)
       VALUES
-        ('" + OrphanMessageType + @"', 'perspective', '" + OrphanPerspectiveName + @"',
-         '" + ServiceName + @"', '" + OrphanMessageType + @"', NOW(), NOW())");
+        ('" + OrphanMessageType + "', 'perspective', '" + OrphanPerspectiveName + @"',
+         '" + ServiceName + "', '" + OrphanMessageType + "', NOW(), NOW())");
     // Two separate events so the (stream_id, perspective_name, event_id) uniqueness on
     // wh_perspective_events doesn't trip — we need one pending row and one completed row.
     await conn.ExecuteAsync(@"
@@ -235,7 +238,7 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
         ('" + pendingWorkId + "', '" + streamId + "', '" + OrphanPerspectiveName + @"',
          '" + pendingEventId + @"', 0, 0, NOW()),
         ('" + completedWorkId + "', '" + streamId + "', '" + OrphanPerspectiveName + @"',
-         '" + completedEventId + @"', 2, 0, NOW())");
+         '" + completedEventId + "', 2, 0, NOW())");
 
     await using var dbContext = CreateDbContext();
     await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger: null);

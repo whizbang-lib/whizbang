@@ -106,7 +106,7 @@ public class WhizbangApplyStackEndpointBaseTests {
       CancellationToken.None);
 
     await Assert.That(report.Available).IsTrue();
-    await Assert.That(query.SeenPath!).IsEquivalentTo(["Created", "Updated+", "Closed"])
+    await Assert.That(query.SeenPath).IsEquivalentTo(["Created", "Updated+", "Closed"])
       .Because("the drill-in passes the exact collapsed path — the base adds nothing");
   }
 }

@@ -23,10 +23,10 @@ namespace Whizbang.Sagas.Helpers;
 /// collapses concurrent emitters to exactly one via atomic INSERT …
 /// ON CONFLICT DO NOTHING. The guard exists to package the saga
 /// idiom — receptors that previously wrote
-/// <c>if (await CompletionGuard.AlreadyEmittedAsync(...)) return;
-/// await dispatcher.PublishAsync(...);</c> now write
-/// <c>await SagaCompletionGuard.EmitOnceAsync(dispatcher, sagaName,
-/// sagaId, evt, ct);</c> — one line, no read-then-act window.
+/// <code>if (await CompletionGuard.AlreadyEmittedAsync(...)) return;
+/// await dispatcher.PublishAsync(...);</code> now write
+/// <code>await SagaCompletionGuard.EmitOnceAsync(dispatcher, sagaName,
+/// sagaId, evt, ct);</code> — one line, no read-then-act window.
 /// </para>
 /// </remarks>
 public static class SagaCompletionGuard {

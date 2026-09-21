@@ -88,8 +88,8 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
 
     await Assert.That(received).Count().IsEqualTo(2)
       .Because("3 streams × 2 unique owners must produce exactly 2 NOTIFYs (deduped per owner)");
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToList();
-    var expected = new[] { $"wh_work_i_{ownerA}", $"wh_work_i_{ownerB}" }.OrderBy(c => c).ToList();
+    var channels = received.Select(r => r.Channel).Order().ToList();
+    var expected = new[] { $"wh_work_i_{ownerA}", $"wh_work_i_{ownerB}" }.Order().ToList();
     await Assert.That(channels).IsEquivalentTo(expected);
   }
 

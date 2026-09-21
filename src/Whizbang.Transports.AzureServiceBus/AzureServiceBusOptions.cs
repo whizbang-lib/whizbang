@@ -332,8 +332,8 @@ public class AzureServiceBusOptions {
 
   /// <summary>
   /// When true, the transport projects its worst-case idle broker-operation rate every time a
-  /// session-enabled subscription starts (<c>subscriptions × MaxConcurrentSessions /
-  /// SessionIdleTimeout</c>) and logs a structured warning when the projection crosses
+  /// session-enabled subscription starts (<code>subscriptions × MaxConcurrentSessions /
+  /// SessionIdleTimeout</code>) and logs a structured warning when the projection crosses
   /// <see cref="OpsRateWarningThresholdPerSecond"/>. This catches configurations whose receive
   /// machinery alone can exhaust a namespace's shared request quota at idle — a failure mode
   /// that is invisible to message-level metrics and logs nothing when healthy.

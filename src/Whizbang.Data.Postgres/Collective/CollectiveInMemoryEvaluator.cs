@@ -88,7 +88,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
   /// <see cref="Flush"/>, so every computed value reads the original state — matching the SQL path.
   /// </summary>
   private sealed class _inMemorySetters(TModel original) : ICollectiveSetters<TModel> {
-    private readonly List<(PropertyInfo Property, object? Value)> _writes = new();
+    private readonly List<(PropertyInfo Property, object? Value)> _writes = [];
 
     public ICollectiveSetters<TModel> SetProperty<TProp>(
         Expression<Func<TModel, TProp>> selector, TProp value) {

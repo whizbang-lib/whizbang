@@ -42,7 +42,7 @@ public class SagaItemStreamsTests {
 
   [Test]
   public async Task Of_DifferentSagaIds_ProduceDifferentStreamIdsAsync() {
-    var item = "item-42";
+    const string item = "item-42";
 
     var a = SagaItemStreams.Of(Guid.Parse("11111111-1111-1111-1111-111111111111"), item);
     var b = SagaItemStreams.Of(Guid.Parse("22222222-2222-2222-2222-222222222222"), item);

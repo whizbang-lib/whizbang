@@ -297,7 +297,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
 
           var topicForClosure = expectedTopic;
           var subscription = await _transport!.SubscribeAsync(
-            async (envelope, envelopeType, ct) => {
+            async (_, envelopeType, ct) => {
               receivedMessages[topicForClosure].TrySetResult(true);
               await Task.CompletedTask;
             },

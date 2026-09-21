@@ -42,8 +42,8 @@ public class PrincipalFilterExtensionsCoverageTests {
     var ownedId = Guid.NewGuid();
     var otherId = Guid.NewGuid();
     var rows = new List<PerspectiveRow<Order>> {
-      _row(id: ownedId, userId: "user-alice", allowedPrincipals: []),
-      _row(id: otherId, userId: "user-bob", allowedPrincipals: []),
+      _row(userId: "user-alice", allowedPrincipals: [], id: ownedId),
+      _row(userId: "user-bob", allowedPrincipals: [], id: otherId),
     }.AsQueryable();
 
     var result = rows.FilterByUserOrPrincipals("user-alice", new HashSet<SecurityPrincipalId>()).ToList();
@@ -61,8 +61,8 @@ public class PrincipalFilterExtensionsCoverageTests {
     var sharedId = Guid.NewGuid();
     var unsharedId = Guid.NewGuid();
     var rows = new List<PerspectiveRow<Order>> {
-      _row(id: sharedId, userId: "user-bob", allowedPrincipals: ["group:sales-team"]),
-      _row(id: unsharedId, userId: "user-charlie", allowedPrincipals: ["group:engineering"]),
+      _row(userId: "user-bob", allowedPrincipals: ["group:sales-team"], id: sharedId),
+      _row(userId: "user-charlie", allowedPrincipals: ["group:engineering"], id: unsharedId),
     }.AsQueryable();
     var callerPrincipals = new HashSet<SecurityPrincipalId> { SecurityPrincipalId.Group("sales-team") };
 

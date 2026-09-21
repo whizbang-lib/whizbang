@@ -96,8 +96,8 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
 
     var c1 = cohorts.FirstOrDefault(c => c.Fingerprint == fp1);
     var c2 = cohorts.FirstOrDefault(c => c.Fingerprint == fp2);
-    await Assert.That(c1 is not null && c1.RowCount == 2 && c1.MessageTypeCount == 2).IsTrue();
-    await Assert.That(c2 is not null && c2.RowCount == 1).IsTrue()
+    await Assert.That(c1?.RowCount == 2 && c1.MessageTypeCount == 2).IsTrue();
+    await Assert.That(c2?.RowCount == 1).IsTrue()
       .Because("only HELD rows form cohorts — pending rows are the live queue, not campaign material");
   }
 
@@ -183,7 +183,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
       up.Parameters.AddWithValue("fp", fp);
       await up.ExecuteNonQueryAsync();
     }
-    await _seedHeldAsync(conn, fp, "T.B", sourceId: srcB, status: 0, offset: "+1 second");
+    await _seedHeldAsync(conn, fp, "T.B", status: 0, sourceId: srcB, offset: "+1 second");
 
     var verdict = await svc.EvaluateCampaignAsync(fp, "gen/1");
     await Assert.That(verdict.Kind).IsEqualTo(CanaryVerdictKind.Mixed)

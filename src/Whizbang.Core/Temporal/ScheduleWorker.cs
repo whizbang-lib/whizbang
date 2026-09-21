@@ -21,7 +21,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly ILogger<ScheduleWorker> _logger;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly ISignalBus? _signalBus;
-  private ISignalSubscription? _dueSubscription;
+  private readonly ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private readonly ScheduleTimer _timer;
 

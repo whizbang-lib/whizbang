@@ -314,7 +314,7 @@ public class PackageManagerTests {
     await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
 
     var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
-      .Select(v => v.Include).ToList();
+      .ConvertAll(v => v.Include);
     await Assert.That(includes).DoesNotContain("Marten");
   }
 
@@ -333,7 +333,7 @@ public class PackageManagerTests {
     });
 
     var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
-      .Select(v => v.Include).ToList();
+      .ConvertAll(v => v.Include);
     await Assert.That(includes).Contains("Marten")
       .Because("a preserved package must keep the version entry that makes it resolvable");
     await Assert.That(_packageRefs(project)).Contains("Marten")
@@ -351,7 +351,7 @@ public class PackageManagerTests {
     await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
 
     var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
-      .Select(v => v.Include).ToList();
+      .ConvertAll(v => v.Include);
     await Assert.That(includes.Count(i => i == "SoftwareExtravaganza.Whizbang.Data.Postgres")).IsEqualTo(1);
   }
 
@@ -371,7 +371,7 @@ public class PackageManagerTests {
 
     await Assert.That(result.Success).IsTrue();
     var remaining = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
-      .Select(v => v.Include).ToList();
+      .ConvertAll(v => v.Include);
     await Assert.That(remaining).DoesNotContain("Wolverine.FluentValidation")
       .Because("nothing replaces it, so the central version entry has no reason to survive the "
              + "reference that used it");

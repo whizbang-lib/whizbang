@@ -1297,7 +1297,7 @@ public class SecurityIntegrationTests {
     IScopeContext? capturedScopeInsideHandler = null;
     IMessageContext? capturedMessageInsideHandler = null;
 
-    var testCallback = new TestSecurityContextCallback(ctx => {
+    var testCallback = new TestSecurityContextCallback(_ => {
       // This runs INSIDE the execution context where security is established
       capturedScopeInsideHandler = ScopeContextAccessor.CurrentContext;
       capturedMessageInsideHandler = MessageContextAccessor.CurrentContext;

@@ -221,7 +221,7 @@ public class SqliteTypeMapperTests {
 
   [Test]
   public async Task MapDataType_UnknownDataType_ThrowsArgumentOutOfRangeAsync() {
-    var unknown = (Whizbang.Data.Schema.WhizbangDataType)9999;
+    const WhizbangDataType unknown = (Whizbang.Data.Schema.WhizbangDataType)9999;
 
     await Assert.That(() => SqliteTypeMapper.MapDataType(unknown))
         .ThrowsExactly<ArgumentOutOfRangeException>();

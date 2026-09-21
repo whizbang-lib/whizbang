@@ -901,7 +901,7 @@ public class ScopeDeltaIntegrationTests {
   public async Task ScopeDelta_DeserializesPostgresJsonbFormat_WithEnumStringKeysAsync() {
     // Arrange - This is the exact JSON format a consumer stores in PostgreSQL
     // Note: Enum keys are serialized as strings ("Scope") not integers (0)
-    var postgresJson = """{"v":{"Scope":{"t":"tenant-abc","u":"user-xyz"}}}""";
+    const string postgresJson = """{"v":{"Scope":{"t":"tenant-abc","u":"user-xyz"}}}""";
 
     var options = JsonContextRegistry.CreateCombinedOptions();
 

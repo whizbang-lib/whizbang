@@ -74,7 +74,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
       // WHIZ120 — a living pinned type whose current name the ledger doesn't know (rename, unacknowledged).
       foreach (var kvp in living) {
         var entry = ledger.FindByPinnedId(kvp.Key);
-        if (entry is not null && !entry.KnowsName(kvp.Value.ClrTypeName)) {
+        if (entry?.KnowsName(kvp.Value.ClrTypeName) == false) {
           endContext.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.PinnedTypeRenamedWithoutAcknowledgment,
             kvp.Value.Location,
@@ -132,7 +132,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
 
   private static string _simpleName(string clrName) {
     var lastSep = clrName.LastIndexOfAny(['+', '.']);
-    return lastSep >= 0 ? clrName.Substring(lastSep + 1) : clrName;
+    return lastSep >= 0 ? clrName[(lastSep + 1)..] : clrName;
   }
 
   private readonly struct LivingPinnedType(string clrTypeName, Location location) {

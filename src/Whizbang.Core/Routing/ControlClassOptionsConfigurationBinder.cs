@@ -24,7 +24,7 @@ internal sealed class ControlClassOptionsConfigurationBinder(IConfiguration? con
   public void PostConfigure(string? name, ControlClassOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return;
     }
 

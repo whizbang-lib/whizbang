@@ -367,8 +367,7 @@ public partial class ServiceBusConsumerWorker(
       // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
       // registries preserve legacy fire-unconditionally behavior for test harnesses.
       var runtimeMessageType = typedEnvelope.Payload?.GetType();
-      if (_receptorRegistry is not null
-          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
+      if (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType) == false
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {

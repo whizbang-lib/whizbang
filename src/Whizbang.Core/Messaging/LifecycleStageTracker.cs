@@ -25,7 +25,9 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleStageTrackerTests.cs</tests>
-public sealed class LifecycleStageTracker {
+/// <remarks>Creates the tracker with a hard ceiling on how many claims it retains.</remarks>
+/// <param name="maxTrackedClaims">Maximum retained claims before the oldest are evicted.</param>
+public sealed class LifecycleStageTracker(int maxTrackedClaims = 100_000) {
   // Key is (messageId, stage, perspectiveType?). The perspective-type component lets
   // perspective-scoped stages (PostPerspectiveInline, PostPerspectiveDetached,
   // PrePerspectiveInline, PrePerspectiveDetached, ImmediateDetached) dedup per-perspective
@@ -38,13 +40,7 @@ public sealed class LifecycleStageTracker {
   // the map no longer has (anything released for retry); _evictOldest tolerates that by design.
   private readonly ConcurrentQueue<(Guid MessageId, LifecycleStage Stage, Type? PerspectiveType)> _claimOrder = new();
 
-  private readonly int _maxTrackedClaims;
-
-  /// <summary>Creates the tracker with a hard ceiling on how many claims it retains.</summary>
-  /// <param name="maxTrackedClaims">Maximum retained claims before the oldest are evicted.</param>
-  public LifecycleStageTracker(int maxTrackedClaims = 100_000) {
-    _maxTrackedClaims = maxTrackedClaims > 0 ? maxTrackedClaims : 100_000;
-  }
+  private readonly int _maxTrackedClaims = maxTrackedClaims > 0 ? maxTrackedClaims : 100_000;
 
   /// <summary>How many claims are currently retained. Diagnostic; also what bounds memory.</summary>
   public int TrackedClaims => _processed.Count;

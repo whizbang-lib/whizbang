@@ -35,16 +35,14 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_exempt_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
     ));
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestLoginEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestLoginEvent)));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -68,7 +66,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_envelope_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
@@ -98,7 +96,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_with_security_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -129,9 +127,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     var registry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestLoginEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestLoginEvent)));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
