@@ -3500,6 +3500,21 @@ public abstract partial class Dispatcher(
       _trackEventForSync(messageType, eventId.Value, streamId);
     }
 
+    // Event store BEFORE local dispatch (for Local, EventStoreOnly). The order is the point, not an
+    // accident of layout: a receptor fired by this event cascades further events, and each of those
+    // stores ITSELF on the way through, so dispatching first gave the cause a LATER stream version
+    // than its own effects. A consumer replaying that stream in version order saw a name update, a
+    // status initialisation and a version bump against a job whose initialising event it had not
+    // reached yet. Storing first makes cause-before-effect structural.
+    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && message is IEvent) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
+      }
+#pragma warning restore CA1848
+      await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+    }
+
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
     if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
 #pragma warning disable CA1848
@@ -3525,16 +3540,6 @@ public abstract partial class Dispatcher(
         await publisher(message, cascadeEnvelope, cancellationToken);
       }
       await _publishToForeignLookupsAsync(message, messageType, cascadeEnvelope, cancellationToken).ConfigureAwait(false);
-    }
-
-    // Event store only: Store to event store without transport (for Local, EventStoreOnly)
-    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && message is IEvent) {
-#pragma warning disable CA1848
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
-      }
-#pragma warning restore CA1848
-      await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
     }
 
     // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
