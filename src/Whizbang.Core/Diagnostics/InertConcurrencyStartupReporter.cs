@@ -47,11 +47,11 @@ namespace Whizbang.Core.Diagnostics;
 /// </remarks>
 internal sealed partial class InertConcurrencyStartupReporter(
     ILogger<InertConcurrencyStartupReporter> logger,
-    IServiceProvider? services = null,
-    IOptions<WorkCoordinatorOptions>? coordinator = null,
-    IOptions<OrderedStreamProcessorOptions>? orderedStream = null,
-    IOptions<OutboxDrainWorkerOptions>? outboxDrain = null,
-    IOptions<InboxDispatchWorkerOptions>? inboxDispatch = null) : IHostedService {
+    IServiceProvider services,
+    IOptions<WorkCoordinatorOptions> coordinator,
+    IOptions<OrderedStreamProcessorOptions> orderedStream,
+    IOptions<OutboxDrainWorkerOptions> outboxDrain,
+    IOptions<InboxDispatchWorkerOptions> inboxDispatch) : IHostedService {
   private readonly ILogger<InertConcurrencyStartupReporter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorOptions? _coordinator = _resolve(services, coordinator);
   private readonly OrderedStreamProcessorOptions? _orderedStream = _resolve(services, orderedStream);

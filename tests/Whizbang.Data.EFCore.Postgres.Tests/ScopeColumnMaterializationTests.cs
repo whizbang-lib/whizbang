@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -127,7 +128,7 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
     var envelopes = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, afterEventId: null, upToEventId: eventId, [typeof(OrderCreatedEvent)]);
 
-    var extraction = await new MessageHopSecurityExtractor()
+    var extraction = await new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance)
       .ExtractAsync(envelopes[0], new MessageSecurityOptions());
 
     await Assert.That(extraction).IsNotNull()
@@ -212,7 +213,7 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
     var raw = await _readStoredRowAsStreamEventAsync(streamId, ProductionScopeJson, withHop: true);
 
     var envelopes = eventStore.DeserializeStreamEvents([raw], [typeof(OrderCreatedEvent)]);
-    var extraction = await new MessageHopSecurityExtractor()
+    var extraction = await new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance)
       .ExtractAsync(envelopes[0], new MessageSecurityOptions());
 
     await Assert.That(extraction).IsNotNull()

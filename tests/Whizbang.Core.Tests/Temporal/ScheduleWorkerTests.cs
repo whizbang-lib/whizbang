@@ -44,6 +44,7 @@ public class ScheduleWorkerTests {
       Options.Create(options ?? new TemporalOptions()),
       logger ?? NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      timerLogger: NullLogger<ScheduleTimer>.Instance,
       signalBus: bus,
       timeProvider: clock);
     return (worker, claimer);

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Temporal;
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
 /// <remarks>Creates the timer. <paramref name="onDue"/> must be fast/non-blocking (enqueue-and-return).</remarks>
-public sealed partial class ScheduleTimer(TimeProvider timeProvider, Func<ValueTask> onDue, ILogger<ScheduleTimer>? logger = null) : IDisposable {
+public sealed partial class ScheduleTimer(TimeProvider timeProvider, Func<ValueTask> onDue, ILogger<ScheduleTimer> logger) : IDisposable {
   private readonly TimeProvider _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
   private readonly Func<ValueTask> _onDue = onDue ?? throw new ArgumentNullException(nameof(onDue));
   private readonly ILogger<ScheduleTimer> _logger = logger ?? NullLogger<ScheduleTimer>.Instance;

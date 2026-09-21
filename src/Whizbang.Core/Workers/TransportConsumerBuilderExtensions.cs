@@ -194,7 +194,7 @@ public static class TransportConsumerBuilderExtensions {
     // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
     builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(
-        sp, sp.GetService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
+        sp, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
 
     // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
@@ -348,7 +348,7 @@ public static class TransportConsumerBuilderExtensions {
     // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
     builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(
-        sp, sp.GetService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
+        sp, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
 
     // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called

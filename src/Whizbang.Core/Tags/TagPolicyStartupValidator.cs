@@ -25,8 +25,8 @@ internal sealed class TagPolicyStartupValidator : IHostedService {
   /// <summary>DI constructor — validates against the process-global tag registry.</summary>
   public TagPolicyStartupValidator(
       TagOptions options,
-      IOptions<SystemEvents.SystemEventOptions>? systemEventOptions = null,
-      IConfiguration? configuration = null)
+      IOptions<SystemEvents.SystemEventOptions> systemEventOptions,
+      IConfiguration configuration)
     : this(options, MessageTagRegistry.GetAllTags, configuration) {
     _systemEventOptions = systemEventOptions?.Value;
   }
