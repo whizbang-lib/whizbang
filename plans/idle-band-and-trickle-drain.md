@@ -115,25 +115,43 @@ standard or better, perspective events on their own merits.
 
 ## Nested band or its own bucket
 
-Both work; they trade different things.
+An earlier draft of this plan said the band could be its own bucket in C# while the SQL lane nested
+inside the background index -- "clarity without the index cost". That was wrong, and the reason is
+worth keeping.
 
-| | nested (numbers 400+ inside band 200+) | own `WorkBucket.Idle` |
-|---|---|---|
-| index cost | none -- the literal bound provably implies the lane's | likely its own lane, spending the last slot of the 11 of 12 gate |
-| scheduler surface | none | round robin, floors, reservations and meters each need a case |
-| semantics | `Background` quietly means two things | the intent is in the type |
-| observability | a meter cannot separate idle from bulk | it can |
+**The SQL must know the bound, or the feature does nothing.** The claim derives the bucket with
 
-**Recommended: its own bucket in C#, nested lane in SQL.** The bucket enum and the index set do not
-have to be one to one. A distinct `WorkBucket.Idle` gives meters, reservations and anything that
-reasons about buckets something honest to read, while the claim's idle branch keeps using the
-background lane index -- which the EXPLAIN above shows it can, because both bounds are literals.
-Clarity without spending the index slot.
+```sql
+FOR v_bucket IN 0..2 LOOP
+  ... AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = v_bucket
+```
 
-One thing needs deciding either way, and it is not a detail: **whether Idle takes a turn in the
-round robin at all.** It should not while the service is busy -- that is the entire point -- so it
-is not simply a fourth equal turn. The trickle and forced-drain bounds are what give it turns, and
-they are time-based rather than rotation-based.
+The `ELSE 2` is open-ended, so an idle band at 400 and up falls into bucket 2 and is claimed as
+ordinary background work. Every site that computes a bucket needs the new upper bound on background
+and a branch for idle -- there is no version of this where the SQL stays unaware.
+
+**And that forces the index question rather than avoiding it.** The background lane is partial on
+`priority > 199`, so it would CONTAIN idle rows. Filtering them out in the background branch means
+every background scan walks over rows it will never claim, and the first occupant of the idle band
+is audit, which was 22 percent of read-model writes on the service that motivated this. That trades
+a write cost for a read cost on the busiest lane, which is the wrong direction.
+
+| | background index | idle index | cost |
+|---|---|---|---|
+| nest | stays `> 199`, holds idle rows | reuses it | no new index, but background scans skip idle rows, degrading with idle volume |
+| **bound both** | `> 199 AND < 400` | its own lane | **one added index: 11 of 12, the gate's last slot** |
+
+**Bound both.** The idle band gets a real lane, background gets an upper bound, and the index count
+goes to the ceiling the baseline allows. That is a genuine cost and it should be stated as one: the
+last slot is spent, and the next feature that wants an index on this table has to remove one first.
+
+The EXPLAIN earlier in this plan still holds for what it actually proved -- a literal bound is
+provable against a lane's own literal bound, so the trickle age test rides the lane's leading key.
+It did not prove the band was free, only that the ordering is index-serviceable.
+
+One thing still needs deciding: **whether Idle takes a turn in the round robin at all.** It should
+not while the service is busy -- that is the point -- so it is not a fourth equal turn. The trickle
+and forced-drain bounds are what give it turns, and they are time-based rather than rotational.
 
 ## What must not regress
 
