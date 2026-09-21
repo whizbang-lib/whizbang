@@ -571,7 +571,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);
     ins.Parameters.AddWithValue("data", eventData);
-    ins.Parameters.AddWithValue("scope", scope);
+    ins.Parameters.AddWithValue(nameof(scope), scope);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -586,7 +586,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("name", perspectiveName);
     ins.Parameters.AddWithValue("last_event", (object?)lastEventId ?? DBNull.Value);
-    ins.Parameters.AddWithValue("status", status);
+    ins.Parameters.AddWithValue(nameof(status), status);
     ins.Parameters.AddWithValue("trigger", (object?)rewindTriggerEventId ?? DBNull.Value);
     await ins.ExecuteNonQueryAsync();
   }

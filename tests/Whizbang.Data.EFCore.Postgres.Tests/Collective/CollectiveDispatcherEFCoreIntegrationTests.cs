@@ -611,7 +611,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data->>'Status' FROM wh_per_collective_job WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return (string)result!;
   }
@@ -621,7 +621,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT updated_at, version FROM wh_per_collective_job WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     return (reader.GetFieldValue<DateTime>(0), reader.GetInt32(1));
@@ -918,7 +918,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT (data->>'Marked')::bool FROM wh_per_collective_overlay WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
@@ -944,7 +944,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT (data->>'IsActive')::bool FROM wh_per_collective_overlay WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
@@ -1028,7 +1028,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data->>'ArchivedAt' FROM wh_per_collective_job WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return result == DBNull.Value || result is null ? null : (string)result;
   }
@@ -1143,7 +1143,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data->>'Tag' FROM wh_per_collective_cells WHERE id = @id;";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return result == DBNull.Value || result is null ? null : (string)result;
   }

@@ -56,7 +56,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
       _readAxesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand(
       $"SELECT created_at, updated_at, sys_created_at, sys_updated_at FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     return (

@@ -436,7 +436,7 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("evt", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);
-    ins.Parameters.AddWithValue("version", version);
+    ins.Parameters.AddWithValue(nameof(version), version);
     await ins.ExecuteNonQueryAsync();
   }
 

@@ -77,7 +77,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", tenant is null ? "null" : $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue("seq", commitSeq);
-      store.Parameters.AddWithValue("flags", flags);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = conn.CreateCommand();
@@ -107,7 +107,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("origin", origin);
+      store.Parameters.AddWithValue(nameof(origin), origin);
       store.Parameters.AddWithValue("oseq", originSeq);
       await store.ExecuteNonQueryAsync();
     }

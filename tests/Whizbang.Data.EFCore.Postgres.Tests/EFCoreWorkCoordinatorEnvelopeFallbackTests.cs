@@ -236,7 +236,7 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("type", ORPHAN_EVENT_TYPE);
       ins.Parameters.AddWithValue("data", eventData);
-      ins.Parameters.AddWithValue("scope", (object?)scope ?? DBNull.Value);
+      ins.Parameters.AddWithValue(nameof(scope), (object?)scope ?? DBNull.Value);
       await ins.ExecuteNonQueryAsync();
     }
 

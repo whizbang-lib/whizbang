@@ -113,7 +113,7 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
   private static async Task<int> _countAsync(NpgsqlConnection conn, string table, string column, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT COUNT(*) FROM {table} WHERE {column} = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }

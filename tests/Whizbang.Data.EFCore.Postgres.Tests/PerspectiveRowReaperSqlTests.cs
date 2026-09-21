@@ -36,7 +36,7 @@ public class PerspectiveRowReaperSqlTests : EFCoreTestBase {
     cmd.CommandText = $@"
       INSERT INTO {table} (id, data, metadata, scope, created_at, updated_at, expires_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, NOW(), NOW(), {expiresExpr}, 1)";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -50,7 +50,7 @@ public class PerspectiveRowReaperSqlTests : EFCoreTestBase {
   private static async Task<long> _existsAsync(NpgsqlConnection connection, string table, Guid id) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = $"SELECT count(*) FROM {table} WHERE id = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 

@@ -46,14 +46,14 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
          @misfire, @lookback);";
     cmd.Parameters.AddWithValue("id", scheduleId);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(kind), NpgsqlDbType.Smallint) { Value = kind });
     cmd.Parameters.AddWithValue("interval", (object?)intervalMs ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("cron", (object?)cron ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(cron), (object?)cron ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("next", NpgsqlDbType.TimestampTz) { Value = nextFireAt });
     cmd.Parameters.Add(new NpgsqlParameter("until", NpgsqlDbType.TimestampTz) { Value = (object?)untilAt ?? DBNull.Value });
     cmd.Parameters.AddWithValue("maxocc", (object?)maxOccurrences ?? DBNull.Value);
     cmd.Parameters.AddWithValue("occ", occurrenceCount);
-    cmd.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Smallint) { Value = status });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(status), NpgsqlDbType.Smallint) { Value = status });
     cmd.Parameters.AddWithValue("etype", eventType);
     cmd.Parameters.Add(new NpgsqlParameter("misfire", NpgsqlDbType.Smallint) { Value = misfirePolicy });
     cmd.Parameters.AddWithValue("lookback", (object?)catchUpLookbackMs ?? DBNull.Value);
@@ -92,7 +92,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
       SELECT count(*) FROM wh_claim_due_schedules(
         p_instance_id => @i, p_lease_expiry => @lease, p_partition_count => @pc, p_limit => 100, p_now => @now)";
     cmd.Parameters.AddWithValue("i", instanceId);
-    cmd.Parameters.Add(new NpgsqlParameter("now", NpgsqlDbType.TimestampTz) { Value = now });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(now), NpgsqlDbType.TimestampTz) { Value = now });
     cmd.Parameters.Add(new NpgsqlParameter("lease", NpgsqlDbType.TimestampTz) { Value = now.AddMinutes(5) });
     cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = PARTITION_COUNT });
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
@@ -101,7 +101,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
   private async Task<long> _scalarAsync(NpgsqlConnection conn, string sql, Guid p) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("p", p);
+    cmd.Parameters.AddWithValue(nameof(p), p);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L, CultureInfo.InvariantCulture);
   }
 

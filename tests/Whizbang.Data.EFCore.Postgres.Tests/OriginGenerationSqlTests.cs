@@ -60,7 +60,7 @@ public class OriginGenerationSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("version", version);
+      store.Parameters.AddWithValue(nameof(version), version);
       store.Parameters.AddWithValue("seq", commitSeq);
       await store.ExecuteNonQueryAsync();
     }

@@ -144,7 +144,7 @@ public sealed class WorkCostRecorder(string connectionString) {
         FROM pg_statio_user_indexes i GROUP BY i.relid
       ) x ON x.relid = u.relid
       WHERE u.relname = ANY(@tables)";
-    cmd.Parameters.AddWithValue("tables", tables.ToArray());
+    cmd.Parameters.AddWithValue(nameof(tables), tables.ToArray());
     var costs = new Dictionary<string, TableCost>(StringComparer.Ordinal);
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {

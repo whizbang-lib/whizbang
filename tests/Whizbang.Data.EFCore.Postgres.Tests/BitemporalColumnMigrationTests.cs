@@ -64,7 +64,7 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {LEGACY_TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, @c, @u, 1);", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("c", createdAt);
     cmd.Parameters.AddWithValue("u", updatedAt);
     await cmd.ExecuteNonQueryAsync();
@@ -74,7 +74,7 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand(
       $"SELECT sys_created_at, sys_updated_at FROM {LEGACY_TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return (null, null);

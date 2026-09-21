@@ -46,7 +46,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
       "UPDATE wh_perspective_registry SET row_cap_per_scope = @cap, row_cap_scope_key = @key " +
       "WHERE clr_type_name = @t", conn);
     set.Parameters.AddWithValue("t", CLR_TYPE);
-    set.Parameters.Add(new NpgsqlParameter("cap", NpgsqlTypes.NpgsqlDbType.Integer) {
+    set.Parameters.Add(new NpgsqlParameter(nameof(cap), NpgsqlTypes.NpgsqlDbType.Integer) {
       Value = (object?)cap ?? DBNull.Value
     });
     set.Parameters.Add(new NpgsqlParameter("key", NpgsqlTypes.NpgsqlDbType.Text) {
@@ -60,7 +60,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, jsonb_build_object('u', @u),
               NOW() - make_interval(days => @d), NOW() - make_interval(days => @d), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("u", user);
     cmd.Parameters.AddWithValue("d", updatedDaysAgo);
     await cmd.ExecuteNonQueryAsync();
@@ -82,7 +82,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }
 

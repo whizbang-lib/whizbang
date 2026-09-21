@@ -43,7 +43,7 @@ public class PgScheduleOccurrenceStoreIntegrationTests : EFCoreTestBase {
          authority_principal_id, authority_claims)
       VALUES (@id, gen_random_uuid(), 1, 60000, NOW(), 0, 'Occ', gen_random_uuid(), @claims::jsonb);", conn);
     cmd.Parameters.AddWithValue("id", scheduleId);
-    cmd.Parameters.AddWithValue("claims", claims);
+    cmd.Parameters.AddWithValue(nameof(claims), claims);
     await cmd.ExecuteNonQueryAsync();
   }
 

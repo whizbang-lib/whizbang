@@ -140,7 +140,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
   private static async Task<int> _dlqStatusAsync(NpgsqlConnection c, Guid id) {
     await using var q = c.CreateCommand();
     q.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id=@id";
-    q.Parameters.AddWithValue("id", id);
+    q.Parameters.AddWithValue(nameof(id), id);
     return (int)(await q.ExecuteScalarAsync() ?? -1);
   }
 

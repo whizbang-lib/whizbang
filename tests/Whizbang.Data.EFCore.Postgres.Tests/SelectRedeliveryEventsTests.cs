@@ -191,8 +191,8 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-      store.Parameters.AddWithValue("version", version);
-      store.Parameters.AddWithValue("flags", flags);
+      store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
     if (!reapBody) {

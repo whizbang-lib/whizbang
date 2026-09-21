@@ -44,7 +44,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
       FROM m";
     ins.Parameters.AddWithValue("inst", instanceId);
     ins.Parameters.AddWithValue("n", streams);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     ins.Parameters.AddWithValue("age", ageOffset);
     await ins.ExecuteNonQueryAsync();
   }

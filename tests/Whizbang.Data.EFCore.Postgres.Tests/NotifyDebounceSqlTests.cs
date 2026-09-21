@@ -443,7 +443,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
       VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb)
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = EXCLUDED.last_heartbeat_at";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.Add(new NpgsqlParameter("hb", NpgsqlDbType.TimestampTz) { Value = hb });
     await cmd.ExecuteNonQueryAsync();
   }
@@ -463,7 +463,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
                         VALUES (@id, @kind, NOW() - make_interval(secs => @age))
                         ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = EXCLUDED.last_work_at";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
     cmd.Parameters.AddWithValue("age", ageSeconds);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -472,7 +472,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT EXTRACT(EPOCH FROM (NOW() - last_work_at)) FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
     var v = await cmd.ExecuteScalarAsync();
     return v is null or DBNull ? double.MaxValue : Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture);
   }
@@ -493,7 +493,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
             last_attempt_at = EXCLUDED.last_attempt_at,
             rapid_run = EXCLUDED.rapid_run";
     cmd.Parameters.AddWithValue("id", inst);
-    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
     cmd.Parameters.AddWithValue("lwNull", lastWorkAgeSeconds is null);
     cmd.Parameters.AddWithValue("lwAge", (double)(lastWorkAgeSeconds ?? 0));
     cmd.Parameters.AddWithValue("laMs", (double)lastAttemptMsAgo);
@@ -517,7 +517,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
                                (last_work_at IS NULL)
                         FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind";
     cmd.Parameters.AddWithValue("id", inst);
-    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return (0L, 0L, 0, 0, true);

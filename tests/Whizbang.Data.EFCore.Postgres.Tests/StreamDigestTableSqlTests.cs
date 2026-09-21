@@ -402,12 +402,12 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       VALUES (@origin::uuid, @tenant, @type, @sid, @lo, @hi, @count, NOW() - INTERVAL '{(settled ? "2 hours" : "0 seconds")}')
       """;
     cmd.Parameters.AddWithValue("origin", originUuid);
-    cmd.Parameters.AddWithValue("tenant", tenant);
+    cmd.Parameters.AddWithValue(nameof(tenant), tenant);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("sid", streamId);
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
-    cmd.Parameters.AddWithValue("count", count);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
+    cmd.Parameters.AddWithValue(nameof(count), count);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -554,7 +554,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("version", version);
+      store.Parameters.AddWithValue(nameof(version), version);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = connection.CreateCommand();

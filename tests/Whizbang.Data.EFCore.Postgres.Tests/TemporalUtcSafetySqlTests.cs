@@ -28,8 +28,8 @@ public class TemporalUtcSafetySqlTests : EFCoreTestBase {
     }
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_cron_next(@cron, @after, @tz)";
-    cmd.Parameters.AddWithValue("cron", cron);
-    cmd.Parameters.Add(new NpgsqlParameter("after", NpgsqlDbType.TimestampTz) { Value = after });
+    cmd.Parameters.AddWithValue(nameof(cron), cron);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(after), NpgsqlDbType.TimestampTz) { Value = after });
     cmd.Parameters.AddWithValue("tz", cronTz);
     var scalar = await cmd.ExecuteScalarAsync();
     if (scalar is null or DBNull) {

@@ -167,7 +167,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("type", eventType);
     ins.Parameters.AddWithValue("data", eventData);
     ins.Parameters.AddWithValue("meta", metadata);
-    ins.Parameters.AddWithValue("scope", scope);
+    ins.Parameters.AddWithValue(nameof(scope), scope);
     ins.Parameters.AddWithValue("ver", version);
     await ins.ExecuteNonQueryAsync();
   }

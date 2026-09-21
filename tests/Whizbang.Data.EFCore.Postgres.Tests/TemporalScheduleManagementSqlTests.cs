@@ -39,13 +39,13 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
         p_event_type => @etype, p_event_data => '{}'::jsonb, p_scope => NULL,
         p_authority_principal_id => @authority)";
     cmd.Parameters.AddWithValue("id", scheduleId);
-    cmd.Parameters.AddWithValue("key", (object?)key ?? DBNull.Value);
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
+    cmd.Parameters.AddWithValue(nameof(key), (object?)key ?? DBNull.Value);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(kind), NpgsqlDbType.Smallint) { Value = kind });
     cmd.Parameters.AddWithValue("interval", (object?)intervalMs ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("cron", (object?)cron ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(cron), (object?)cron ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("start", NpgsqlDbType.TimestampTz) { Value = (object?)startAt ?? DBNull.Value });
     cmd.Parameters.AddWithValue("etype", eventType);
-    cmd.Parameters.AddWithValue("authority", authority ?? Guid.NewGuid());
+    cmd.Parameters.AddWithValue(nameof(authority), authority ?? Guid.NewGuid());
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
     var next = new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);

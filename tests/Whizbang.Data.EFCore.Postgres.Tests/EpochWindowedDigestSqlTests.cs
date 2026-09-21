@@ -92,8 +92,8 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
       UPDATE wh_digest_epochs SET digest_lo = @lo, digest_hi = @hi
       WHERE event_type = @type AND epoch_id = @epoch
       """;
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("epoch", epochId);
     if (await cmd.ExecuteNonQueryAsync() == 0) {

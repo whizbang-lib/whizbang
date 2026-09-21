@@ -23,9 +23,9 @@ public class WhScheduleNextFireSqlTests : EFCoreTestBase {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_cron_next(@cron, @after, @tz)";
-    cmd.Parameters.AddWithValue("cron", cron);
-    cmd.Parameters.Add(new NpgsqlParameter("after", NpgsqlDbType.TimestampTz) { Value = after });
-    cmd.Parameters.AddWithValue("tz", tz);
+    cmd.Parameters.AddWithValue(nameof(cron), cron);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(after), NpgsqlDbType.TimestampTz) { Value = after });
+    cmd.Parameters.AddWithValue(nameof(tz), tz);
     return _readInstant(await cmd.ExecuteScalarAsync());
   }
 
@@ -35,11 +35,11 @@ public class WhScheduleNextFireSqlTests : EFCoreTestBase {
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT wh_schedule_next_fire(@kind, @cron, @interval, @tz, @after)";
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
-    cmd.Parameters.AddWithValue("cron", (object?)cron ?? DBNull.Value);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(kind), NpgsqlDbType.Smallint) { Value = kind });
+    cmd.Parameters.AddWithValue(nameof(cron), (object?)cron ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("interval", NpgsqlDbType.Bigint) { Value = (object?)intervalMs ?? DBNull.Value });
-    cmd.Parameters.AddWithValue("tz", (object?)tz ?? DBNull.Value);
-    cmd.Parameters.Add(new NpgsqlParameter("after", NpgsqlDbType.TimestampTz) { Value = after });
+    cmd.Parameters.AddWithValue(nameof(tz), (object?)tz ?? DBNull.Value);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(after), NpgsqlDbType.TimestampTz) { Value = after });
     return _readInstant(await cmd.ExecuteScalarAsync());
   }
 

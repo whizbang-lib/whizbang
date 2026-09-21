@@ -61,7 +61,7 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, jsonb_build_object('blobName', @id::text), '{{}}'::jsonb, jsonb_build_object('u', @u),
               NOW() - make_interval(hours => @h), NOW() - make_interval(hours => @h), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("u", user);
     cmd.Parameters.AddWithValue("h", idleHours);
     await cmd.ExecuteNonQueryAsync();
@@ -69,7 +69,7 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(
       await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }

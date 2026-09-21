@@ -60,7 +60,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await conn.OpenAsync(ct);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM wh_instance_capabilities WHERE capability = @duty AND instance_id = @id)";
-    cmd.Parameters.AddWithValue("duty", duty);
+    cmd.Parameters.AddWithValue(nameof(duty), duty);
     cmd.Parameters.AddWithValue("id", instanceId);
     return (bool)(await cmd.ExecuteScalarAsync(ct))!;
   }

@@ -319,7 +319,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       store.Parameters.AddWithValue("e", eventId);
       store.Parameters.AddWithValue("s", stream);
       store.Parameters.AddWithValue("t", TYPE);
-      store.Parameters.AddWithValue("seq", seq);
+      store.Parameters.AddWithValue(nameof(seq), seq);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = conn.CreateCommand();

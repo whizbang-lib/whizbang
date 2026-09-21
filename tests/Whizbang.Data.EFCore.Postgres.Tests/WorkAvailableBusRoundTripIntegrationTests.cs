@@ -44,7 +44,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand("SELECT notify_instance_owners(@payload, @stream_ids)", conn);
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.Add(new NpgsqlParameter("stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = new[] { streamId },
     });

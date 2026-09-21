@@ -61,14 +61,14 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       INSERT INTO {table} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb,
               NOW() - make_interval(hours => @h), NOW() - make_interval(hours => @h), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("h", idleHours);
     await cmd.ExecuteNonQueryAsync();
   }
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, string table, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {table} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(
       await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }

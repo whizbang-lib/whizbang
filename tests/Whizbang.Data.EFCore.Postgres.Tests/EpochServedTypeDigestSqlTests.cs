@@ -66,7 +66,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", tenant is null ? "null" : $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue("seq", (object?)commitSeq ?? DBNull.Value);
-      store.Parameters.AddWithValue("origin", (object?)origin ?? DBNull.Value);
+      store.Parameters.AddWithValue(nameof(origin), (object?)origin ?? DBNull.Value);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = conn.CreateCommand();
@@ -91,8 +91,8 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
       UPDATE wh_digest_epochs SET digest_lo = @lo, digest_hi = @hi
       WHERE event_type = @type AND epoch_id = @epoch
       """;
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("epoch", epochId);
     var rows = await cmd.ExecuteNonQueryAsync();

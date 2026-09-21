@@ -50,7 +50,7 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand("SELECT COUNT(*) FROM wh_signals WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var count = Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
     return count > 0;
   }
