@@ -154,7 +154,7 @@ public partial class JsonbPolymorphicOrderingTests {
   internal sealed record TestTinyKeyEvent(int X, Guid OrderId) : IEvent;
 
   [JsonSerializable(typeof(TestTinyKeyEvent))]
-  internal sealed partial class TinyKeyJsonContext : JsonSerializerContext { }
+  internal sealed partial class TinyKeyJsonContext : JsonSerializerContext;
 
   private sealed record MechHolder(PictureDto Object);
   private abstract record PictureDto;

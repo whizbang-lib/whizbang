@@ -18,10 +18,10 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 [NotInParallel("SyncTests")]
 public class WaitForStreamAsyncIntegrationTests {
 
-  private sealed class CompletedEvent { }
-  private sealed class StartedEvent { }
-  private sealed class QuestionAnsweredEvent { }
-  private sealed class TestProjection { }
+  private sealed class CompletedEvent;
+  private sealed class StartedEvent;
+  private sealed class QuestionAnsweredEvent;
+  private sealed class TestProjection;
 
   [Test]
   public async Task WaitForStreamAsync_WithTrackedEvent_CompletesWhenPerspectiveProcessesAsync() {

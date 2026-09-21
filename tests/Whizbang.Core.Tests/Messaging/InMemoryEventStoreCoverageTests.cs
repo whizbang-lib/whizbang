@@ -66,5 +66,5 @@ public class InMemoryEventStoreCoverageTests {
     };
   }
 
-  private sealed class UnregisteredCoverageEvent : IEvent { }
+  private sealed class UnregisteredCoverageEvent : IEvent;
 }

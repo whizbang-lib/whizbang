@@ -23,8 +23,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Test events
-  public record _coverageEvent1([StreamId] string Id = "coverage-1") : IEvent { }
-  public record _coverageEvent2([StreamId] string Id = "coverage-2") : IEvent { }
+  public record _coverageEvent1([StreamId] string Id = "coverage-1") : IEvent;
+  public record _coverageEvent2([StreamId] string Id = "coverage-2") : IEvent;
 
   // ========================================
   // DISPOSE: unflushed items WITHOUT logger — exercises null-logger path

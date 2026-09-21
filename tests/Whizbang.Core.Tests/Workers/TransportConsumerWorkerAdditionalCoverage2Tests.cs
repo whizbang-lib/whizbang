@@ -870,7 +870,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public string Name { get; set; } = "";
   }
 
-  internal sealed class Cov2TestEvent : IEvent { }
+  internal sealed class Cov2TestEvent : IEvent;
 
   private sealed class Cov2Transport : ITransport, IDisposable {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;

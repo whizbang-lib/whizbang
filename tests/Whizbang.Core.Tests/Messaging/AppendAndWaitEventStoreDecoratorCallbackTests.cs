@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Callbacks")]
 public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
   private sealed record TestEvent(string Value) : IEvent;
-  private sealed class FakePerspective { }
+  private sealed class FakePerspective;
 
   #region AppendAndWaitAsync<TMessage, TPerspective> Callback Tests
 

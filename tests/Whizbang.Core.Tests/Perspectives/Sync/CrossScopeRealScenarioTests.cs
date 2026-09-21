@@ -273,5 +273,5 @@ public class CrossScopeRealScenarioTests {
 }
 
 // Fake types for testing
-internal sealed class FakeProjection { }
-internal sealed class FakeStartedEvent { }
+internal sealed class FakeProjection;
+internal sealed class FakeStartedEvent;

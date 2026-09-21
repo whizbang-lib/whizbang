@@ -246,15 +246,15 @@ public class PinnedConnectionPoolPrimitivesTests {
     Size = 1,
   };
 
-  private sealed class _fakeWorker { }
-  private sealed class _anotherFakeWorker { }
-  private sealed class _anonymousCustomWorker { }
+  private sealed class _fakeWorker;
+  private sealed class _anotherFakeWorker;
+  private sealed class _anonymousCustomWorker;
 
   // Stand-ins named exactly the same as the Whizbang internal workers so the
   // tier check (which uses CLR short names) matches by string.
-  private sealed class ClaimWorker { }
-  private sealed class InboxHandlerWorker { }
-  private sealed class FailureFlushWorker { }
+  private sealed class ClaimWorker;
+  private sealed class InboxHandlerWorker;
+  private sealed class FailureFlushWorker;
 
   /// <summary>
   /// Minimal <see cref="DbConnection"/> subclass used by AsyncLocal tests. Only

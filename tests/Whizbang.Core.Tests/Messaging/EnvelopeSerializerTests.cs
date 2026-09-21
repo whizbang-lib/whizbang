@@ -450,8 +450,7 @@ public partial class EnvelopeSerializerTests {
   [JsonSerializable(typeof(MessageEnvelope<EnvelopeTestMsg>))]
   [JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
   [JsonSerializable(typeof(object))]
-  internal sealed partial class EnvelopeTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class EnvelopeTestJsonContext : JsonSerializerContext;
 
   /// <summary>Priority step 1 on the wire: the conversion to storage form carries the declared number.</summary>
   [Test]

@@ -28,8 +28,7 @@ public record SbcGapTestEvent : IEvent {
 [JsonSerializable(typeof(SbcGapTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<SbcGapTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class SbcGapJsonContext : JsonSerializerContext {
-}
+internal sealed partial class SbcGapJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Gap-coverage tests for ServiceBusConsumerWorker targeting branches missed by the existing

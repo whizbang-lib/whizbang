@@ -165,15 +165,15 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   // Test factory for testing
-  private interface ITestId { }
-  private sealed class TestId : ITestId { }
+  private interface ITestId;
+  private sealed class TestId : ITestId;
   private sealed class TestIdFactory : IWhizbangIdFactory<ITestId> {
     public ITestId Create() => new TestId();
   }
 
   // Second test factory for multiple factory registration test
-  private interface ISecondTestId { }
-  private sealed class SecondTestId : ISecondTestId { }
+  private interface ISecondTestId;
+  private sealed class SecondTestId : ISecondTestId;
   private sealed class SecondTestIdFactory : IWhizbangIdFactory<ISecondTestId> {
     public ISecondTestId Create() => new SecondTestId();
   }

@@ -1054,7 +1054,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   // Test Doubles
   // ========================================
 
-  internal sealed class UncoveredTestEvent : IEvent { }
+  internal sealed class UncoveredTestEvent : IEvent;
 
   /// <summary>
   /// Keeps the exceptions the worker caught. Per-message error isolation deliberately keeps a

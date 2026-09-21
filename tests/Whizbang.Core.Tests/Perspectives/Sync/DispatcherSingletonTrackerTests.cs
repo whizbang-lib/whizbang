@@ -242,6 +242,6 @@ public class DispatcherSingletonTrackerTests {
 }
 
 // Test types (prefixed to avoid collision with other test files)
-internal sealed class SingletonTestProjection { }
-internal sealed class SingletonTestStartedEvent { }
-internal sealed class SingletonTestCompletedEvent { }
+internal sealed class SingletonTestProjection;
+internal sealed class SingletonTestStartedEvent;
+internal sealed class SingletonTestCompletedEvent;

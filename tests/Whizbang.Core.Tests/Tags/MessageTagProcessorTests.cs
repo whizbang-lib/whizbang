@@ -1106,12 +1106,10 @@ public class MessageTagProcessorTests {
   }
 
   // Custom test attribute type (simulates a consumer's custom attributes)
-  private sealed class CustomTestTagAttribute : MessageTagAttribute {
-  }
+  private sealed class CustomTestTagAttribute : MessageTagAttribute;
 
   // Another custom attribute type with no dispatcher
-  private sealed class UnknownTestTagAttribute : MessageTagAttribute {
-  }
+  private sealed class UnknownTestTagAttribute : MessageTagAttribute;
 
   // Test message types
   private sealed record CustomTaggedMessage(string Value);

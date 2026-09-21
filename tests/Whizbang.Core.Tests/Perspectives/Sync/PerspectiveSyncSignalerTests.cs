@@ -11,9 +11,9 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public class PerspectiveSyncSignalerTests {
   // Dummy perspective types for testing
-  private sealed class TestPerspective { }
-  private sealed class PerspectiveA { }
-  private sealed class PerspectiveB { }
+  private sealed class TestPerspective;
+  private sealed class PerspectiveA;
+  private sealed class PerspectiveB;
 
   // ==========================================================================
   // PerspectiveCursorSignal record tests

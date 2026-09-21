@@ -235,6 +235,6 @@ public class DispatcherIntegrationSyncTests {
 }
 
 // Integration test types
-internal sealed class IntegrationTestEventB { }
-internal sealed class IntegrationTestPerspectiveC { }
-internal sealed class IntegrationTestCommandE { }
+internal sealed class IntegrationTestEventB;
+internal sealed class IntegrationTestPerspectiveC;
+internal sealed class IntegrationTestCommandE;

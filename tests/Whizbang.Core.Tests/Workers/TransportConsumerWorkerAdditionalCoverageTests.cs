@@ -1319,7 +1319,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     }
   }
 
-  private sealed class TestEvent : IEvent { }
+  private sealed class TestEvent : IEvent;
 
   private sealed class NonJsonEnvelope : IMessageEnvelope {
     public int Version => 1;

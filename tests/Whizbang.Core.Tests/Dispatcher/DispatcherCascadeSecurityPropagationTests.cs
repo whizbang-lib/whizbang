@@ -368,5 +368,4 @@ public class DispatcherCascadeSecurityPropagationTests {
 [JsonSerializable(typeof(MessageEnvelope<DispatcherCascadeSecurityPropagationTests.CascadeTestEvent>))]
 [JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
 [JsonSerializable(typeof(object))]
-internal sealed partial class CascadeTestJsonContext : JsonSerializerContext {
-}
+internal sealed partial class CascadeTestJsonContext : JsonSerializerContext;

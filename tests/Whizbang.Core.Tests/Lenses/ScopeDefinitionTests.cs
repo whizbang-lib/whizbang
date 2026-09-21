@@ -91,5 +91,5 @@ public class ScopeDefinitionTests {
   }
 
   /// <summary>Marker only — no members; lives here so the FilterInterfaceType tests don't have to depend on a production type.</summary>
-  private interface _ITenantScopedMarker { }
+  private interface _ITenantScopedMarker;
 }

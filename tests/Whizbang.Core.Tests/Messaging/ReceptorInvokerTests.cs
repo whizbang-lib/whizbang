@@ -839,12 +839,12 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Dummy perspective type for sync attribute tests.
   /// </summary>
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   /// <summary>
   /// Another perspective type for multi-attribute tests.
   /// </summary>
-  private sealed class TestPerspective2 { }
+  private sealed class TestPerspective2;
 
   /// <summary>
   /// Verifies that a receptor with [AwaitPerspectiveSync] attribute calls the sync awaiter.

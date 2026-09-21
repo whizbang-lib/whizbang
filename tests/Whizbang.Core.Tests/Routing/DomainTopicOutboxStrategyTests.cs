@@ -20,7 +20,7 @@ public class DomainTopicOutboxStrategyTests {
 
   // Test message types for assertion (namespace + name shapes).
   // (Compiler can't see _ on private types, so use real identifiers.)
-  private sealed class TenantCreatedEvent { }
+  private sealed class TenantCreatedEvent;
 
   private sealed class _StubTopicResolver(string topic) : ITopicRoutingStrategy {
     public string LastMessageTypeName { get; private set; } = "";
