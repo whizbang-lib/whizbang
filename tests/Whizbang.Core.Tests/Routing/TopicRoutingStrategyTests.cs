@@ -197,7 +197,7 @@ public class TopicRoutingStrategyTests {
   [Test]
   public async Task NamespaceRoutingStrategy_CustomMapping_OverridesDefaultAsync() {
     // Arrange
-    var strategy = new NamespaceRoutingStrategy(type => "custom-topic");
+    var strategy = new NamespaceRoutingStrategy(_ => "custom-topic");
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestEvent), "ignored");

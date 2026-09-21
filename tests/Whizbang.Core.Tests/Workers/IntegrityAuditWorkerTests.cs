@@ -383,7 +383,7 @@ public class IntegrityAuditWorkerTests {
     // and crashlooped the pod (probe timeout). Detection is still complete: the summary names the
     // total; the remainder re-audits next cycle after repairs shrink it.
     var coordinator = new _auditCoordinator {
-      Gaps = [.. Enumerable.Range(0, 500).Select(i => new PerspectiveCoverageGap {
+      Gaps = [.. Enumerable.Range(0, 500).Select(_ => new PerspectiveCoverageGap {
         StreamId = TrackedGuid.NewMedo().Value,
         PerspectiveName = "FloodedPerspective",
         EventCount = 2,

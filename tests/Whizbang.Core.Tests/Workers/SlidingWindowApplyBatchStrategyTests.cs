@@ -26,7 +26,7 @@ public class SlidingWindowApplyBatchStrategyTests {
     var streamId = _idProvider.NewGuid();
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => {
+      flush: (sid, count, _) => {
         flushed.Add((sid, count));
         flushedSignal.TrySetResult();
         return Task.CompletedTask;

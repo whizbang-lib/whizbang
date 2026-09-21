@@ -58,7 +58,7 @@ public class TransportBatchCollectorTests {
     var flushCount = 0;
     var options = new TransportBatchOptions { BatchSize = 10, SlideMs = 5000, MaxWaitMs = 10000 };
 
-    await using var collector = new TransportBatchCollector<int>(options, async batch => {
+    await using var collector = new TransportBatchCollector<int>(options, async _ => {
       Interlocked.Increment(ref flushCount);
       await Task.CompletedTask;
     });
