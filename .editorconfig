@@ -388,3 +388,20 @@ dotnet_diagnostic.CA1822.severity = none
 dotnet_diagnostic.IDE0062.severity = none
 csharp_prefer_static_local_function = false:none
 csharp_prefer_static_anonymous_function = false:none
+
+[src/*Generators*/**.cs]
+# Source generators and their analyzers: prefer allocation-free loops to LINQ.
+#
+# S3267 asks for `foreach (x in y.Where(p))` in place of a loop carrying a guard or an early
+# return. These projects deliberately do the opposite. ai-docs/performance-principles.md makes
+# allocation-free patterns the rule here because generators run inside every consumer's build,
+# and a LINQ predicate allocates a delegate (usually a closure too) per call on paths that run
+# per symbol, per compilation. Most of the sites are find-first loops returning on the first
+# match, which LINQ cannot express without allocating.
+#
+# This is a decision rather than an oversight: instances were already being suppressed one at a
+# time in these files before this entry existed. The behavior the loops implement is pinned by
+# tests instead of left to inspection, notably PinnedTypeLedgerCoverageTests, which asserts that
+# FindByPinnedId matches case insensitively while KnowsName matches case sensitively, the exact
+# contract a careless LINQ rewrite would flip.
+dotnet_diagnostic.S3267.severity = none

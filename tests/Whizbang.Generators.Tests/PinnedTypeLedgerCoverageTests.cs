@@ -67,6 +67,12 @@ public class PinnedTypeLedgerCoverageTests {
     return pairs;
   }
 
+  private static object? _findByPinnedId(object ledger, string pinnedId) {
+    var method = _ledgerType.GetMethod("FindByPinnedId")
+      ?? throw new InvalidOperationException("PinnedTypeLedger.FindByPinnedId(string) not found.");
+    return method.Invoke(ledger, [pinnedId]);
+  }
+
   private static bool _knowsName(object entry, string name) {
     var method = _entryType.GetMethod("KnowsName")
       ?? throw new InvalidOperationException("PinnedTypeLedgerEntry.KnowsName(string) not found.");
@@ -196,5 +202,59 @@ public class PinnedTypeLedgerCoverageTests {
 
     await Assert.That(knows).IsFalse()
       .Because("a name that is neither the current name nor a recorded former name must not be reported as known");
+  }
+
+  // ==================== PinnedTypeLedger.FindByPinnedId ====================
+
+  /// <summary>
+  /// Pinned ids are guid text, and guid text has no canonical case — a ledger hand-edited, copied out
+  /// of a tool, or round-tripped through something that upper-cases can carry either form. The lookup
+  /// is therefore deliberately <c>OrdinalIgnoreCase</c>, and this test pins that: a case-sensitive
+  /// lookup would report a pinned type as absent, which reads as "never pinned" and invites a second
+  /// pinned id for a type that already has one.
+  /// </summary>
+  [Test]
+  public async Task FindByPinnedId_MatchingIdInDifferentCase_StillFindsTheEntryAsync() {
+    var entry = _newEntry("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "MyApp.Orders.OrderPlaced");
+    var ledger = _newLedgerWithEntries(entry);
+
+    var found = _findByPinnedId(ledger, "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE");
+
+    await Assert.That(found).IsNotNull()
+      .Because("pinned ids are guid text with no canonical case, so the lookup is OrdinalIgnoreCase — matching case-sensitively would report an already-pinned type as absent");
+  }
+
+  /// <summary>
+  /// The absent case is the one every caller branches on, so it has to be a plain null rather than a
+  /// throw or a default-constructed entry: a non-null answer here would hand back an entry whose
+  /// pinned id is empty and let it be treated as a real pinning.
+  /// </summary>
+  [Test]
+  public async Task FindByPinnedId_NoEntryCarriesThatId_ReturnsNullAsync() {
+    var ledger = _newLedgerWithEntries(
+      _newEntry("11111111-1111-1111-1111-111111111111", "MyApp.Orders.OrderPlaced"));
+
+    var found = _findByPinnedId(ledger, "99999999-9999-9999-9999-999999999999");
+
+    await Assert.That(found).IsNull()
+      .Because("an unknown pinned id must come back as null, because callers branch on absence to decide whether a type is pinned at all");
+  }
+
+  /// <summary>
+  /// The counterpart to the lookup above, and the reason both are pinned together: <c>KnowsName</c>
+  /// compares CLR type names, which ARE case-sensitive, so it is deliberately <c>Ordinal</c> while
+  /// <c>FindByPinnedId</c> is <c>OrdinalIgnoreCase</c>. Two names differing only by case are two
+  /// different types; treating them as one would let an unrelated type inherit a pinned identity.
+  /// </summary>
+  [Test]
+  public async Task KnowsName_NameDiffersFromTheCurrentNameOnlyByCase_IsNotKnownAsync() {
+    var entry = _newEntry(
+      "66666666-6666-6666-6666-666666666666",
+      "MyApp.Orders.OrderPlaced");
+
+    var knows = _knowsName(entry, "myapp.orders.orderplaced");
+
+    await Assert.That(knows).IsFalse()
+      .Because("CLR type names are case-sensitive, so KnowsName is Ordinal — unlike the pinned-id lookup, which is OrdinalIgnoreCase because guid text has no canonical case");
   }
 }

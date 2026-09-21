@@ -75,9 +75,9 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
       if (p.Type.TypeKind != TypeKind.Interface) {
         continue;
       }
-      // Collection and comparison abstractions from the BCL (IReadOnlyList<T>, IEnumerable<T>,
-      // IComparer<T>) describe a value the caller shapes, not a collaborator the container resolves;
-      // the rule's remedy, a TryAdd default, has no meaning for them.
+      // Collection and comparison abstractions from the BCL, such as IReadOnlyList<T> or
+      // IComparer<T>, describe a value the caller shapes, not a collaborator the container resolves,
+      // so the rule's remedy, a TryAdd default, has no meaning for them.
       if (_isBclDataInterface(p.Type)) {
         continue;
       }
