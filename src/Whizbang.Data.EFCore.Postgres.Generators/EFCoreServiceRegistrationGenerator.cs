@@ -802,6 +802,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     bool isUnique = false;
     string? columnName = null;
+    string? columnType = null;
+    int? maxLength = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
@@ -810,6 +812,23 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
+          break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
+          break;
+        case "MaxLength":
+          // Read here as well as on the model side. This generator emits the DDL, and it did not
+          // read MaxLength at all, so a promoted string declared varchar(n) in the model was
+          // created as text in the table -- the model and the table describing different columns,
+          // which is the same hazard ColumnType would otherwise reintroduce.
+          if (namedArg.Value.Kind == TypedConstantKind.Primitive && namedArg.Value.Value != null) {
+            var declared = System.Convert.ToInt32(namedArg.Value.Value, System.Globalization.CultureInfo.InvariantCulture);
+            if (declared > 0) {
+              maxLength = declared;
+            }
+          }
           break;
       }
     }
@@ -823,12 +842,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TypeName: typeName,
         IsIndexed: isIndexed,
         IsUnique: isUnique,
-        MaxLength: null, // Not applicable for physical fields (JSONB handles length)
+        MaxLength: maxLength,
         IsVector: false,
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -1124,6 +1144,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Handle vector fields specially
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // The author's own type wins over the derived one, and is checked before the switch rather than
+    // as its default arm: that arm is text, so an unrecognized type would silently become text.
+    // This is the DDL side, and it has to agree with the EF Core side or the model and the table
+    // describe different columns.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
     }
 
     // Map .NET types to PostgreSQL types
