@@ -45,20 +45,20 @@ public sealed partial class PerspectiveSyncAwaiter(
     IDebuggerAwareClock clock,
     ILogger<PerspectiveSyncAwaiter> logger,
     ISyncEventTracker syncEventTracker,
-    IScopedEventTracker? tracker = null,
-    ILifecycleContextAccessor? lifecycleContextAccessor = null) : IPerspectiveSyncAwaiter {
+    IScopedEventTracker tracker,
+    ILifecycleContextAccessor lifecycleContextAccessor) : IPerspectiveSyncAwaiter {
   private const string TAG_SYNC_OUTCOME = "whizbang.sync.outcome";
   private const string TAG_SYNC_EVENT_COUNT = "whizbang.sync.event_count";
 
   /// <inheritdoc />
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly IScopedEventTracker? _tracker = tracker;
+  private readonly IScopedEventTracker _tracker = tracker;
   private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
   private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly ILifecycleContextAccessor? _lifecycleContextAccessor = lifecycleContextAccessor;
+  private readonly ILifecycleContextAccessor _lifecycleContextAccessor = lifecycleContextAccessor;
 
 
   /// <inheritdoc />
@@ -69,7 +69,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     ArgumentNullException.ThrowIfNull(perspectiveType);
     ArgumentNullException.ThrowIfNull(options);
 
-    if (_tracker is null) {
+    if (!_tracker.IsAvailable) {
       throw new InvalidOperationException(
           "IsCaughtUpAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
@@ -122,7 +122,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     ArgumentNullException.ThrowIfNull(options);
     _throwIfInsideInlineStage();
 
-    if (_tracker is null) {
+    if (!_tracker.IsAvailable) {
       throw new InvalidOperationException(
           "WaitAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
@@ -424,7 +424,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   /// Detached stages are safe because they run in their own scope on the thread pool.
   /// </summary>
   private void _throwIfInsideInlineStage() {
-    if (_lifecycleContextAccessor?.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
+    if (_lifecycleContextAccessor.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
       throw new InvalidOperationException(
         "WaitForStreamAsync/WaitAsync cannot be called inside an Inline lifecycle " +
         $"receptor (current stage: {ctx.CurrentStage}). This would deadlock the work " +

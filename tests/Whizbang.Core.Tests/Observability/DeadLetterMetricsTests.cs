@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -33,7 +34,7 @@ public class DeadLetterMetricsTests {
     };
     listener.Start();
 
-    var _ = new DeadLetterMetrics(new WhizbangMetrics());
+    var _ = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(observed).Contains("whizbang.dead_letters.added");
     await Assert.That(observed).Contains("whizbang.dead_letters.recovered");
@@ -45,7 +46,7 @@ public class DeadLetterMetricsTests {
 
   [Test]
   public async Task Counters_AreNotNullAsync() {
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await Assert.That(metrics.Added).IsNotNull();
     await Assert.That(metrics.Recovered).IsNotNull();
     await Assert.That(metrics.Held).IsNotNull();

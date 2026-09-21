@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -43,7 +44,7 @@ public class StreamIntegrityMetricsCoverageTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.ManifestAnswerDuration.Record(0.5, new KeyValuePair<string, object?>("level", "Types"));
     metrics.ManifestCompareDuration.Record(1.25, new KeyValuePair<string, object?>("level", "Streams"));
     metrics.RedeliveryBuildDuration.Record(2.5);
@@ -89,7 +90,7 @@ public class StreamIntegrityMetricsCoverageTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.ComparesDeclined.Add(4, new KeyValuePair<string, object?>("origin", "origin-a"));
     metrics.RedeliveryEventsShipped.Add(12);
     metrics.ManifestPagesFollowed.Add(1, new KeyValuePair<string, object?>("origin", "origin-b"));
@@ -144,7 +145,7 @@ public class StreamIntegrityMetricsCoverageTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
       UnhealedBuckets = 7,
       RepairExhausted = 3,

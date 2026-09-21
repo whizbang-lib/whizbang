@@ -113,4 +113,59 @@ public class OptionalInjectedParameterAnalyzerTests {
     await Assert.That(reported).IsNotEmpty();
     await Assert.That(reported[0].Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Info);
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task APositionalRecordIsNotReportedAsync() {
+    // A record's parameters are values supplied at creation, not services a container resolves:
+    // there is nothing to register a default for, so the rule stays silent even for an interface.
+    const string source = """
+      using System.Collections.Generic;
+      namespace App;
+      public interface ICallerInfo { }
+      public sealed record ReceptorInfo(string Name, IReadOnlyList<string>? Tags = null, ICallerInfo? Caller = null);
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<OptionalInjectedParameterAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ501")).IsEmpty()
+      .Because("a positional record is a data carrier; flagging its parameters would push a null literal to every construction site instead of a TryAdd default");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ABclCollectionInterfaceIsNotReportedAsync() {
+    const string source = """
+      using System.Collections.Generic;
+      namespace App;
+      public sealed class Serializer {
+        public Serializer(IReadOnlyList<string>? names = null, IComparer<string>? order = null, IEnumerable<int>? sizes = null) { }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<OptionalInjectedParameterAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ501")).IsEmpty()
+      .Because("IReadOnlyList<T>, IComparer<T> and IEnumerable<T> describe a value the caller shapes; the rule's remedy, a container default, has no meaning for them");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AServiceInterfaceBesideACollectionIsStillReportedAsync() {
+    const string source = """
+      using System.Collections.Generic;
+      namespace App;
+      public interface IClock { }
+      public sealed class Worker {
+        public Worker(IReadOnlyList<string>? names = null, IClock? clock = null) { }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<OptionalInjectedParameterAnalyzer>(source);
+
+    var reported = diagnostics.Where(d => d.Id == "WHIZ501").ToList();
+    await Assert.That(reported.Count).IsEqualTo(1)
+      .Because("the collection parameter is exempt, the service parameter is not; the exemption must not swallow its neighbor");
+    await Assert.That(reported[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'clock'");
+  }
 }

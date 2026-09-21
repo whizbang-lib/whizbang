@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatch;
 
@@ -801,7 +802,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -915,7 +916,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -975,7 +976,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -1219,7 +1220,7 @@ public class DispatcherSecurityBuilderTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddSingleton(scopeContextAccessor);
     services.AddSingleton(traceStore);

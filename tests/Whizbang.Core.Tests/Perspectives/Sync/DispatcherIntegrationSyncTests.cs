@@ -164,8 +164,12 @@ public class DispatcherIntegrationSyncTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // === STEP 3+4: Command E waits; Perspective C processes Event B exactly when the awaiter first
     // observes it pending. No racing tasks, no timing assumptions: the awaiter's first GetPendingEvents

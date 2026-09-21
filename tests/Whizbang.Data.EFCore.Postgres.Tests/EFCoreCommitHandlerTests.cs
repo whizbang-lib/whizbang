@@ -5,6 +5,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Serialization;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -154,7 +156,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
     // outbox destination — the raise escapes the bulk tier whole; the savepoint loop then
     // isolates it to the one poisoned handler.
     var logger = new _captureLogger();
-    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     long fallbacks = 0;
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {

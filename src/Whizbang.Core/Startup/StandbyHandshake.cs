@@ -31,8 +31,8 @@ public sealed partial class StandbyHandshake {
       IServiceScopeFactory scopeFactory,
       IStartupFleetStatusSource fleetSource,
       IServiceInstanceProvider instanceProvider,
-      StandbyWatcherOptions? options = null,
-      ILogger<StandbyHandshake>? logger = null) {
+      ILogger<StandbyHandshake> logger,
+      StandbyWatcherOptions? options = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(fleetSource);
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -40,7 +40,7 @@ public sealed partial class StandbyHandshake {
     _fleetSource = fleetSource;
     _instanceProvider = instanceProvider;
     _options = options ?? new StandbyWatcherOptions();
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StandbyHandshake>.Instance;
+    _logger = logger;
   }
 
   /// <summary>Records the request. False when another instance's request is active — one

@@ -197,7 +197,7 @@ public class MaintenanceWorkerIntegritySweepTests {
 
   [Test]
   public async Task ReportOnly_CountsTheDiscardsOnTheMetric_PerTableAsync() {
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var counts = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {

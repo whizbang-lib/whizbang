@@ -57,13 +57,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
-  private readonly IReceptorRegistryQuery? _receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
-  private readonly IEphemeralModeResolver? _ephemeralModeResolver;
+  private readonly IReceptorRegistryQuery _receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry;
+  private readonly IEphemeralModeResolver _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IEventMarkerResolver? _eventMarkerResolver;
+  private readonly IEventMarkerResolver _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
   // is ACTUALLY bound to its transport destinations. Completes regardless of
@@ -109,7 +109,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private HashSet<string>? _knownEventTypeNames;
   private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly TransportBatchOptions _transportBatchOptions;
-  private readonly IWorkChannelWriter? _workChannelWriter;
+  private readonly IWorkChannelWriter _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
   // Single source of truth for partition count across this service. Read from
@@ -118,7 +118,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly int _partitionCount;
   // Control class (topology arc phase 9): non-durable receive is a migration step consulted LIVE
   // off the shared options instance, so a rollback is a configuration edit, not a redeploy.
-  private readonly Routing.ControlClassOptions? _controlClass;
+  private readonly Routing.ControlClassOptions _controlClass;
   private readonly Tags.ControlClassResolver? _controlClassResolver;
 
   /// <summary>
@@ -156,18 +156,18 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // database work against a schema that may not exist yet on a first boot. Optional only so
     // existing fixtures construct unchanged; DI always supplies it.
     ISchemaReadyGate schemaReadyGate,
-    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
-    MessageProcessingOptions? messageProcessingOptions = null,
-    TransportBatchOptions? transportBatchOptions = null,
-    IWorkChannelWriter? workChannelWriter = null,
-    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
-    IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null,
-    IEphemeralModeResolver? ephemeralModeResolver = null,
-    IEventMarkerResolver? eventMarkerResolver = null,
+    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions> routingOptions,
+    IWorkChannelWriter workChannelWriter,
+    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions> claimWorkerOptions,
+    IReceptorRegistryQuery receptorRegistry,
+    IReceptorRegistry runtimeReceptorRegistry,
+    IEphemeralModeResolver ephemeralModeResolver,
+    IEventMarkerResolver eventMarkerResolver,
     // Control class (topology arc phase 9). Both optional: absent ⇒ every message takes the
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
-    Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions>? controlClass = null,
+    Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
+    MessageProcessingOptions? messageProcessingOptions = null,
+    TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null
   ) {
 #pragma warning restore S107
@@ -188,7 +188,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
     _logger = logger;
-    _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+    _ownedDomains = routingOptions.Value.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase);
     // An unknown identity is not a service name. The three gates below (self-echo, foreign
     // target, hop attribution) all treat a null name as "this service cannot know who it is" and
     // fail open. Passing "Unknown" through as if it were a real name would make every targeted
@@ -206,8 +206,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
-    _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
-    _controlClass = controlClass?.Value;
+    _partitionCount = claimWorkerOptions.Value.PartitionCount;
+    _controlClass = controlClass.Value;
     _controlClassResolver = controlClassResolver;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
@@ -255,9 +255,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // the wiring state once at startup so a broken chain is visible in service logs, not just in data.
     if (_logger.IsEnabled(LogLevel.Information)) {
       _logger.LogInformation(
-        "Receive-path flag derivation: eventMarkerResolver={HasMarkerResolver}, ephemeralModeResolver={HasEphemeralResolver}, indexedTypeNames={IndexedTypeNames}",
-        _eventMarkerResolver is not null,
-        _ephemeralModeResolver is not null,
+        "Receive-path flag derivation: indexedTypeNames={IndexedTypeNames}",
         (_eventMarkerResolver as EventMarkerResolver)?.IndexedTypeNameCount ?? -1);
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
@@ -558,12 +556,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // fan-out note below). Running the gate against the composite drops the ENTIRE bundle here,
       // before any inbox row is written — unrecoverable, and only visible at Debug. See
       // CompositeInboxFanout.IsCompositeWireType.
-      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
+      if (!string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+            && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
             && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
@@ -577,7 +575,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // receive-boundary extension of the rule DeadLetterDropPolicy already applies at the
       // dead-letter boundary. The comparison is not skipped — it MOVES here, at the same
       // lifecycle stage the durable path fires it at, so control receptors are unchanged.
-      if (_controlClass?.NonDurableReceive == true
+      if (_controlClass.NonDurableReceive
           && _controlClassResolver is not null
           && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && _controlClassResolver.IsControlClass(EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType))) {
@@ -645,7 +643,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     }
 
     // Signal the publisher worker to poll immediately so messages are claimed and processed promptly.
-    _workChannelWriter?.SignalNewWorkAvailable();
+    _workChannelWriter.SignalNewWorkAvailable();
 
     // Active-cleanup body-offload claims (MessageBodyOffloadOptions.ActiveCleanup=true).
     // Runs AFTER the inbox commit succeeds — a failed insert never deletes a body that's
@@ -1076,8 +1074,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Determine if message is an event using IEventTypeProvider
     // This is more reliable than "payload is IEvent" when payload is JsonElement
     var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider != null) {
+    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
     } else {
@@ -1088,7 +1086,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Diagnostic: an EVENT whose wire type name is absent from the catalog union means its flags
     // (and TTL) cannot be derived on this service — warn once per type so the exact name that
     // missed is visible in logs instead of silently storing flags=0.
-    if (isEvent && _eventMarkerResolver is not null
+    if (isEvent
         && Whizbang.Core.Messaging.EventFlagsDeriver.ToClrTypeName(messageTypeName) is { } diagClrName
         && _eventMarkerResolver.Resolve(diagClrName) is null
         && _warnedFlagMisses.Count < 100 && _warnedFlagMisses.TryAdd(diagClrName, 0)) {
@@ -1277,8 +1275,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_knownEventTypeNames is not null) {
       return;
     }
-    var eventTypeProvider = serviceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider is not null) {
+    var eventTypeProvider = serviceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       _knownEventTypeNames = new HashSet<string>(
         eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(

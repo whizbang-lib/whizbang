@@ -11,6 +11,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Execution;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -190,26 +193,35 @@ public class PrePublishGateForensicPreservationTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: new _FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new _FakePublishStrategy(),
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new _FakeGenerationProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,
+      })).Value));
 
     // The drop path stores NOTHING, so there is no MoveAsync to await on — and IsIdle starts
     // true, so polling it would assert before the worker ever ran (a vacuous pass that survived
@@ -260,26 +272,35 @@ public class PrePublishGateForensicPreservationTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: new _FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,  // row.Attempts = 11 > 10 → gate fires
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new _FakePublishStrategy(),
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new _FakeGenerationProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,  // row.Attempts = 11 > 10 → gate fires
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -316,26 +337,35 @@ public class PrePublishGateForensicPreservationTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: new _FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new _FakePublishStrategy(),
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new _FakeGenerationProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -8,6 +8,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -789,6 +790,7 @@ public class SecurityIntegrationTests {
 
       // Build service provider with test callback
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<ISecurityContextCallback>(testCallback);
       var provider = services.BuildServiceProvider();
 
@@ -910,6 +912,7 @@ public class SecurityIntegrationTests {
 
     // Setup DI without any security extractors (extraction will fail)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(testCallback);
@@ -1012,6 +1015,7 @@ public class SecurityIntegrationTests {
 
     // Setup DI with callback but no extractors
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(callback);
@@ -1307,6 +1311,7 @@ public class SecurityIntegrationTests {
     // Setup DI WITHOUT any security extractors (simulates extraction failing)
     // This forces the code to fall back to envelope.GetCurrentScope()
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(testCallback);

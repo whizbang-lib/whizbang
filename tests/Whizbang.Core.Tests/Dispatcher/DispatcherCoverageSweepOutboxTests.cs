@@ -11,6 +11,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
+using System.Diagnostics.Metrics;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures.
@@ -83,7 +85,7 @@ public class DispatcherCoverageSweepOutboxTests {
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     Type? handleMessageType = null,
     bool publisherThrows = false
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
@@ -388,7 +390,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // ILogger<Dispatcher> warning; the publisher failure must still surface
     var logs = new List<string>();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics()), logs: logs),
+      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())), logs: logs),
       publisherThrows: true);
 
     // Act & Assert
@@ -404,7 +406,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // Arrange - full success path with metrics registered
     var strategy = new SweepWorkStrategy();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics())),
+      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()))),
       envelopeSerializer: new SweepEnvelopeSerializer());
 
     // Act

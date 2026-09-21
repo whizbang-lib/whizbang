@@ -40,12 +40,12 @@ public class ScheduleWorkerTests {
     }
     var provider = services.BuildServiceProvider();
     var worker = new ScheduleWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options ?? new TemporalOptions()),
-      logger ?? NullLogger<ScheduleWorker>.Instance,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options ?? new TemporalOptions()),
+      logger: logger ?? NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       timerLogger: NullLogger<ScheduleTimer>.Instance,
-      signalBus: bus,
+      signalBus: bus ?? NullSignalBus.Instance,
       timeProvider: clock);
     return (worker, claimer);
   }
@@ -229,7 +229,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task Execute_DoorbellArrivesViaSignalBus_WakesDrainAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var claimer = new SignallingClaimer();
     var (worker, _) = _create(new TemporalOptions { BackstopIntervalMilliseconds = 600_000 }, bus: bus, claimer: claimer);
 
@@ -247,7 +247,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task Dispose_IsIdempotentAsync() {
-    var (worker, _) = _create(bus: new SignalBus([]), claimer: new FakeClaimer());
+    var (worker, _) = _create(bus: new SignalBus(transports: [], pullSources: []), claimer: new FakeClaimer());
 
     worker.Dispose();
     worker.Dispose();   // double dispose must not throw (unsubscribes + disposes timer/semaphore once)
@@ -307,7 +307,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task ScheduleDueSignal_Received_WakesWorkerAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var (worker, _) = _create(bus: bus);   // ctor subscribes to ScheduleDueSignal
 
     await ((ISignalSink)bus).ReceiveAsync(new ScheduleDueSignal());

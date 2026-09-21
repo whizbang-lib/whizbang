@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -28,8 +29,9 @@ public class TableRewriteStartupStepCoverageTests {
     var services = new ServiceCollection(); // deliberately no IWorkCoordinator registration
     var provider = services.BuildServiceProvider();
     var step = new TableRewriteStartupStep(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }));
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }),
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);
 

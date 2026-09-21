@@ -10,6 +10,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Data.Postgres.Notifications;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Notifications;
 
@@ -100,7 +101,7 @@ public class PgSharedNotifyConnectionMetricsTests {
 
   private static (PgSharedNotifyConnection conn, NotifyMetrics metrics) _build() {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var metrics = new NotifyMetrics(new WhizbangMetrics());
+    var metrics = new NotifyMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var conn = new PgSharedNotifyConnection(
       Options.Create(new WhizbangNotificationOptions { SignalingMode = WorkSignalingMode.Polling }),
       cfg,

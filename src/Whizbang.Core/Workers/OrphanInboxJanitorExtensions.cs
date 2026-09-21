@@ -29,6 +29,7 @@ public static class OrphanInboxJanitorExtensions {
 
     var receptorTypes = _snapshotReceptorMessageTypes(services);
     services.AddSingleton(new HandledReceptorTypeSnapshot(receptorTypes));
+    services.TryAddWhizbangDefaults();
     services.AddHostedService<OrphanInboxJanitor>();
     return services;
   }

@@ -111,8 +111,8 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
 
     // Assert
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
-    await Assert.That(_getNamespaceRouting(strategy)).IsNull()
-      .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
+    await Assert.That(_getNamespaceRouting(strategy)).IsSameReferenceAs(NullCommandInboxAddressResolver.Instance)
+      .Because("a strategy outside the seam gets the resolver that never flips — commands ride the default inbox topic");
   }
 
   // --- _wireUpConnectionStateMonitoring ---

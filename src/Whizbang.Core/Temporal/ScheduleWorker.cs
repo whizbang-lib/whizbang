@@ -20,7 +20,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly TemporalOptions _options;
   private readonly ILogger<ScheduleWorker> _logger;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly ISignalBus? _signalBus;
+  private readonly ISignalBus _signalBus;
   private readonly ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private readonly ScheduleTimer _timer;
@@ -32,7 +32,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
     ILogger<ScheduleWorker> logger,
     ISchemaReadyGate schemaReadyGate,
     ILogger<ScheduleTimer> timerLogger,
-    ISignalBus? signalBus = null,
+    ISignalBus signalBus,
     TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -48,7 +48,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
 
     // Doorbell: a schedule-due signal (arm-on-mutation NOTIFY or the poll-source backstop) wakes the
     // drain immediately instead of waiting for the next backstop tick.
-    if (_signalBus is not null) {
+    if (_signalBus.IsConfigured) {
       _dueSubscription = _signalBus.Subscribe<ScheduleDueSignal>(_onScheduleDue);
     }
   }

@@ -34,7 +34,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -55,7 +55,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -77,7 +77,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock(timedOut: true);
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -103,7 +103,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
     var cts = new CancellationTokenSource();
     cts.Cancel();
 
@@ -131,7 +131,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -156,7 +156,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -177,7 +177,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -202,7 +202,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(null!, clock, logger, new SyncEventTracker())));
+        Task.FromResult(new PerspectiveSyncAwaiter(coordinator: null!, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   [Test]
@@ -213,7 +213,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, null!, logger, new SyncEventTracker())));
+        Task.FromResult(new PerspectiveSyncAwaiter(coordinator: coordinator, clock: null!, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   [Test]
@@ -224,7 +224,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, clock, null!, new SyncEventTracker())));
+        Task.FromResult(new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: null!, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   // ==========================================================================

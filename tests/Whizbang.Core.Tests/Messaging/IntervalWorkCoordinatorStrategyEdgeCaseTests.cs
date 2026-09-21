@@ -13,6 +13,10 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -81,7 +85,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -104,7 +108,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
@@ -135,7 +139,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(coalesceMs: 50); // 50ms coalesce window
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -160,7 +164,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(coalesceMs: 5000); // Long coalesce window
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -189,6 +193,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   public async Task Constructor_WithNullCoordinatorAndScopeFactory_DoesNotThrowAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator, TrackingWorkCoordinator>();
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -200,7 +205,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory
+      scopeFactory: scopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Assert - should construct successfully
@@ -209,20 +219,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await sut.DisposeAsync();
   }
 
-  [Test]
-  public async Task Constructor_WithNullCoordinatorAndNullScopeFactory_ThrowsArgumentNullExceptionAsync() {
-    // Arrange
-    var instanceProvider = new TestInstanceProvider();
-    var options = _createOptions();
-
-    // Act & Assert
-    await Assert.That(() => new IntervalWorkCoordinatorStrategy(
-      coordinator: null,
-      instanceProvider: instanceProvider,
-      options: options,
-      scopeFactory: null
-    )).Throws<ArgumentNullException>();
-  }
 
   // ============================================================
   // Constructor: null instanceProvider
@@ -238,7 +234,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
       coordinator: coordinator,
       instanceProvider: null!,
-      options: options
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -256,7 +258,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
       coordinator: coordinator,
       instanceProvider: instanceProvider,
-      options: null!
+      options: null!,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -270,7 +278,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -293,7 +301,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act - flush with nothing queued via IWorkFlusher
@@ -317,7 +325,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act & Assert - StreamId = Guid.Empty (non-null) should fail validation
@@ -334,7 +342,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act & Assert
@@ -351,7 +359,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new OutboxMessage {
@@ -388,7 +396,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new InboxMessage {
@@ -428,7 +436,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var options = _createOptions();
 
     // Act - no logger parameter
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Assert
     await Assert.That(sut).IsNotNull();
@@ -448,7 +456,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     var message = _createOutboxMessage();
 
     try {
@@ -470,7 +478,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     var message = _createInboxMessage();
 
     try {
@@ -495,7 +503,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory);
+      scopeFactory: host.ScopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
     var messageId = Guid.CreateVersion7();
 
     try {
@@ -523,7 +536,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory);
+      scopeFactory: host.ScopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
 
     try {
       sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored);
@@ -546,7 +564,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory);
+      scopeFactory: host.ScopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
     var messageId = Guid.CreateVersion7();
 
     try {
@@ -570,7 +593,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory);
+      scopeFactory: host.ScopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
     var messageId = Guid.CreateVersion7();
 
     try {
@@ -595,7 +623,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -625,13 +653,22 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_WithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      metrics: metrics,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -649,14 +686,23 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_EmptyQueuesWithMetrics_RecordsEmptyFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var logger = new RecordingLogger<IntervalWorkCoordinatorStrategy>();
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      metrics: metrics,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act - flush with nothing queued
@@ -673,13 +719,22 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_BestEffortWithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      metrics: metrics,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act
@@ -702,7 +757,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Queue something so disposal flush has work
     var messageId = Guid.CreateVersion7();
@@ -727,7 +782,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -753,7 +808,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -779,7 +834,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(intervalMs: 50); // Short interval
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Dispose immediately, then wait for timer to have fired (if it were active)
     await sut.DisposeAsync();
@@ -810,7 +865,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -838,7 +893,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var slowCoordinator = new SlowWorkCoordinator(500);
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(slowCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: slowCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -876,7 +931,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     await sut.DisposeAsync();
 
@@ -895,7 +950,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -909,7 +964,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -923,7 +978,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -937,7 +992,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -951,7 +1006,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -965,7 +1020,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -983,7 +1038,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Queue work so the first disposal has something to drain — with empty queues both
     // disposals are indistinguishable and the second one proves nothing.
@@ -1010,6 +1065,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     // Arrange
     var scopedCoordinator = new TrackingWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => scopedCoordinator);
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -1020,7 +1076,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory
+      scopeFactory: scopeFactory,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1047,7 +1108,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -1065,7 +1126,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -1101,7 +1162,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(intervalMs: 50); // Short interval for timer to fire quickly
-    var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act - the coordinator signals each call, so this waits on the flush itself rather than
@@ -1156,6 +1217,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       FailureChannel = new CountingFailureChannel();
 
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddScoped<IWorkCoordinator>(_ => {
         Interlocked.Increment(ref _coordinatorResolutions);
         return Coordinator;

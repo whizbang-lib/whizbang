@@ -12,6 +12,10 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -204,6 +208,7 @@ public class SecurityContextTimeoutTests {
   public async Task InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync() {
     var hangingProvider = new _HangingSecurityContextProvider();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -212,21 +217,27 @@ public class SecurityContextTimeoutTests {
     var channel = new _FakeInboxChannelWriter();
     var failure = new _FakeFailureChannel();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      channel,
-      new _FakeHandlerCommitChannel(),
-      failure,
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      inboxChannelWriter: channel,
+      handlerCommitChannel: new _FakeHandlerCommitChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions {
         Enabled = true,
         SecurityContextTimeoutSeconds = 1,
       }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new _PassthroughDeserializer(),
-      receptorRegistry: new _AllStagesReceptorRegistry());
+      receptorRegistry: new _AllStagesReceptorRegistry(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -249,27 +260,37 @@ public class SecurityContextTimeoutTests {
     var hangingProvider = new _HangingSecurityContextProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: new _FakeOutboxDrainChannel(),
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         SecurityContextTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _NoOpPublishStrategy(),
-      lifecycleMessageDeserializer: new _PassthroughDeserializer());
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new _NoOpPublishStrategy(),
+      lifecycleMessageDeserializer: new _PassthroughDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        SecurityContextTimeoutSeconds = 1,
+      })).Value));
 
     var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
 

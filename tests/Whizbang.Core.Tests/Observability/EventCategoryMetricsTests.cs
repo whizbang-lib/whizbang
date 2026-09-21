@@ -3,6 +3,8 @@
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -31,7 +33,7 @@ public class EventCategoryMetricsTests {
 
   [Test]
   public async Task EventCategoryMetrics_Constructor_CreatesAllInstrumentsAsync() {
-    var metrics = new EventCategoryMetrics(new WhizbangMetrics());
+    var metrics = new EventCategoryMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.DispatchDuration).IsNotNull();
     await Assert.That(metrics.Fanout).IsNotNull();

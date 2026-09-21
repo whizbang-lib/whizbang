@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -23,10 +24,10 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
 
   private static RecentlyProcessedEventCacheSweepWorker _worker(
       RecentlyProcessedEventCache cache, bool enabled, int intervalSeconds = 1) =>
-    new(cache, Options.Create(new RecentlyProcessedEventCacheOptions {
+    new(cache: cache, options: Options.Create(new RecentlyProcessedEventCacheOptions {
       Enabled = enabled,
       SweepIntervalSeconds = intervalSeconds,
-    }));
+    }), logger: NullLogger<RecentlyProcessedEventCacheSweepWorker>.Instance);
 
   /// <summary>
   /// A clock the test can move forward and break on demand. A sweep reads it exactly once per pass,

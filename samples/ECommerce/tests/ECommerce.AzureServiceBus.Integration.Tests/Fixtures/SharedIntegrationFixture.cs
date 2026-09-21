@@ -27,6 +27,7 @@ using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
 using Whizbang.Transports.AzureServiceBus;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
@@ -303,8 +304,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -336,11 +338,18 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions: jsonOptions,
-        logger: // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
         options: consumerOptions,
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+      )
     );
 
     return builder.Build();
@@ -430,8 +439,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -469,11 +479,18 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions: jsonOptions,
-        logger: // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
         options: consumerOptions,
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+      )
     );
 
     return builder.Build();

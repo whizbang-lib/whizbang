@@ -14,6 +14,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -90,79 +92,7 @@ public class ServiceBusConsumerWorkerGapTests {
   // _serializeToNewInboxMessage serializer resolution branches
   // ========================================
 
-  /// <summary>
-  /// Covers the strongly-typed envelope path where _envelopeSerializer is null and the
-  /// serializer is resolved from the scoped provider (scopeServiceProvider.GetService branch).
-  /// Also covers the explicit non-null MessageProcessingOptions with a positive limit,
-  /// exercising the semaphore construction from configured (non-default) options.
-  /// </summary>
-  [Test]
-  public async Task HandleMessage_StronglyTypedEnvelope_ResolvesEnvelopeSerializerFromScopeAsync() {
-    var transport = new GapTransport();
-    var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
-    var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
-    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
-    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
-    var worker = _createWorker(
-      transport, strategy, services,
-      messageProcessingOptions: new MessageProcessingOptions { MaxConcurrentMessages = 2 });
-
-    await worker.StartAsync(CancellationToken.None);
-    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
-
-    var envelope = _createTypedEnvelope(MessageId.New());
-    var envelopeType = typeof(MessageEnvelope<SbcGapTestEvent>).AssemblyQualifiedName!;
-
-    await transport.CapturedBatchHandler!(
-      [new TransportMessage(envelope, envelopeType)],
-      CancellationToken.None);
-
-    // The scoped serializer converted the strongly-typed payload into JsonElement form.
-    await Assert.That(strategy.CapturedInboxMessages.Count).IsEqualTo(1);
-    var captured = strategy.CapturedInboxMessages[0];
-    await Assert.That(captured.EnvelopeType).IsEqualTo(envelopeType);
-    await Assert.That(captured.Envelope.Payload.ValueKind).IsEqualTo(JsonValueKind.Object);
-
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  /// <summary>
-  /// Covers the throw branch when a strongly-typed envelope arrives but IEnvelopeSerializer
-  /// is neither constructor-injected nor registered in the scoped container: the worker must
-  /// fail loudly with InvalidOperationException instead of storing an unserializable envelope.
-  /// </summary>
-  [Test]
-  public async Task HandleMessage_StronglyTypedEnvelope_NoSerializerAnywhere_ThrowsAsync() {
-    var transport = new GapTransport();
-    var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
-    // AllowAnonymous so the strongly-typed (non-JsonElement) payload clears the security
-    // gate and reaches the serializer-resolution branch under test. No IEnvelopeSerializer
-    // is registered anywhere, so _serializeToNewInboxMessage must throw InvalidOperationException.
-    var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
-    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
-    var worker = _createWorker(transport, strategy, services);
-
-    await worker.StartAsync(CancellationToken.None);
-    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
-
-    var envelope = _createTypedEnvelope(MessageId.New());
-    var envelopeType = typeof(MessageEnvelope<SbcGapTestEvent>).AssemblyQualifiedName!;
-
-    await Assert.That(async () =>
-      await transport.CapturedBatchHandler!(
-        [new TransportMessage(envelope, envelopeType)],
-        CancellationToken.None)
-    ).Throws<InvalidOperationException>();
-
-    // Nothing may reach the storage path when serialization is impossible.
-    await Assert.That(strategy.CapturedInboxMessages.Count).IsEqualTo(0);
-
-    await worker.StopAsync(CancellationToken.None);
-  }
 
   /// <summary>
   /// Covers the defensive double-serialization guard: an envelope typed as
@@ -212,6 +142,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var transport = new GapTransport();
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IEventTypeProvider>(new GapEventTypeProvider());
@@ -241,6 +172,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var transport = new GapTransport();
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IEventTypeProvider>(new GapEventTypeProvider());
@@ -407,6 +339,7 @@ public class ServiceBusConsumerWorkerGapTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -508,6 +441,7 @@ public class ServiceBusConsumerWorkerGapTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -590,6 +524,7 @@ public class ServiceBusConsumerWorkerGapTests {
     ]);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -641,16 +576,18 @@ public class ServiceBusConsumerWorkerGapTests {
       scopeFactory: scopeFactory,
       jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
       },
-      lifecycleMessageDeserializer: lifecycleMessageDeserializer,
-      envelopeSerializer: null,
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
       messageProcessingOptions: messageProcessingOptions,
-      receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: null);
+      receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(

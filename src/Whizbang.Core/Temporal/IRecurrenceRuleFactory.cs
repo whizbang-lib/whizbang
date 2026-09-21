@@ -8,7 +8,7 @@ namespace Whizbang.Core.Temporal;
 /// via <c>TryAdd</c>. Kept separate from the DB-side next-fire so both halves of the dual engine stay
 /// swappable together.
 /// </summary>
-/// <docs>fundamentals/temporal/recurrence</docs>
+/// <docs>fundamentals/dispatcher/dispatch-patterns</docs>
 public interface IRecurrenceRuleFactory {
   /// <summary>
   /// Creates the rule for a schedule. <paramref name="interval"/> is required for

@@ -66,17 +66,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly LeaseRegistry? _leaseRegistry;
   private readonly TimeProvider _timeProvider;
   private readonly ILogger<InboxDispatchWorker> _logger;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IReceptorRegistryQuery? _receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
+  private readonly IReceptorRegistryQuery _receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry;
   private readonly InboxDeserializeCache? _deserializeCache;
-  private readonly IMessageDiscardPolicy? _discardPolicy;
+  private readonly IMessageDiscardPolicy _discardPolicy;
   // v0.502 slice C.4 — optional DLQ persistence. When wired, the dead-letter branch
   // moves the row into wh_dead_letters via the atomic SQL function instead of just
   // marking it Published. Optional so existing callers (and the legacy fakes used by
   // many tests) continue to compile + run unchanged.
-  private readonly IDeadLetterStore? _deadLetterStore;
-  private readonly IGenerationProvider? _generationProvider;
+  private readonly IDeadLetterStore _deadLetterStore;
+  private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // v0.660 slice 8 — per-message-type dispatch duration histogram.
   private readonly Whizbang.Core.Observability.InboxMetrics? _inboxMetrics;
@@ -99,17 +99,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
     IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
-    IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
+    ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+    IOptions<LeaseHandleOptions> leaseHandleOptions,
+    IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
+    IReceptorRegistryQuery receptorRegistry,
+    IMessageDiscardPolicy discardPolicy,
+    IReceptorRegistry runtimeReceptorRegistry,
+    IDeadLetterStore deadLetterStore,
+    IGenerationProvider generationProvider,
     LeaseRegistry? leaseRegistry = null,
     TimeProvider? timeProvider = null,
-    IReceptorRegistryQuery? receptorRegistry = null,
     InboxDeserializeCache? deserializeCache = null,
-    IMessageDiscardPolicy? discardPolicy = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null,
-    IDeadLetterStore? deadLetterStore = null,
-    IGenerationProvider? generationProvider = null,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
@@ -126,8 +126,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
-    _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
-    _leaseRenewalOptions = leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions();
+    _leaseHandleOptions = leaseHandleOptions.Value;
+    _leaseRenewalOptions = leaseRenewalOptions.Value;
     _leaseRegistry = leaseRegistry;
     _timeProvider = timeProvider ?? TimeProvider.System;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -348,7 +348,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         return;
       }
 
-      if (_deadLetterStore is not null && _generationProvider is not null) {
+      if (_deadLetterStore.IsConfigured) {
         try {
           var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
           var movedId = await _deadLetterStore.MoveAsync(
@@ -504,9 +504,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// payload exists, or deserialization fails — callers then no-op the lifecycle stage.
   /// </summary>
   private IMessageEnvelope? _resolveTypedEnvelope(InboxWork work) {
-    if (_lifecycleMessageDeserializer is null) {
-      return null;
-    }
     // The handler name rides on the typed envelope's dispatch context so an emission made while handling
     // this row derives an identity that names the handler; a sibling handler row of the same message
     // then cannot derive the same id (EmissionIdentity).
@@ -547,7 +544,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// dispatch; the same gate ShouldSkipInbox applies to ordinary rows (#736). Null when no discard policy is registered.
   /// </summary>
   private Func<string, bool>? _hasConsumerFilter() =>
-    _discardPolicy is null ? null : messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
+    messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
 
   /// <summary>
   /// Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes precedence over
@@ -660,7 +657,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail ?? "(none)");
     _compositeMetrics?.DeadLettered.Add(1);
 
-    if (_deadLetterStore is not null && _generationProvider is not null) {
+    if (_deadLetterStore.IsConfigured) {
       try {
         var movedId = await _deadLetterStore.MoveAsync(
           deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
@@ -752,7 +749,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private async Task _deadLetterCompositeAsync(
       InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
     _compositeMetrics?.DeadLettered.Add(1);
-    if (_deadLetterStore is not null && _generationProvider is not null) {
+    if (_deadLetterStore.IsConfigured) {
       try {
         var movedId = await _deadLetterStore.MoveAsync(
           deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
@@ -794,9 +791,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return default;
     }
     var runtimeType = typedEnvelope.Payload?.GetType();
-    var hasPre = (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType) ?? false)
+    var hasPre = _receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
       || _runtimeHasReceptors(runtimeType, LifecycleStage.PreInboxInline);
-    var hasPost = (_receptorRegistry?.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType) ?? false)
+    var hasPost = _receptorRegistry.HasReceptors(LifecycleStage.PostInboxInline, work.MessageType)
       || _runtimeHasReceptors(runtimeType, LifecycleStage.PostInboxInline);
     if (!hasPre && !hasPost) {
       return default;
@@ -903,10 +900,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // the gate would silently skip runtime-registered receptors (the integration-test
     // PreInboxDetached failure on a consumer's service was this exact bug).
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
-    var hasDetached = _receptorRegistry is null || !_isGatedStage(detachedStage)
+    var hasDetached = !_isGatedStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, detachedStage);
-    var hasInline = _receptorRegistry is null || !_isGatedStage(inlineStage)
+    var hasInline = !_isGatedStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
@@ -1012,7 +1009,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           or LifecycleStage.PostInboxInline;
 
   private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
-    if (_runtimeReceptorRegistry is null || messageType is null) {
+    if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
@@ -1173,10 +1170,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// rolling-deploy drift is visible without being noisy.
   /// </remarks>
   internal static bool ShouldSkipInbox(
-      IMessageDiscardPolicy? discardPolicy,
+      IMessageDiscardPolicy discardPolicy,
       string messageType,
       Guid messageId) {
-    if (discardPolicy is null || string.IsNullOrEmpty(messageType)) {
+    if (string.IsNullOrEmpty(messageType)) {
       return false;
     }
     var decision = discardPolicy.EvaluateInbox(messageType);

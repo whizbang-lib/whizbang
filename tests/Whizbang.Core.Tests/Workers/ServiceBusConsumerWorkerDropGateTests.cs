@@ -12,6 +12,8 @@ using Whizbang.Core.Offloads;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -151,6 +153,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new FakeServiceInstanceProvider());
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     var sp = services.BuildServiceProvider();
@@ -162,15 +165,17 @@ public class ServiceBusConsumerWorkerDropGateTests {
       scopeFactory: scopeFactory,
       jsonOptions: jsonOptions,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
       },
-      envelopeSerializer: envelopeSerializer,
-      receptorRegistry: registry,
-      runtimeReceptorRegistry: runtimeRegistry,
-      eventMarkerResolver: eventMarkerResolver);
+      envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
+      eventMarkerResolver: eventMarkerResolver ?? new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
 
     return (worker, transport, strategy, sp);
   }

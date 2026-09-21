@@ -11,6 +11,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Execution;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -179,25 +182,36 @@ public class PublishTimeoutTests {
     var hangingStrategy = new _HangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: new _FakeOutboxDrainChannel(),
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      hangingStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: hangingStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
     var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);
@@ -235,25 +249,36 @@ public class PublishTimeoutTests {
     var hangingStrategy = new _HangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: new _FakeOutboxDrainChannel(),
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      hangingStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: hangingStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
 
@@ -287,25 +312,36 @@ public class PublishTimeoutTests {
     var uncooperativeStrategy = new _UncooperativeHangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: new _FakeOutboxDrainChannel(),
+      completionChannel: new _FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      uncooperativeStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: uncooperativeStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
     var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);

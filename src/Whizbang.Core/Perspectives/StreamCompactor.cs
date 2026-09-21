@@ -23,7 +23,7 @@ public sealed record CompactionResult(string Status, long ThroughVersion, long E
 /// BEFORE the truncate), then gated-truncate the folded detail via the A1 <see cref="IStreamCloser"/>. The
 /// compacted stream then replays only back to the <see cref="Compacted"/> event.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IStreamCompactor {
   /// <summary>Compact <paramref name="streamId"/> to the authoritative model of <paramref name="perspectiveName"/>.</summary>
   Task<CompactionResult> CompactAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default);

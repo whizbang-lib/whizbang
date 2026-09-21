@@ -62,7 +62,7 @@ public class StartupPipelineRunnerDutyTests {
   public async Task DutyStep_WhenTheElectorGrants_RunsAndReleasesAsync() {
     var elector = new _elector(grantOnAttempt: 1);
     var step = new _countingStep("Rewrite", "maintainer");
-    var runner = new StartupPipelineRunner([step], dutyElector: elector);
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -76,7 +76,7 @@ public class StartupPipelineRunnerDutyTests {
   public async Task DutyStep_NonHolderWithSkip_ReportsCapabilityNotHeldAndCarriesOnAsync() {
     var elector = new _elector(grantOnAttempt: int.MaxValue);   // never wins
     var step = new _countingStep("Rewrite", "maintainer", NonHolderBehavior.Skip);
-    var runner = new StartupPipelineRunner([step], dutyElector: elector);
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -94,7 +94,7 @@ public class StartupPipelineRunnerDutyTests {
   public async Task DutyStep_NonHolderWithAwait_ReAttemptsUntilTheHoldersReleaseLetsItWinAsync() {
     var elector = new _elector(grantOnAttempt: 3);   // wins on the third attempt
     var step = new _countingStep("Migrate2", "migrator", NonHolderBehavior.Await);
-    var runner = new StartupPipelineRunner([step], dutyElector: elector) {
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
 
@@ -111,7 +111,7 @@ public class StartupPipelineRunnerDutyTests {
   [Test]
   public async Task DutyStep_WithNoElector_DegradesToASharedCapabilityAsync() {
     var step = new _countingStep("Rewrite", "maintainer", NonHolderBehavior.Skip);
-    var runner = new StartupPipelineRunner([step]);
+    var runner = new StartupPipelineRunner(steps: [step], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -126,7 +126,7 @@ public class StartupPipelineRunnerDutyTests {
   public async Task SharedStep_NeverConsultsTheElectorAsync() {
     var elector = new _elector(grantOnAttempt: 1);
     var step = new _countingStep("Reconcile", StartupCapabilities.EVERY_INSTANCE);
-    var runner = new StartupPipelineRunner([step], dutyElector: elector);
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -139,7 +139,7 @@ public class StartupPipelineRunnerDutyTests {
   public async Task DutyStep_WhoseBodyThrows_StillReleasesTheGrantAsync() {
     var elector = new _elector(grantOnAttempt: 1);
     var step = new _throwingStep();
-    var runner = new StartupPipelineRunner([step], dutyElector: elector);
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -181,7 +181,7 @@ public class StartupPipelineRunnerDutyTests {
   [Test]
   [Timeout(30000)]
   public async Task AwaitDutyStep_WhoseDutyIsNeverGrantable_FailsBoundedlyInsteadOfHangingAsync(CancellationToken cancellationToken) {
-    var runner = new StartupPipelineRunner([new _awaitDutyStep()], dutyElector: new _neverGrantingElector());
+    var runner = new StartupPipelineRunner(steps: [new _awaitDutyStep()], dutyElector: new _neverGrantingElector(), observers: []);
 
     var run = runner.RunAsync(cancellationToken);
     var winner = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));

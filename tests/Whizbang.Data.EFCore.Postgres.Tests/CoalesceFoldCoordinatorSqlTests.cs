@@ -12,6 +12,9 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Minting;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -202,7 +205,13 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), gate, new Whizbang.Core.Observability.ServiceInstanceProvider(), coalesceResolver: resolver, logger: null, timeProvider: time);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      coalesceResolver: resolver,
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      timeProvider: time,
+      compositeFactory: new CompositeFactory());
   }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {

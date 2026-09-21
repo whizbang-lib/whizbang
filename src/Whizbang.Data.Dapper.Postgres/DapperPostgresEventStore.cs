@@ -280,7 +280,9 @@ public class DapperPostgresEventStore(
   /// </summary>
   private async Task<JsonbPersistenceModel> _prepareJsonbAsync<TMessage>(MessageEnvelope<TMessage> envelope) {
     var payload = envelope.Payload!;
-    var policyCtx = new PolicyContext(payload, envelope);
+    // Persistence policies here are matched on the message and envelope alone; no scoped services
+    // take part in the decision, so none are offered.
+    var policyCtx = new PolicyContext(payload, envelope, services: null);
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
     var jsonb = _adapter.ToJsonb(envelope, policy);

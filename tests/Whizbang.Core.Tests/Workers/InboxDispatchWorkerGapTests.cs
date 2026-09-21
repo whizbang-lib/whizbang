@@ -16,6 +16,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -294,16 +296,24 @@ public class InboxDispatchWorkerGapTests {
     public ILogger<InboxDispatchWorker>? Logger { get; set; } = NullLogger<InboxDispatchWorker>.Instance;
 
     public InboxDispatchWorker Build() => new(
-      ScopeFactory!,
-      InstanceProvider!,
-      InboxChannelWriter!,
-      HandlerCommitChannel!,
-      FailureChannel!,
-      SchemaGate!,
-      WorkerOptions!,
-      CoordinatorOptions!,
-      Logger!,
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: ScopeFactory!,
+      instanceProvider: InstanceProvider!,
+      inboxChannelWriter: InboxChannelWriter!,
+      handlerCommitChannel: HandlerCommitChannel!,
+      failureChannel: FailureChannel!,
+      schemaReadyGate: SchemaGate!,
+      options: WorkerOptions!,
+      coordinatorOptions: CoordinatorOptions!,
+      logger: Logger!,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
   }
 
   private static async Task _assertCtorGuardAsync(CtorDeps deps, string expectedParamName) {
@@ -388,12 +398,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     await worker.StartAsync(CancellationToken.None);
     var executeTask = worker.ExecuteTask;
@@ -427,17 +449,29 @@ public class InboxDispatchWorkerGapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var logger = new RecordingLogger<InboxDispatchWorker>();
-    using var coordinatorGate = new WorkCoordinatorGate(maxConcurrent: 2);
+    using var coordinatorGate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      gate: coordinatorGate);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      gate: coordinatorGate,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -476,14 +510,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       deadLetterStore: new ThrowingDeadLetterStore(),
-      generationProvider: new FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -508,7 +552,7 @@ public class InboxDispatchWorkerGapTests {
   public async Task MaxAttemptsExceeded_StoreSucceeds_IncrementsDlqAddedCounterAndSkipsCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
@@ -536,15 +580,25 @@ public class InboxDispatchWorkerGapTests {
     listener.Start();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       deadLetterStore: store,
       generationProvider: new FakeGenerationProvider(),
-      dlqMetrics: metrics);
+      dlqMetrics: metrics,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -579,16 +633,25 @@ public class InboxDispatchWorkerGapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(options ?? new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(options ?? new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      deadLetterStore: deadLetterStore,
-      generationProvider: generationProvider,
-      dlqMetrics: dlqMetrics);
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: generationProvider ?? new DefaultGenerationProvider(),
+      dlqMetrics: dlqMetrics,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
   }
 
   /// <summary>
@@ -659,7 +722,7 @@ public class InboxDispatchWorkerGapTests {
   public async Task CompositeOverCap_StoreSucceeds_IncrementsDlqAddedCounterAndSkipsCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -726,13 +789,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new ThrowingDeserializer());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new ThrowingDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -761,13 +835,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      discardPolicy: policy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      discardPolicy: policy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -801,17 +886,30 @@ public class InboxDispatchWorkerGapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ =>
       new StageThrowingInvoker(LifecycleStage.PreInboxDetached, new InvalidOperationException("simulated detached receptor fault")));
     await using var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
@@ -847,12 +945,24 @@ public class InboxDispatchWorkerGapTests {
     var signalingFactory = new SignalingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
 
     var worker = new InboxDispatchWorker(
-      signalingFactory,
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: signalingFactory,
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     var inlineInvoker = new CapturingReceptorInvoker();
@@ -891,7 +1001,7 @@ public class InboxDispatchWorkerGapTests {
     var failure = new FakeFailureChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var metrics = new InboxMetrics(new WhizbangMetrics());
+    var metrics = new InboxMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var measured = new TaskCompletionSource<(double Value, string? MessageType)>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -914,13 +1024,25 @@ public class InboxDispatchWorkerGapTests {
     listener.Start();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      inboxMetrics: metrics);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      inboxMetrics: metrics,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -988,7 +1110,7 @@ public class InboxDispatchWorkerGapTests {
   [Test]
   public async Task CompositeOverConsumerBudget_Enforced_RecordsTheDeadLetterMetricAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -1202,14 +1324,24 @@ public class InboxDispatchWorkerGapTests {
     gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      new RecordingLogger<InboxDispatchWorker>(),
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: new RecordingLogger<InboxDispatchWorker>(),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       deadLetterStore: new CapturingDeadLetterStore(),
-      generationProvider: new FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -1227,7 +1359,7 @@ public class InboxDispatchWorkerGapTests {
     var handlerCommit = new FakeHandlerCommitChannel();
     var writer = new FakeInboxChannelWriter();
     var store = new AlreadyGoneDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var logger = new RecordingLogger<InboxDispatchWorker>();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -1243,15 +1375,25 @@ public class InboxDispatchWorkerGapTests {
     listener.Start();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       deadLetterStore: store,
       generationProvider: new FakeGenerationProvider(),
-      dlqMetrics: metrics);
+      dlqMetrics: metrics,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -1283,12 +1425,24 @@ public class InboxDispatchWorkerGapTests {
     gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false }));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false }),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     work = work with {

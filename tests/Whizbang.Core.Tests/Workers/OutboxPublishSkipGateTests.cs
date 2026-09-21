@@ -5,6 +5,8 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -46,8 +48,7 @@ public class OutboxPublishSkipGateTests {
   public async Task ShouldSkipOutboxPublish_DefaultPolicy_AlwaysReturnsFalseAsync() {
     var registry = new TestRegistry();  // empty — but EvaluateOutbox is the SAFE-default no-op
     var meter = new Meter("Whizbang.Tests.OutboxPublishSkipGateTests.A");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(new RecordingLogger()), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(new RecordingLogger()), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
 
     var shouldSkip = OutboxPublishWorker.ShouldSkipOutboxPublish(
       discardPolicy: policy,

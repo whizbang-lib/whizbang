@@ -9,6 +9,10 @@ using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -30,6 +34,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var ownedDomains = new HashSet<string> { "myapp.users", "myapp.orders" };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
       new RoutingOptions().OwnDomains([.. ownedDomains])));
@@ -72,6 +77,7 @@ public class TransportConsumerWorkerProvisioningTests {
     // Arrange
     var transport = new TrackingTransport();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
     var serviceProvider = services.BuildServiceProvider();
 
@@ -104,6 +110,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var transport = new TrackingTransport();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions())); // Empty owned domains
     var serviceProvider = services.BuildServiceProvider();
@@ -143,6 +150,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var manifest = new Whizbang.Core.Routing.TopologyManifest("test-service", [], []);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(manifest);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
@@ -182,6 +190,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var transport = new TrackingTransport();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
     var serviceProvider = services.BuildServiceProvider();
@@ -228,8 +237,16 @@ public class TransportConsumerWorkerProvisioningTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>(),
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   // ========================================

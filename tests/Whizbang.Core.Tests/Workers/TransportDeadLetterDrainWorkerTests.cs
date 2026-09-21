@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -57,7 +58,7 @@ public class TransportDeadLetterDrainWorkerTests {
     return new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(opts),
-      whizbangMetrics: new WhizbangMetrics(),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
@@ -102,7 +103,7 @@ public class TransportDeadLetterDrainWorkerTests {
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true }),
-      whizbangMetrics: new WhizbangMetrics(),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       logger: log,
       schemaReadyGate: gate);
 
@@ -156,7 +157,7 @@ public class TransportDeadLetterDrainWorkerTests {
         Enabled = true,
         IntervalMinutes = 0
       }),
-      whizbangMetrics: new WhizbangMetrics(),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       logger: log,
       schemaReadyGate: SchemaReadyGate.AlreadyReady());
 
@@ -329,7 +330,7 @@ public class TransportDeadLetterDrainWorkerTests {
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 500 }),
-      whizbangMetrics: new WhizbangMetrics(),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       logger: logger,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -382,7 +383,7 @@ public class TransportDeadLetterDrainWorkerTests {
     return new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(opts),
-      whizbangMetrics: new WhizbangMetrics(),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       logger: logger,
       schemaReadyGate: SchemaReadyGate.AlreadyReady());
   }

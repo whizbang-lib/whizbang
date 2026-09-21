@@ -20,6 +20,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -258,7 +259,7 @@ public class IntegrityCheckpointReceptorTests {
     // ordinary back-pressure as data loss. While the service is measurably unsettled the
     // pending DEFERS: no confirmation, no warning, carried to a later cycle. Once settled,
     // a deficit that persists is real and confirms exactly as before.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var meter = metrics.GapsDetected.Meter;
     long gaps = 0;
     using var listener = new System.Diagnostics.Metrics.MeterListener();
@@ -382,7 +383,7 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(metrics
-      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     // A fresh policy per fixture: its window state is the subject under test, and the receptor's
@@ -409,7 +410,7 @@ public class IntegrityCheckpointReceptorTests {
   [Test]
   public async Task ConfirmedGap_WithDefaultOptions_EmitsGapCounterAndRequestsNoRepairAsync() {
     // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var meter = metrics.GapsDetected.Meter;
     var measurements = new Dictionary<string, long>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
@@ -441,7 +442,7 @@ public class IntegrityCheckpointReceptorTests {
   [Test]
   public async Task ConfirmedGap_WithAutoRepairCapped_EmitsGapAndRepairCountersAsync() {
     // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var meter = metrics.GapsDetected.Meter;
     var measurements = new Dictionary<string, long>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();

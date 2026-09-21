@@ -65,10 +65,12 @@ public class CrossCommandPerspectiveSyncTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator,
-        clock,
-        logger,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: logger,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // === STEP 3 + 4: deterministic, single-threaded — no wall-clock pacing ===
     // The former shape raced a simulated 100ms "processing delay" against a 500ms sync timeout,
@@ -180,8 +182,12 @@ public class CrossCommandPerspectiveSyncTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator, clock, logger,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: logger,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Mark event as processed for C only
     _ = Task.Run(async () => {
@@ -220,8 +226,12 @@ public class CrossCommandPerspectiveSyncTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator, clock, logger,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: logger,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - C never processes B, so this should timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -269,8 +279,12 @@ public class CrossCommandPerspectiveSyncTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator, clock, logger,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: logger,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var sw = System.Diagnostics.Stopwatch.StartNew();

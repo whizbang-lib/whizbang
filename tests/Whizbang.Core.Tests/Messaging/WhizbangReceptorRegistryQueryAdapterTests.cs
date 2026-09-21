@@ -36,7 +36,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasReceptors_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasReceptors(LifecycleStage.PreDistributeDetached, UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -48,7 +48,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasInboxHandler_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasInboxHandler(UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -108,7 +108,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasAnyConsumer_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasAnyConsumer(UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -122,7 +122,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   public async Task Adapter_ImplementsIReceptorRegistryQueryAsync() {
     // Compile-time fact, but explicitly asserted here so a future rename / shape
     // change of IReceptorRegistryQuery breaks this test before it breaks DI.
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
     await Assert.That(sut).IsAssignableTo<IReceptorRegistryQuery>();
   }
 
@@ -130,7 +130,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   public async Task GetHandledMessages_DelegatesToGeneratedStaticAsync() {
     // The adapter must surface the SAME enumeration as the aggregating static — same
     // count, same order (both read the merged AssemblyRegistry contributions).
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     IReadOnlyList<HandledMessageInfo> direct = ((IReceptorRegistryQuery)sut).GetHandledMessages();
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();

@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -112,6 +113,9 @@ public class WorkerPipelineExtensionsCoverageTests {
     // forever and the test hangs to its timeout rather than failing -- the storage write this test
     // is about is downstream of that wait.
     services.AddSingleton<ISchemaReadyGate>(SchemaReadyGate.AlreadyReady());
+    // Lifecycle stages run only where a receptor invoker exists; without one the helper skips the
+    // stage before deserializing, and the throwing deserializer this test is about is never reached.
+    services.AddSingleton<IReceptorInvoker>(new NullReceptorInvoker());
 
     await using var provider = services.BuildServiceProvider();
     var callback = provider.GetRequiredService<OutboxBulkFlushCallback>();
@@ -162,6 +166,7 @@ public class WorkerPipelineExtensionsCoverageTests {
 
   private static ServiceCollection _composeWorkerPipeline() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbangWorkers();
     return services;

@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -142,6 +143,7 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_OutboxCompletions_RouteToCompletionChannelAsync() {
     var completionChannel = new CountingOutboxCompletionChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
     await using var sp = services.BuildServiceProvider();
@@ -161,6 +163,7 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_OutboxFailures_RouteToFailureChannelWithOutboxCategoryAsync() {
     var failureChannel = new CountingFailureChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
     await using var sp = services.BuildServiceProvider();
@@ -182,6 +185,7 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_InboxFailures_RouteToFailureChannelWithInboxCategoryAsync() {
     var failureChannel = new CountingFailureChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
     await using var sp = services.BuildServiceProvider();
@@ -202,6 +206,7 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_InboxMessages_SignalsInboxChannelWriterAsync() {
     var inboxWriter = new CountingInboxChannelWriter();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IInboxChannelWriter>(inboxWriter);
     await using var sp = services.BuildServiceProvider();
@@ -223,6 +228,7 @@ public class WorkCoordinatorFlushHelperTests {
     // doesn't register them must not crash the flush path.
     var coordinator = new CapturingWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     await using var sp = services.BuildServiceProvider();
 
@@ -254,6 +260,7 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task PartitionCount_ClaimWorkerOptions_TakesPrecedenceAsync() {
     var coordinator = new CapturingWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddOptions<ClaimWorkerOptions>().Configure(o => o.PartitionCount = 42);
     await using var sp = services.BuildServiceProvider();
@@ -308,6 +315,7 @@ public class WorkCoordinatorFlushHelperTests {
     var inboxWriter = new CountingInboxChannelWriter();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
     services.AddSingleton<IFailureChannel>(failureChannel);

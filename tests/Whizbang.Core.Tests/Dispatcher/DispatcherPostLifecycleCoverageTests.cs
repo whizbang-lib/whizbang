@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -49,7 +50,7 @@ public class DispatcherPostLifecycleCoverageTests {
   // Dispatcher subclass with PostLifecycle receptors registered
   // ========================================
 
-  private sealed class PostLifecycleDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+  private sealed class PostLifecycleDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
              receptorRegistry: sp.GetService<IReceptorRegistry>()) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(PostLifecycleWithResultCommand)) {

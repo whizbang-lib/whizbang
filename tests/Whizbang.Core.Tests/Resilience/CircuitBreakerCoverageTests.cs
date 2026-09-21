@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Resilience;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 
@@ -32,7 +33,7 @@ public class CircuitBreakerCoverageTests {
     // burst of concurrent callers on a just-recovered dependency would pile up redundant calls
     // instead of the one the circuit breaker exists to collapse them into.
     var options = _defaultOptions();
-    var breaker = new CircuitBreaker<int>(options);
+    var breaker = new CircuitBreaker<int>(options: options, logger: NullLogger.Instance);
 
     var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -78,7 +79,7 @@ public class CircuitBreakerCoverageTests {
     // that as "safe to probe again", every subsequent call would launch another probe against a
     // dependency that just failed catastrophically instead of failing fast.
     var options = _defaultOptions();
-    var breaker = new CircuitBreaker<string>(options);
+    var breaker = new CircuitBreaker<string>(options: options, logger: NullLogger.Instance);
 
     // Trip the circuit, then let the (zero) cooldown expire immediately so the very next call
     // transitions Open -> HalfOpen and runs the probe.

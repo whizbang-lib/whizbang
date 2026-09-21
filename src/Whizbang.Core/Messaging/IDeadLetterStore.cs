@@ -11,6 +11,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AtCap_NoDeadLetterStoreWired_FallsBackToFailureChannelAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEFCoreDeadLetterStoreTests.cs:MoveAsync_OutboxRow_AdapterOpensScopeAndDelegatesToInnerStoreAsync</tests>
 public interface IDeadLetterStore {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Atomically moves a failing row from its source work table (<c>wh_outbox</c>,
   /// <c>wh_inbox</c>, or <c>wh_perspective_events</c>) into <c>wh_dead_letters</c> with a
@@ -55,4 +59,24 @@ public static class DeadLetterSourceTable {
   /// <summary>Perspective-event failure (projection apply failed beyond retry).</summary>
   public const string PERSPECTIVE_EVENTS = "wh_perspective_events";
 #pragma warning restore CA1707
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IDeadLetterStore"/>: reports <see cref="IDeadLetterStore.IsConfigured"/>
+/// false, which is the "no dead-letter queue, rows keep accumulating" behavior a host without a storage driver had.
+/// Callers check the flag first and this implementation throws if they do not.
+/// </summary>
+public sealed class NullDeadLetterStore : IDeadLetterStore, INullDefault {
+  private NullDeadLetterStore() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullDeadLetterStore Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId, MessageFailureReason failureReason,
+      string? errorText, Guid instanceId, string generation, CancellationToken ct = default) =>
+    throw new InvalidOperationException("No dead-letter store is registered; a storage driver supplies one. Check IsConfigured before calling.");
 }

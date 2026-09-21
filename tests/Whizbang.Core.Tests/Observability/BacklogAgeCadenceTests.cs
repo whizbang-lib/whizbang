@@ -5,6 +5,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -88,7 +90,7 @@ public class BacklogAgeCadenceTests {
     new([peek], [],
       Options.Create(new BacklogAgeOptions { Interval = _interval }),
       new BacklogAgeState(),
-      new BacklogAgeMetrics(new WhizbangMetrics()),
+      new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())),
       NullLogger<BacklogAgeWorker>.Instance,
       probeMetrics);
 

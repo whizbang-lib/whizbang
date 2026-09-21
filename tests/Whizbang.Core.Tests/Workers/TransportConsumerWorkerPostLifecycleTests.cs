@@ -15,6 +15,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -29,6 +30,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
   public async Task EventWithoutPerspectives_ShouldFirePostLifecycle_WhenNoPerspectiveRegistryAsync() {
     // When no IPerspectiveRunnerRegistry is registered, all events are "without perspectives"
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
 
     var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
@@ -156,6 +158,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
   [Test]
   public async Task NullRegistry_ReturnsTrue_AllEventsWithoutPerspectivesAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
 
     var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
@@ -207,6 +210,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ILifecycleCoordinator>(spy);
     services.AddSingleton<IReceptorInvoker>(new NoOpReceptorInvoker());
     var scopedProvider = services.BuildServiceProvider();
@@ -233,6 +237,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ILifecycleCoordinator>(spy);
     services.AddSingleton<IReceptorInvoker>(new NoOpReceptorInvoker());
     var scopedProvider = services.BuildServiceProvider();
@@ -299,6 +304,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReceptorInvoker>(spyInvoker);
     var scopedProvider = services.BuildServiceProvider();
 

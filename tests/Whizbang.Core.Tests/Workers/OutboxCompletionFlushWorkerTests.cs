@@ -47,9 +47,9 @@ public class OutboxCompletionFlushWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new OutboxCompletionFlushWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new OutboxCompletionFlushWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxCompletionFlushWorkerOptions {
         Flusher = new BatchFlusherOptions {
           MaxBatchSize = 100,
           CoalesceWindowMs = 25,
@@ -57,8 +57,9 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<OutboxCompletionFlushWorker>.Instance);
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<OutboxCompletionFlushWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -86,9 +87,9 @@ public class OutboxCompletionFlushWorkerTests {
 
     var gate = new SchemaReadyGate();  // gate NOT marked ready
     var worker = new OutboxCompletionFlushWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new OutboxCompletionFlushWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxCompletionFlushWorkerOptions {
         Flusher = new BatchFlusherOptions {
           MaxBatchSize = 100,
           CoalesceWindowMs = 25,
@@ -96,8 +97,9 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<OutboxCompletionFlushWorker>.Instance);
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<OutboxCompletionFlushWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -126,9 +128,9 @@ public class OutboxCompletionFlushWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready, but Enabled=false should still skip the flush loop
     var worker = new OutboxCompletionFlushWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new OutboxCompletionFlushWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxCompletionFlushWorkerOptions {
         Enabled = false,
         Flusher = new BatchFlusherOptions {
           MaxBatchSize = 100,
@@ -137,8 +139,9 @@ public class OutboxCompletionFlushWorkerTests {
           ChannelCapacity = 1_000
         }
       }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<OutboxCompletionFlushWorker>.Instance);
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<OutboxCompletionFlushWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

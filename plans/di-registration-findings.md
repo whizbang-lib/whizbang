@@ -180,12 +180,51 @@ The third is the one to remember. It passed the build, passed the suite, and pas
 because the manifest could not see factory registrations at the time. Every guard here has a blind
 spot, and the blind spots are where the defects live.
 
+## Phase 3 conversion: every remaining declaration (complete)
+
+Every optional interface-typed constructor parameter in the framework assembly is now required, and
+every one of them has a registered default. Baseline dropped 140 to 1. The one that remains is
+`ReceptorInfo.CallerInfo`, a positional record parameter: the record is a data carrier, there is no
+container to register a default in, and the analyzer (WHIZ501) exempts positional records and
+`System.Collections` interfaces for that reason. The reflection ratchet in
+`CompositionSatisfiabilityTests` does not apply the exemption, so its baseline is 1, not 0.
+
+How the defaults were supplied, by kind:
+
+- **Working default, TryAdd** (`WhizbangDefaultsServiceCollectionExtensions.TryAddWhizbangDefaults`):
+  channel writers, envelope registry and serializer, lifecycle deserializer, the batched completion
+  strategy sized from the perspective retry options, routing strategies from `RoutingOptions`, an
+  empty configuration root, `AddLogging` and `AddMetrics`.
+- **Null default with a capability flag** where the real implementation comes from a storage driver or
+  a transport: dead-letter store, snapshot store, stream locker, signal bus, startup assessor, duty
+  elector, notification listener, publish strategy, event-type provider, message-type catalog,
+  receptor registry, inbox-address resolver, alive-lock source, scoped event tracker. Each implements
+  `INullDefault` and reports `IsConfigured` (or `IsAvailable`) false; consumers branch on the flag where
+  they used to branch on null. Subsystems displace the placeholder with
+  `TryAddSingletonOverNullDefault`, which leaves a host's own registration alone whatever the order.
+- **Keyed per worker**: the two concurrency governors (`OutboxDrainWorker.GOVERNOR_KEY`,
+  `PerspectiveWorker.GOVERNOR_KEY`).
+
+Two pre-existing `#pragma warning disable WHIZ501` suppressions (heartbeat worker, inbox handler
+worker) were removed and their sites converted. Every standalone extension (worker pipeline, routing
+builder, transport consumer builder, message security, system events, signal bus, the transports,
+the Postgres notification stack) registers the defaults first, because the 386 test failures that
+followed the conversion were all one shape: a container composed from one extension without
+`AddWhizbang`, activating a type whose logger was never registered.
+
+### A finding this surfaced
+
+Nothing registers `IInstanceAliveLockSource`. `PgSharedNotifyConnection` implements it but is only
+exposed as `INotifySignalingGate` and `ISharedNotifyConnection`, so the heartbeat worker's watchdog
+has always been told the alive lock is not held. Left as is here (changing heartbeat behavior is not
+this conversion's job) and filed as ADO #19006.
+
 ## Next actions
 
-1. Classify each candidate: genuine gap, extension point optional by design, or not a DI service.
-2. For each genuine gap, determine whether a deployed version ran without it and what behavior was
-   consequently absent.
-3. Feed confirmed gaps into the migration phase: required constructor parameter plus a `TryAdd`
-   default, so the service can no longer be silently missing.
-4. Replace this reflection-based audit with the generated manifest once the generator lands, keeping
+1. Replace this reflection-based audit with the generated manifest once the generator lands, keeping
    the audit as a cross-check that the manifest is complete.
+2. Register the alive-lock source from the notification stack (ADO #19006) and cover the watchdog
+   decision it feeds.
+
+Items 1 to 3 of the earlier list (classify, assess deployed impact, convert to required plus a
+`TryAdd` default) are complete as of the phase 3 conversion above.

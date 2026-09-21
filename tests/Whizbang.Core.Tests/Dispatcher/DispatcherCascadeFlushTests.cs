@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -83,7 +84,7 @@ public class DispatcherCascadeFlushTests {
   public async Task CascadeToOutbox_UsesFireAndForgetFlushAsync_NotFlushAndGetBatchAsyncAsync() {
     var strategy = new MethodRecordingStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();

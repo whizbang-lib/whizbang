@@ -13,6 +13,10 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -71,6 +75,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
@@ -114,6 +119,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy(messageId.Value);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
@@ -158,6 +164,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var workStrategy = new TrackingBatchWorkStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
@@ -171,13 +178,20 @@ public class TransportConsumerWorkerBatchHandlerTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new StubServiceInstanceProvider(serviceName),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      routingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>());
+      routingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>(),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -215,6 +229,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var noOpCoordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
@@ -260,6 +275,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     var noOpCoordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
@@ -299,12 +315,20 @@ public class TransportConsumerWorkerBatchHandlerTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: _buildScopeFactory(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   private static TransportConsumerWorker _createWorkerWithScope(
@@ -315,16 +339,25 @@ public class TransportConsumerWorkerBatchHandlerTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   private static IServiceScopeFactory _buildScopeFactory() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
   }
 

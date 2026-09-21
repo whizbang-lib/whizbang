@@ -11,6 +11,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -465,7 +466,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -476,7 +477,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcherWithDebugLogging() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Add logging with Debug level to exercise debug log blocks
     services.AddLogging(builder => {
@@ -494,7 +495,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcherWithOutbox(IWorkCoordinatorStrategy strategy) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();

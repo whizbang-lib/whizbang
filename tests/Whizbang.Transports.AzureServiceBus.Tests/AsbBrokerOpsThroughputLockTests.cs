@@ -83,10 +83,11 @@ public class AsbBrokerOpsThroughputLockTests {
       NullLogger<AzureServiceBusTransport>.Instance);
     var routingOptions = new RoutingOptions().RouteCommandNamespaceToInbox(HANDLED_NAMESPACE);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
 
     for (var i = 0; i < N; i++) {
       var envelope = _outboxEnvelope($"burst-{i}");

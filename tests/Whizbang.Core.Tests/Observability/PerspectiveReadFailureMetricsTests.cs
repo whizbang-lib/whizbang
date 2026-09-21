@@ -1,6 +1,8 @@
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -18,7 +20,7 @@ public class PerspectiveReadFailureMetricsTests {
   /// <summary>The instrument exists under the perspective meter, with the documented name.</summary>
   [Test]
   public async Task ReadFailures_IsCreatedUnderThePerspectiveMeterAsync() {
-    var metrics = new PerspectiveMetrics(new WhizbangMetrics());
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.ReadFailures).IsNotNull();
     await Assert.That(metrics.ReadFailures.Name).IsEqualTo("whizbang.perspective.read_failures");

@@ -7,6 +7,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -34,7 +35,7 @@ public class DispatcherCoverageScopeTests {
   private static void _reset() { lock (_lock) { _localInvocations.Clear(); _outboxInvocations.Clear(); } }
   private static (int LocalCount, int OutboxCount) _snapshotCounts() { lock (_lock) { return (_localInvocations.Count, _outboxInvocations.Count); } }
 
-  private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand) && typeof(TResult) == typeof(ScopeTestResult)) {
         return _ => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));

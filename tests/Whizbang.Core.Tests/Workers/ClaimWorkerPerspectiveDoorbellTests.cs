@@ -8,6 +8,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -30,6 +32,7 @@ public class ClaimWorkerPerspectiveDoorbellTests {
     // window must be signal-driven.
     var coord = new CountingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -37,16 +40,25 @@ public class ClaimWorkerPerspectiveDoorbellTests {
 
     var listener = new RaisableListener();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000,
         NotifyHealthyPollingIntervalMilliseconds = null
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await worker.StartAsync(cts.Token);

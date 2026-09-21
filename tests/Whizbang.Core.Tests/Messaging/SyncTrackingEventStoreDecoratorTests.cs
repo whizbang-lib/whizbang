@@ -22,7 +22,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   [Test]
   public async Task Constructor_WithNullInner_ThrowsArgumentNullExceptionAsync() {
     await Assert.ThrowsAsync<ArgumentNullException>(async () => {
-      _ = new SyncTrackingEventStoreDecorator(null!);
+      _ = new SyncTrackingEventStoreDecorator(inner: null!, tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
       await Task.CompletedTask;
     });
   }
@@ -31,7 +31,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task Constructor_WithNullTracker_DoesNotThrowAsync() {
     var inner = new InMemoryEventStore();
 
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker: null);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     await Assert.That(decorator).IsNotNull();
   }
@@ -44,7 +44,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task AppendAsync_WithEnvelope_TracksEmittedEventAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -68,7 +68,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task AppendAsync_WithEnvelope_DelegatesToInnerStoreAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var envelope = new MessageEnvelope<TestEvent> {
@@ -93,7 +93,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   [Test]
   public async Task AppendAsync_WithEnvelope_NoTracker_DoesNotThrowAsync() {
     var inner = new InMemoryEventStore();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker: null);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var envelope = new MessageEnvelope<TestEvent> {
@@ -123,7 +123,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task AppendAsync_WithMessage_TracksEmittedEventAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test");
@@ -143,7 +143,7 @@ public class SyncTrackingEventStoreDecoratorTests {
     var envelopeRegistry = new EnvelopeRegistry();
     var inner = new InMemoryEventStore(envelopeRegistry);
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker, envelopeRegistry);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: envelopeRegistry, syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -173,7 +173,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task AppendAsync_MultipleEvents_TracksAllAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
 
@@ -203,7 +203,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task ReadAsync_DelegatesToInnerStoreAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
@@ -226,7 +226,7 @@ public class SyncTrackingEventStoreDecoratorTests {
   public async Task GetLastSequenceAsync_DelegatesToInnerStoreAsync() {
     var inner = new InMemoryEventStore();
     var tracker = new ScopedEventTracker();
-    var decorator = new SyncTrackingEventStoreDecorator(inner, tracker);
+    var decorator = new SyncTrackingEventStoreDecorator(inner: inner, tracker: tracker, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     await decorator.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
@@ -255,11 +255,11 @@ public class SyncTrackingEventStoreDecoratorTests {
     });
 
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        scopedTracker,
-        envelopeRegistry: null,
-        syncEventTracker,
-        typeRegistry);
+        inner: inner,
+        tracker: scopedTracker,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: syncEventTracker,
+        typeRegistry: typeRegistry);
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -293,11 +293,11 @@ public class SyncTrackingEventStoreDecoratorTests {
     });
 
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        tracker: null,
-        envelopeRegistry: null,
-        syncEventTracker,
-        typeRegistry);
+        inner: inner,
+        tracker: NullScopedEventTracker.Instance,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: syncEventTracker,
+        typeRegistry: typeRegistry);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test");
@@ -319,11 +319,11 @@ public class SyncTrackingEventStoreDecoratorTests {
     });
 
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        tracker: null,
-        envelopeRegistry: null,
-        syncEventTracker,
-        typeRegistry);
+        inner: inner,
+        tracker: NullScopedEventTracker.Instance,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: syncEventTracker,
+        typeRegistry: typeRegistry);
 
     var streamId = Guid.NewGuid();
     var envelope = new MessageEnvelope<TestEvent> {
@@ -349,11 +349,11 @@ public class SyncTrackingEventStoreDecoratorTests {
     });
 
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        tracker: null,
-        envelopeRegistry: null,
-        syncEventTracker,
-        typeRegistry);
+        inner: inner,
+        tracker: NullScopedEventTracker.Instance,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: syncEventTracker,
+        typeRegistry: typeRegistry);
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -395,11 +395,11 @@ public class SyncTrackingEventStoreDecoratorTests {
 
     // No syncEventTracker provided
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        tracker: null,
-        envelopeRegistry: null,
-        syncEventTracker: null,
-        typeRegistry);
+        inner: inner,
+        tracker: NullScopedEventTracker.Instance,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: new SyncEventTracker(),
+        typeRegistry: typeRegistry);
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -431,11 +431,11 @@ public class SyncTrackingEventStoreDecoratorTests {
 
     // No typeRegistry provided
     var decorator = new SyncTrackingEventStoreDecorator(
-        inner,
-        tracker: null,
-        envelopeRegistry: null,
-        syncEventTracker,
-        typeRegistry: null);
+        inner: inner,
+        tracker: NullScopedEventTracker.Instance,
+        envelopeRegistry: new EnvelopeRegistry(),
+        syncEventTracker: syncEventTracker,
+        typeRegistry: new TrackedEventTypeRegistry());
 
     var streamId = Guid.NewGuid();
     var envelope = new MessageEnvelope<TestEvent> {

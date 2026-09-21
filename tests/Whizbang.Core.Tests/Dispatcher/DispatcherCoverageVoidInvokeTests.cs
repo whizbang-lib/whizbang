@@ -7,6 +7,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -44,7 +45,7 @@ public class DispatcherCoverageVoidInvokeTests {
     lock (_lock) { return [.. _invocations]; }
   }
 
-  private sealed class VoidAsyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class VoidAsyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }
@@ -93,7 +94,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
   }
 
-  private sealed class VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null), traceStore: traceStore) {
+  private sealed class VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: traceStore) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }

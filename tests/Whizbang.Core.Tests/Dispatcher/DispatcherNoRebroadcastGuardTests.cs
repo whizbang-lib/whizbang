@@ -13,6 +13,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -55,7 +56,7 @@ public class DispatcherNoRebroadcastGuardTests {
   // Minimal concrete Dispatcher exposing the protected dynamic outbox publish.
   private sealed class _guardDispatcher : Core.Dispatcher {
     public _guardDispatcher(IServiceProvider sp)
-      : base(sp, new ServiceInstanceProvider(configuration: null)) { }
+      : base(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) { }
 
     public Task PublishDynamicAsync(IMessage evt, IMessageEnvelope? source) =>
       PublishToOutboxDynamicAsync(evt, evt.GetType(), MessageId.New(), source);

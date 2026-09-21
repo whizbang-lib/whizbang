@@ -9,6 +9,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -121,23 +123,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedIdenticalWorkSet_BacksOffLikeAnIdlePollAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -178,23 +189,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedWorkSet_UnderConstantWakeSignals_StillSpacesClaimsAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Every claim immediately re-arms the wake, as our own completion signals do in production.
     coord.AfterClaim = worker.RequestImmediatePoll;
@@ -228,17 +248,18 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedWorkSet_NewWorkDoorbellDuringSpacing_ClaimsPromptlyAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         // The gate reports available, so this IS the spacing nap length — production's 5s
@@ -246,8 +267,16 @@ public class ClaimWorkerReemissionBackoffTests {
         // against the 1s promptness bound without slowing the suite unduly.
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Drive the first two claims promptly (completion-feedback shape), so claim 2 is the
     // re-offer that engages the spacing. Stop pulling the lever after that: the nap that
@@ -292,23 +321,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedWorkSet_CompletionFeedbackDuringSpacing_StillWaitsOutTheNapAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     var fed = 0;
     coord.AfterClaim = () => {
@@ -350,23 +388,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task EmptyStore_UnderConstantCompletionFeedback_StillSpacesClaimsAsync() {
     var coord = new ReemittingCoordinator { ReturnEmpty = true };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Constant feedback: every claim pulls the wake lever, the shape a chatty fleet produces.
     coord.AfterClaim = worker.RequestImmediatePoll;
@@ -396,23 +443,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task EmptyStore_NewWorkDoorbellInterruptsTheIdleSpacingAsync() {
     var coord = new ReemittingCoordinator { ReturnEmpty = true };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

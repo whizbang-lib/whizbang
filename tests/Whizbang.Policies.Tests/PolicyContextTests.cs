@@ -54,7 +54,7 @@ public class PolicyContextTests {
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
 
     // Act
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Assert
     await Assert.That(context.Message).IsEqualTo(message);
@@ -67,7 +67,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Assert
     await Assert.That(context.Trail).IsNotNull();
@@ -87,7 +87,7 @@ public class PolicyContextTests {
     };
 
     // Act
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Assert
     await Assert.That(context.Envelope).IsEqualTo(envelope);
@@ -102,7 +102,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message: message, services: services, envelope: null);
 
     // Assert
     await Assert.That(context.Services).IsEqualTo(services);
@@ -114,7 +114,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message, environment: "production");
+    var context = new PolicyContext(message: message, environment: "production", envelope: null, services: null);
 
     // Assert
     await Assert.That(context.Environment).IsEqualTo("production");
@@ -127,7 +127,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
     var after = DateTimeOffset.UtcNow;
 
     // Assert
@@ -142,7 +142,7 @@ public class PolicyContextTests {
         .AddSingleton<ITestService, TestService>()
         .BuildServiceProvider();
     var message = new TestMessage("test");
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message: message, services: services, envelope: null);
 
     // Act
     var service = context.GetService<ITestService>();
@@ -156,7 +156,7 @@ public class PolicyContextTests {
   public async Task GetService_ThrowsException_WhenServiceProviderNotSetAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act & Assert
     await Assert.That(() => context.GetService<ITestService>())
@@ -168,7 +168,7 @@ public class PolicyContextTests {
     // Arrange
     var message = new TestMessage("test");
     var services = new TestServiceProvider(); // Empty provider
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message: message, services: services, envelope: null);
 
     // Act & Assert - Service not registered
     await Assert.That(() => context.GetService<ITestService>())
@@ -191,7 +191,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act
     var tenant = context.GetMetadata("tenant");
@@ -212,7 +212,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = new Dictionary<string, JsonElement>()
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act
     var result = context.GetMetadata("nonexistent");
@@ -225,7 +225,7 @@ public class PolicyContextTests {
   public async Task GetMetadata_ReturnsNull_WhenEnvelopeNotSetAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act
     var result = context.GetMetadata("any-key");
@@ -250,7 +250,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert
     await Assert.That(context.HasTag("high-priority")).IsTrue();
@@ -274,7 +274,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert
     await Assert.That(context.HasTag("low-priority")).IsFalse();
@@ -284,7 +284,7 @@ public class PolicyContextTests {
   public async Task HasTag_ReturnsFalse_WhenNoTagsInMetadataAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act & Assert
     await Assert.That(context.HasTag("any-tag")).IsFalse();
@@ -306,7 +306,7 @@ public class PolicyContextTests {
       Metadata = metadata  // Tags in envelope metadata, not hop metadata
     };
 
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert - Test IEnumerable<string> path (not just string[])
     await Assert.That(context.HasTag("high-priority")).IsTrue();
@@ -328,7 +328,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert
     await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsTrue();
@@ -349,7 +349,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert
     await Assert.That(context.HasFlag(WhizbangOptions.DryRun)).IsFalse();
@@ -359,7 +359,7 @@ public class PolicyContextTests {
   public async Task HasFlag_ReturnsFalse_WhenNoFlagsInMetadataAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act & Assert
     await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsFalse();
@@ -369,7 +369,7 @@ public class PolicyContextTests {
   public async Task MatchesAggregate_ReturnsTrue_WhenMessageIsForSpecifiedAggregateTypeAsync() {
     // Arrange
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act
     var matches = context.MatchesAggregate<Order>();
@@ -382,7 +382,7 @@ public class PolicyContextTests {
   public async Task MatchesAggregate_ReturnsFalse_WhenMessageIsForDifferentAggregateTypeAsync() {
     // Arrange
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act
     var matches = context.MatchesAggregate<Customer>();
@@ -402,7 +402,7 @@ public class PolicyContextTests {
     services.AddSingleton<IStreamIdExtractor>(StreamIdExtractorRegistry.GetComposite());
     var serviceProvider = services.BuildServiceProvider();
     var message = new MessageWithoutAttributeMarker("test");
-    var context = new PolicyContext(message, services: serviceProvider);
+    var context = new PolicyContext(message: message, services: serviceProvider, envelope: null);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -419,7 +419,7 @@ public class PolicyContextTests {
         .Services
         .BuildServiceProvider();
     var message = new TestMessage("test");
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message: message, services: services, envelope: null);
 
     // Act & Assert
     await Assert.That(() => context.GetAggregateId())
@@ -441,7 +441,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert - a non-array tags element must not match any tag
     await Assert.That(context.HasTag("high-priority")).IsFalse()
@@ -463,7 +463,7 @@ public class PolicyContextTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Metadata = metadata
     };
-    var context = new PolicyContext(message, envelope);
+    var context = new PolicyContext(message: message, envelope: envelope, services: null);
 
     // Act & Assert - a non-number flags element cannot have any flag set
     await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsFalse()
@@ -475,7 +475,7 @@ public class PolicyContextTests {
     // Arrange - no service provider means no extractor can be resolved.
     // Covers the Services-is-null guard at the top of GetAggregateId.
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message: message, envelope: null, services: null);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -489,7 +489,7 @@ public class PolicyContextTests {
     // Covers the "extractor not registered" throw branch.
     var services = new ServiceCollection().BuildServiceProvider();
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message: message, services: services, envelope: null);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -510,7 +510,7 @@ public class PolicyContextTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var message = new CreateProduct(expectedId, "Gadget");
-    var context = new PolicyContext(message, services: serviceProvider);
+    var context = new PolicyContext(message: message, services: serviceProvider, envelope: null);
 
     // Act
     var aggregateId = context.GetAggregateId();

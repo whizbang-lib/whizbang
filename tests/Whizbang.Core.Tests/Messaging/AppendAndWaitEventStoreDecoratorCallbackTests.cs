@@ -31,7 +31,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ResultToReturn = new SyncResult(SyncOutcome.Synced, 1, TimeSpan.FromMilliseconds(50))
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -70,7 +70,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ResultToReturn = new SyncResult(SyncOutcome.TimedOut, 0, TimeSpan.FromMilliseconds(100))
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -102,7 +102,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ResultToReturn = new SyncResult(SyncOutcome.Synced, 1, TimeSpan.FromMilliseconds(10))
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -195,38 +195,6 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     await Assert.That(capturedDecision.EventsAwaited).IsEqualTo(0);
   }
 
-  [Test]
-  public async Task AppendAndWaitAsync_AllPerspectives_WithoutEventCompletionAwaiter_InvokesDecisionCallbackOnlyAsync() {
-    // Arrange - NO event completion awaiter registered
-    var inner = new InMemoryEventStore();
-    var syncAwaiter = new FakePerspectiveSyncAwaiter();
-    var tracker = new FakeScopedEventTracker();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, syncAwaiter, eventCompletionAwaiter: null, tracker);
-
-    var streamId = Guid.NewGuid();
-    var message = new TestEvent("test-data");
-
-    SyncWaitingContext? capturedWaiting = null;
-    SyncDecisionContext? capturedDecision = null;
-
-    tracker.TrackEmittedEvent(streamId, typeof(TestEvent), Guid.NewGuid());
-
-    // Act
-    var result = await decorator.AppendAndWaitAsync(
-        streamId,
-        message,
-        TimeSpan.FromSeconds(5),
-        onWaiting: ctx => capturedWaiting = ctx,
-        onDecisionMade: ctx => capturedDecision = ctx);
-
-    // Assert - onWaiting NOT called because no awaiter to wait with
-    await Assert.That(capturedWaiting).IsNull();
-
-    // Assert - onDecisionMade called with Synced (can't verify either way)
-    await Assert.That(capturedDecision).IsNotNull();
-    await Assert.That(capturedDecision!.Outcome).IsEqualTo(SyncOutcome.Synced);
-    await Assert.That(capturedDecision.DidWait).IsFalse();
-  }
 
   [Test]
   public async Task AppendAndWaitAsync_AllPerspectives_WhenTimedOut_InvokesBothCallbacksAsync() {
@@ -333,7 +301,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     var syncAwaiter = new FakePerspectiveSyncAwaiter();
     var eventCompletionAwaiter = new FakeEventCompletionAwaiter(completesImmediately: true);
     // Note: NO scopedEventTracker passed to constructor
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, syncAwaiter, eventCompletionAwaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: syncAwaiter, eventCompletionAwaiter: eventCompletionAwaiter, scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");

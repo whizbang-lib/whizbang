@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -30,7 +31,7 @@ public class DispatcherDisposalTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();

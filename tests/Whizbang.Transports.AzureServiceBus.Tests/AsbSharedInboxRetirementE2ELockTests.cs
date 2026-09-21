@@ -102,10 +102,11 @@ public class AsbSharedInboxRetirementE2ELockTests {
         new AzureServiceBusOptions { EnableSessions = false },
         NullLogger<AzureServiceBusTransport>.Instance);
       var publishStrategy = new TransportPublishStrategy(
-        publisherTransport,
-        new DefaultTransportReadinessCheck(),
-        SHARED_INBOX,
-        namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+        transport: publisherTransport,
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        inboxTopic: SHARED_INBOX,
+        namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+        loggerFactory: NullLoggerFactory.Instance);
 
       var domainResult = await publishStrategy.PublishAsync(
         _commandWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp", "domain-command"),

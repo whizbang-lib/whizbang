@@ -55,7 +55,7 @@ public static class TrafficClasses {
 /// exists because the transport's idle machinery once consumed a whole namespace quota unobserved;
 /// an expensive observer would be the same bug wearing a different hat.
 /// </remarks>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public interface IBacklogPeek {
   /// <summary>The short transport tag this peek reports under (<c>asb</c>, <c>rabbitmq</c>).</summary>

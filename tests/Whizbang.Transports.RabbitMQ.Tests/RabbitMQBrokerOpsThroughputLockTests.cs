@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -75,10 +76,11 @@ public class RabbitMQBrokerOpsThroughputLockTests {
     var publisherTransport = await RabbitTestWire.NewInitializedTransportAsync(publisherConnection);
     var routingOptions = new RoutingOptions().RouteCommandNamespaceToInbox(HANDLED_NAMESPACE);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
 
     for (var i = 0; i < N; i++) {
       var envelope = _outboxEnvelope($"burst-{i}");

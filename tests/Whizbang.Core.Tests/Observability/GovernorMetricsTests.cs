@@ -4,6 +4,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -47,7 +48,7 @@ public class GovernorMetricsTests {
   /// </remarks>
   private static (GovernorMetrics Metrics, MeterListener Listener, List<(string Name, long Value, string? Direction)> Captured) _listen(string series) {
     var captured = new List<(string, long, string?)>();
-    var metrics = new GovernorMetrics(new WhizbangMetrics());
+    var metrics = new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var listener = new MeterListener {
       InstrumentPublished = (inst, l) => {
         if (inst.Meter.Name == GovernorMetrics.METER_NAME) { l.EnableMeasurementEvents(inst); }
@@ -132,7 +133,7 @@ public class GovernorMetricsTests {
 
   [Test]
   public async Task MeterIsRegisteredSoConsumersGetItAutomaticallyAsync() {
-    _ = new GovernorMetrics(new WhizbangMetrics());
+    _ = new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(WhizbangMeters.All).Contains(GovernorMetrics.METER_NAME)
       .Because("a meter absent from the central list is one every consumer must remember to add "

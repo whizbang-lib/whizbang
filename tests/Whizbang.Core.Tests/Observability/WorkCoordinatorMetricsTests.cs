@@ -1,5 +1,7 @@
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -20,7 +22,7 @@ public class WorkCoordinatorMetricsTests {
   [Test]
   public async Task WCMetrics_Constructor_CreatesAllInstrumentsAsync() {
     // Arrange & Act
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
 
     // Assert - all properties are non-null

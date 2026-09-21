@@ -12,6 +12,13 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -116,18 +123,20 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var leaseRegistry = new LeaseRegistry();
     var renewCoordinator = new _renewCapturingCoordinator();
     var renewalServices = new ServiceCollection();
+    renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
-      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry);
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry: leaseRegistry,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
@@ -177,18 +186,20 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var dispatcher = new _ackedBatchReportingDispatcher(
       BATCHES, batchNumber => renewCoordinator.WaitForRenewalCountAsync(sinkWork.WorkId, batchNumber));
     var renewalServices = new ServiceCollection();
+    renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
-      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry);
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry: leaseRegistry,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
@@ -768,11 +779,12 @@ public class PerspectiveWorkerCollectiveSinkTests {
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null) {
     var instanceProvider = new _instanceProvider();
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
     var coordinator = new _coordinator(work) { DrainStreamIds = drainStreamIds ?? [], StreamEvents = streamEvents ?? [] };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -796,19 +808,35 @@ public class PerspectiveWorkerCollectiveSinkTests {
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
-      processedEventCacheObserver: processedEventCacheObserver,
+      processedEventCacheObserver: processedEventCacheObserver ?? NullProcessedEventCacheObserver.Instance,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      leaseRenewalChannel: leaseRenewalChannel,
+      leaseRenewalChannel: leaseRenewalChannel ?? new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
-      deadLetterStore: deadLetterStore,
-      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: (deadLetterStore is null ? null : new DefaultGenerationProvider()) ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider(),
       leaseRegistry: leaseRegistry,
-      compositeMetrics: compositeMetrics);
+      compositeMetrics: compositeMetrics,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
+      })).Value));
     return (worker, harness, coordinator);
   }
 

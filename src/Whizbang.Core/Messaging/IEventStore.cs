@@ -18,6 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+/// <docs>fundamentals/events/event-store</docs>
 public interface IEventStore {
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).

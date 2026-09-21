@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -39,7 +40,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.CreateVersion7();
@@ -70,7 +71,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var coordinator = new TestWorkCoordinator();
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     // Act - First flush with 2 messages
     var msg1 = System.Guid.CreateVersion7();
@@ -148,7 +149,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {

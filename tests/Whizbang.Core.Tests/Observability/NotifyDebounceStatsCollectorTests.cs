@@ -9,6 +9,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -22,7 +23,7 @@ namespace Whizbang.Core.Tests.Observability;
 [Category("Observability")]
 public class NotifyDebounceStatsCollectorTests {
 
-  private static NotifyDebounceMetrics _newMetrics() => new(new WhizbangMetrics());
+  private static NotifyDebounceMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   [Test]
   public async Task NoProvider_LogsAndExitsLoopAsync() {

@@ -190,7 +190,7 @@ public class BacklogAgeDutyTests {
     public IReadOnlyList<TrafficClassOpsRate> Project() => rates;
   }
 
-  private static BacklogAgeMetrics _metrics() => new(new WhizbangMetrics());
+  private static BacklogAgeMetrics _metrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   private static BacklogAgeWorker _worker(
       BacklogAgeState state,

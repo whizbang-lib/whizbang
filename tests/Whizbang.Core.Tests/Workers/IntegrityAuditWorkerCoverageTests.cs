@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -207,7 +208,7 @@ public class IntegrityAuditWorkerCoverageTests {
     var worker = _buildWorker(coordinator, new StreamIntegrityOptions { RepairTopic = "test-topic" },
       tracker: tracker,
       serializer: new EnvelopeSerializer(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()),
-      instanceProvider: new ServiceInstanceProvider());
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     // Deliberately NOT registered: ITransport — the one piece a single-service host never wires.
 
     await worker.RunAuditOnceAsync(CancellationToken.None);

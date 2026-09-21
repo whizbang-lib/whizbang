@@ -15,6 +15,8 @@ using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -383,12 +385,13 @@ public class CoalesceShipWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       coalesceResolver: resolver,
-      logger: null,
-      timeProvider: time);
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      timeProvider: time,
+      compositeFactory: new CompositeFactory());
   }
 
   private static CoalesceGroupStats _stats(string group, long count, int oldestAge, int newestAge) => new() {
@@ -754,12 +757,13 @@ public class CoalesceShipWorkerTests {
     // Gate never marked ready, and it reports the moment a waiter arrives.
     var gate = new BlockingGate();
     var worker = new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       coalesceResolver: _oneGroupResolver(time),
-      logger: null,
-      timeProvider: time);
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      timeProvider: time,
+      compositeFactory: new CompositeFactory());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

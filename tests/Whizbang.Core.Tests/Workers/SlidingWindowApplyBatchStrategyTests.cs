@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -35,7 +36,8 @@ public class SlidingWindowApplyBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamId);
     await sut.AppendAsync(streamId);
@@ -70,7 +72,8 @@ public class SlidingWindowApplyBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamA);
     await sut.AppendAsync(streamA);
@@ -102,7 +105,8 @@ public class SlidingWindowApplyBatchStrategyTests {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(60),
         MaxSize = 1000,
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamId);
     await sut.AppendAsync(streamId);
@@ -116,7 +120,8 @@ public class SlidingWindowApplyBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterDispose_ThrowsObjectDisposedAsync() {
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (_, _, _) => Task.CompletedTask);
+      flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
     await sut.DisposeAsync();
 
     await Assert.That(async () => await sut.AppendAsync(_idProvider.NewGuid()))
@@ -147,7 +152,8 @@ public class SlidingWindowApplyBatchStrategyTests {
         MaxSize = 100,
         IdleSweepInterval = TimeSpan.FromMilliseconds(20),
         IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamId);
     await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -189,7 +195,8 @@ public class SlidingWindowApplyBatchStrategyTests {
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamId);
     await flushStarted.Task;  // the flush is in flight and stuck, whatever the machine's load
@@ -247,7 +254,8 @@ public class SlidingWindowApplyBatchStrategyTests {
         // eviction state instead, so the assertion is about recovery, not about timing.
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromMinutes(5),
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(streamId);
 

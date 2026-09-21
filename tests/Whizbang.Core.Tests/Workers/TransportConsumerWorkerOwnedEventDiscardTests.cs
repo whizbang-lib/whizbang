@@ -15,6 +15,8 @@ using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -247,6 +249,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
@@ -261,13 +264,20 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: instanceProvider,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>());
+      routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

@@ -51,6 +51,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithoutRouting_ThrowsOnResolutionAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("TestSvc"));
 
@@ -74,6 +75,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
@@ -105,6 +107,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_WithConfigureAction_AddsDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
@@ -138,6 +141,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithoutServiceInstanceProvider_UsesAssemblyNameFallbackAsync() {
     // Arrange - No IServiceInstanceProvider registered
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     var builder = new WhizbangBuilder(services);
@@ -160,6 +164,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_WithoutServiceInstanceProvider_ResolvesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     var whizbangBuilder = new WhizbangBuilder(services);

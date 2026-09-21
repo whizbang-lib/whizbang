@@ -13,6 +13,10 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -452,14 +456,24 @@ public class OutboxPublishWorkerErrorPathTests {
       TransportNotReadyRetryDelayMilliseconds = transportNotReadyRetryDelayMs,
     };
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(options),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
-      lifecycleMessageDeserializer: lifecycleDeserializer,
-      occurrenceGate: occurrenceGate);
+      lifecycleMessageDeserializer: lifecycleDeserializer ?? new JsonLifecycleMessageDeserializer(),
+      occurrenceGate: occurrenceGate ?? new NoOpOccurrencePublishGate(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     return new _Fixture(worker, channel, completion, failure, renewal, options, gate);
   }
 
@@ -708,6 +722,7 @@ public class OutboxPublishWorkerErrorPathTests {
     var coordinator = new _SpyLifecycleCoordinator();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddScoped<ILifecycleCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
@@ -758,6 +773,7 @@ public class OutboxPublishWorkerErrorPathTests {
     var invoker = new _RecordingReceptorInvoker();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     // No ILifecycleCoordinator — the direct receptor-invocation fallback runs.
     var sp = services.BuildServiceProvider();
@@ -791,6 +807,7 @@ public class OutboxPublishWorkerErrorPathTests {
     var coordinator = new _SpyLifecycleCoordinator();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddScoped<ILifecycleCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();

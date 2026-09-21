@@ -26,12 +26,12 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
     ISchemaReadyGate schemaReadyGate,
     IOptions<FailureFlushWorkerOptions> options,
     ILogger<FailureFlushWorker> logger,
-    IPinnedConnectionPool? pinnedPool = null) {
+    IPinnedConnectionPool pinnedPool) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -82,7 +82,13 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
 /// <summary>Categorized failure carried by the failure channel.</summary>
 public sealed record CategorizedFailure(WorkCategory Category, MessageFailure Failure);
 
-/// <summary>Channel surface for workers to enqueue failures.</summary>
+/// <summary>
+/// Channel through which workers hand off failed work items. The failure flush worker drains it and
+/// records each failure in a batch, which is what schedules the retry or the dead-letter move.
+/// Replaceable: a host registers its own implementation before the framework's to intercept or
+/// reroute failures; the default is the flush worker itself.
+/// </summary>
+/// <docs>messaging/failure-handling</docs>
 public interface IFailureChannel {
   /// <summary>Enqueue a categorized failure for asynchronous flushing.</summary>
   ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default);

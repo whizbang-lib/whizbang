@@ -14,6 +14,8 @@ using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Routing;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -215,15 +217,15 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       ITransport transport, TransportNamespaceResolver? transportNamespaces,
       TransportMetrics? metrics = null) {
     return new TransportPublishStrategy(
-      transport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
-      loggerFactory: null,
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
       throttleRetryOptions: new ThrottleRetryOptions { MaxAttempts = 2, BaseDelay = TimeSpan.FromMilliseconds(1) },
       metrics: metrics,
       postSerializeHookChain: null,
       jsonOptions: null,
-      namespaceRouting: null,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       transportNamespaces: transportNamespaces);
   }
 

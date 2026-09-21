@@ -9,6 +9,9 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Execution;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -65,22 +68,28 @@ public partial class OutboxDrainWorkerCoverageTests {
     gate.MarkReady();
     var logger = new EventIdSignalingLogger<OutboxDrainWorker>();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IMessageSecurityContextProvider>(new _ThrowingSecurityContextProvider(flushFailure));
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _ServiceInstanceProvider(),
-      drain,
-      new _CompletionChannel(),
-      new _FailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      logger,
-      new _BulkSuccessStrategy(),
-      lifecycleMessageDeserializer: new _PassthroughDeserializer());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _ServiceInstanceProvider(),
+      drainChannel: drain,
+      completionChannel: new _CompletionChannel(),
+      failureChannel: new _FailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: logger,
+      publishStrategy: new _BulkSuccessStrategy(),
+      lifecycleMessageDeserializer: new _PassthroughDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

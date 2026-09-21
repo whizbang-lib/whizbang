@@ -14,6 +14,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures.
@@ -77,7 +78,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     ReceptorInvoker<object>? invoker = null,
     VoidReceptorInvoker? voidInvoker = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor,
@@ -484,7 +485,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     // Arrange - DispatcherMetrics registered + trace store forces the tracing path;
     // a throwing receptor must record an error measurement and rethrow
     var errorCount = 0L;
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     using var meterListener = new MeterListener();
     // Pin to THIS test's error counter: other tests build DispatcherMetrics on the same meter
     // name, and a passive counter reports every instance's series at collection.

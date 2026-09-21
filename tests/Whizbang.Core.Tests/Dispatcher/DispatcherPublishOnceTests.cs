@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Observability;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -223,7 +224,7 @@ public class DispatcherPublishOnceTests {
 
   private static IDispatcher _createDispatcher(IClaimedEmissionStore? claimStore) {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     if (claimStore is not null) {
@@ -236,7 +237,7 @@ public class DispatcherPublishOnceTests {
       IClaimedEmissionStore claimStore,
       TestMeterFactory factory) {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     services.AddSingleton(claimStore);

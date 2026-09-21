@@ -41,7 +41,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly IOutboxCompletionChannel _completionChannel;
   private readonly IFailureChannel _failureChannel;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IMessagePublishStrategy? _publishStrategy;
+  private readonly IMessagePublishStrategy _publishStrategy;
   private readonly OutboxDrainWorkerOptions _options;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor;
   // Cross-stream publish accumulator. Streams drain concurrently at up to the governor's width,
@@ -52,14 +52,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly List<OutboxBatchRow> _publishAccumulator = [];
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IReceptorRegistryQuery? _receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
+  private readonly IReceptorRegistryQuery _receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry;
   // v0.502 slice C.4b — optional DLQ persistence + generation tag. When both wired, rows
   // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
-  private readonly IDeadLetterStore? _deadLetterStore;
-  private readonly IGenerationProvider? _generationProvider;
+  private readonly IDeadLetterStore _deadLetterStore;
+  private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
@@ -102,6 +102,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <docs>operations/workers/publisher-worker</docs>
   public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
 
+  /// <summary>Keyed-service key under which this worker's concurrency governor is registered. A host
+  /// that registers its own governor under this key before AddWhizbang wins; the framework default
+  /// is added with TryAdd and built by <see cref="CreateDefaultGovernor"/>.</summary>
+  public const string GOVERNOR_KEY = "outbox-drain";
+
   /// <summary>
   /// The governor a host gets when it supplies none: self-tuning, starting at the configured width.
   /// </summary>
@@ -127,7 +132,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// only this worker's own latency.
   /// </para>
   /// </remarks>
-  internal static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(OutboxDrainWorkerOptions options) {
+  public static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(OutboxDrainWorkerOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var configured = Math.Max(1, options.MaxConcurrentStreams);
     return new Whizbang.Core.Execution.ThroughputGovernor(
@@ -136,16 +141,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       start: configured);
   }
 
-  /// <summary>
-  /// An explicitly supplied governor always wins; otherwise the adaptive default applies.
-  /// </summary>
-  /// <remarks>
-  /// A host that wired a specific strategy knows something the framework does not. Changing the
-  /// default must never silently overrule that choice.
-  /// </remarks>
-  internal static Whizbang.Core.Execution.IConcurrencyGovernor ResolveGovernor(
-      Whizbang.Core.Execution.IConcurrencyGovernor? supplied, OutboxDrainWorkerOptions options)
-    => supplied ?? CreateDefaultGovernor(options);
 
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
@@ -160,14 +155,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOptions<OutboxDrainWorkerOptions> options,
     JsonSerializerOptions jsonOptions,
     ILogger<OutboxDrainWorker> logger,
-    IMessagePublishStrategy? publishStrategy = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null,
-    IDeadLetterStore? deadLetterStore = null,
-    IGenerationProvider? generationProvider = null,
+    IMessagePublishStrategy publishStrategy,
+    ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+    IReceptorRegistryQuery receptorRegistry,
+    IReceptorRegistry runtimeReceptorRegistry,
+    IDeadLetterStore deadLetterStore,
+    IGenerationProvider generationProvider,
+    [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-    Whizbang.Core.Execution.IConcurrencyGovernor? governor = null,
     Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -176,13 +171,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    // Turn-key observability: whatever governor is in play — the adaptive default or a host
-    // supplied strategy — is wrapped so its decisions and their inputs reach OpenTelemetry with no
+    // Turn-key observability: whatever governor is in play — the keyed adaptive default or a host
+    // supplied strategy under the same key — is wrapped so its decisions and their inputs reach OpenTelemetry with no
     // consumer wiring. A concurrency controller nobody can see is one nobody can debug.
-    var chosen = ResolveGovernor(governor, _options);
     _governor = governorMetrics is null
-      ? chosen
-      : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", chosen, governorMetrics);
+      ? governor
+      : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", governor, governorMetrics);
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _publishStrategy = publishStrategy;
@@ -199,8 +193,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxPerStream);
 
-    if (!_options.Enabled || _publishStrategy is null) {
-      if (_publishStrategy is null) { LogNoTransportRegistered(_logger); }
+    if (!_options.Enabled || !_publishStrategy.IsConfigured) {
+      if (!_publishStrategy.IsConfigured) { LogNoTransportRegistered(_logger); }
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
       LogStopped(_logger);
@@ -540,8 +534,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           row.MessageId,
           row.Attempts,
           _options.MaxOutboxAttempts ?? -1,
-          _deadLetterStore is not null,
-          _generationProvider is not null);
+          _deadLetterStore.IsConfigured);
         // Control-plane traffic is DROPPED, never stored (see DeadLetterDropPolicy): the audit
         // re-issues these on its own cadence, and a stored copy is re-emitted into the inbox by
         // the recovery worker on a later boot — turning a burst of failures into a backlog that
@@ -561,8 +554,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         }
         if (_options.MaxOutboxAttempts is int maxAttempts
             && row.Attempts > maxAttempts
-            && _deadLetterStore is not null
-            && _generationProvider is not null) {
+            && _deadLetterStore.IsConfigured) {
           try {
             LogPrePublishGateFiring(_logger, row.MessageId, row.Attempts, maxAttempts);
             // Slice 1 of release/v0.648.0-alpha.1 — prefer the row's existing
@@ -608,7 +600,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // so a 49-message stream becomes 1 round-trip instead of 49. Per-stream FIFO is
       // preserved by the within-stream ordering above; per-row lifecycle hooks fire inside
       // the bulk helper around the batched publish call.
-      if (_publishStrategy!.SupportsBulkPublish && newRowList.Count > 0) {
+      if (_publishStrategy.SupportsBulkPublish && newRowList.Count > 0) {
         var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
         // Accumulate ACROSS streams rather than publishing this stream's rows alone. With work
         // spread thin — the measured shape was ~1.4 rows per stream across ~18,000 streams — a
@@ -804,7 +796,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
         // e.g., a strategy that validates inputs and throws before returning — flows into
         // the existing catch (Exception ex) failure path instead of escaping uncaught.
-        publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
+        publishTask = _publishStrategy.PublishBatchAsync(works, ct);
         results = publishTimeoutSeconds > 0
           ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
           : await publishTask;
@@ -924,7 +916,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Task<MessagePublishResult>? publishTask = null;
     LogPublishOneStart(_logger, row.MessageId, publishTimeoutSeconds);
     try {
-      publishTask = _publishStrategy!.PublishAsync(work, ct);
+      publishTask = _publishStrategy.PublishAsync(work, ct);
       result = publishTimeoutSeconds > 0
         ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
         : await publishTask;
@@ -991,9 +983,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// in that case so a missing deserializer never blocks the publish path.
   /// </summary>
   private IMessageEnvelope? _tryResolveTypedEnvelope(OutboxWork work) {
-    if (_lifecycleMessageDeserializer is null) {
-      return null;
-    }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       return work.Envelope.ReconstructWithPayload(message);
@@ -1026,10 +1015,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
 
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
-    var hasDetached = _receptorRegistry is null || !_isGatedOutboxStage(detachedStage)
+    var hasDetached = !_isGatedOutboxStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, detachedStage);
-    var hasInline = _receptorRegistry is null || !_isGatedOutboxStage(inlineStage)
+    var hasInline = !_isGatedOutboxStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
@@ -1114,7 +1103,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           or LifecycleStage.PostOutboxInline;
 
   private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
-    if (_runtimeReceptorRegistry is null || messageType is null) {
+    if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
@@ -1330,8 +1319,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   static partial void LogFetchBatchReturned(ILogger logger, Guid streamId, int fetchCount, int rowCount);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Debug,
-    Message = "OutboxDrainWorker: pre-publish DLQ gate eval msg={MessageId} attempts={Attempts} max={MaxAttempts} dlqStore={HasDlqStore} genProvider={HasGenerationProvider}")]
-  static partial void LogPrePublishGateEval(ILogger logger, Guid messageId, int attempts, int maxAttempts, bool hasDlqStore, bool hasGenerationProvider);
+    Message = "OutboxDrainWorker: pre-publish DLQ gate eval msg={MessageId} attempts={Attempts} max={MaxAttempts} dlqStore={HasDlqStore}")]
+  static partial void LogPrePublishGateEval(ILogger logger, Guid messageId, int attempts, int maxAttempts, bool hasDlqStore);
 
   [LoggerMessage(EventId = 34, Level = LogLevel.Debug,
     Message = "OutboxDrainWorker: pre-publish DLQ gate FIRING for {MessageId} (attempts={Attempts} > max={MaxAttempts}) — moving to wh_dead_letters")]

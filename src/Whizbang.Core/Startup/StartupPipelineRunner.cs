@@ -87,7 +87,7 @@ public interface IStartupStep {
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;
-  private readonly IDutyElector? _dutyElector;
+  private readonly IDutyElector _dutyElector;
 
   /// <summary>Creates a runner over the registered steps.</summary>
   /// <param name="steps">The registered steps, in any order — the resolver decides the real one.</param>
@@ -104,11 +104,11 @@ public sealed class StartupPipelineRunner {
   /// <exception cref="ArgumentNullException"><paramref name="steps"/> is <see langword="null"/>.</exception>
   public StartupPipelineRunner(
       IReadOnlyList<IStartupStep> steps,
-      IReadOnlyList<IStartupStepObserver>? observers = null,
-      IDutyElector? dutyElector = null) {
+      IReadOnlyList<IStartupStepObserver> observers,
+      IDutyElector dutyElector) {
     ArgumentNullException.ThrowIfNull(steps);
     _steps = steps;
-    _observers = observers ?? [];
+    _observers = observers;
     _dutyElector = dutyElector;
   }
 
@@ -163,7 +163,7 @@ public sealed class StartupPipelineRunner {
 
       var step = byName[descriptor.Name];
       var watch = Stopwatch.StartNew();
-      var report = descriptor.RequiredCapability != StartupCapabilities.EVERY_INSTANCE && _dutyElector is not null
+      var report = descriptor.RequiredCapability != StartupCapabilities.EVERY_INSTANCE && _dutyElector.IsConfigured
         ? await _executeExclusiveAsync(step, descriptor, cancellationToken).ConfigureAwait(false)
         : await _executeAsync(step, cancellationToken).ConfigureAwait(false);
       watch.Stop();

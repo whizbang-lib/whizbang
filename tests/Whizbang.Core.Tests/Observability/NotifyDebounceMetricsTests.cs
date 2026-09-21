@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -27,13 +28,13 @@ public class NotifyDebounceMetricsTests {
 
   [Test]
   public async Task Constructor_CreatesWithoutErrorAsync() {
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await Assert.That(metrics).IsNotNull();
   }
 
   [Test]
   public async Task Update_StoresPerKindReadings_IncludingTheRegimeAsync() {
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.Update([
       new NotifyDebounceKindStats("inbox", FiredCount: 12, SuppressedCount: 3, MaxEffectiveWindowMs: 50, MaxRapidRun: 0),
       new NotifyDebounceKindStats("outbox", FiredCount: 4, SuppressedCount: 99, MaxEffectiveWindowMs: 7000, MaxRapidRun: 11),
@@ -55,7 +56,7 @@ public class NotifyDebounceMetricsTests {
 
   [Test]
   public async Task Update_LatestReadingWins_PerKindAsync() {
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.Update([new NotifyDebounceKindStats("inbox", 1, 0, 50, 0)]);
     metrics.Update([new NotifyDebounceKindStats("inbox", 5, 2, 7000, 8)]);
 
@@ -67,7 +68,7 @@ public class NotifyDebounceMetricsTests {
 
   [Test]
   public async Task GetForTest_UnknownKind_IsNullAsync() {
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await Assert.That(metrics.GetForTest("never-seen").HasValue).IsFalse();
   }
 
@@ -113,7 +114,7 @@ public class NotifyDebounceMetricsTests {
     // stays real-time" is exactly the comparison a single untagged number cannot express.
     var inbox = $"inbox-{Guid.NewGuid():N}";
     var outbox = $"outbox-{Guid.NewGuid():N}";
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.Update([
       new NotifyDebounceKindStats(inbox, FiredCount: 12, SuppressedCount: 3, MaxEffectiveWindowMs: 50, MaxRapidRun: 0),
       new NotifyDebounceKindStats(outbox, FiredCount: 4, SuppressedCount: 99, MaxEffectiveWindowMs: 7000, MaxRapidRun: 11),
@@ -155,7 +156,7 @@ public class NotifyDebounceMetricsTests {
     // A gauge that captured its value at construction would keep reporting the first cycle
     // forever -- the flood would be invisible on the dashboard while it was happening.
     var kind = $"inbox-{Guid.NewGuid():N}";
-    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics());
+    var metrics = new NotifyDebounceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.Update([new NotifyDebounceKindStats(kind, 1, 0, 50, 0)]);
     var before = _sample(metrics, new HashSet<string>(StringComparer.Ordinal) { kind });
 

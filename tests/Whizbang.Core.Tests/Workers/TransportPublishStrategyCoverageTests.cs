@@ -12,6 +12,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -64,9 +65,12 @@ public class TransportPublishStrategyCoverageTests {
     var transport = new AzureServiceBusTransport();
     var logger = new _capturingLogger();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
       loggerFactory: new _loggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts());
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -84,9 +88,12 @@ public class TransportPublishStrategyCoverageTests {
     var transport = new RabbitMQTransport();
     var logger = new _capturingLogger();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
       loggerFactory: new _loggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts());
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -103,9 +110,12 @@ public class TransportPublishStrategyCoverageTests {
     var transport = new InMemoryTransport();
     var logger = new _capturingLogger();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
       loggerFactory: new _loggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts());
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -136,9 +146,12 @@ public class TransportPublishStrategyCoverageTests {
       throw new InvalidOperationException("broker outage");
     });
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts());
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -183,7 +196,9 @@ public class TransportPublishStrategyCoverageTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: chain,
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_hookWork(), CancellationToken.None);
 

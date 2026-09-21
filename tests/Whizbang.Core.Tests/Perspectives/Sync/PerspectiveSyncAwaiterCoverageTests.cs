@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -38,12 +39,13 @@ public class PerspectiveSyncAwaiterCoverageTests {
 
   private static PerspectiveSyncAwaiter _awaiter(IScopedEventTracker tracker) =>
     new(
-      new MockWorkCoordinator((_, _) => throw new InvalidOperationException(
+      coordinator: new MockWorkCoordinator((_, _) => throw new InvalidOperationException(
         "the database must never be queried when there are no inquiries to resolve")),
-      new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
-      NullLogger<PerspectiveSyncAwaiter>.Instance,
-      new SyncEventTracker(),
-      tracker);
+      clock: new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
+      logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+      syncEventTracker: new SyncEventTracker(),
+      tracker: tracker,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
   // A one-shot status check that treated an inconsistent snapshot as "still pending" would report
   // false forever for events that were never actually there — callers polling IsCaughtUpAsync

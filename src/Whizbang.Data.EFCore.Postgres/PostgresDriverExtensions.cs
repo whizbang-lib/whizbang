@@ -121,7 +121,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.
-        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupAssessor>(sp =>
+        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
             new EFCorePostgresStartupAssessor(
                 sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
                 dbContextType,
@@ -201,7 +201,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: Register perspective snapshot store for efficient rewind
         // Uses NpgsqlDataSource for connection management (same as readiness check)
-        selector.Services.TryAddSingleton<IPerspectiveSnapshotStore>(sp => {
+        selector.Services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
           var snapshotLogger = sp.GetService<ILogger<EFCorePerspectiveSnapshotStore>>();
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
@@ -273,7 +273,7 @@ public static class PostgresDriverExtensions {
         //
         // IDeadLetterRecoveryService is SCOPED — DeadLetterRecoveryWorker explicitly
         // creates a scope per scan and resolves from it (see DeadLetterRecoveryWorker.cs).
-        selector.Services.TryAddSingleton<IDeadLetterStore>(sp =>
+        selector.Services.TryAddSingletonOverNullDefault<IDeadLetterStore>(sp =>
           new ScopedEFCoreDeadLetterStore(
             sp.GetRequiredService<IServiceScopeFactory>(),
             dbContextType,

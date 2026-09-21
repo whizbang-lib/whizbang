@@ -14,6 +14,9 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -95,8 +98,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
   private static TransportPublishStrategy _flipPublishStrategy(RabbitMQTransport transport) {
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox();
     return new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
   }
 
   private static OutboxWork _commandWork<TPayload>(TPayload payload, Guid? streamId = null)
@@ -269,9 +275,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
     // this stub consumes PlaceOrder (the sentinel) and nothing else, so the mis-delivered
     // ChargeCard on the orders exchange is exactly a mis-delivery.
     var discardPolicy = new MessageDiscardPolicy(
-      new ConsumesOnlyPlaceOrderRegistry(),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageDiscardPolicy>.Instance,
-      new System.Diagnostics.Metrics.Meter($"phase6-discard-{Guid.NewGuid():N}"));
+      registry: new ConsumesOnlyPlaceOrderRegistry(),
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageDiscardPolicy>.Instance,
+      meter: new System.Diagnostics.Metrics.Meter($"phase6-discard-{Guid.NewGuid():N}"),
+      routingOptions: Options.Create(new RoutingOptions()),
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     var transport = await _createTransportAsync(discardPolicy: discardPolicy);
     var handlerService = _uniqueService("svc-orders");
 
@@ -467,8 +475,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
     try {
       var publish = new TransportPublishStrategy(
-        transport, new DefaultTransportReadinessCheck(), "inbox",
-        namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+        transport: transport,
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        inboxTopic: "inbox",
+        namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+        loggerFactory: NullLoggerFactory.Instance);
       var commandResult = await publish.PublishAsync(commandWork, ct);
       var systemResult = await publish.PublishAsync(systemWork, ct);
       await Assert.That(commandResult.Success).IsTrue();

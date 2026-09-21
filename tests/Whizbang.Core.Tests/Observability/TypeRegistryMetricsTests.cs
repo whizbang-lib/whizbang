@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -15,7 +16,7 @@ namespace Whizbang.Core.Tests.Observability;
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 public class TypeRegistryMetricsTests {
 
-  private static TypeRegistryMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: null));
+  private static TypeRegistryMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   // The counters are passive (#711): the meter reports every series it holds at collection, so
   // the capture collects after the act and keeps the series that counted something. The series

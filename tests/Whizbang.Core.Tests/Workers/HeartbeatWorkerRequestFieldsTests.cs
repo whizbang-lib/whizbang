@@ -10,6 +10,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -100,7 +102,7 @@ public class HeartbeatWorkerRequestFieldsTests {
       HeartbeatWorkerOptions? options = null,
       IServiceInstanceProvider? provider = null) {
     var services = new ServiceCollection();
-    services.AddSingleton(provider ?? new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton(provider ?? new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
 
     return new HeartbeatWorker(
@@ -111,9 +113,9 @@ public class HeartbeatWorkerRequestFieldsTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: lifecycle!,
       libraryVersion: version!,
-      pinnedPool: null,
-      aliveLockSource: null,
-      signalBus: null,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance,
       timeProvider: null);
   }
 

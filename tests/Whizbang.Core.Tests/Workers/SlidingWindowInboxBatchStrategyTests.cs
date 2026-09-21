@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -37,7 +38,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage());
 
@@ -63,7 +65,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(10),  // generous so MaxSize is what flushes
         MaxSize = 5,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     for (var i = 0; i < 5; i++) {
       await sut.AppendAsync(_makeMessage());
@@ -89,7 +92,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMinutes(1),  // very long — won't fire before stop
         MaxSize = 1000,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage());
     await sut.AppendAsync(_makeMessage());
@@ -104,7 +108,8 @@ public class SlidingWindowInboxBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
     var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (_, _) => Task.CompletedTask);
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync();
 
@@ -148,7 +153,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     // Generate three messages — Uuid7 provider guarantees m1 < m2 < m3 lex order.
     var m1 = _makeMessage();
@@ -197,7 +203,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(300),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage(streamA));
     await sut.AppendAsync(_makeMessage(streamA));
@@ -236,7 +243,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(500),
         MaxWait = TimeSpan.FromSeconds(3),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     // m1, m2, m3 are MessageId-sorted. Append m3 first, m1 second (within window),
     // m2 third (also within window) — mirrors the cross-producer race that produced
@@ -279,7 +287,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage(streamId: null));
     await sut.AppendAsync(_makeMessage(streamId: null));
@@ -313,7 +322,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         MaxSize = 100,
         IdleSweepInterval = TimeSpan.FromMilliseconds(20),
         IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage(streamId));
     await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -437,7 +447,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(testToken);
     await sut.DisposeAsync();
@@ -462,7 +473,8 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(testToken);
 

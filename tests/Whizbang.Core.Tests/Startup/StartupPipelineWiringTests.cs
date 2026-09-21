@@ -6,6 +6,7 @@ using Whizbang.Core.Configuration;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -21,6 +22,7 @@ public class StartupPipelineWiringTests {
 
   private static ServiceProvider _build() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbangWorkers();
     return services.BuildServiceProvider();
@@ -121,6 +123,7 @@ public class StartupPipelineWiringTests {
   [Test]
   public async Task AddTransportConsumer_RegistersTheSameWorkerInstanceAsAReadinessContributorAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<Whizbang.Core.Transports.ITransport>(new Whizbang.Core.Transports.InProcessTransport());
     services.AddSingleton(new System.Text.Json.JsonSerializerOptions());

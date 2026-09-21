@@ -7,6 +7,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -32,6 +34,7 @@ public class ServiceBusConsumerWorkerPollingTests {
     // Arrange
     var transport = new TestPollingTransport();
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddLogging();
     serviceCollection.AddSingleton<IServiceInstanceProvider>(_ => new PollingTestServiceInstanceProvider());
     var serviceProvider = serviceCollection.BuildServiceProvider();
@@ -69,6 +72,7 @@ public class ServiceBusConsumerWorkerPollingTests {
     // Arrange
     var transport = new TestPollingTransport();
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddLogging();
     serviceCollection.AddSingleton<IServiceInstanceProvider>(_ => new PollingTestServiceInstanceProvider());
     var serviceProvider = serviceCollection.BuildServiceProvider();
@@ -233,6 +237,6 @@ internal sealed class PollingTestServiceInstanceProvider : IServiceInstanceProvi
 /// </summary>
 internal sealed class TestOrderedStreamProcessor : OrderedStreamProcessor {
   public TestOrderedStreamProcessor()
-    : base(parallelizeStreams: false, logger: null) {
+    : base(NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false) {
   }
 }

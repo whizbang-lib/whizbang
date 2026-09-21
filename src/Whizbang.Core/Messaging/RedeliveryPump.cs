@@ -91,15 +91,15 @@ public sealed class RedeliveryPump(
     ITransport transport,
     IEnvelopeSerializer envelopeSerializer,
     IServiceInstanceProvider instanceProvider,
+    ICompositeFactory compositeFactory,
     RedeliveryPumpOptions? options = null,
-    TimeProvider? timeProvider = null,
-    ICompositeFactory? compositeFactory = null) {
+    TimeProvider? timeProvider = null) {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly RedeliveryPumpOptions _options = options ?? new RedeliveryPumpOptions();
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
-  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
+  private readonly ICompositeFactory _compositeFactory = compositeFactory;
 
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.

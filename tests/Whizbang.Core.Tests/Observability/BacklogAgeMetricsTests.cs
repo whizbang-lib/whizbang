@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -61,7 +62,7 @@ public class BacklogAgeMetricsTests {
 
   [Test]
   public async Task BacklogDepthGauge_ReportsStoredDepthWithTagsAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var entity = $"inbox.orders.{Guid.NewGuid():N}";
     var recorded = _collect(entity, () => metrics.UpdateBacklogs(new Dictionary<string, BacklogAgeMetrics.BacklogGaugeSample> {
@@ -78,7 +79,7 @@ public class BacklogAgeMetricsTests {
 
   [Test]
   public async Task BacklogAgeGauge_ReportsOldestAgeAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var entity = $"inbox.orders.{Guid.NewGuid():N}";
     var recorded = _collect(entity, () => metrics.UpdateBacklogs(new Dictionary<string, BacklogAgeMetrics.BacklogGaugeSample> {
@@ -93,7 +94,7 @@ public class BacklogAgeMetricsTests {
   public async Task BacklogAgeGauge_SkipsEntriesWithNoAgeAsync() {
     // Depth without an age is a backlog we could not date; emitting zero would read as
     // "brand new" and mask a stuck consumer.
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var entity = $"inbox.orders.{Guid.NewGuid():N}";
     var recorded = _collect(entity, () => metrics.UpdateBacklogs(new Dictionary<string, BacklogAgeMetrics.BacklogGaugeSample> {
@@ -106,7 +107,7 @@ public class BacklogAgeMetricsTests {
 
   [Test]
   public async Task OpsRateGauge_ReportsStoredRateWithTagsAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var ns = $"ns.{Guid.NewGuid():N}";
     var recorded = _collect(ns, () => metrics.UpdateOpsRates(new Dictionary<string, BacklogAgeMetrics.OpsRateGaugeSample> {
@@ -123,7 +124,7 @@ public class BacklogAgeMetricsTests {
   public async Task UpdateBacklogs_DropsEntitiesMissingFromTheNewSampleAsync() {
     // Stale entries must go, or a deleted subscription keeps reporting its last depth
     // forever and an operator chases a backlog that no longer exists.
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.UpdateBacklogs(new Dictionary<string, BacklogAgeMetrics.BacklogGaugeSample> {
       ["gone"] = new("asb", "ns-1", "bulk", 5, 10),
@@ -139,7 +140,7 @@ public class BacklogAgeMetricsTests {
 
   [Test]
   public async Task UpdateOpsRates_DropsNamespacesMissingFromTheNewSampleAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.UpdateOpsRates(new Dictionary<string, BacklogAgeMetrics.OpsRateGaugeSample> {
       ["gone"] = new("asb", "gone", "bulk", 1),
@@ -155,14 +156,14 @@ public class BacklogAgeMetricsTests {
 
   [Test]
   public async Task UpdateBacklogs_WithNullSamples_ThrowsAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(() => metrics.UpdateBacklogs(null!)).ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
   public async Task UpdateOpsRates_WithNullSamples_ThrowsAsync() {
-    var metrics = new BacklogAgeMetrics(new WhizbangMetrics());
+    var metrics = new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(() => metrics.UpdateOpsRates(null!)).ThrowsExactly<ArgumentNullException>();
   }

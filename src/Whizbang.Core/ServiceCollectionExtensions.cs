@@ -320,17 +320,17 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private static void _registerCoreServices(IServiceCollection services) {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
-    services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
+    services.TryAddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
 
     // Deferred outbox channel for events published outside transaction context
     // Events queued here are drained by the work coordinator in the next lifecycle loop
-    services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
 
     // Inbox channel for routing claimed inbox work to the publisher worker
-    services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
+
+    services.TryAddWhizbangDefaults();
 
     // Shared completion counter. The claim loop sizes its outstanding budget from this; the
     // dispatch and publish workers feed it. Registered unconditionally because a MISSING meter
@@ -375,7 +375,7 @@ public static class ServiceCollectionExtensions {
     });
 
     services.TryAddSingleton<IServiceInstanceProvider>(sp => {
-      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      var configuration = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new ServiceInstanceProvider(configuration);
     });
 
@@ -604,10 +604,10 @@ public static class ServiceCollectionExtensions {
         var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
-        var scopedTracker = sp.GetService<IScopedEventTracker>();
-        var envelopeRegistry = sp.GetService<Observability.IEnvelopeRegistry>();
-        var syncEventTracker = sp.GetService<ISyncEventTracker>();
-        var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
+        var scopedTracker = sp.GetRequiredService<IScopedEventTracker>();
+        var envelopeRegistry = sp.GetRequiredService<Observability.IEnvelopeRegistry>();
+        var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
+        var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
             withSecurityContext,
             scopedTracker,
@@ -617,7 +617,7 @@ public static class ServiceCollectionExtensions {
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
-        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
+        var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
             syncAwaiter,
@@ -655,23 +655,23 @@ public static class ServiceCollectionExtensions {
         var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
-        var syncEventTracker = sp.GetService<ISyncEventTracker>();
-        var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
+        var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
+        var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
             withSecurityContext,
-            tracker: null, // Scoped tracker not available in singleton
-            envelopeRegistry: null,
+            tracker: NullScopedEventTracker.Instance, // a singleton store cannot hold a request-scoped tracker
+            sp.GetRequiredService<Observability.IEnvelopeRegistry>(),
             syncEventTracker,
             typeRegistry);
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
-        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
+        var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
             syncAwaiter,
             eventCompletionAwaiter,
-            scopedEventTracker: null); // Scoped tracker not available in singleton
+            scopedEventTracker: AmbientScopedEventTracker.Instance); // waits on the caller's ambient scope, when one exists
       });
     }
 

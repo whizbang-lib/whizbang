@@ -1,5 +1,7 @@
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -18,7 +20,7 @@ public class TransportMetricsTests {
 
   [Test]
   public async Task TransportMetrics_Constructor_CreatesAllInstrumentsAsync() {
-    var metrics = new TransportMetrics(new WhizbangMetrics());
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.InboxReceiveDuration).IsNotNull();
     await Assert.That(metrics.InboxDedupDuration).IsNotNull();

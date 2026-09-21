@@ -19,7 +19,7 @@ public sealed partial class WhizbangStartupLogger(
   ILoggerFactory loggerFactory,
   IServiceInstanceProvider instanceProvider,
   WhizbangCoreOptions coreOptions,
-  IConfiguration? configuration = null) : IHostedService {
+  IConfiguration configuration) : IHostedService {
 
   private readonly ILogger _logger = loggerFactory.CreateLogger("Whizbang.Startup");
 
@@ -30,7 +30,7 @@ public sealed partial class WhizbangStartupLogger(
 
     // Config file overrides code option (Whizbang:ShowBanner in appsettings.json)
     var showBanner = coreOptions.ShowBanner;
-    var configValue = configuration?["Whizbang:ShowBanner"];
+    var configValue = configuration["Whizbang:ShowBanner"];
     if (configValue is not null && bool.TryParse(configValue, out var parsed)) {
       showBanner = parsed;
     }

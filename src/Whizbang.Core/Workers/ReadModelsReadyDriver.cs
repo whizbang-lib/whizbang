@@ -31,14 +31,14 @@ public sealed partial class ReadModelsReadyDriver : BackgroundService {
       IReadModelsReadyGate readModelsGate,
       ISchemaReadyGate schemaReadyGate,
       IServiceProvider services,
-      ILogger<ReadModelsReadyDriver>? logger = null) {
+      ILogger<ReadModelsReadyDriver> logger) {
     ArgumentNullException.ThrowIfNull(readModelsGate);
     ArgumentNullException.ThrowIfNull(schemaReadyGate);
     ArgumentNullException.ThrowIfNull(services);
     _readModelsGate = readModelsGate;
     _schemaReadyGate = schemaReadyGate;
     _services = services;
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ReadModelsReadyDriver>.Instance;
+    _logger = logger;
   }
 
   /// <inheritdoc />

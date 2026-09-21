@@ -9,6 +9,7 @@ using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -161,15 +162,16 @@ public class StandbyWatcherTests {
     gate.MarkReady();
 
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle,
-      host,
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: lifecycle,
+      hostLifetime: host,
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider(ourVersion),
-      assessor: assessor,
+      assessor: assessor ?? NullStartupAssessor.Instance,
       pipelineRunner: null,
-      options: options ?? new StandbyWatcherOptions());
+      options: options ?? new StandbyWatcherOptions(),
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     return new Harness(watcher, lifecycle, host, coordinator, sp);
   }
@@ -461,12 +463,14 @@ public class StandbyWatcherTests {
 
     var gate = new BlockingSchemaGate();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
-      versionProvider: new StubVersionProvider("1.0.0"));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -500,13 +504,15 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) },
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -537,12 +543,14 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle,
-      new RecordingHostLifetime(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: lifecycle,
+      hostLifetime: new RecordingHostLifetime(),
       instanceProvider: null!,
-      gate,
-      versionProvider: new StubVersionProvider("1.0.0"));
+      schemaReadyGate: gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -573,13 +581,15 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) },
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);

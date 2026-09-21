@@ -125,7 +125,7 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>Initializes a new instance of the <see cref="WorkCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 
     ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");

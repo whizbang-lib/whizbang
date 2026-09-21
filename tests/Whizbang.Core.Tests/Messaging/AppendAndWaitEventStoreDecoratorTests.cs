@@ -20,8 +20,10 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task Constructor_WithNullInner_ThrowsArgumentNullExceptionAsync() {
     await Assert.ThrowsAsync<ArgumentNullException>(async () => {
       _ = new AppendAndWaitEventStoreDecorator(
-          null!,
-          new FakePerspectiveSyncAwaiter());
+          inner: null!,
+          syncAwaiter: new FakePerspectiveSyncAwaiter(),
+          eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()),
+          scopedEventTracker: NullScopedEventTracker.Instance);
       await Task.CompletedTask;
     });
   }
@@ -30,8 +32,10 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task Constructor_WithNullAwaiter_ThrowsArgumentNullExceptionAsync() {
     await Assert.ThrowsAsync<ArgumentNullException>(async () => {
       _ = new AppendAndWaitEventStoreDecorator(
-          new InMemoryEventStore(),
-          null!);
+          inner: new InMemoryEventStore(),
+          syncAwaiter: null!,
+          eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()),
+          scopedEventTracker: NullScopedEventTracker.Instance);
       await Task.CompletedTask;
     });
   }
@@ -40,7 +44,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAndWaitAsync_AppendsEventToInnerStoreAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -66,7 +70,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ResultToReturn = new SyncResult(SyncOutcome.Synced, 1, TimeSpan.FromMilliseconds(50))
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -87,7 +91,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAndWaitAsync_UsesProvidedTimeoutAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -105,7 +109,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAndWaitAsync_WithNullTimeout_UsesDefaultTimeoutAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -125,7 +129,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ResultToReturn = new SyncResult(SyncOutcome.TimedOut, 0, TimeSpan.FromSeconds(5))
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -142,7 +146,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAndWaitAsync_PassesCancellationTokenAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -163,7 +167,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
     var awaiter = new FakePerspectiveSyncAwaiter {
       ShouldThrowOnCancellation = true
     };
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -183,7 +187,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAsync_WithEnvelope_DelegatesToInnerAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
@@ -209,7 +213,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task AppendAsync_WithMessage_DelegatesToInnerAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
@@ -229,7 +233,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task ReadAsync_BySequence_DelegatesToInnerAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     await inner.AppendAsync(streamId, new MessageEnvelope<TestEvent> {
@@ -252,7 +256,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   public async Task GetLastSequenceAsync_DelegatesToInnerAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter();
-    var decorator = new AppendAndWaitEventStoreDecorator(inner, awaiter);
+    var decorator = new AppendAndWaitEventStoreDecorator(inner: inner, syncAwaiter: awaiter, eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance);
 
     var streamId = Guid.NewGuid();
     await inner.AppendAsync(streamId, new MessageEnvelope<TestEvent> {

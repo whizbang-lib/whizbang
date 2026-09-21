@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -39,10 +40,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
 
     var msg = _outboxMessage(streamId);
     await sut.QueueOutboxMessageAsync(msg);
@@ -78,12 +80,13 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch, options);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, systemEventOptions: options, logger: NullLogger.Instance);
 
     var msg = _eventOutboxMessage(_idProvider.NewGuid());
     await sut.QueueOutboxMessageAsync(msg);
@@ -120,11 +123,12 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var inner = new RecordingInnerStrategy();
     // No SystemEventOptions at all — the pre-audit wiring shape. Nothing extra may be batched.
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
 
     await sut.QueueOutboxMessageAsync(_eventOutboxMessage(_idProvider.NewGuid()));
     await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -150,12 +154,13 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch, options);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, systemEventOptions: options, logger: NullLogger.Instance);
 
     // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
     await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));
@@ -171,9 +176,9 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task QueueOutboxMessage_SyncCall_ThrowsAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
 
     var msg = _outboxMessage(_idProvider.NewGuid());
 
@@ -188,9 +193,9 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task QueueInboxMessage_DelegatesToInnerStrategyAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
 
     sut.QueueInboxMessage(_inboxMessage(_idProvider.NewGuid()));
     sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Stored);
@@ -223,10 +228,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
 
     var m1 = _outboxMessage(streamId);
     var m2 = _outboxMessage(streamId);

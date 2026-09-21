@@ -8,6 +8,7 @@ namespace Whizbang.Core.Sequencing;
 /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
+/// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 public interface ISequenceProvider {
   /// <summary>
   /// Gets the next sequence number for a stream.

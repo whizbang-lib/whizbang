@@ -79,9 +79,11 @@ public class AwaiterIdentityTests {
 
   private static PerspectiveSyncAwaiter _createPerspectiveSyncAwaiter() {
     return new PerspectiveSyncAwaiter(
-        new MockWorkCoordinator(),
-        new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
-        NullLogger<PerspectiveSyncAwaiter>.Instance,
-        new SyncEventTracker());
+        coordinator: new MockWorkCoordinator(),
+        clock: new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
+        logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+        syncEventTracker: new SyncEventTracker(),
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
   }
 }

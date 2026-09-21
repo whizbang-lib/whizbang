@@ -12,6 +12,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.RabbitMQ.Tests;
 
@@ -320,7 +322,11 @@ public class RabbitMQTransportFailurePathTests {
   public async Task ProcessMessage_DiscardPolicySaysSkip_AcksWithoutInvokingHandlerAsync() {
     using var meter = new Meter("Whizbang.Tests.RabbitMQTransportFailurePathTests.Discard");
     var policy = new MessageDiscardPolicy(
-      new EmptyReceptorRegistry(), new CapturingLogger<MessageDiscardPolicy>(), meter);
+      registry: new EmptyReceptorRegistry(),
+      logger: new CapturingLogger<MessageDiscardPolicy>(),
+      meter: meter,
+      routingOptions: Options.Create(new RoutingOptions()),
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     var (channel, handled, _, _) = await _subscribeAsync(discardPolicy: policy);
 
     var (props, body) = RabbitTestWire.ValidWireMessage("skipped");

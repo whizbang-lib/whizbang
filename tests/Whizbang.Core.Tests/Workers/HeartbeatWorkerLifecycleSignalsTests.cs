@@ -124,14 +124,16 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     var schemaGate = gate ?? new SchemaReadyGate();
     if (gate is null) { ((SchemaReadyGate)schemaGate).MarkReady(); }
     return new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      schemaGate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
-      NullLogger<HeartbeatWorker>.Instance,
-      HeartbeatTestDependencies.LifecycleState,
-      HeartbeatTestDependencies.Version,
-      signalBus: bus);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      signalBus: bus,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance);
   }
 
   [Test]
@@ -215,14 +217,17 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     schemaGate.MarkReady();
     var bus = new CapturingBus();
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      schemaGate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),   // long interval — first heartbeat only
-      NullLogger<HeartbeatWorker>.Instance,
-      HeartbeatTestDependencies.LifecycleState,
-      HeartbeatTestDependencies.Version,
-      signalBus: bus);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
+      // long interval — first heartbeat only
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      signalBus: bus,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance);
     return (worker, coord, bus);
   }
 

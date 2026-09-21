@@ -114,7 +114,7 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Initializes a new instance of <see cref="StreamIntegrityMetrics"/>.</summary>
   public StreamIntegrityMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     CheckpointsPublished = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_published",

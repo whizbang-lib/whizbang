@@ -13,6 +13,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Execution;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -259,21 +262,37 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = streamCount,
         MaxPublishBatchSize = 0,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 0,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -329,21 +348,37 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = streamCount,
         MaxPublishBatchSize = 25,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 25,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -403,21 +438,37 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = streamCount,
         MaxPublishBatchSize = 5,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 5,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -481,20 +532,35 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = streamCount,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -568,21 +634,35 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel,
-      new FakeOutboxCompletionChannel(), new FakeFailureChannel(), gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = streamCount,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+      })).Value));
 
     // Queue the whole batch before the worker reads — the first batcher window sees all four.
     foreach (var sid in streamIds) {
@@ -666,17 +746,28 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var allPublished = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
     worker.OnOutboxMessagePublished += _ => {
       if (completion.AllIds.Count >= msgIds.Length) {
         allPublished.TrySetResult(completion.AllIds.Count);
@@ -753,17 +844,28 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
     worker.OnOutboxMessagePublished += _ => {
       if (completion.AllIds.Count + failure.All.Count >= 3) {
         done.TrySetResult(true);
@@ -804,17 +906,28 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
     // OnWorkProcessingIdle fires once the batch finishes — even when every row failed.
     // Use it as the completion signal so the test stays deterministic without Task.Delay.
     var idle = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -859,20 +972,35 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxConcurrentStreams = 1,
       }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = 1,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -904,16 +1032,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -960,16 +1099,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1006,16 +1156,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1081,16 +1242,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1179,20 +1351,28 @@ public class OutboxDrainWorkerTests {
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IReceptorInvoker>(invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
       lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
       receptorRegistry: new AlwaysHasReceptorsRegistry(),
-      runtimeReceptorRegistry: null);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1234,16 +1414,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1295,20 +1486,28 @@ public class OutboxDrainWorkerTests {
       }
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IReceptorInvoker>(invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
       lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
       receptorRegistry: new AlwaysHasReceptorsRegistry(),
-      runtimeReceptorRegistry: null);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1366,20 +1565,28 @@ public class OutboxDrainWorkerTests {
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IReceptorInvoker>(invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
       lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
       receptorRegistry: new NeverHasReceptorsRegistry(),
-      runtimeReceptorRegistry: null);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1420,20 +1627,28 @@ public class OutboxDrainWorkerTests {
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IReceptorInvoker>(invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
       lifecycleMessageDeserializer: new CapturingLifecycleDeserializer(),
       receptorRegistry: new AlwaysHasReceptorsRegistry(),
-      runtimeReceptorRegistry: null);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1484,16 +1699,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1543,16 +1769,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1604,20 +1841,28 @@ public class OutboxDrainWorkerTests {
 
     var invoker = new CapturingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton<IReceptorInvoker>(invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
       lifecycleMessageDeserializer: new ThrowingLifecycleDeserializer(),
       receptorRegistry: new AlwaysHasReceptorsRegistry(),
-      runtimeReceptorRegistry: null);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1662,16 +1907,27 @@ public class OutboxDrainWorkerTests {
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      loggerFactory.CreateLogger<OutboxDrainWorker>(),
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1721,16 +1977,27 @@ public class OutboxDrainWorkerTests {
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      loggerFactory.CreateLogger<OutboxDrainWorker>(),
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1771,16 +2038,27 @@ public class OutboxDrainWorkerTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1817,16 +2095,27 @@ public class OutboxDrainWorkerTests {
     using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      loggerFactory.CreateLogger<OutboxDrainWorker>(),
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1872,16 +2161,27 @@ public class OutboxDrainWorkerTests {
     });
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      loggerFactory.CreateLogger<OutboxDrainWorker>(),
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -19,7 +19,7 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#event-subscription-discovery</docs>
 public sealed class EventSubscriptionDiscovery {
-  private readonly IEventNamespaceRegistry? _registry;
+  private readonly IEventNamespaceRegistry _registry;
   private readonly RoutingOptions _routingOptions;
 
   /// <summary>
@@ -29,7 +29,7 @@ public sealed class EventSubscriptionDiscovery {
   /// <param name="registry">Event namespace registry for testing (optional). When null, uses static <see cref="EventNamespaceRegistry"/>.</param>
   public EventSubscriptionDiscovery(
       IOptions<RoutingOptions> routingOptions,
-      IEventNamespaceRegistry? registry = null) {
+      IEventNamespaceRegistry registry) {
     ArgumentNullException.ThrowIfNull(routingOptions);
     _routingOptions = routingOptions.Value;
     _registry = registry;
@@ -56,8 +56,7 @@ public sealed class EventSubscriptionDiscovery {
 
     // Add auto-discovered namespaces from perspectives and receptors
     // Use injected registry (for testing) or static registry (production)
-    var autoNamespaces = _registry?.GetAllEventNamespaces()
-        ?? EventNamespaceRegistry.GetAllNamespaces();
+    var autoNamespaces = _registry.GetAllEventNamespaces();
 
     foreach (var ns in autoNamespaces) {
       namespaces.Add(ns);
@@ -90,8 +89,7 @@ public sealed class EventSubscriptionDiscovery {
   /// <returns>Set of auto-discovered event namespaces.</returns>
   public IReadOnlySet<string> GetAutoDiscoveredNamespaces() {
     // Use injected registry (for testing) or static registry (production)
-    return _registry?.GetAllEventNamespaces()
-        ?? EventNamespaceRegistry.GetAllNamespaces();
+    return _registry.GetAllEventNamespaces();
   }
 
   /// <summary>
@@ -113,6 +111,7 @@ public static class EventSubscriptionDiscoveryExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection for chaining.</returns>
   public static IServiceCollection AddEventSubscriptionDiscovery(this IServiceCollection services) {
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<EventSubscriptionDiscovery>();
     return services;
   }

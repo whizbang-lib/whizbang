@@ -177,7 +177,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
 
   [Test]
   public async Task GatedCoordinator_AllGatedMethods_ExecuteThroughGateAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 2);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
     var c = new DapperWorkCoordinator(
       ConnectionString,
       _jsonOptions,

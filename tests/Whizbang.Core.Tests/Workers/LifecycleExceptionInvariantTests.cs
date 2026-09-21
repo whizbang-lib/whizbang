@@ -11,6 +11,10 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -109,15 +113,22 @@ public partial class LifecycleExceptionInvariantTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _NoOpOutboxCompletionChannel(),
-      failure, gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _NoOpOutboxPublishStrategy());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      drainChannel: new _FakeOutboxDrainChannel(),
+      completionChannel: new _NoOpOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new _NoOpOutboxPublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     var messageId = (Guid)TrackedGuid.NewMedo();
     var envelope = new MessageEnvelope<JsonElement> {
@@ -185,16 +196,24 @@ public partial class LifecycleExceptionInvariantTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeInboxChannelWriter(),
-      new _FakeHandlerCommitChannel(),
-      failure,
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      inboxChannelWriter: new _FakeInboxChannelWriter(),
+      handlerCommitChannel: new _FakeHandlerCommitChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var messageId = (Guid)TrackedGuid.NewMedo();
     var envelope = new MessageEnvelope<JsonElement> {
@@ -238,16 +257,24 @@ public partial class LifecycleExceptionInvariantTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeInboxChannelWriter(),
-      new _FakeHandlerCommitChannel(),
-      failure,
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _FakeServiceInstanceProvider(),
+      inboxChannelWriter: new _FakeInboxChannelWriter(),
+      handlerCommitChannel: new _FakeHandlerCommitChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var messageId = (Guid)TrackedGuid.NewMedo();
     var envelope = new MessageEnvelope<JsonElement> {

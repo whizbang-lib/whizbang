@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Diagnostics;
 
@@ -93,6 +94,7 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task IsRegisteredByAddWhizbangSoNobodyHasToKnowItExistsAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbang();
 
@@ -116,6 +118,7 @@ public class InertConcurrencyStartupReporterTests {
     // pod spec, and the warning fired anyway. A diagnostic that cries wolf on a healthy config is
     // worse than none — it is the exact noise this feature was written to avoid.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = true });
     services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = true });
@@ -136,6 +139,7 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task StillWarnsWhenTheSingletonOptionsAreGenuinelyInertAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = false });
     services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = false });

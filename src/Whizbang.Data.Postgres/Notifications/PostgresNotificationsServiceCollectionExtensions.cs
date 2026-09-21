@@ -8,6 +8,7 @@ using Npgsql;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -67,6 +68,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangPostgresNotifications(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    services.TryAddWhizbangDefaults();
     // AOT-safe options binding: register an IConfigureOptions impl that reads IConfiguration
     // values manually instead of using the reflection-based BindConfiguration<TOptions>.
     services.AddOptions<WhizbangNotificationOptions>();
@@ -92,12 +94,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddHostedService(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
 
-    // Replace the NoOp listener registered by AddWhizbangWorkers with the real one — but
-    // the listener is now a thin subscriber. It subscribes via the shared connection in
-    // its IHostedService.StartAsync.
-    services.RemoveAll<IWorkNotificationListener>();
+    // Displace the placeholder listener the core registers; a host's own listener, if it registered
+    // one, is left in place. The listener is a thin subscriber: it subscribes via the shared
+    // connection in its IHostedService.StartAsync.
     services.TryAddSingleton<PgWorkNotificationListener>();
-    services.AddSingleton<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
+    services.TryAddSingletonOverNullDefault<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
     services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
 
     // Slice 26.12: register the commit-order stamper worker. Singleton per pod via
@@ -157,7 +158,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // occurrence executes. Inert unless the developer registers an IScheduleFireHook — with none, the gate
     // proceeds for everything and publishing is byte-for-byte unchanged.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleOccurrenceStore, PgScheduleOccurrenceStore>();
-    services.TryAddSingleton<Whizbang.Core.Workers.IOccurrencePublishGate,
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Workers.IOccurrencePublishGate,
       Whizbang.Core.Temporal.ScheduleOccurrencePublishGate>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
@@ -180,7 +181,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Duty election (startup-pipeline increment 7): duties are won on a session advisory lock over
     // a dedicated direct connection, with holdings recorded via record_capability — the lock
     // decides, the row reports.
-    services.TryAddSingleton<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
@@ -298,7 +299,6 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     }
     return null;
   }
-
 
   /// <summary>
   /// Registers a dedicated <see cref="NpgsqlDataSource"/> for the notification

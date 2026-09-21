@@ -14,6 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs</tests>
+/// <docs>fundamentals/dispatcher/rpc-extraction</docs>
 public interface IRequestResponseStore {
   /// <summary>
   /// Saves a request and sets up tracking for the expected response.

@@ -320,7 +320,7 @@ public sealed partial class IntegrityCheckpointReceptor(
 
   private static HashSet<string> _subscribedTypeNames(IServiceProvider services) {
     var provider = services.GetService<IEventTypeProvider>();
-    if (provider is null) {
+    if (provider is not { IsAvailable: true }) {
       return [];
     }
     // Wire form ("Type, Assembly") — checkpoint buckets carry wh_event_store.event_type values,

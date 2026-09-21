@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Priority;
 
@@ -141,6 +142,7 @@ public class PriorityHooksTests {
   [Test]
   public async Task Defaults_AreRegisteredByTheCoreRegistration_SoAHostGetsThemWithoutWiringAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangPriority();
     await using var sp = services.BuildServiceProvider();
 

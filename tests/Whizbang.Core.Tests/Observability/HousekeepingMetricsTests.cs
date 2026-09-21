@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -29,7 +30,7 @@ public class HousekeepingMetricsTests {
 
   private static (HousekeepingMetrics Metrics, List<(string Name, long Value, string? Activity, string? Verdict)> Seen, MeterListener Listener)
       _listen(IIdleActivityTracker? tracker = null) {
-    var metrics = new HousekeepingMetrics(new WhizbangMetrics(), tracker);
+    var metrics = new HousekeepingMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()), tracker);
     var seen = new List<(string, long, string?, string?)>();
     var listener = new MeterListener();
     listener.InstrumentPublished = (inst, l) => {
@@ -108,7 +109,7 @@ public class HousekeepingMetricsTests {
 
   [Test]
   public async Task IdleTracker_SurfacesAsAGauge_WithItsSourceAsync() {
-    var metrics = new HousekeepingMetrics(new WhizbangMetrics(), new FakeTracker());
+    var metrics = new HousekeepingMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()), new FakeTracker());
     var got = new List<(double Value, string? Source)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (inst, l) => {

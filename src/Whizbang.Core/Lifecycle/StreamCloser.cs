@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lifecycle;
 /// A close is a stream-granularity destruction (<see cref="DestructionReason.PeriodClose"/>), so it reuses
 /// the same <see cref="IDestructionHook"/> the ephemeral reaper uses.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IStreamCloser {
   /// <summary>
   /// Close <paramref name="streamId"/> through <paramref name="throughVersion"/>: fire the awaited

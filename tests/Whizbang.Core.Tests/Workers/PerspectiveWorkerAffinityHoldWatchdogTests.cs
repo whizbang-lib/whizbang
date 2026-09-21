@@ -14,6 +14,13 @@ using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -186,6 +193,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       };
       var instanceProvider = new HoldInstanceProvider();
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<IWorkCoordinator>(f.Coordinator);
       services.AddSingleton<IPerspectiveRunnerRegistry>(f.Registry);
       services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -212,9 +220,9 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
           }
         }),
         schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        tracingOptions: null,
-        completionStrategy: new InstantCompletionStrategy(),
-        eventTypeProvider: null,
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+        eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
         logger: f.Logger,
         streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
         timeProvider: timeProvider,
@@ -222,7 +230,28 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
         perspectiveCompletionChannel: f.Harness.CompletionCapture,
         failureChannel: f.Harness.FailureCapture,
         perspectiveDrainChannel: f.Harness.DrainChannel,
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent, logger: NullLogger<WorkCoordinatorGate>.Instance) : null,
+        syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+        syncEventTracker: new SyncEventTracker(),
+        snapshotStore: NullPerspectiveSnapshotStore.Instance,
+        streamLocker: NullPerspectiveStreamLocker.Instance,
+        streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+        processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+        workChannelWriter: new WorkChannelWriter(),
+        rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+        leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+        leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+        leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+        deadLetterStore: NullDeadLetterStore.Instance,
+        generationProvider: new DefaultGenerationProvider(),
+        perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+        governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+          PollingIntervalMilliseconds = 50,
+          DrainBatcher = new SlidingWindowBatcherOptions {
+            SlidingWindow = TimeSpan.Zero,
+            MaxWait = TimeSpan.Zero
+          }
+        })).Value));
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
       // ExecuteAsync is queued to the thread pool.

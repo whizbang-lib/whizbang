@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Notifications;
 
 #pragma warning disable CA1707 // test method underscores
 
@@ -219,12 +220,13 @@ public sealed class DeadLetterCanaryCampaignTests {
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     var provider = services.BuildServiceProvider();
     return new DeadLetterRecoveryWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      new Gate(),
-      Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new Gen(),
-      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new Gate(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new Gen(),
+      logger: provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
+      notificationListener: new NoOpWorkNotificationListener());
   }
 
   [Test]
@@ -421,7 +423,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       new Gate(),
       Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      Options.Create(new StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
       notificationListener: bell);
@@ -689,12 +691,13 @@ public sealed class DeadLetterCanaryCampaignTests {
     services.AddFakeLogging();
     await using var provider = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      new Gate(),
-      Options.Create(_opts(RetryHeldOnStartupMode.Canary)),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new Gen(),
-      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new Gate(),
+      options: Options.Create(_opts(RetryHeldOnStartupMode.Canary)),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new Gen(),
+      logger: provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
+      notificationListener: new NoOpWorkNotificationListener());
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var logs = provider.GetFakeLogCollector();

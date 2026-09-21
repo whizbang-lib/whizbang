@@ -12,6 +12,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -64,8 +65,12 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
   private static TransportPublishStrategy _flipPublishStrategy(AzureServiceBusTransport transport) {
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox();
     return new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      jsonOptions: null, namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      jsonOptions: null,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
   }
 
   /// <summary>Builds the outbox-shaped work item for a command payload (envelope stored as
@@ -463,8 +468,12 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     await transport.InitializeAsync(ct);
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
     var publish = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      jsonOptions: null, namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      jsonOptions: null,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var commandWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"retire-{Guid.CreateVersion7():N}"));
     var systemWork = _commandWork(new Whizbang.Core.Commands.System.RebuildPerspectiveCommand(

@@ -12,6 +12,8 @@ using Whizbang.Core.Offloads;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Routing;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -33,8 +35,11 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: null,                          // no chain
-      jsonOptions: null);
+      postSerializeHookChain: null,
+      // no chain
+      jsonOptions: null,
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -50,8 +55,11 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),    // empty
-      jsonOptions: _buildJsonOptions());
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      // empty
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -68,7 +76,9 @@ public class TransportPublishStrategyHookChainTests {
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -91,7 +101,9 @@ public class TransportPublishStrategyHookChainTests {
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -117,7 +129,9 @@ public class TransportPublishStrategyHookChainTests {
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var work1 = _buildWork();
     var work2 = _buildWork();
@@ -143,7 +157,9 @@ public class TransportPublishStrategyHookChainTests {
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var works = new[] { _buildWork(), _buildWork() };
     var results = await strategy.PublishBatchAsync(works, CancellationToken.None);
@@ -166,7 +182,9 @@ public class TransportPublishStrategyHookChainTests {
       readinessCheck: new _alwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: chain,
-      jsonOptions: _buildJsonOptions());
+      jsonOptions: _buildJsonOptions(),
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 

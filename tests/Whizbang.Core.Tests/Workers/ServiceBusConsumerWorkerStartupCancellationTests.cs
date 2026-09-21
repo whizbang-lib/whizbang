@@ -7,6 +7,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -79,6 +82,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
   private static ServiceBusConsumerWorker _worker(ITransport transport, ISchemaReadyGate gate) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -87,11 +91,17 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: gate,
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
-      });
+      },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
   }
 
   /// <summary>

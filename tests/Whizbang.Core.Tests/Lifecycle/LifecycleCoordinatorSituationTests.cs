@@ -15,6 +15,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -50,11 +51,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var events = Enumerable.Range(0, 3).Select(i => {
       var id = Guid.NewGuid();
       return (Id: id, Envelope: _createEnvelope(new TestEvent(id, $"event-{i}")));
@@ -90,11 +92,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — 3 events go through PostInbox → PostLifecycle
     using var scope = provider.CreateScope();
@@ -127,12 +130,13 @@ public class LifecycleCoordinatorSituationTests {
     var registry = new TrackingReceptorRegistry(tracker);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     services.AddSingleton<IMessageTagProcessor>(tagProcessor);
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "tag-test"));
 
@@ -168,12 +172,13 @@ public class LifecycleCoordinatorSituationTests {
 
     var emptyRegistry = new TrackingReceptorRegistry(new StageInvocationTracker());
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(emptyRegistry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     services.AddSingleton<IMessageTagProcessor>(tagProcessor);
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "no-receptor-test"));
 
@@ -201,11 +206,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("ImmediateReceptor", LifecycleStage.ImmediateDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "immediate-test"));
 
@@ -234,11 +240,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventIds = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
 
     // Begin tracking and register WhenAll for each event
@@ -276,7 +283,7 @@ public class LifecycleCoordinatorSituationTests {
   [Test]
   public async Task AbandonTracking_MultipleEvents_AllCleanedUpAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventIds = Enumerable.Range(0, 10).Select(_ => Guid.NewGuid()).ToList();
 
     foreach (var eventId in eventIds) {
@@ -304,12 +311,13 @@ public class LifecycleCoordinatorSituationTests {
   public async Task AdvanceTo_PostLifecycleInline_SetsIsCompleteAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp =>
       new ReceptorInvoker(new TrackingReceptorRegistry(new StageInvocationTracker()), sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "complete-test"));
     var tracking = coordinator.BeginTracking(
@@ -337,11 +345,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate local dispatch of 3 events
     using var scope = provider.CreateScope();
@@ -378,11 +387,12 @@ public class LifecycleCoordinatorSituationTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — 10 events through PostLifecycle
     using var scope = provider.CreateScope();
@@ -413,12 +423,13 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     using var scope = provider.CreateScope();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // 3 events WITHOUT WhenAll (fire immediately)
     for (int i = 0; i < 3; i++) {
@@ -472,12 +483,13 @@ public class LifecycleCoordinatorSituationTests {
     });
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     using var scope = provider.CreateScope();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "outbox-full"));
     var tracking = coordinator.BeginTracking(
@@ -516,12 +528,13 @@ public class LifecycleCoordinatorSituationTests {
     });
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     using var scope = provider.CreateScope();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "inbox-full"));
     var tracking = coordinator.BeginTracking(
@@ -557,11 +570,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — 20 concurrent events
     var tasks = Enumerable.Range(0, 20).Select(async i => {
@@ -593,13 +607,14 @@ public class LifecycleCoordinatorSituationTests {
 
     var emptyRegistry = new TrackingReceptorRegistry(new StageInvocationTracker());
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(emptyRegistry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     services.AddSingleton<IMessageTagProcessor>(tagProcessor);
     var provider = services.BuildServiceProvider();
     using var scope = provider.CreateScope();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "tag-count"));
     var tracking = coordinator.BeginTracking(
@@ -638,11 +653,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate ServiceBusConsumer processing 3 events without perspectives
     // This is the EXACT pattern ServiceBusConsumerWorker should follow after PostInbox
@@ -698,11 +714,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // === Path 1: Dispatcher (local dispatch) ===
     using (var scope = provider.CreateScope()) {
@@ -774,11 +791,12 @@ public class LifecycleCoordinatorSituationTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate OutboxWorker publishing 2 events that leave the service
     using var scope = provider.CreateScope();

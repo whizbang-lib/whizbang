@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -118,10 +119,11 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
     var publisherConnection = new FakeConnection(() => Task.FromResult<IChannel>(publisherChannel));
     var publisherTransport = await RabbitTestWire.NewInitializedTransportAsync(publisherConnection);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      SHARED_INBOX,
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: SHARED_INBOX,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var domainResult = await publishStrategy.PublishAsync(
       _commandWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp", "domain-command"),

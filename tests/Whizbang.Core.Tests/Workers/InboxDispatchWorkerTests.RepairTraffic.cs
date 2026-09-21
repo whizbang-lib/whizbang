@@ -9,6 +9,10 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -42,14 +46,24 @@ public partial class InboxDispatchWorkerTests {
       .BuildServiceProvider();
     var logger = new CapturingLogger<InboxDispatchWorker>();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions { RepairMode = repairMode }),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      receptorRegistry: new PostInboxInlineRegistry());
+      receptorRegistry: new PostInboxInlineRegistry(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await inbox.WriteAsync(_makeWork(), cts.Token);

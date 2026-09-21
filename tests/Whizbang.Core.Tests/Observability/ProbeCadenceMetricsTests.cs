@@ -2,6 +2,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -70,7 +72,7 @@ public class ProbeCadenceMetricsTests {
 
   [Test]
   public async Task RecordTick_WithAnEmptyProbeName_ThrowsAsync() {
-    var metrics = new ProbeCadenceMetrics(new WhizbangMetrics());
+    var metrics = new ProbeCadenceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(() => metrics.RecordTick("", foundWork: true)).Throws<ArgumentException>()
       .Because("an unnamed probe would collapse into one anonymous series nobody can read");

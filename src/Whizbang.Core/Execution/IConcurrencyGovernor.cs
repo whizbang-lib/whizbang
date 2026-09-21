@@ -26,7 +26,7 @@ namespace Whizbang.Core.Execution;
 /// bounds memory. Growing those under load removes the property they were added for.
 /// </para>
 /// </remarks>
-/// <docs>operations/workers/concurrency-governor</docs>
+/// <docs>extending/extensibility/replaceable-services</docs>
 /// <tests>tests/Whizbang.Core.Tests/Execution/ConcurrencyGovernorTests.cs</tests>
 public interface IConcurrencyGovernor {
   /// <summary>How many units of work may run concurrently right now.</summary>

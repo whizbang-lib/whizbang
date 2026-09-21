@@ -1,7 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Execution;
 using Whizbang.Core.Workers;
 
@@ -172,11 +174,37 @@ public class GovernorDefaultIsAdaptiveTests {
 
   [Test]
   public async Task AHostSuppliedGovernorStillWinsAsync() {
+    // The governor is a keyed dependency: the framework's adaptive default is registered under the
+    // worker's key with TryAdd, so a host registration under that key made first is the one the
+    // worker receives. Registration order is the whole mechanism, so that is what is exercised.
     var supplied = new FixedWidthGovernor(7);
-    var options = Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 24 });
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddOptions<OutboxDrainWorkerOptions>().Configure(o => o.MaxConcurrentStreams = 24);
+    services.AddKeyedSingleton<IConcurrencyGovernor>(OutboxDrainWorker.GOVERNOR_KEY, supplied);
+    services.TryAddWhizbangDefaults();
+    await using var provider = services.BuildServiceProvider();
 
-    await Assert.That(OutboxDrainWorker.ResolveGovernor(supplied, options.Value).CurrentWidth).IsEqualTo(7)
+    var resolved = provider.GetRequiredKeyedService<IConcurrencyGovernor>(OutboxDrainWorker.GOVERNOR_KEY);
+
+    await Assert.That(resolved).IsSameReferenceAs(supplied)
       .Because("an operator who wired a specific strategy has context the framework does not; a "
              + "new default must never silently override an explicit choice");
+  }
+
+  [Test]
+  public async Task WithoutAHostGovernor_TheKeyedDefaultIsSizedFromTheWorkerOptionsAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddOptions<OutboxDrainWorkerOptions>().Configure(o => o.MaxConcurrentStreams = 24);
+    services.TryAddWhizbangDefaults();
+    await using var provider = services.BuildServiceProvider();
+
+    var resolved = provider.GetRequiredKeyedService<IConcurrencyGovernor>(OutboxDrainWorker.GOVERNOR_KEY);
+    var expected = OutboxDrainWorker.CreateDefaultGovernor(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 24 });
+
+    await Assert.That(resolved.CurrentWidth).IsEqualTo(expected.CurrentWidth)
+      .Because("the default registered under the worker's key must be the same adaptive governor the "
+             + "worker used to build for itself, sized from the same options");
   }
 }

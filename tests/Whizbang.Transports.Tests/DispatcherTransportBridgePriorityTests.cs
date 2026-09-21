@@ -9,6 +9,7 @@ using Whizbang.Core.Priority;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Transports.Tests;
 
@@ -25,7 +26,7 @@ public class DispatcherTransportBridgePriorityTests {
   public record BridgePriorityProbe(int Value) : ICommand;
 
   private static DispatcherTransportBridge _bridge(InProcessTransport transport) {
-    var instanceProvider = new ServiceInstanceProvider(configuration: null);
+    var instanceProvider = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
     var dispatcher = new NoReceptorDispatcher(new ServiceCollection().BuildServiceProvider(), instanceProvider);
     return new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
   }

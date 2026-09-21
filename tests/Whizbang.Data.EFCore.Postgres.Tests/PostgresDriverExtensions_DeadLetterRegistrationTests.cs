@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -27,6 +28,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     // implementation. The dispatch worker is a singleton that injects
     // IDeadLetterStore? — registration must satisfy a singleton consumer.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddDbContext<PostgresTestDbContext>(options =>
         options.UseInMemoryDatabase("DlqRegistrationDb"));
 
@@ -49,6 +51,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     // fresh scope per scan (the worker explicitly uses GetService — null = no-op).
     // Register as Scoped so it composes with the consumer's scoped DbContext.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddDbContext<PostgresTestDbContext>(options =>
         options.UseInMemoryDatabase("DlqRegistrationDb"));
 

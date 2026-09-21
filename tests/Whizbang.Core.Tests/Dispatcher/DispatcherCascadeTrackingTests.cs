@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Common;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -81,7 +82,7 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     IStreamIdExtractor? streamIdExtractor = null,
     Func<object, (object message, DispatchModes mode)>? cascadeResult = null) : Core.Dispatcher(
         serviceProvider,
-        new ServiceInstanceProvider(configuration: null),
+        new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
         streamIdExtractor: streamIdExtractor,
         scopedEventTracker: tracker) {
     private readonly Func<object, (object message, DispatchModes mode)>? _cascadeResult = cascadeResult;

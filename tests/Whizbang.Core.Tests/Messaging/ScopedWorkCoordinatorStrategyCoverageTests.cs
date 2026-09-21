@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -48,11 +49,13 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
     var inboxChannelWriter = new RecordingInboxChannelWriter();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      coordinator,
-      instanceProvider,
-      null, // IWorkChannelWriter — not needed for this test
-      options,
-      inboxChannelWriter: inboxChannelWriter);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      // IWorkChannelWriter — not needed for this test
+      options: options,
+      inboxChannelWriter: inboxChannelWriter,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance);
 
     sut.QueueInboxMessage(_inboxMessage());
 

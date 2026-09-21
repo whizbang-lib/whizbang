@@ -13,6 +13,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -39,6 +40,7 @@ public class PerspectiveWorkerReceptorInvokerTests {
     var registry = new TestPerspectiveReceptorRegistry();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp =>
@@ -57,6 +59,7 @@ public class PerspectiveWorkerReceptorInvokerTests {
   public async Task ReceptorInvoker_ResolvedFromScope_IsNull_WhenNotRegisteredAsync() {
     // Arrange: No IReceptorInvoker registered (tests the null guard path)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
 
     // Act: Create scope and resolve
@@ -85,6 +88,7 @@ public class PerspectiveWorkerReceptorInvokerTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp =>

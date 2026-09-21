@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -37,7 +38,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task Instruments_HaveStableNamesAsync() {
-    var metrics = new StartupPipelineMetrics(new WhizbangMetrics());
+    var metrics = new StartupPipelineMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.StepDuration.Name).IsEqualTo("whizbang.startup.step_duration");
     await Assert.That(metrics.StepDuration.Unit).IsEqualTo("ms");
@@ -46,7 +47,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task MetricsObserver_OnStepCompleted_RecordsDurationAndOutcomeTaggedByStepAsync() {
-    var metrics = new StartupPipelineMetrics(new WhizbangMetrics());
+    var metrics = new StartupPipelineMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var durations = new List<(double Value, string? Step, string? Outcome)>();
     var outcomes = new List<(long Value, string? Step, string? Outcome)>();
     using var listener = new MeterListener();

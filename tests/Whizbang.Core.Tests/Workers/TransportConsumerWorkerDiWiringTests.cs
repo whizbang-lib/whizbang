@@ -16,6 +16,8 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -69,6 +71,7 @@ public class TransportConsumerWorkerDiWiringTests {
       var coordinator = new NoOpWorkCoordinator();
       var transport = new DiFlagTransport();
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
       services.AddScoped<IWorkCoordinator>(_ => coordinator);
       services.AddSingleton<ITransport>(transport);
@@ -77,7 +80,7 @@ public class TransportConsumerWorkerDiWiringTests {
       services.AddSingleton(options);
       services.AddSingleton(new SubscriptionResilienceOptions());
       services.AddSingleton(new JsonSerializerOptions());
-      services.AddSingleton(new OrderedStreamProcessor(parallelizeStreams: false, logger: null));
+      services.AddSingleton(new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance));
       // The worker requires an instance identity, as it does in production composition.
       services.AddWhizbangInstanceIdentity();
       // The worker waits on schema readiness. This fixture has no schema step, so it registers a
@@ -89,7 +92,10 @@ public class TransportConsumerWorkerDiWiringTests {
       // Production registers both of these in AddWhizbang (ServiceCollectionExtensions) — they are
       // required-but-nullable ctor params, so the container refuses type-activation without them.
       services.AddSingleton<ILifecycleMessageDeserializer>(new DiNoOpLifecycleDeserializer());
-      services.AddSingleton(new WhizbangMetrics());
+      // The no-consumer gate consults the registry query; this fixture has no generated receptors, so the
+      // permissive query keeps the flag-derivation path under test reachable.
+      services.AddSingleton<IReceptorRegistryQuery>(new PermissiveReceptorRegistryQuery());
+      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
       services.AddSingleton<TransportMetrics>();
       services.AddHostedService<TransportConsumerWorker>();
 
@@ -147,6 +153,7 @@ public class TransportConsumerWorkerDiWiringTests {
       var coordinator = new NoOpWorkCoordinator();
       var transport = new DiFlagTransport();
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<ITransport>(transport);
       services.AddScoped<IWorkCoordinator>(_ => coordinator);
       // Host parity: a real host's builder provides logging before AddWhizbang runs, and the

@@ -4,6 +4,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -45,7 +46,10 @@ public class StandbyHandshakeCoverageTests {
   [Test]
   public async Task AwaitPeersStandingByAsync_UnreadableVersion_ThrowsArgumentExceptionAsync() {
     var handshake = new StandbyHandshake(
-      _emptyScopeFactory(), new _fakeFleetSource([]), new _fakeInstanceProvider(Guid.NewGuid()));
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: new _fakeFleetSource([]),
+      instanceProvider: new _fakeInstanceProvider(Guid.NewGuid()),
+      logger: NullLogger<StandbyHandshake>.Instance);
 
     await Assert.That(async () => await handshake.AwaitPeersStandingByAsync("not-a-version", CancellationToken.None))
       .Throws<ArgumentException>()
@@ -68,7 +72,10 @@ public class StandbyHandshakeCoverageTests {
       new(newerPeer, "svc", "host", DateTimeOffset.UtcNow, [], LifecyclePhase: "Running", LibraryVersion: "99.0.0"),
     };
     var handshake = new StandbyHandshake(
-      _emptyScopeFactory(), new _fakeFleetSource(fleet), new _fakeInstanceProvider(self));
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: new _fakeFleetSource(fleet),
+      instanceProvider: new _fakeInstanceProvider(self),
+      logger: NullLogger<StandbyHandshake>.Instance);
 
     var acknowledged = await handshake.AwaitPeersStandingByAsync("1.0.0", CancellationToken.None);
 

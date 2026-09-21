@@ -10,6 +10,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 #pragma warning disable IDE0060, RCS1163 // Unused parameters: the fake coordinator implements interface members the test never exercises
 
@@ -98,6 +100,7 @@ public class ClaimWorkerPriorityBatchHookTests {
   private static (ClaimWorker Worker, RecordingDrain Drain, FakeCoordinator Coordinator) _worker(WorkBatch batch, IPriorityBatchHook? hook) {
     var coordinator = new FakeCoordinator(batch);
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -105,14 +108,22 @@ public class ClaimWorkerPriorityBatchHookTests {
     var drain = new RecordingDrain();
     var chain = hook is null ? null : new PriorityHookChain([], [], [hook]);
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
       inboxDrainChannel: drain,
-      priorityHooks: chain);
+      priorityHooks: chain,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
     return (worker, drain, coordinator);
   }
 

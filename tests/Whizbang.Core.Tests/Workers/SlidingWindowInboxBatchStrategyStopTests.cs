@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -31,7 +32,8 @@ public class SlidingWindowInboxBatchStrategyStopTests {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), testToken);

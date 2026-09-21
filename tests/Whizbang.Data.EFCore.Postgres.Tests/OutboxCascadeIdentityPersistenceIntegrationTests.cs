@@ -15,6 +15,8 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -298,9 +300,10 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddScoped(_ => CreateDbContext());
 
@@ -324,11 +327,12 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
-        coordinator,
-        instanceProvider,
+        coordinator: coordinator,
+        instanceProvider: instanceProvider,
         workChannelWriter: null,
-        options,
-        logger
+        options: options,
+        logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+        inboxChannelWriter: new InboxChannelWriter()
       );
     });
 

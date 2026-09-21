@@ -86,7 +86,7 @@ public class MaintenanceWorkerRetentionAdoptionTests {
 
   [Test]
   public async Task Adoption_RecordsTheBacklogOnTheMaintenanceMeter_TaggedByPerspectiveAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var readings = new List<(string Name, long Value, string? Perspective)>();
     using var listener = new MeterListener();
     // Pin to THIS test's instrument, not the meter name: parallel tests build MaintenanceMetrics

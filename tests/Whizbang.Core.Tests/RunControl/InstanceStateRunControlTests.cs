@@ -7,6 +7,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace Whizbang.Core.Tests.RunControl;
 
@@ -81,10 +83,10 @@ public class InstanceStateRunControlTests {
     var sp = services.BuildServiceProvider();
     var provider = new _stubInstanceProvider();
     var control = new InstanceStateRunControl(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      provider,
-      withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null,
-      logger);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: provider,
+      versionProvider: withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null ?? new LibraryVersionProvider("0.0.0-test"),
+      logger: (ILogger<InstanceStateRunControl>?)logger ?? NullLogger<InstanceStateRunControl>.Instance);
     return (control, coordinator, provider);
   }
 
@@ -102,15 +104,6 @@ public class InstanceStateRunControlTests {
       .Because("the version rides along from the generated constant — the same one the ledger records");
   }
 
-  [Test]
-  public async Task OnPhase_WithoutAVersionProvider_StillRecordsThePhaseAsync() {
-    var (control, coordinator, _) = _build(withVersion: false);
-
-    await control.OnPhaseAsync(LifecyclePhase.Migrating, CancellationToken.None);
-
-    await Assert.That(coordinator.Recorded.Count).IsEqualTo(1);
-    await Assert.That(coordinator.Recorded[0].Version).IsNull();
-  }
 
   [Test]
   public async Task OnPhase_WhenRecordingFails_NeverBreaksTheTransitionAsync() {

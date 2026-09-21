@@ -91,7 +91,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     // NO scoped tracker - this simulates Request 2 which is a DIFFERENT scope
     // With empty SyncEventTracker and no tracked events, WaitForStreamAsync returns NoPendingEvents
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - Call WaitForStreamAsync exactly as [AwaitPerspectiveSync] does
     var result = await awaiter.WaitForStreamAsync(
@@ -147,7 +147,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -201,7 +201,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -246,7 +246,7 @@ public class RealWorldCrossScopeBugReproductionTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var result = await awaiter.WaitForStreamAsync(
       typeof(FakeProjection),

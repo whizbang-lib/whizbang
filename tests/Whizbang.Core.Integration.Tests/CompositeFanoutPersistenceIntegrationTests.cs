@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -94,7 +95,7 @@ public class CompositeFanoutPersistenceIntegrationTests {
   private static (IDispatcher dispatcher, SpyWorkCoordinatorStrategy strategy) _createOwnedCompositeDispatcher() {
     var strategy = new SpyWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<ITopicRoutingStrategy>(new NamespaceRoutingStrategy());

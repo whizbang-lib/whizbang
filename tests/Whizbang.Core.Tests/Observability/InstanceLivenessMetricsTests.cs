@@ -2,6 +2,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -47,7 +49,7 @@ public class InstanceLivenessMetricsTests {
   public async Task WithoutAMeterFactory_StillConstructsAsync() {
     // Hosts without OpenTelemetry wiring still run the worker; the meters fall back to a bare
     // Meter rather than making liveness depend on observability being configured.
-    var metrics = new InstanceLivenessMetrics(new WhizbangMetrics());
+    var metrics = new InstanceLivenessMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.WatchdogBeats.Add(1);
 

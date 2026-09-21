@@ -8,6 +8,12 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -283,26 +289,41 @@ public class FlushApiTests {
     WorkCoordinatorOptions? options = null,
     IWorkChannelWriter? channelWriter = null) {
     return new ScopedWorkCoordinatorStrategy(
-      coordinator,
-      new FakeServiceInstanceProvider(),
-      channelWriter,
-      options ?? new WorkCoordinatorOptions()
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: channelWriter,
+      options: options ?? new WorkCoordinatorOptions(),
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
   }
 
   private static ImmediateWorkCoordinatorStrategy _createImmediateStrategy(IWorkCoordinator coordinator) {
     return new ImmediateWorkCoordinatorStrategy(
-      coordinator,
-      new FakeServiceInstanceProvider(),
-      new WorkCoordinatorOptions()
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      options: new WorkCoordinatorOptions(),
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
   }
 
   private static IntervalWorkCoordinatorStrategy _createIntervalStrategy(IWorkCoordinator coordinator) {
     return new IntervalWorkCoordinatorStrategy(
-      coordinator,
-      new FakeServiceInstanceProvider(),
-      new WorkCoordinatorOptions { IntervalMilliseconds = 60_000 } // Long interval to prevent timer-based flushes
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      options: new WorkCoordinatorOptions { IntervalMilliseconds = 60_000 }, // Long interval to prevent timer-based flushes
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
   }
 

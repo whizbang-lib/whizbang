@@ -10,6 +10,14 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -431,6 +439,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -462,17 +471,31 @@ public class PerspectiveWorkerDeepPathMiscTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
-      streamLocker: streamLocker,
-      streamLockOptions: streamLockOptions is null ? null : Options.Create(streamLockOptions),
-      streamAffinityOptions: affinityOptions is null ? null : Options.Create(affinityOptions),
+      streamLocker: streamLocker ?? NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: (streamLockOptions is null ? null : Options.Create(streamLockOptions)) ?? Options.Create(new PerspectiveStreamLockOptions()) ?? Options.Create(new PerspectiveStreamLockOptions()) ?? Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: (affinityOptions is null ? null : Options.Create(affinityOptions)) ?? Options.Create(new PerspectiveStreamAffinityOptions()) ?? Options.Create(new PerspectiveStreamAffinityOptions()) ?? Options.Create(new PerspectiveStreamAffinityOptions()),
       timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel);
+      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value));
     return (worker, harness, provider);
   }
 

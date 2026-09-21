@@ -14,6 +14,7 @@ namespace Whizbang.Core.Data;
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs</tests>
+/// <docs>extending/extensibility/custom-storage</docs>
 public interface IDbExecutor {
   /// <summary>
   /// Executes a query and returns a collection of results.

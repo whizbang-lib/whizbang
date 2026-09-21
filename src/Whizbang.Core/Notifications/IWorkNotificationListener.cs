@@ -45,6 +45,10 @@ public enum WorkSignalCategory {
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public interface IWorkNotificationListener {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>True when the listener has an active connection and recent keepalive.</summary>
   bool IsHealthy { get; }
 
@@ -62,7 +66,10 @@ public interface IWorkNotificationListener {
 /// No-op implementation bound when no <c>DirectConnectionString</c> is configured.
 /// Always reports unhealthy so claim workers stay on aggressive polling cadence.
 /// </summary>
-public sealed class NoOpWorkNotificationListener : IWorkNotificationListener {
+public sealed class NoOpWorkNotificationListener : IWorkNotificationListener, INullDefault {
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
   /// <inheritdoc />
   public bool IsHealthy => false;
   /// <inheritdoc />

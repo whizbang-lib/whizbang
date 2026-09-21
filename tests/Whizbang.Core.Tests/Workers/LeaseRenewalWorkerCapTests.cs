@@ -113,15 +113,16 @@ public class LeaseRenewalWorkerCapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new LeaseRenewalWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         LeaseSeconds = 60,
         Flusher = new BatchFlusherOptions { MaxBatchSize = 100, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 1000 }
       }),
-      NullLogger<LeaseRenewalWorker>.Instance,
-      registry,
-      time);
+      logger: NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry: registry,
+      timeProvider: time,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     return (worker, coord, time, registry);
   }
 
@@ -231,14 +232,16 @@ public class LeaseRenewalWorkerCapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new LeaseRenewalWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 }
       }),
-      NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry: null,  // not wired
-      timeProvider: time);
+      logger: NullLogger<LeaseRenewalWorker>.Instance,
+      leaseRegistry: null,
+      // not wired
+      timeProvider: time,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

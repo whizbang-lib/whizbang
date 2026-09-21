@@ -10,6 +10,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -497,10 +499,11 @@ public class LocalEventStorageTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Register service instance provider
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register DbContext with our test options
     services.AddScoped(_ => CreateDbContext());
@@ -532,11 +535,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
-        coordinator,
-        instanceProvider,
+        coordinator: coordinator,
+        instanceProvider: instanceProvider,
         workChannelWriter: null,
-        options,
-        logger
+        options: options,
+        logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+        inboxChannelWriter: new InboxChannelWriter()
       );
     });
 

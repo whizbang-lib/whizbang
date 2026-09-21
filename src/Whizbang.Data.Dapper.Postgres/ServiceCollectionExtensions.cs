@@ -146,11 +146,11 @@ public static class ServiceCollectionExtensions {
     services.AddOptions<PerspectiveRewindOptions>();
 
     // Register perspective snapshot store and stream locker
-    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
         connectionString,
         sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
-    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveStreamLocker>(sp =>
       new DapperPerspectiveStreamLocker(
         connectionString,
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
@@ -286,11 +286,11 @@ public static class ServiceCollectionExtensions {
     services.AddOptions<PerspectiveRewindOptions>();
 
     // Register perspective snapshot store and stream locker
-    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
         connectionString,
         sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
-    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveStreamLocker>(sp =>
       new DapperPerspectiveStreamLocker(
         connectionString,
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
@@ -356,7 +356,7 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
   internal static void _addDeadLetterStore(IServiceCollection services, string connectionString) {
-    services.TryAddSingleton<IDeadLetterStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IDeadLetterStore>(sp =>
       new DapperDeadLetterStore(
         connectionString,
         sp.GetService<ILogger<DapperDeadLetterStore>>()

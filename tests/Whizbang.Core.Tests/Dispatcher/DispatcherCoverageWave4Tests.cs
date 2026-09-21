@@ -9,6 +9,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures even when the test body doesn't use every arg.
@@ -76,7 +77,7 @@ public class DispatcherCoverageWave4Tests {
     DispatchModes? defaultRouting = null,
     bool publisherThrows = false,
     string publisherFailureMessage = "wave4-publisher-failed"
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;

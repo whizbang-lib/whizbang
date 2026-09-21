@@ -15,6 +15,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -39,6 +40,7 @@ public class LifecycleCoordinatorTests {
     InvocationTracker? tracker = null,
     IMessageTagProcessor? tagProcessor = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     if (tracker is not null) {
       var registry = new TrackingReceptorRegistry(tracker);
       services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -60,7 +62,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task BeginTracking_CreatesTracking_AtEntryStageAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
 
@@ -78,7 +80,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task GetTracking_ReturnsTracking_WhenExistsAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PreInboxDetached, MessageSource.Inbox);
@@ -93,7 +95,7 @@ public class LifecycleCoordinatorTests {
 
   [Test]
   public async Task GetTracking_ReturnsNull_WhenNotTrackedAsync() {
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var tracking = coordinator.GetTracking(Guid.NewGuid());
     await Assert.That(tracking).IsNull();
   }
@@ -105,7 +107,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AbandonTracking_RemovesFromDictionaryAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PreOutboxDetached, MessageSource.Outbox);
@@ -121,7 +123,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AbandonTracking_NoOp_WhenNotTrackedAsync() {
     // Should not throw
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     coordinator.AbandonTracking(Guid.NewGuid());
 
     // Verify no tracking exists
@@ -138,7 +140,7 @@ public class LifecycleCoordinatorTests {
     // Arrange
     var tracker = new InvocationTracker();
     var scopedProvider = _createScopedProvider(tracker);
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
 
@@ -162,12 +164,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("ImmediateReceptor", LifecycleStage.ImmediateDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
 
@@ -190,7 +193,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task GetTracking_ReturnsCurrentStage_DuringProcessingAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     var scopedProvider = _createScopedProvider();
@@ -214,7 +217,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AdvanceTo_ThreadSafe_ConcurrentAccessAsync() {
     // Arrange - multiple events tracked concurrently
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventCount = 10;
     var trackings = new List<ILifecycleTracking>();
     var scopedProvider = _createScopedProvider();
@@ -249,12 +252,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -276,12 +280,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -307,12 +312,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "test"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -341,11 +347,12 @@ public class LifecycleCoordinatorTests {
   public async Task AdvanceTo_NullInvoker_StillUpdatesStageAsync() {
     // Arrange — no IReceptorInvoker registered
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "null-invoker"));
     var tracking = coordinator.BeginTracking(
@@ -366,7 +373,7 @@ public class LifecycleCoordinatorTests {
   public async Task AdvanceBatchAsync_AdvancesAllTrackingsAsync() {
     // Arrange
     var scopedProvider = _createScopedProvider();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var trackings = new List<ILifecycleTracking>();
     for (int i = 0; i < 5; i++) {
       var id = Guid.NewGuid();
@@ -402,7 +409,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task BeginTracking_SameEventIdTwice_ReturnsFirstTrackingAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope1 = _createEnvelope(new TestEvent(eventId, "first"));
     var envelope2 = _createEnvelope(new TestEvent(eventId, "second"));
@@ -422,7 +429,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task BeginTracking_WithStreamIdAndPerspectiveType_PreservesContextAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "context-test"));
@@ -451,13 +458,14 @@ public class LifecycleCoordinatorTests {
     });
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     services.AddScoped<ILifecycleContextAccessor, TestLifecycleContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "context"));
@@ -493,12 +501,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("Receptor3", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "multi-receptor"));
     var tracking = coordinator.BeginTracking(
@@ -519,7 +528,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalSegmentComplete_NonTrackedEvent_NoOpAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var scopedProvider = _createScopedProvider();
 
     // Act — signal for an event that was never tracked
@@ -538,12 +547,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "dup-signal"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -573,12 +583,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "three-sources"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -611,7 +622,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AbandonTracking_CleansUpWhenAllStateAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "cleanup-whenall"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -644,11 +655,12 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "concurrent-whenall"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateDetached, MessageSource.Local);
@@ -678,7 +690,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task ConcurrentBeginAndAbandon_DoesNotThrowAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventIds = Enumerable.Range(0, 100).Select(_ => Guid.NewGuid()).ToList();
 
     // Act — concurrent begin + abandon
@@ -703,7 +715,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task BeginTracking_SameEventTwice_ReturnsSameInstanceAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope1 = _createEnvelope(new TestEvent(eventId, "first"));
     var envelope2 = _createEnvelope(new TestEvent(eventId, "second"));
@@ -730,12 +742,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "dup-advance"));
     var tracking = coordinator.BeginTracking(
@@ -758,12 +771,13 @@ public class LifecycleCoordinatorTests {
     registry.RegisterReceptor<TestEvent>("PrePerspReceptor", LifecycleStage.PrePerspectiveDetached);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     var provider = services.BuildServiceProvider();
     var scopedProvider = provider.CreateScope().ServiceProvider;
 
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "post-complete"));
     var tracking = coordinator.BeginTracking(
@@ -787,7 +801,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task ExpectPerspectiveCompletions_AllSignal_ReturnsTrueAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "all-perspectives"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -806,7 +820,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task ExpectPerspectiveCompletions_PartialSignal_ReturnsFalseAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "partial-perspectives"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -823,7 +837,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalPerspectiveComplete_ExactNameTracking_Async() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "name-tracking"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -842,7 +856,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalPerspectiveComplete_DuplicateSignal_IdempotentAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "dup-signal"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -862,7 +876,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalPerspectiveComplete_UnknownPerspective_IgnoredAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "unknown-perspective"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -892,7 +906,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalPerspectiveComplete_ExtraUnrelatedSignal_DoesNotPreventCompletionAsync() {
     // Arrange — event expects only perspective "ActiveTenantProjection"
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "extra-signal-bug"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -918,7 +932,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AreAllPerspectivesComplete_NoExpectationsRegistered_ReturnsTrueAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "no-expectations"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -934,7 +948,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AbandonTracking_ClearsPerspectiveStateAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "abandon-perspective"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -957,7 +971,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "stale"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -973,7 +987,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_PreservesRecentEntries_WhenWithinThresholdAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "recent"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -989,7 +1003,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_PreservesCompleteEntries_EvenWhenOldAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "complete"));
     var provider = _createScopedProvider();
@@ -1007,7 +1021,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_AlsoCleansUpPerspectiveAndWhenAllStatesAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "full-cleanup"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1025,7 +1039,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task SignalPerspectiveComplete_ResetsLastActivityTimestamp_KeepsTrackingAliveAsync() {
     // Arrange
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "debounce"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1049,7 +1063,7 @@ public class LifecycleCoordinatorTests {
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);
     var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
-    var coordinator = new LifecycleCoordinator(coordinatorMetrics);
+    var coordinator = new LifecycleCoordinator(metrics: coordinatorMetrics, logger: NullLogger<LifecycleCoordinator>.Instance);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     var eventId = Guid.NewGuid();
@@ -1068,7 +1082,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_PreservesEntry_WhenPartialPerspectiveCompletionsExistAsync() {
     // Arrange — simulate multi-batch scenario: A signals, cleanup fires, B+C signal later
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "partial-race"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1093,7 +1107,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_RemovesEntry_WhenZeroPerspectiveCompletionsAsync() {
     // Arrange — expectations registered but no signals sent (genuinely stale)
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "zero-completions"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1110,7 +1124,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_RemovesEntry_WhenNoPerspectiveExpectationsRegisteredAsync() {
     // Arrange — no ExpectPerspectiveCompletions called (no _perspectiveStates entry)
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "no-expectations"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1126,7 +1140,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_PreservesEntry_EvenWithZeroThresholdAsync() {
     // Arrange — partial completions survive even the most aggressive threshold
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "zero-threshold"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1144,7 +1158,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_RemovesEntry_WhenAllPerspectivesAlreadyCompleteAsync() {
     // Arrange — fully complete entries are preserved by IsComplete guard, not partial guard
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "all-complete"));
     var provider = _createScopedProvider();
@@ -1169,7 +1183,7 @@ public class LifecycleCoordinatorTests {
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);
     var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
-    var coordinator = new LifecycleCoordinator(coordinatorMetrics);
+    var coordinator = new LifecycleCoordinator(metrics: coordinatorMetrics, logger: NullLogger<LifecycleCoordinator>.Instance);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     var eventId = Guid.NewGuid();
@@ -1190,7 +1204,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task CleanupStaleTracking_ConcurrentSignalAndCleanup_DoesNotDeadlockAsync() {
     // Arrange — concurrent operations on the same eventId must not deadlock
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "concurrent"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
@@ -1226,13 +1240,14 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task AdvanceToAsync_InlineStageThrows_ExceptionPropagatesAsync() {
     // Arrange — inline stages propagate exceptions (the PerspectiveWorker wraps in try/catch)
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "throws"));
     var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
 
     var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReceptorRegistry>(throwingRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
     var provider = services.BuildServiceProvider();
@@ -1246,7 +1261,7 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task PostLifecycle_MultipleEvents_OneThrows_OthersStillFireAsync() {
     // Arrange — simulates the error isolation pattern used in PerspectiveWorker
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Event A: will throw during PostAllPerspectivesInline
     var eventIdA = Guid.NewGuid();
@@ -1260,6 +1275,7 @@ public class LifecycleCoordinatorTests {
 
     var throwingRegistry = new ThrowingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
     var throwingServices = new ServiceCollection();
+    throwingServices.TryAddWhizbangDefaults();
     throwingServices.AddSingleton<IReceptorRegistry>(throwingRegistry);
     throwingServices.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(throwingRegistry, sp));
     var throwingProvider = throwingServices.BuildServiceProvider();
@@ -1299,13 +1315,14 @@ public class LifecycleCoordinatorTests {
   [Test]
   public async Task PostLifecycle_OperationCanceled_NotCaughtByIsolationAsync() {
     // Arrange — OperationCanceledException must propagate (shutdown signal)
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "canceled"));
     var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveDetached, MessageSource.Local);
 
     var cancelingRegistry = new CancelingReceptorRegistry(LifecycleStage.PostAllPerspectivesInline);
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReceptorRegistry>(cancelingRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(cancelingRegistry, sp));
     var provider = services.BuildServiceProvider();

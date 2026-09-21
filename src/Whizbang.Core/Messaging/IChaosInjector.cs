@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// validates.
 /// </para>
 /// </remarks>
-/// <docs>operations/testing/chaos-injection</docs>
+/// <docs>operations/dependency-injection/injectable-services</docs>
 public interface IChaosInjector {
   /// <summary>
   /// Whether this injector actually injects anything. False only for the shipped no-op.

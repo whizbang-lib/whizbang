@@ -52,8 +52,8 @@ public sealed partial class SubscriptionExpansionWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
-    var typeProvider = services.GetService<IEventTypeProvider>();
-    if (coordinator is null || typeProvider is null) {
+    var typeProvider = services.GetRequiredService<IEventTypeProvider>();
+    if (coordinator is null || !typeProvider.IsAvailable) {
       return;   // schema-only / diagnostic hosts: nothing to reconcile with.
     }
 

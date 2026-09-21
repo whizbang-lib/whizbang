@@ -11,6 +11,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Execution;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -94,20 +97,27 @@ public class OutboxDrainWorkerLifecycleFailureTests {
 
   private static OutboxDrainWorker _buildWorker(FakeFailureChannel failure) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(),
-      new FakeOutboxDrainChannel(),
-      new FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      new FakePublishStrategy());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new FakePublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
   }
 
   private static OutboxWork _outboxWork(Guid messageId, Guid streamId) {

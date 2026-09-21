@@ -40,7 +40,7 @@ public class WhizbangStartupLoggerTests {
     var instanceProvider = new _StubInstanceProvider("Whizbang.Test.Service");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions);
+    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
 
     await sut.StartAsync(CancellationToken.None);
 
@@ -117,7 +117,7 @@ public class WhizbangStartupLoggerTests {
     var instanceProvider = new _StubInstanceProvider("SvcD");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions, configuration: null);
+    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
 
     await sut.StartAsync(CancellationToken.None);
 
@@ -127,9 +127,10 @@ public class WhizbangStartupLoggerTests {
   [Test]
   public async Task StopAsync_ReturnsCompletedTaskAsync() {
     var sut = new WhizbangStartupLogger(
-      NullLoggerFactory.Instance,
-      new _StubInstanceProvider("SvcE"),
-      new WhizbangCoreOptions());
+      loggerFactory: NullLoggerFactory.Instance,
+      instanceProvider: new _StubInstanceProvider("SvcE"),
+      coreOptions: new WhizbangCoreOptions(),
+      configuration: new ConfigurationBuilder().Build());
 
     var task = sut.StopAsync(CancellationToken.None);
 

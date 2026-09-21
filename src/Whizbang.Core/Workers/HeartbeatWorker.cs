@@ -33,7 +33,6 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
-#pragma warning disable WHIZ501 // signalBus: the bus exists only where the notification stack is registered; a host without it must still heartbeat, and there is then neither a bus to publish the joined/leaving announcements on nor a subscriber to hear them.
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,
@@ -42,21 +41,20 @@ public partial class HeartbeatWorker(
   ILogger<HeartbeatWorker> logger,
   IWhizbangLifecycleState lifecycleState,
   ILibraryVersionProvider libraryVersion,
-  IPinnedConnectionPool? pinnedPool = null,
-  IInstanceAliveLockSource? aliveLockSource = null,
-  ISignalBus? signalBus = null,
+  IPinnedConnectionPool pinnedPool,
+  IInstanceAliveLockSource aliveLockSource,
+  ISignalBus signalBus,
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null
 ) : BackgroundService {
-#pragma warning restore WHIZ501
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly HeartbeatWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<HeartbeatWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
-  private readonly IInstanceAliveLockSource? _aliveLockSource = aliveLockSource;
-  private readonly ISignalBus? _signalBus = signalBus;
+  private readonly IPinnedConnectionPool _pinnedPool = pinnedPool;
+  private readonly IInstanceAliveLockSource _aliveLockSource = aliveLockSource;
+  private readonly ISignalBus _signalBus = signalBus;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   // Required, not optional: the registry row these feed is what peers and operators read to tell a
   // live instance from a dead one, and an optional dependency is silently null wherever the worker
@@ -98,7 +96,7 @@ public partial class HeartbeatWorker(
     if (_options.LivenessSourceMode == HeartbeatLivenessSourceMode.HeartbeatTableOnly) {
       return _options.IntervalSeconds;
     }
-    var lockHeld = _aliveLockSource?.IsAliveLockHeld ?? false;
+    var lockHeld = _aliveLockSource.IsAliveLockHeld;
     return lockHeld ? _options.SlowIntervalSeconds : _options.IntervalSeconds;
   }
 
@@ -283,7 +281,7 @@ public partial class HeartbeatWorker(
     // Announce InstanceJoined once, after the first successful heartbeat (which is the
     // moment wh_service_instances first has a row for this pod). Subscribers use this to
     // warm caches, rebalance topology, etc.
-    if (_signalBus is not null && Interlocked.CompareExchange(ref _joinedAnnounced, 1, 0) == 0) {
+    if (_signalBus.IsConfigured && Interlocked.CompareExchange(ref _joinedAnnounced, 1, 0) == 0) {
       try {
         await _signalBus.PublishAsync(new InstanceJoinedSignal(), SignalTarget.Broadcast, ct);
       } catch (OperationCanceledException) { throw; } catch (Exception ex) {
@@ -317,7 +315,7 @@ public partial class HeartbeatWorker(
     // Best-effort InstanceLeaving on graceful shutdown so peers can rebalance without waiting
     // for the stale-heartbeat threshold. Failures are silent: the InstanceDied monitor will
     // still detect this pod's departure via the lease/heartbeat expiry.
-    if (_signalBus is not null) {
+    if (_signalBus.IsConfigured) {
       try {
         await _signalBus.PublishAsync(new InstanceLeavingSignal(), SignalTarget.Broadcast, cancellationToken);
       } catch (OperationCanceledException) {

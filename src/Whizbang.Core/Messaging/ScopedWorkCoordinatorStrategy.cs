@@ -49,21 +49,20 @@ public partial class ScopedWorkCoordinatorStrategy(
   IServiceInstanceProvider instanceProvider,
   IWorkChannelWriter? workChannelWriter,
   WorkCoordinatorOptions options,
-  ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
+  ILogger<ScopedWorkCoordinatorStrategy> logger,
+  IInboxChannelWriter inboxChannelWriter,
   ScopedWorkCoordinatorDependencies? dependencies = null,
   WorkCoordinatorMetrics? metrics = null,
-  LifecycleMetrics? lifecycleMetrics = null,
-  IInboxChannelWriter? inboxChannelWriter = null
-  ) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  LifecycleMetrics? lifecycleMetrics = null) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
 #pragma warning restore S107
   private const string STRATEGY_NAME = "scoped";
 
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
-  private readonly IInboxChannelWriter? _inboxChannelWriter = inboxChannelWriter;
+  private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter;
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance;
+  private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
@@ -77,9 +76,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueOutbox", message.MessageType);
 
     _queues.AddOutboxMessage(message, _dependencies.SystemEventOptions);
-    if (_logger != null) {
-      LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
-    }
+    LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
   }
 
   /// <inheritdoc />
@@ -88,9 +85,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueInbox", message.MessageType);
 
     _queues.AddInboxMessage(message);
-    if (_logger != null) {
-      LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
-    }
+    LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
   }
 
   /// <inheritdoc />
@@ -98,9 +93,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queues.AddOutboxCompletion(messageId, completedStatus);
-    if (_logger != null) {
-      LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
-    }
+    LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
   }
 
   /// <inheritdoc />
@@ -108,9 +101,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queues.AddInboxCompletion(messageId, completedStatus);
-    if (_logger != null) {
-      LogQueuedInboxCompletion(_logger, messageId, completedStatus);
-    }
+    LogQueuedInboxCompletion(_logger, messageId, completedStatus);
   }
 
   /// <inheritdoc />
@@ -118,9 +109,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queues.AddOutboxFailure(messageId, completedStatus, errorMessage);
-    if (_logger != null) {
-      LogQueuedOutboxFailure(_logger, messageId, errorMessage);
-    }
+    LogQueuedOutboxFailure(_logger, messageId, errorMessage);
   }
 
   /// <inheritdoc />
@@ -128,9 +117,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queues.AddInboxFailure(messageId, completedStatus, errorMessage);
-    if (_logger != null) {
-      LogQueuedInboxFailure(_logger, messageId, errorMessage);
-    }
+    LogQueuedInboxFailure(_logger, messageId, errorMessage);
   }
 
   /// <inheritdoc />
@@ -158,10 +145,8 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
 
     // Log a summary of what's being flushed to the database
-    if (_logger != null) {
-      LogFlushSummary(_logger, _queues.OutboxMessages.Count, _queues.InboxMessages.Count);
-      LogFlushingWithInstanceId(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _queues.OutboxMessages.Count);
-    }
+    LogFlushSummary(_logger, _queues.OutboxMessages.Count, _queues.InboxMessages.Count);
+    LogFlushingWithInstanceId(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _queues.OutboxMessages.Count);
 
     // Snapshot arrays from queues + pending audit messages
     var outboxMessages = _queues.OutboxMessages.ToArray();
@@ -202,7 +187,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
   /// no inbox rows.</summary>
   private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
-    if (_inboxChannelWriter is null || workBatch.InboxWork.Count == 0) {
+    if (workBatch.InboxWork.Count == 0) {
       return;
     }
     // S3267: Loop body has side effects (channel writer mutation) — LINQ not appropriate
@@ -231,15 +216,13 @@ public partial class ScopedWorkCoordinatorStrategy(
     // ambient resources like HttpContext may be disposed — so skip lifecycle to avoid
     // ObjectDisposedException.
     if (!_queues.IsEmpty) {
-      if (_logger != null) {
-        LogDisposingWithUnflushedOperations(
-          _logger,
-          _queues.OutboxMessages.Count,
-          _queues.InboxMessages.Count,
-          _queues.OutboxCompletions.Count + _queues.InboxCompletions.Count,
-          _queues.OutboxFailures.Count + _queues.InboxFailures.Count
-        );
-      }
+      LogDisposingWithUnflushedOperations(
+        _logger,
+        _queues.OutboxMessages.Count,
+        _queues.InboxMessages.Count,
+        _queues.OutboxCompletions.Count + _queues.InboxCompletions.Count,
+        _queues.OutboxFailures.Count + _queues.InboxFailures.Count
+      );
 
       try {
         // Snapshot arrays from queues + pending audit messages
@@ -268,9 +251,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
         _queues.Clear();
       } catch (Exception ex) {
-        if (_logger != null) {
-          LogErrorFlushingOnDisposal(_logger, ex);
-        }
+        LogErrorFlushingOnDisposal(_logger, ex);
       }
     }
 

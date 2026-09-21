@@ -67,7 +67,7 @@ public class CrossScopeRealScenarioTests {
 
     // NO scoped tracker - simulates Request 2 which doesn't have events in its scope
     // With empty SyncEventTracker and no tracked events, WaitForStreamAsync returns NoPendingEvents
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - This is what [AwaitPerspectiveSync] does before RequestActivityStatusCommandHandler runs
     var result = await awaiter.WaitForStreamAsync(
@@ -114,7 +114,7 @@ public class CrossScopeRealScenarioTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -159,7 +159,7 @@ public class CrossScopeRealScenarioTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -206,7 +206,7 @@ public class CrossScopeRealScenarioTests {
 
     // NO scoped tracker - simulates cross-scope scenario
     // With empty SyncEventTracker, WaitForStreamAsync returns NoPendingEvents immediately
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -254,7 +254,7 @@ public class CrossScopeRealScenarioTests {
 
     var clock = new DebuggerAwareClock();
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - Call WaitForStreamAsync with a real Type
     var result = await awaiter.WaitForStreamAsync(

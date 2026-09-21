@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Priority;
 
@@ -93,6 +94,7 @@ public class PriorityTagSurfaceTests {
   [Test]
   public async Task AddWhizbang_CalledTwice_MergesTheTagDeclarations_LastWinsPerTagAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang(o => o.Tags.DeclarePriority("bulk-import", WorkPriority.BACKGROUND).DeclarePriority("shared", WorkPriority.STANDARD));
     _ = services.AddWhizbang(o => o.Tags.DeclarePriority("shared", WorkPriority.INTERACTIVE));
     await using var provider = services.BuildServiceProvider();
@@ -148,6 +150,7 @@ public class PriorityTagSurfaceTests {
   public async Task AddWhizbangPriority_RegistersTheSugarHooksAheadOfTheDefaultsAsync() {
     _ = _registered.Value;
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(new TagOptions().DeclarePriority("bulk-import", WorkPriority.BACKGROUND));
     services.AddSingleton(new PriorityOptions().ClassifyNamespace("Contracts.Job", WorkPriority.BACKGROUND));
     services.AddWhizbangPriority();

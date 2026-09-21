@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -28,9 +29,9 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   // gets a completed Task back with no exception, but nothing was ever asked to persist.
   [Test]
   public async Task FlushAsync_DelegatesToInnerStrategyWithSameFlagsAndTokenAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlushInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
     using var cts = new CancellationTokenSource();
 
     await sut.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cts.Token);
@@ -47,10 +48,10 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   // — or an always-empty — WorkBatch, silently dropping the very work it just flushed.
   [Test]
   public async Task FlushAndGetBatchAsync_DelegatesToInnerStrategyAndReturnsItsBatchAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var expectedBatch = new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
     var inner = new RecordingFlushInner { BatchToReturn = expectedBatch };
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
     using var cts = new CancellationTokenSource();
 
     var actualBatch = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None, cts.Token);
@@ -68,9 +69,9 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   // inner IWorkFlusher implementation performs).
   [Test]
   public async Task IWorkFlusher_FlushAsync_InnerImplementsIWorkFlusher_DelegatesToInnersIWorkFlusherAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlusherInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
     var flusher = (IWorkFlusher)sut;
     using var cts = new CancellationTokenSource();
 
@@ -88,9 +89,9 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   // when middleware calls through this hook, and queued work would sit unflushed indefinitely.
   [Test]
   public async Task IWorkFlusher_FlushAsync_InnerDoesNotImplementIWorkFlusher_FallsBackToFlushAsyncWithNoneFlagsAsync() {
-    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlushInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner, batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
     var flusher = (IWorkFlusher)sut;
     using var cts = new CancellationTokenSource();
 

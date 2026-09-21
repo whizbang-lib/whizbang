@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -224,6 +225,7 @@ public class WhizbangDatabaseInitializerServiceTests {
       TimeSpan? initRetryDelay = null,
       ILogger<WhizbangDatabaseInitializerService>? logger = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
     }

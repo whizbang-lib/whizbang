@@ -40,15 +40,14 @@ public partial class ServiceBusConsumerWorker(
   // database work against a schema that may not exist yet on a first boot. Optional only so
   // existing fixtures construct unchanged; DI always supplies it.
   ISchemaReadyGate schemaReadyGate,
+  ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+  IEnvelopeSerializer envelopeSerializer,
+  IReceptorRegistryQuery receptorRegistry,
+  IReceptorRegistry runtimeReceptorRegistry,
+  IEventMarkerResolver eventMarkerResolver,
+  IEphemeralModeResolver ephemeralModeResolver,
   ServiceBusConsumerOptions? options = null,
-  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-  IEnvelopeSerializer? envelopeSerializer = null,
-  MessageProcessingOptions? messageProcessingOptions = null,
-  IReceptorRegistryQuery? receptorRegistry = null,
-  IReceptorRegistry? runtimeReceptorRegistry = null,
-  IEventMarkerResolver? eventMarkerResolver = null,
-  IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
@@ -67,17 +66,17 @@ public partial class ServiceBusConsumerWorker(
   /// <inheritdoc />
   Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
-  private readonly IEventMarkerResolver? _eventMarkerResolver = eventMarkerResolver;
-  private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
+  private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
+  private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-  private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
-  private readonly IReceptorRegistryQuery? _receptorRegistry = receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry = runtimeReceptorRegistry;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer;
+  private readonly IReceptorRegistryQuery _receptorRegistry = receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry = runtimeReceptorRegistry;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
@@ -89,7 +88,8 @@ public partial class ServiceBusConsumerWorker(
   // Different streams continue to run in parallel via independent per-stream workers.
   private readonly PerStreamSerializer<AsbReceivedItem> _streamSerializer = new(
     streamIdSelector: static item => _extractStreamId(item.Envelope),
-    processor: static (item, ct) => item.HandleAsync(ct));
+    processor: static (item, ct) => item.HandleAsync(ct),
+    logger: logger);
 
   private sealed record AsbReceivedItem(
     IMessageEnvelope Envelope,
@@ -245,12 +245,12 @@ public partial class ServiceBusConsumerWorker(
     // itself; its consumers are registered for the INNER events, which only become addressable
     // after the dispatch seam fans it out. Dropping here loses the whole bundle before any inbox
     // row is written. See CompositeInboxFanout.IsCompositeWireType.
-    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)
+    if (!string.IsNullOrWhiteSpace(envelopeType)
         && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
       if (innerMessageType is not null
           && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+          && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
           && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
         return;
@@ -345,7 +345,7 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   private async Task _invokePreInboxLifecycleAsync(
     List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
-    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+    if (receptorInvoker is null) {
       return;
     }
 
@@ -367,7 +367,7 @@ public partial class ServiceBusConsumerWorker(
       // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
       // registries preserve legacy fire-unconditionally behavior for test harnesses.
       var runtimeMessageType = typedEnvelope.Payload?.GetType();
-      if (_receptorRegistry?.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType) == false
+      if (!_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
@@ -421,7 +421,7 @@ public partial class ServiceBusConsumerWorker(
   private async Task _invokePostInboxLifecycleAsync(
     List<InboxWork> myWork, IReceptorInvoker? receptorInvoker,
     IServiceProvider scopedProvider, CancellationToken ct) {
-    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+    if (receptorInvoker is null) {
       return;
     }
 
@@ -484,7 +484,7 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
-    if (_runtimeReceptorRegistry is null || messageType is null) {
+    if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
@@ -628,10 +628,7 @@ public partial class ServiceBusConsumerWorker(
         "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
-      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>()
-        ?? throw new InvalidOperationException(
-          "IEnvelopeSerializer is required but not registered. " +
-          "Ensure you call services.AddWhizbang() to register core services.");
+      var serializer = _envelopeSerializer;
 
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
@@ -646,8 +643,8 @@ public partial class ServiceBusConsumerWorker(
     // Determine if message is an event using IEventTypeProvider
     // This is more reliable than "payload is IEvent" when payload is JsonElement
     var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider != null) {
+    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
     } else {

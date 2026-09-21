@@ -57,8 +57,9 @@ public class StartupPipelineHooksTests {
   public async Task RunAsync_NotifiesStartingAndCompletedForEachStepInOrderAsync() {
     var observer = new _recordingObserver();
     var runner = new StartupPipelineRunner(
-      [new _step("Ready", dependsOn: ["Migrate"]), new _step("Migrate")],
-      [observer]);
+      steps: [new _step("Ready", dependsOn: ["Migrate"]), new _step("Migrate")],
+      observers: [observer],
+      dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -71,8 +72,9 @@ public class StartupPipelineHooksTests {
   public async Task RunAsync_ObserverSeesSkipOutcomeAndReasonAsync() {
     var observer = new _recordingObserver();
     var runner = new StartupPipelineRunner(
-      [new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "nothing to repair")],
-      [observer]);
+      steps: [new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "nothing to repair")],
+      observers: [observer],
+      dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -85,8 +87,9 @@ public class StartupPipelineHooksTests {
   public async Task RunAsync_ThrowingObserver_DoesNotFailTheStepOrThePipelineAsync() {
     var log = new List<string>();
     var runner = new StartupPipelineRunner(
-      [new _step("Migrate", log)],
-      [new _throwingObserver()]);
+      steps: [new _step("Migrate", log)],
+      observers: [new _throwingObserver()],
+      dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -100,8 +103,9 @@ public class StartupPipelineHooksTests {
   public async Task RunAsync_ThrowingObserver_DoesNotStarveOtherObserversAsync() {
     var healthy = new _recordingObserver();
     var runner = new StartupPipelineRunner(
-      [new _step("Migrate")],
-      [new _throwingObserver(), healthy]);
+      steps: [new _step("Migrate")],
+      observers: [new _throwingObserver(), healthy],
+      dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -124,8 +128,9 @@ public class StartupPipelineHooksTests {
   public async Task State_AfterARun_ReportsPerStepStatusAndCompletionAsync() {
     var state = new StartupPipelineState();
     var runner = new StartupPipelineRunner(
-      [new _step("Migrate"), new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "cold")],
-      [state]);
+      steps: [new _step("Migrate"), new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "cold")],
+      observers: [state],
+      dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -141,7 +146,7 @@ public class StartupPipelineHooksTests {
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var blocked = new _gatedStep("Migrate", gate.Task);
-    var runner = new StartupPipelineRunner([blocked], [state]);
+    var runner = new StartupPipelineRunner(steps: [blocked], observers: [state], dutyElector: NullDutyElector.Instance);
 
     var run = runner.RunAsync(CancellationToken.None);
     var waiter = state.WaitForAsync("Migrate", CancellationToken.None);
@@ -159,7 +164,7 @@ public class StartupPipelineHooksTests {
   [Test]
   public async Task State_WaitForAsync_AfterTheStepAlreadyCompleted_ReturnsImmediatelyAsync() {
     var state = new StartupPipelineState();
-    var runner = new StartupPipelineRunner([new _step("Migrate")], [state]);
+    var runner = new StartupPipelineRunner(steps: [new _step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
     await runner.RunAsync(CancellationToken.None);
 
     var waiter = state.WaitForAsync("Migrate", CancellationToken.None);
@@ -173,13 +178,13 @@ public class StartupPipelineHooksTests {
   [Test]
   public async Task State_OnReentry_ResetsToTheNewRunAsync() {
     var state = new StartupPipelineState();
-    var runner = new StartupPipelineRunner([new _step("Migrate")], [state]);
+    var runner = new StartupPipelineRunner(steps: [new _step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
     await Assert.That(state.IsComplete).IsTrue();
 
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var runner2 = new StartupPipelineRunner([new _gatedStep("Migrate", gate.Task)], [state]);
+    var runner2 = new StartupPipelineRunner(steps: [new _gatedStep("Migrate", gate.Task)], observers: [state], dutyElector: NullDutyElector.Instance);
     var run2 = runner2.RunAsync(CancellationToken.None);
 
     // Poll briefly: the reset happens when the new run begins.

@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Tests.RunControl;
 
@@ -57,9 +58,10 @@ public class InstanceStateRunControlCoverageTests {
 
     var logger = new _recordingLogger();
     var control = new InstanceStateRunControl(
-      sp.GetRequiredService<IServiceScopeFactory>(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: null!,
-      logger: logger);
+      logger: logger,
+      versionProvider: new LibraryVersionProvider("0.0.0-test"));
 
     await control.OnPhaseAsync(LifecyclePhase.Running, CancellationToken.None);
 

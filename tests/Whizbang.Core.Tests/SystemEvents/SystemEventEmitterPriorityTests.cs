@@ -10,6 +10,7 @@ using Whizbang.Core.Priority;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -63,7 +64,7 @@ public class SystemEventEmitterPriorityTests {
   private static (SystemEventEmitter Emitter, _captureStore Store) _build() {
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit().EnableCommandAudit());
-    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
   }
 
   private static MessageEnvelope<_auditedEvent> _source() => new() {

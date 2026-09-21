@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -62,26 +63,35 @@ public class ClaimWorkerBusWakeTests {
   private static (ClaimWorker Worker, CountingCoordinator Coord, SignalBus Bus, CancellationTokenSource Cts) _create() {
     var coord = new CountingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
-    var bus = new SignalBus([new InMemorySignalTransport()]);
+    var bus = new SignalBus(transports: [new InMemorySignalTransport()], pullSources: []);
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
       // Huge polling intervals: without the bus wake, the SecondCall.WaitAsync would time out
       // long before the adaptive-poll timer fires again.
-      Options.Create(new ClaimWorkerOptions {
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 300_000,
         PollingMaxIntervalMilliseconds = 300_000
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalBus: bus);
+      logger: NullLogger<ClaimWorker>.Instance,
+      signalBus: bus,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     return (worker, coord, bus, new CancellationTokenSource(TimeSpan.FromSeconds(15)));
   }
 

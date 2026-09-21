@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 ///   <item>Per-tenant strategies via a strategy resolver</item>
 /// </list>
 /// </remarks>
-/// <docs>internals/inbox-batch-strategy</docs>
+/// <docs>messaging/inbox-pattern</docs>
 public interface IInboxBatchStrategy : IAsyncDisposable {
   /// <summary>
   /// Append a message for batched insertion. Returns when the message is safely buffered.

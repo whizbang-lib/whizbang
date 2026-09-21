@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -109,23 +110,32 @@ public class ClaimWorkerDoorbellLivenessTests {
 
   private static ClaimWorker _buildWorker(EdgeCoordinator coord, SignalBusLivenessState liveness, int pollingIntervalMs = 50) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
     return new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = pollingIntervalMs,
         PollingMaxIntervalMilliseconds = Math.Max(2_000, pollingIntervalMs),
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
+      logger: NullLogger<ClaimWorker>.Instance,
       signalingGate: new AvailableGate(),
-      busLiveness: liveness);
+      busLiveness: liveness,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
   }
 
   [Test]

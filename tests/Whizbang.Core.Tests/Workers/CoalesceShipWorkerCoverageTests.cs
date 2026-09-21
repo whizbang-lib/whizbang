@@ -7,6 +7,9 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Minting;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -267,11 +270,12 @@ public class CoalesceShipWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
 
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? SchemaReadyGate.AlreadyReady(),
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate ?? SchemaReadyGate.AlreadyReady(),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       coalesceResolver: resolver,
-      logger: logger,
-      timeProvider: time);
+      logger: logger ?? NullLogger<CoalesceShipWorker>.Instance,
+      timeProvider: time,
+      compositeFactory: new CompositeFactory());
   }
 }

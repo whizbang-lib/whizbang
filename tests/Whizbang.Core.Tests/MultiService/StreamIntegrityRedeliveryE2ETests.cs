@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.MultiService;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.MultiService;
 
@@ -107,9 +108,10 @@ public class StreamIntegrityRedeliveryE2ETests {
     // DIRECTED at the damaged service, on the same topic the originals used. The REAL envelope
     // serializer converts the typed bundle exactly as the outbox's composite seam does.
     var pump = new RedeliveryPump(
-      harness.Wire,
-      new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      transport: harness.Wire,
+      envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      compositeFactory: new CompositeFactory());
     var originServiceId = TrackedGuid.NewMedo().Value;
     var published = await pump.PublishAsync(
       events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc", originServiceId: originServiceId);

@@ -54,7 +54,7 @@ public sealed class HousekeepingMetrics {
   /// </param>
   public HousekeepingMetrics(WhizbangMetrics whizbangMetrics, IIdleActivityTracker? idleTracker) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     Decisions = meter.CreatePassiveCounter<long>(
       "whizbang.housekeeping.decisions",

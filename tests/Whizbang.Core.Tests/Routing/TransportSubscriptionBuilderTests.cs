@@ -6,6 +6,9 @@ using TUnit.Core;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Messaging;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -28,9 +31,11 @@ public class TransportSubscriptionBuilderTests {
     var registry = new TestEventNamespaceRegistry(["myapp.users.events", "myapp.orders.events"]);
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), registry);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildDestinations();
@@ -47,9 +52,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildDestinations();
@@ -72,11 +79,13 @@ public class TransportSubscriptionBuilderTests {
     routingOptions.OwnDomains("myapp.orders.commands");
     routingOptions.Inbox.UseSharedTopic("commands.inbox");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destination = builder.BuildInboxDestination();
@@ -93,11 +102,13 @@ public class TransportSubscriptionBuilderTests {
     routingOptions.OwnDomains("orders");
     routingOptions.Inbox.UseDomainTopics(".in");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destination = builder.BuildInboxDestination();
@@ -116,11 +127,13 @@ public class TransportSubscriptionBuilderTests {
     routingOptions.OwnDomains("myapp.orders.commands");
     routingOptions.Inbox.UseSharedTopic("inbox");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destination = builder.BuildInboxDestination();
@@ -143,9 +156,11 @@ public class TransportSubscriptionBuilderTests {
     var registry = new TestEventNamespaceRegistry(["myapp.users.events", "myapp.orders.events"]);
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), registry);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildEventDestinations();
@@ -164,9 +179,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildEventDestinations();
@@ -185,9 +202,11 @@ public class TransportSubscriptionBuilderTests {
     var registry = new TestEventNamespaceRegistry(["myapp.orders.events"]);
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), registry);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildEventDestinations();
@@ -204,9 +223,11 @@ public class TransportSubscriptionBuilderTests {
     var registry = new TestEventNamespaceRegistry(["myapp.users.events"]);
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), registry);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act
     var destinations = builder.BuildEventDestinations();
@@ -228,11 +249,13 @@ public class TransportSubscriptionBuilderTests {
     routingOptions.OwnDomains("myapp.orders.commands");
     routingOptions.SubscribeTo("myapp.payments.events");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var options = new TransportConsumerOptions();
 
@@ -247,11 +270,13 @@ public class TransportSubscriptionBuilderTests {
   public async Task ConfigureOptions_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var routingOptions = new RoutingOptions();
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Act & Assert
     await Assert.That(() => builder.ConfigureOptions(null!))
@@ -266,10 +291,10 @@ public class TransportSubscriptionBuilderTests {
   public async Task Constructor_WithNullRoutingOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var routingOptions = new RoutingOptions();
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
 
     // Act & Assert
-    await Assert.That(() => new TransportSubscriptionBuilder(null!, discovery, "OrderService"))
+    await Assert.That(() => new TransportSubscriptionBuilder(routingOptions: null!, discovery: discovery, serviceName: "OrderService", inboxStrategy: new RoutingOptions().InboxStrategy, receptorRegistry: new PermissiveReceptorRegistryQuery()))
       .Throws<ArgumentNullException>();
   }
 
@@ -279,7 +304,7 @@ public class TransportSubscriptionBuilderTests {
     var routingOptions = new RoutingOptions();
 
     // Act & Assert
-    await Assert.That(() => new TransportSubscriptionBuilder(Options.Create(routingOptions), null!, "OrderService"))
+    await Assert.That(() => new TransportSubscriptionBuilder(routingOptions: Options.Create(routingOptions), discovery: null!, serviceName: "OrderService", inboxStrategy: routingOptions.InboxStrategy, receptorRegistry: new PermissiveReceptorRegistryQuery()))
       .Throws<ArgumentNullException>();
   }
 
@@ -287,10 +312,10 @@ public class TransportSubscriptionBuilderTests {
   public async Task Constructor_WithNullServiceName_ThrowsArgumentExceptionAsync() {
     // Arrange
     var routingOptions = new RoutingOptions();
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
 
     // Act & Assert
-    await Assert.That(() => new TransportSubscriptionBuilder(Options.Create(routingOptions), discovery, null!))
+    await Assert.That(() => new TransportSubscriptionBuilder(routingOptions: Options.Create(routingOptions), discovery: discovery, serviceName: null!, inboxStrategy: routingOptions.InboxStrategy, receptorRegistry: new PermissiveReceptorRegistryQuery()))
       .Throws<ArgumentException>();
   }
 
@@ -298,10 +323,10 @@ public class TransportSubscriptionBuilderTests {
   public async Task Constructor_WithEmptyServiceName_ThrowsArgumentExceptionAsync() {
     // Arrange
     var routingOptions = new RoutingOptions();
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
 
     // Act & Assert
-    await Assert.That(() => new TransportSubscriptionBuilder(Options.Create(routingOptions), discovery, ""))
+    await Assert.That(() => new TransportSubscriptionBuilder(routingOptions: Options.Create(routingOptions), discovery: discovery, serviceName: "", inboxStrategy: routingOptions.InboxStrategy, receptorRegistry: new PermissiveReceptorRegistryQuery()))
       .Throws<ArgumentException>();
   }
 
@@ -320,9 +345,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     // Expected: hand-built from the strategy's singular answer (today's behavior)
     var singular = routingOptions.InboxStrategy!.GetSubscription(
@@ -355,9 +382,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var singular = routingOptions.InboxStrategy!.GetSubscription(
         routingOptions.OwnedDomains, "OrderService", MessageKind.Command);
@@ -386,10 +415,11 @@ public class TransportSubscriptionBuilderTests {
     var diStrategy = new FixedTopicStrategy("di-resolved-inbox");
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService",
-        inboxStrategy: diStrategy);
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: diStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var destination = builder.BuildInboxDestination();
 
@@ -406,10 +436,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService",
-        inboxStrategy: null);
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var destination = builder.BuildInboxDestination();
 
@@ -432,10 +463,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService",
-        receptorRegistry: registryQuery);
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        receptorRegistry: registryQuery,
+        inboxStrategy: routingOptions.InboxStrategy);
 
     _ = builder.BuildInboxDestinations();
 
@@ -454,6 +486,7 @@ public class TransportSubscriptionBuilderTests {
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("myapp.orders.commands");
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(Options.Create(routingOptions));
     services.AddSingleton(new EventSubscriptionDiscovery(
         Options.Create(routingOptions), TestEventNamespaceRegistry.Empty));
@@ -486,9 +519,11 @@ public class TransportSubscriptionBuilderTests {
         Options.Create(routingOptions),
         new TestEventNamespaceRegistry(["myapp.payments.events"]));
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     _ = builder.BuildInboxDestinations();
 
@@ -507,9 +542,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     _ = builder.BuildInboxDestinations();
 
@@ -526,9 +563,11 @@ public class TransportSubscriptionBuilderTests {
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var destinations = builder.BuildInboxDestinations();
 

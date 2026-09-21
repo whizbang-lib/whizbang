@@ -7,6 +7,9 @@ using TUnit.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -68,27 +71,40 @@ public class IdleActivityTouchHookBinderTests {
     var tracker = new RecordingTracker();
     var listener = new RaisableListener();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
     var gate = SchemaReadyGate.AlreadyReady();
     var instance = new StubInstanceProvider();
 
     var claimWorker = new ClaimWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      instance,
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions()),
-      NullLogger<ClaimWorker>.Instance);
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions()),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     var heartbeatWorker = new HeartbeatWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      instance,
-      gate,
-      Options.Create(new HeartbeatWorkerOptions()),
-      NullLogger<HeartbeatWorker>.Instance,
-      HeartbeatTestDependencies.LifecycleState,
-      HeartbeatTestDependencies.Version);
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      schemaReadyGate: gate,
+      options: Options.Create(new HeartbeatWorkerOptions()),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
 
     return (new IdleActivityTouchHookBinder(tracker, claimWorker, heartbeatWorker, listener), tracker, listener);
   }

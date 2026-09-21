@@ -17,6 +17,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -213,6 +214,7 @@ public class RepairDrainWorkerTests {
     // tick is inert by design, and the loop would look broken when it is merely idle.
     tracker.RecordCheckpoint(Guid.NewGuid(), "origin-svc", clock.GetUtcNow(), "origin.requests");
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
@@ -346,6 +348,7 @@ public class RepairDrainWorkerTests {
       tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, requestTopic: null);
     }
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);

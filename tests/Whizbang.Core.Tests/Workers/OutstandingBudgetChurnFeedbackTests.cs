@@ -9,6 +9,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -135,16 +137,17 @@ public class OutstandingBudgetChurnFeedbackTests {
 
   private static ClaimWorker _worker(_reportingCoordinator coord, WorkCompletionMeter? meter) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         AdaptiveOutstandingBudget = true,
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,
@@ -152,8 +155,17 @@ public class OutstandingBudgetChurnFeedbackTests {
         MinOutstandingInboxRows = BUDGET_FLOOR,
         MaxOutstandingInboxRows = BUDGET_CEILING,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      completionMeter: meter);
+      logger: NullLogger<ClaimWorker>.Instance,
+      completionMeter: meter,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
   }
 
   private static async Task _driveAsync(_reportingCoordinator coord, WorkCompletionMeter? meter, int cycles) {
@@ -225,23 +237,33 @@ public class OutstandingBudgetChurnFeedbackTests {
     // constructed value, which was harmless only while that value happened to be the ceiling.
     var coord = new _reportingCoordinator(BUDGET_CEILING, measurable: true, meter: null);
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,
         MinStreamsPerBatch = WINDOW_FLOOR,
         AdaptiveOutstandingBudget = false,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      completionMeter: new WorkCompletionMeter());
+      logger: NullLogger<ClaimWorker>.Instance,
+      completionMeter: new WorkCompletionMeter(),
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

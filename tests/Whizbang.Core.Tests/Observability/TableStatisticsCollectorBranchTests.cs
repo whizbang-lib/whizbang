@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -26,7 +27,7 @@ namespace Whizbang.Core.Tests.Observability;
 [Category("Observability")]
 public class TableStatisticsCollectorBranchTests {
 
-  private static TableStatisticsMetrics _newMetrics() => new(new WhizbangMetrics());
+  private static TableStatisticsMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   [Test]
   public async Task NoProvider_LogsAndExitsLoopAsync() {

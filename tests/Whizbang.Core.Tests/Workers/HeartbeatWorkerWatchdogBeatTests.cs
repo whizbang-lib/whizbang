@@ -8,6 +8,8 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -53,7 +55,7 @@ public class HeartbeatWorkerWatchdogBeatTests {
     var coordinator = new ScriptedHeartbeatCoordinator(onBeat);
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -66,7 +68,10 @@ public class HeartbeatWorkerWatchdogBeatTests {
       logger: logger,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
-      timeProvider: clock);
+      timeProvider: clock,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
     return (worker, logger, coordinator);
   }
 

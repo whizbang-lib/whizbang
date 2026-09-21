@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Notifications;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -362,14 +363,14 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var gate = new NeverReadySchemaGate();
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"),
-      NullLogger<DeadLetterRecoveryWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
       metrics: null,
-      notificationListener: null);
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -421,14 +422,14 @@ public class DeadLetterRecoveryWorkerTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(new DefaultDeadLetterRecoveryPolicy(Options.Create(options ?? new DeadLetterRecoveryOptions())));
     var sp = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new ImmediateSchemaGate(),
-      Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
-      Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider(generation),
-      NullLogger<DeadLetterRecoveryWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider(generation),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
       metrics: null,
-      notificationListener: listener,
+      notificationListener: (IWorkNotificationListener?)listener ?? new NoOpWorkNotificationListener(),
       timeProvider: timeProvider);
     return (worker, svc);
   }
@@ -612,12 +613,13 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var logger = new EventIdSignalLogger(16);  // LogNoRecoveryService
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new ImmediateSchemaGate(),
-      Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"),
-      logger);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: logger,
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token); // must NOT throw
@@ -1053,10 +1055,14 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: null, housekeeping: housekeeping);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
     svc.FetchBatches.Enqueue([_entry()]);
 
     using var cts = new CancellationTokenSource();
@@ -1109,10 +1115,14 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: null, housekeeping: housekeeping);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
     svc.FetchBatches.Enqueue([_entry()]);
 
     using var cts = new CancellationTokenSource();
@@ -1149,10 +1159,14 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: null, housekeeping: housekeeping);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1374,10 +1388,14 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: null, housekeeping: housekeeping);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateSchemaGate(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
     svc.FetchBatches.Enqueue([_entry()]);
 
     using var cts = new CancellationTokenSource();

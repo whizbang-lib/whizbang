@@ -51,6 +51,7 @@ public class DefaultNamespaceTopologyTests {
 
   private static RoutingOptions _resolve(Action<RoutingOptions> configure) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     new WhizbangBuilder(services).WithRouting(configure);
     using var provider = services.BuildServiceProvider();
     return provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
@@ -62,6 +63,7 @@ public class DefaultNamespaceTopologyTests {
   public async Task ConfigFreeConsumer_ResolvesNamespaceStrategies_FullyFlippedAndRetiredAsync() {
     // THE HEADLINE: AddWhizbang().WithRouting() with no inbox/outbox call at all.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     new WhizbangBuilder(services).WithRouting(r => r.OwnDomains("outboxtesttypes.orders.commands"));
 
     await using var provider = services.BuildServiceProvider();
@@ -82,6 +84,7 @@ public class DefaultNamespaceTopologyTests {
     // Internal consistency: the default end state must SATISFY the retirement guard. A default
     // that throws on first options resolution would break every config-free consumer.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     new WhizbangBuilder(services).WithRouting(_ => { });
 
     await using var provider = services.BuildServiceProvider();
@@ -127,6 +130,7 @@ public class DefaultNamespaceTopologyTests {
   public async Task ConfigFreeConsumer_ManifestThroughDi_ContainsNoLegacyInboxEntityAsync() {
     // Same lock through the REAL registration path the consumer worker uses.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     new WhizbangBuilder(services).WithRouting(_ => { });
     services.AddTransportSubscriptionBuilder("order-service");
 
@@ -316,6 +320,7 @@ public class DefaultNamespaceTopologyTests {
     // Retirement ON with the flip incomplete is still silent loss — the guard must survive the
     // default change (it can only be reached now by asking for both explicitly).
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     new WhizbangBuilder(services).WithRouting(r => {
       r.RouteCommandNamespaceToInbox("outboxtesttypes.orders.commands");
       r.RetireSharedInbox();
@@ -340,6 +345,7 @@ public class DefaultNamespaceTopologyTests {
       })
       .Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
@@ -360,6 +366,7 @@ public class DefaultNamespaceTopologyTests {
       })
       .Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
@@ -382,6 +389,7 @@ public class DefaultNamespaceTopologyTests {
       })
       .Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 

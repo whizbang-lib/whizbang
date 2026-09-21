@@ -11,7 +11,7 @@ namespace Whizbang.Core.Temporal;
 /// and cancelling needs no bookkeeping on the caller's side.
 /// </para>
 /// </summary>
-/// <docs>fundamentals/temporal/saga-deadlines</docs>
+/// <docs>fundamentals/sagas/continuations</docs>
 public interface ISagaDeadlineScheduler {
   /// <summary>
   /// Arm (or move) a deadline: at <paramref name="at"/>, spawn <paramref name="eventType"/> on the saga's

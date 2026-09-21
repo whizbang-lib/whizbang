@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -19,7 +20,7 @@ public class TableStatisticsCollectorTests {
     // Reproduces: Kestrel bind failure → DI container disposed → TableStatisticsCollector
     // used to catch ObjectDisposedException, log a warning, then wait 30s and retry forever.
     // After the fix it should break out of the loop and exit cleanly.
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = new TableStatisticsCollector(
   scopeFactory: new AlwaysDisposedScopeFactory(),
   metrics: metrics,
@@ -82,7 +83,7 @@ public class TableStatisticsCollectorTests {
   [Test]
   public async Task Collector_PublishesTableBloatRatioAsync() {
     var provider = new BloatReportingProvider();
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = new TableStatisticsCollector(
   scopeFactory: new SingleProviderScopeFactory(provider),
   metrics: metrics,

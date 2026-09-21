@@ -12,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -51,6 +52,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -86,6 +88,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -119,6 +122,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -161,6 +165,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // Use AddWhizbangMessageSecurity without custom extractors — relies on default
     // MessageHopSecurityExtractor which extracts from hops' ScopeDelta
     services.AddWhizbangMessageSecurity();

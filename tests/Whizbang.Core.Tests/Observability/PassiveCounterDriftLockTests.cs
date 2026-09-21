@@ -11,6 +11,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -109,7 +110,7 @@ public class PassiveCounterDriftLockTests {
     var recorder = new CounterRecorder(meterName: meter.Name);
     recorder.Start();
 
-    _ = new MessageDiscardPolicy(new NoReceptors(), NullLogger<MessageDiscardPolicy>.Instance, meter);
+    _ = new MessageDiscardPolicy(registry: new NoReceptors(), logger: NullLogger<MessageDiscardPolicy>.Instance, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     recorder.Collect();
 
     var gates = recorder.Measurements

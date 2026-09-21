@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -50,7 +51,8 @@ public class SlidingWindowApplyFailurePathTests {
         }
         throw new InvalidOperationException("perspective store unavailable");
       },
-      options: _fastWindow());
+      options: _fastWindow(),
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(Guid.CreateVersion7());
     await sut.AppendAsync(Guid.CreateVersion7());
@@ -98,7 +100,8 @@ public class SlidingWindowApplyFailurePathTests {
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.TrySetResult(); return Task.CompletedTask; },
       options: _fastWindow(idleWindow: TimeSpan.FromSeconds(1)),
-      timeProvider: time);
+      timeProvider: time,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(Guid.CreateVersion7());
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

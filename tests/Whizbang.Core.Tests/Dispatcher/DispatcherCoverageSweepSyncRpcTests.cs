@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 #pragma warning disable RCS1163 // Unused parameter — fake receptor/handler delegates intentionally match interface signatures.
@@ -63,7 +64,7 @@ public class DispatcherCoverageSweepSyncRpcTests {
     VoidSyncReceptorInvoker? voidSyncInvoker = null,
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       streamIdExtractor: streamIdExtractor,
       receptorRegistry: receptorRegistry) {

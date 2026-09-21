@@ -11,6 +11,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -327,21 +329,29 @@ public class ClaimWorkerAcquisitionBoundsTests {
       IInboxDrainChannel? inboxDrainChannel = null,
       TimeProvider? timeProvider = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstance(coord.InstanceId),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(options),
-      NullLogger<ClaimWorker>.Instance,
-      perspectiveDrainChannel: perspectiveDrainChannel,
-      inboxDrainChannel: inboxDrainChannel,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstance(coord.InstanceId),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<ClaimWorker>.Instance,
+      perspectiveDrainChannel: perspectiveDrainChannel ?? new PerspectiveDrainChannel(),
+      inboxDrainChannel: inboxDrainChannel ?? new InboxDrainChannel(),
       completionMeter: completionMeter,
-      timeProvider: timeProvider);
+      timeProvider: timeProvider,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);

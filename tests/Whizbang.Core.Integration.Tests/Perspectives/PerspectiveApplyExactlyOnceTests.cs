@@ -14,6 +14,13 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Integration.Tests.Perspectives;
 
@@ -595,10 +602,11 @@ public class PerspectiveApplyExactlyOnceTests {
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createCollectiveWorker(
       IWorkCoordinator coordinator, IPerspectiveRunnerRegistry registry, IEventStore eventStore, ICollectiveDispatcher dispatcher) {
     var instanceProvider = new _fakeInstanceProvider();
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(coordinator);
     services.AddSingleton(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -615,7 +623,7 @@ public class PerspectiveApplyExactlyOnceTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -627,7 +635,24 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
     return (worker, harness);
   }
 
@@ -949,10 +974,11 @@ public class PerspectiveApplyExactlyOnceTests {
       IEventStore eventStore,
       Action<PerspectiveWorkerOptions>? configureOptions = null) {
     var instanceProvider = new _fakeInstanceProvider();
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(coordinator);
     services.AddSingleton(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -969,7 +995,7 @@ public class PerspectiveApplyExactlyOnceTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -981,7 +1007,24 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value));
     return (worker, harness);
   }
 

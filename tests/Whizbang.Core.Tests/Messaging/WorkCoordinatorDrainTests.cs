@@ -5,6 +5,13 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -176,14 +183,16 @@ public class WorkCoordinatorDrainTests {
     IWorkCoordinator workCoordinator,
     IDeferredOutboxChannel? deferredChannel) {
     return new ImmediateWorkCoordinatorStrategy(
-      workCoordinator,
-      new ServiceInstanceProvider(configuration: null),
-      new WorkCoordinatorOptions(),
-      logger: null,
-      scopeFactory: null,
-      lifecycleMessageDeserializer: null,
-      tracingOptions: null,
-      deferredChannel: deferredChannel
+      coordinator: workCoordinator,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      options: new WorkCoordinatorOptions(),
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: deferredChannel ?? new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
   }
 

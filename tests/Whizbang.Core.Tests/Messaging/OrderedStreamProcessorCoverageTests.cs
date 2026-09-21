@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -29,7 +30,7 @@ public class OrderedStreamProcessorCoverageTests {
   /// </summary>
   [Test]
   public async Task ProcessInboxWorkAsync_CancelledBeforeStart_ProcessesNoStreamsAsync() {
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var messages = new List<InboxWork> {
       _createInboxWork(_idProvider.NewGuid()),
       _createInboxWork(_idProvider.NewGuid()),
@@ -61,7 +62,7 @@ public class OrderedStreamProcessorCoverageTests {
   /// </summary>
   [Test]
   public async Task ProcessOutboxWorkAsync_CancelledBeforeStart_ProcessesNoStreamsAsync() {
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var messages = new List<OutboxWork> {
       _createOutboxWork(_idProvider.NewGuid()),
       _createOutboxWork(_idProvider.NewGuid()),

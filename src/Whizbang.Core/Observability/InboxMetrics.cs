@@ -26,8 +26,7 @@ public sealed class InboxMetrics {
   /// <summary>Constructor.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public InboxMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(WorkCoordinatorMetrics.METER_NAME)
-              ?? new Meter(WorkCoordinatorMetrics.METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(WorkCoordinatorMetrics.METER_NAME);
     DispatchDuration = meter.CreateHistogram<double>(
       "whizbang.inbox.dispatch.duration_ms",
       "ms",

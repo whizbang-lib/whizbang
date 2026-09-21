@@ -65,10 +65,11 @@ public class LeaseRenewalWorkerCoverageTests {
     var services = new ServiceCollection().BuildServiceProvider();
     var logger = new _signalLogger("disabled via options");
     var worker = new LeaseRenewalWorker(
-      services.GetRequiredService<IServiceScopeFactory>(),
-      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
-      logger);
+      scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
+      logger: logger,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -102,9 +103,9 @@ public class LeaseRenewalWorkerCoverageTests {
       .AddSingleton<IWorkCoordinator>(coordinator)
       .BuildServiceProvider();
     var worker = new LeaseRenewalWorker(
-      services.GetRequiredService<IServiceScopeFactory>(),
-      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Enabled = false,
         Flusher = new BatchFlusherOptions {
           MaxBatchSize = 10,
@@ -114,7 +115,8 @@ public class LeaseRenewalWorkerCoverageTests {
           DrainTimeoutMs = 2000,
         },
       }),
-      NullLogger<LeaseRenewalWorker>.Instance);
+      logger: NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
     // No LeaseRegistry supplied: if the disabled check were bypassed, the "no registry wired"
     // fallback would unconditionally submit this id to RenewLeasesAsync, making the assertion
     // below meaningful rather than accidentally true for an unrelated reason.

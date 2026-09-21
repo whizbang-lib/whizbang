@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -79,13 +80,16 @@ public class HeartbeatWorkerCoverageTests {
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
     return new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _instanceProvider("origin-svc"),
-      gate,
-      Options.Create(options),
-      NullLogger<HeartbeatWorker>.Instance,
-      HeartbeatTestDependencies.LifecycleState,
-      HeartbeatTestDependencies.Version);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new _instanceProvider("origin-svc"),
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
   }
 
   // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the

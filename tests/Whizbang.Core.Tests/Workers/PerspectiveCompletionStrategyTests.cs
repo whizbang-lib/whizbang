@@ -4,6 +4,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -170,7 +171,7 @@ public class PerspectiveCompletionStrategyTests {
       Status = PerspectiveProcessingStatus.Completed
     };
 
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     await strategy.ReportCompletionAsync(completion, coordinator, CancellationToken.None);
@@ -192,7 +193,7 @@ public class PerspectiveCompletionStrategyTests {
       Error = "Test error"
     };
 
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     await strategy.ReportFailureAsync(failure, coordinator, CancellationToken.None);
@@ -205,7 +206,7 @@ public class PerspectiveCompletionStrategyTests {
   [Test]
   public async Task InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async() {
     // Arrange
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     var pending = strategy.GetPendingCompletions();
@@ -217,7 +218,7 @@ public class PerspectiveCompletionStrategyTests {
   [Test]
   public async Task InstantStrategy_GetPendingFailures_AlwaysReturnsEmpty_Async() {
     // Arrange
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     var pending = strategy.GetPendingFailures();

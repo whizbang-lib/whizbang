@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -325,7 +326,7 @@ public class DispatcherTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors
     services.AddReceptors();
@@ -539,10 +540,11 @@ public class DispatcherTests {
     // Arrange
     LogReceptor.Reset();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
@@ -586,8 +588,9 @@ public class DispatcherTests {
   public async Task SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -631,8 +634,9 @@ public class DispatcherTests {
   public async Task SendManyAsync_Generic_CreatesTypedEnvelopesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -680,8 +684,9 @@ public class DispatcherTests {
 
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -746,8 +751,9 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -784,8 +790,9 @@ public class DispatcherTests {
     // Arrange
     LogReceptor.Reset();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -815,8 +822,9 @@ public class DispatcherTests {
   public async Task SendAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -854,8 +862,9 @@ public class DispatcherTests {
     // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
     // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var receptorInvoker = new MockReceptorInvoker();
     services.AddSingleton<IReceptorInvoker>(receptorInvoker);
@@ -882,8 +891,9 @@ public class DispatcherTests {
     // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
     // because the dispatcher already invokes receptors directly via generated delegates.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var receptorInvoker = new MockReceptorInvoker();
     services.AddSingleton<IReceptorInvoker>(receptorInvoker);
@@ -926,8 +936,9 @@ public class DispatcherTests {
   public async Task SendAsync_WithDispatchOptions_Generic_PreservesTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);

@@ -6,6 +6,12 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -30,7 +36,16 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -53,7 +68,12 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, workChannelWriter: null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -76,7 +96,15 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 60_000 };
 
     var strategy = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -105,7 +133,14 @@ public class WorkFlusherTests {
     };
 
     var strategy = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -139,7 +174,16 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());

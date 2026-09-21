@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core.Observability;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Signals;
 
@@ -17,8 +18,10 @@ public static class SignalBusServiceCollectionExtensions {
   /// </summary>
   public static IServiceCollection AddWhizbangSignalBus(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+
+    services.TryAddWhizbangDefaults();
     services.TryAddSingleton<SignalBus>();
-    services.TryAddSingleton<ISignalBus>(static sp => sp.GetRequiredService<SignalBus>());
+    services.TryAddSingletonOverNullDefault<ISignalBus>(static sp => sp.GetRequiredService<SignalBus>());
     // ISignalSink is the bus-side entry point that transports/tail-workers call to deliver
     // received signals. Registered as the same singleton so the durable-log tail (and any
     // other consumer that raises signals into the bus) resolves to the actual bus instance.

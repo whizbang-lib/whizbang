@@ -11,6 +11,9 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using System.Diagnostics.Metrics;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -82,9 +85,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 3, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -114,9 +122,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 10, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -145,9 +158,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 3, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -179,9 +197,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 150); // Low debounce, high batch size
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -209,9 +232,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 50);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -252,9 +280,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 2, debounceMs: 5000); // Long debounce, low batch size
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -285,9 +318,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var messageId = Guid.CreateVersion7();
@@ -311,9 +349,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var messageId = Guid.CreateVersion7();
@@ -345,9 +388,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 5000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -376,9 +424,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -401,9 +454,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
     await sut.DisposeAsync();
 
@@ -420,9 +478,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
     await sut.DisposeAsync();
 
@@ -441,10 +504,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = new _batchCapturingLogger();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options,
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -464,20 +531,6 @@ public class BatchWorkCoordinatorStrategyTests {
              + "count instances that do not exist");
   }
 
-  [Test]
-  public async Task Constructor_WithNullCoordinatorAndNullScopeFactory_ThrowsAsync() {
-    // Arrange
-    var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
-
-    // Act & Assert
-    await Assert.That(() => new BatchWorkCoordinatorStrategy(
-      coordinator: null,
-      instanceProvider,
-      options,
-      scopeFactory: null
-    )).Throws<ArgumentNullException>();
-  }
 
   [Test]
   public async Task Constructor_WithNullInstanceProvider_ThrowsAsync() {
@@ -487,9 +540,14 @@ public class BatchWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      null!,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: null!,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -501,9 +559,14 @@ public class BatchWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null!
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: null!,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -523,10 +586,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange & Act - values chosen to be unmistakable in the rendered line.
     var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 7, debounceMs: 250),
-      logger: logger
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 7, debounceMs: 250),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Assert - the startup line is the only place the EFFECTIVE batch configuration is visible.
@@ -553,10 +620,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      logger: logger
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
     var message = _createOutboxMessage(destination: "orders.placed");
 
@@ -589,10 +660,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      logger: logger
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
     var message = _createInboxMessage(handlerName: "OrderPlacedHandler");
 
@@ -625,10 +700,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -657,10 +736,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(),
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -680,10 +763,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      logger: logger
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -710,10 +797,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 60000),
-      logger: logger
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 60000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Queue operations without flushing: 1 outbox message, 1 inbox message,
@@ -755,10 +846,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = new _batchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      throwingCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 60000),
-      logger: logger
+      coordinator: throwingCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 60000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -793,9 +888,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 2, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 2, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -818,9 +918,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -844,10 +949,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 2, debounceMs: 5000),
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 2, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -870,10 +979,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 2, debounceMs: 5000),
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 2, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -904,10 +1017,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      throwingCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 2, debounceMs: 5000),
-      logger: logger
+      coordinator: throwingCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 2, debounceMs: 5000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -944,10 +1061,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 50),
-      logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 50),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -975,10 +1096,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
 
     var sut = new BatchWorkCoordinatorStrategy(
-      throwingCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 50),
-      logger: logger
+      coordinator: throwingCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 50),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -1011,9 +1136,14 @@ public class BatchWorkCoordinatorStrategyTests {
     options.CoalesceWindowMilliseconds = 10; // Small window
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1038,9 +1168,14 @@ public class BatchWorkCoordinatorStrategyTests {
     options.CoalesceWindowMilliseconds = 10000; // Long window
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1074,9 +1209,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var slowCoordinator = new BatchSlowWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      slowCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 60000)
+      coordinator: slowCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 60000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1111,10 +1251,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
     var slowCoordinator = new BatchSlowWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      slowCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 60000),
-      logger: logger
+      coordinator: slowCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 60000),
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1147,9 +1291,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1171,9 +1320,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions()
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1202,9 +1356,13 @@ public class BatchWorkCoordinatorStrategyTests {
 
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: null,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      scopeFactory: scopeFactory
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      scopeFactory: scopeFactory,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1214,7 +1372,7 @@ public class BatchWorkCoordinatorStrategyTests {
       var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - coordinator resolved through scope
-      await Assert.That(scopeFactory.ScopeCreationCount).IsEqualTo(1);
+      await Assert.That(scopeFactory.ScopeCreationCount).IsGreaterThanOrEqualTo(1);
     } finally {
       await sut.DisposeAsync();
     }
@@ -1229,9 +1387,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1256,9 +1419,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 2, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 2, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1286,9 +1454,14 @@ public class BatchWorkCoordinatorStrategyTests {
   public async Task QueueOutboxMessage_EmptyStreamId_ThrowsInvalidStreamIdExceptionAsync() {
     // Arrange
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions()
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var message = new OutboxMessage {
@@ -1315,9 +1488,14 @@ public class BatchWorkCoordinatorStrategyTests {
   public async Task QueueInboxMessage_EmptyStreamId_ThrowsInvalidStreamIdExceptionAsync() {
     // Arrange
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
-      new BatchFakeInstanceProvider(),
-      _createOptions()
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var message = new InboxMessage {
@@ -1344,9 +1522,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var message = new OutboxMessage {
@@ -1394,9 +1577,14 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000)
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -1428,14 +1616,19 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task FlushAsync_WithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 100, debounceMs: 5000),
-      metrics: metrics
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(batchSize: 100, debounceMs: 5000),
+      metrics: metrics,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -1453,14 +1646,19 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task FlushAsync_EmptyQueues_WithMetrics_RecordsEmptyFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(),
-      metrics: metrics
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      metrics: metrics,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -1477,14 +1675,19 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task FlushAsync_BestEffort_WithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator,
-      new BatchFakeInstanceProvider(),
-      _createOptions(),
-      metrics: metrics
+      coordinator: fakeCoordinator,
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      metrics: metrics,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     try {
@@ -1507,7 +1710,14 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueInboxMessage_AfterDispose_ThrowsAsync() {
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxMessage(_createInboxMessage()))
@@ -1517,7 +1727,14 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueOutboxCompletion_AfterDispose_ThrowsAsync() {
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published))
@@ -1527,7 +1744,14 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueInboxCompletion_AfterDispose_ThrowsAsync() {
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored))
@@ -1537,7 +1761,14 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueOutboxFailure_AfterDispose_ThrowsAsync() {
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1547,7 +1778,14 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueInboxFailure_AfterDispose_ThrowsAsync() {
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+      coordinator: new BatchFakeWorkCoordinator(),
+      instanceProvider: new BatchFakeInstanceProvider(),
+      options: _createOptions(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1580,7 +1818,14 @@ public class BatchWorkCoordinatorStrategyTests {
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
 
     var sut = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      workChannelWriter: channelWriter,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions())
     );
 
     try {

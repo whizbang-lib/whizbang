@@ -8,6 +8,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Minting;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -92,7 +94,7 @@ public class RedeliveryPumpCoverageTests {
   [Test]
   public async Task PublishAsync_EmptySelection_ReturnsZeroWithoutPublishingAsync() {
     var transport = new _captureTransport();
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), new ServiceInstanceProvider());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new _captureSerializer(), instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync([], topic: "repair-topic", target: null);
 
@@ -107,8 +109,7 @@ public class RedeliveryPumpCoverageTests {
   [Timeout(30000)]
   public async Task PublishAsync_TransientFailureWithConfiguredBackoff_ActuallyDelaysBeforeRetryingAsync(CancellationToken testToken) {
     var transport = new _flakyTransport { FailFirst = 1 };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), new ServiceInstanceProvider(),
-      options: new RedeliveryPumpOptions { PublishRetryAttempts = 3, PublishRetryBaseDelayMs = 5 });
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new _captureSerializer(), instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions { PublishRetryAttempts = 3, PublishRetryBaseDelayMs = 5 }, compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync(
       [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],

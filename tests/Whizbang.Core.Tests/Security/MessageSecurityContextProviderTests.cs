@@ -7,6 +7,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Security;
 
@@ -579,6 +580,7 @@ public class MessageSecurityContextProviderTests {
 
   private static ServiceProvider _createServiceProvider() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     return services.BuildServiceProvider();
   }
 

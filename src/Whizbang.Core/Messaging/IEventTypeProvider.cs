@@ -28,6 +28,7 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </example>
+/// <docs>fundamentals/events/events</docs>
 public interface IEventTypeProvider {
   /// <summary>
   /// Gets all known event types in the application that implement IEvent.
@@ -35,4 +36,25 @@ public interface IEventTypeProvider {
   /// </summary>
   /// <returns>A read-only list of all event types.</returns>
   IReadOnlyList<Type> GetEventTypes();
+
+  /// <summary>False only for the framework fallback registered when no generated provider is present.
+  /// Consumers that would otherwise skip on a null provider consult this instead.</summary>
+  bool IsAvailable => true;
+}
+
+/// <summary>
+/// The provider registered when no generated provider is present. It reports itself unavailable
+/// so consumers keep the "no event types known" path they took on a null provider; an empty list
+/// alone would not do, because at least one consumer classifies events differently when a
+/// provider exists than when it does not.
+/// </summary>
+/// <docs>fundamentals/events/events</docs>
+public sealed class NullEventTypeProvider : IEventTypeProvider, INullDefault {
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullEventTypeProvider Instance { get; } = new();
+  private NullEventTypeProvider() { }
+  /// <inheritdoc />
+  public bool IsAvailable => false;
+  /// <inheritdoc />
+  public IReadOnlyList<Type> GetEventTypes() => [];
 }

@@ -6,6 +6,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -24,7 +25,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_WithPendingAudits_AppendsAfterQueuedOutboxMessagesAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     var normalMessage = _createOutboxMessage();
     var auditMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
@@ -40,7 +41,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_NoPendingAudits_LeavesOutboxQueueUntouchedAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     var normalMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
 
@@ -52,7 +53,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_IsIdempotent_SecondCallAddsNothingAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     queues.PendingAuditMessages.Add(_createOutboxMessage());
 
     queues.MergeAuditMessages();

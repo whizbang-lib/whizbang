@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -60,6 +61,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -82,6 +84,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     // Arrange: DI container WITHOUT IReceptorInvoker registered
     // This tests the guard: if (receptorInvoker is not null && ...)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
 
@@ -111,6 +114,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddScoped<ILifecycleContextAccessor, AsyncLocalLifecycleContextAccessor>();
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -158,6 +162,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -186,6 +191,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     var registry = new TestLifecycleReceptorRegistry();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp =>
@@ -228,6 +234,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -269,6 +276,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));

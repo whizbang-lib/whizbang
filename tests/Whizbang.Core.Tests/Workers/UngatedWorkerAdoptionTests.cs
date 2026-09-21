@@ -9,6 +9,12 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using System.Diagnostics.Metrics;
+using Whizbang.Core;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -91,7 +97,7 @@ public class UngatedWorkerAdoptionTests {
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory,
       Options.Create(new TransportDeadLetterDrainWorkerOptions { IntervalMinutes = 1 }),
-      new WhizbangMetrics(),
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       NullLogger<TransportDeadLetterDrainWorker>.Instance,
       schemaReadyGate: gate);
 
@@ -145,11 +151,12 @@ public class UngatedWorkerAdoptionTests {
     var gate = new _observableGate();
     var tracker = new _countingTracker();
     var worker = new BackupTickCoordinator(
-      tracker,
-      new BackupTickRegistry(),
-      Options.Create(new BackupTickCoordinatorOptions()),
-      NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: gate);
+      tracker: tracker,
+      registry: new BackupTickRegistry(),
+      options: Options.Create(new BackupTickCoordinatorOptions()),
+      logger: NullLogger<BackupTickCoordinator>.Instance,
+      schemaReadyGate: gate,
+      gate: NullNotifySignalingGate.Instance);
 
     using var cts = new CancellationTokenSource();
     await _assertGatedAsync(
@@ -174,9 +181,15 @@ public class UngatedWorkerAdoptionTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: gate,
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -207,12 +220,20 @@ public class UngatedWorkerAdoptionTests {
       resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: gate);
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: gate,
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

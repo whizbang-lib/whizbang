@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -199,6 +200,7 @@ public class DispatcherSyncTrackingVerificationTests {
     SyncEventTypeRegistrations.Register(typeof(VerificationTestEventB), typeof(VerificationTestPerspectiveC).FullName!);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Add logging (required dependency)
     services.AddLogging();
@@ -242,6 +244,7 @@ public class DispatcherSyncTrackingVerificationTests {
     SyncEventTypeRegistrations.Register(typeof(VerificationTestEventB), typeof(VerificationTestPerspectiveC).FullName!);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     // Register core services
@@ -314,10 +317,12 @@ public class DispatcherSyncTrackingVerificationTests {
 
     // Create awaiter with empty SyncEventTracker
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
-      NullLogger<PerspectiveSyncAwaiter>.Instance,
-      syncEventTracker: new SyncEventTracker());
+      coordinator: mockCoordinator,
+      clock: new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
+      logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+      syncEventTracker: new SyncEventTracker(),
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - call WaitForStreamAsync with a very short timeout
     var result = await awaiter.WaitForStreamAsync(

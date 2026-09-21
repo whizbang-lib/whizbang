@@ -21,7 +21,7 @@ namespace Whizbang.Core.Messaging;
 ///   <item>Larger-window strategy for bursty pipelines</item>
 /// </list>
 /// </remarks>
-/// <docs>internals/outbox-batch-strategy</docs>
+/// <docs>messaging/outbox-pattern</docs>
 public interface IOutboxBatchStrategy : IAsyncDisposable {
   /// <summary>
   /// Append an outbox message for batched insertion under its stream key. Returns when the

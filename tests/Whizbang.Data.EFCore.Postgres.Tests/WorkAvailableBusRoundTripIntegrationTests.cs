@@ -78,7 +78,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkOutboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkOutboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
@@ -128,7 +128,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkInboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkInboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
@@ -175,7 +175,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });

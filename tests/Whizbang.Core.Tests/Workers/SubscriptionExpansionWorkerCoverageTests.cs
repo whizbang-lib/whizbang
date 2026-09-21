@@ -102,6 +102,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     var transport = new _captureTransport();
     var logger = new _capturingLogger();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // Deliberately no IWorkCoordinator and no IEventTypeProvider — schema-only / diagnostic
     // composition. A transport IS present, so "nothing was broadcast" is a fact about the
     // reconciler rather than about there being nowhere to broadcast to.
@@ -125,6 +126,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
   public async Task RunOnceAsync_NoConsumedEventTypes_ReturnsWithoutTouchingTheRegistryAsync() {
     var coordinator = new _registryCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEventTypeProvider>(new _emptyTypeProvider());
     var worker = _build(services);
@@ -146,6 +148,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     coordinator.Registry[_probeType] = ConsumedTypeBackfillStatus.Requested;
     var transport = new _captureTransport();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEventTypeProvider>(new _oneTypeProvider());
     services.AddSingleton<ITransport>(transport);
@@ -183,6 +186,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
     var logger = new _capturingLogger();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEventTypeProvider>(new _oneTypeProvider());
     // No ITransport, no IEnvelopeSerializer, no IServiceInstanceProvider — nothing to send with.

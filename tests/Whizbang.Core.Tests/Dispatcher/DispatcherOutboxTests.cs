@@ -10,6 +10,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -961,7 +962,7 @@ public class DispatcherOutboxTests {
 
     // Register required dependencies
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register stub envelope serializer (avoids JSON configuration complexity)
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();

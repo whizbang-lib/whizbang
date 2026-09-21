@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 // This uses the test project's generated extractors
 
@@ -237,7 +238,7 @@ public class DispatcherDeliveryReceiptTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register our test receptors manually
     services.AddSingleton<IReceptor<CreateOrderCommand, CreateOrderResponse>, CreateOrderReceptor>();
@@ -259,7 +260,7 @@ public class DispatcherDeliveryReceiptTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register our test receptors manually
     services.AddSingleton<IReceptor<CreateOrderCommand, CreateOrderResponse>, CreateOrderReceptor>();

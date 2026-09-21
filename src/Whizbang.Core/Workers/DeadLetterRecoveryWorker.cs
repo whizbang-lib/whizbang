@@ -40,8 +40,8 @@ public partial class DeadLetterRecoveryWorker(
   IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
+  Whizbang.Core.Notifications.IWorkNotificationListener notificationListener,
   DeadLetterMetrics? metrics = null,
-  Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null,
   HousekeepingCoordinator? housekeeping = null,
   Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null,
   TimeProvider? timeProvider = null
@@ -63,7 +63,7 @@ public partial class DeadLetterRecoveryWorker(
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
   private readonly Whizbang.Core.Observability.HousekeepingMetrics? _metricsRollup = metricsRollup;
   private readonly DeadLetterMetrics? _metrics = metrics;
-  private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
+  private readonly Whizbang.Core.Notifications.IWorkNotificationListener _notificationListener = notificationListener;
   // The scan backstop delay runs on this provider so tests can drive idle cycles without waiting.
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   // A coalescing single-waiter signal, not a SemaphoreSlim(0, 1): every backstop timeout used to
@@ -89,7 +89,7 @@ public partial class DeadLetterRecoveryWorker(
 
   /// <inheritdoc />
   public override Task StopAsync(CancellationToken cancellationToken) {
-    if (_signalSubscribed && _notificationListener is not null) {
+    if (_signalSubscribed) {
       _notificationListener.OnSignal -= _onSignal;
       _signalSubscribed = false;
     }
@@ -152,7 +152,7 @@ public partial class DeadLetterRecoveryWorker(
     // Slice 7c — subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
     // AFTER INSERT trigger (migration 056) fires this on every new DLQ row so the
     // worker wakes within ms instead of waiting up to ScanIntervalMinutes.
-    if (_notificationListener is not null && !_signalSubscribed) {
+    if (_notificationListener.IsConfigured && !_signalSubscribed) {
       _notificationListener.OnSignal += _onSignal;
       _signalSubscribed = true;
     }
@@ -236,7 +236,7 @@ public partial class DeadLetterRecoveryWorker(
         var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), _timeProvider, stoppingToken);
         // WaitAsync hands back the same pending task while a wait is outstanding, so a backstop
         // timeout leaves no extra waiter behind and the next signal wakes this one task (#728).
-        var wakeTask = _notificationListener is not null
+        var wakeTask = _notificationListener.IsConfigured
           ? _wake.WaitAsync(stoppingToken)
           : new TaskCompletionSource<bool>().Task;
         await Task.WhenAny(pollDelay, wakeTask).ConfigureAwait(false);

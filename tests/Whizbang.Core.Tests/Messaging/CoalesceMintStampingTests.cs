@@ -10,6 +10,12 @@ using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -30,7 +36,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: _resolver(time, out _));
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: _resolver(time, out _));
 
     queues.AddOutboxMessage(_taggedMessage(), systemEventOptions: null);
 
@@ -41,7 +47,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task AddOutboxMessage_UnboundType_QueuesUntouchedAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: _resolver(time, out _));
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: _resolver(time, out _));
 
     queues.AddOutboxMessage(_untaggedMessage(), systemEventOptions: null);
 
@@ -51,7 +57,7 @@ public class CoalesceMintStampingTests {
 
   [Test]
   public async Task AddOutboxMessage_NoResolver_BehavesExactlyAsBeforeAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
 
     queues.AddOutboxMessage(_taggedMessage(), systemEventOptions: null);
 
@@ -74,7 +80,7 @@ public class CoalesceMintStampingTests {
     ]);
     var systemEventOptions = new SystemEventOptions { AuditShipSlideSeconds = 0 };
     systemEventOptions.EnableEventAudit();
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
 
     queues.AddOutboxMessage(_untaggedMessage(), systemEventOptions);
 
@@ -92,7 +98,10 @@ public class CoalesceMintStampingTests {
     var time = new FakeTimeProvider(_testNow);
     var batch = new RecordingBatchStrategy();
     var sut = new StreamAffinityWorkCoordinatorStrategy(
-      new RecordingInner(), batch, systemEventOptions: null, logger: null,
+      inner: new RecordingInner(),
+      outboxBatch: batch,
+      systemEventOptions: null,
+      logger: NullLogger.Instance,
       coalesceResolver: _resolver(time, out _));
 
     await sut.QueueOutboxMessageAsync(_taggedMessage());
@@ -105,7 +114,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task StreamAffinity_NoResolver_AppendsUntouchedAsync() {
     var batch = new RecordingBatchStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(new RecordingInner(), batch);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: new RecordingInner(), outboxBatch: batch, logger: NullLogger.Instance);
 
     await sut.QueueOutboxMessageAsync(_taggedMessage());
 
@@ -126,11 +135,17 @@ public class CoalesceMintStampingTests {
     await deferredChannel.QueueAsync(_taggedMessage());
     var coordinator = new CapturingCoordinator();
     var strategy = new ImmediateWorkCoordinatorStrategy(
-      coordinator,
-      new ServiceInstanceProvider(configuration: null),
-      new WorkCoordinatorOptions(),
+      coordinator: coordinator,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      options: new WorkCoordinatorOptions(),
       deferredChannel: deferredChannel,
-      coalesceResolver: _resolver(time, out _));
+      coalesceResolver: _resolver(time, out _),
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter());
 
     await strategy.FlushAsync(WorkBatchOptions.None);
 

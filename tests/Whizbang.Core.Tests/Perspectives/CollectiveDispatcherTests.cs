@@ -246,7 +246,7 @@ public class CollectiveDispatcherTests {
       [_entryFor<_archive>(typeof(_jobModel), typeof(_jobHandler))],
       [new _stubResolver("tenant")],
       [new _stubExecutor(typeof(_jobModel), affectedRows: 4)],
-      new EventCategoryMetrics(new WhizbangMetrics()));
+      new EventCategoryMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     var result = await dispatcher.DispatchAsync(
       new _archive(new _tenantScope("t-1"), [Guid.NewGuid()]), Guid.NewGuid(), new object(), default);

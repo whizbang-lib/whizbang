@@ -636,8 +636,8 @@ public class ServiceCollectionExtensionsTests {
     // Assert
     await Assert.That(strategy).IsTypeOf<TransportPublishStrategy>();
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
-    await Assert.That(_getNamespaceRouting(strategy)).IsNull()
-      .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
+    await Assert.That(_getNamespaceRouting(strategy)).IsSameReferenceAs(Whizbang.Core.Routing.NullCommandInboxAddressResolver.Instance)
+      .Because("a strategy outside the seam gets the resolver that never flips — commands ride the default inbox topic");
   }
 
   // --- multi-namespace composition: peer-namespace init logging + active-consume projection ---

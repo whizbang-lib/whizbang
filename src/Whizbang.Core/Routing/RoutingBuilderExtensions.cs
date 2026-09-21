@@ -7,6 +7,7 @@ namespace Whizbang.Core.Routing;
 /// Marker interface to indicate that <see cref="RoutingBuilderExtensions.WithRouting"/> was called.
 /// Used by <c>AddTransportConsumer</c> to verify routing is configured.
 /// </summary>
+/// <docs>fundamentals/dispatcher/routing</docs>
 internal interface IRoutingConfigured;
 
 /// <summary>
@@ -146,6 +147,7 @@ public static class RoutingBuilderExtensions {
     builder.Services.AddSingleton<IInboxRoutingStrategy>(options.InboxStrategy);
 
     // Register EventSubscriptionDiscovery for event namespace discovery
+    builder.Services.TryAddWhizbangDefaults();
     builder.Services.AddSingleton<EventSubscriptionDiscovery>();
 
     // Register marker to indicate routing was configured

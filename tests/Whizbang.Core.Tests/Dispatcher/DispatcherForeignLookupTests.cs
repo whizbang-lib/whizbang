@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -25,7 +26,7 @@ public class DispatcherForeignLookupTests {
   /// <summary>A host dispatcher whose OWN tables know nothing — every lookup returns null,
   /// exactly what a generated dispatcher answers for another assembly's types.</summary>
   private sealed class _blindDispatcher(IServiceProvider sp) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null)) {
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType)
       => null;
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType)
@@ -347,7 +348,7 @@ public class DispatcherForeignLookupTests {
 
   /// <summary>A host dispatcher whose own table answers for <see cref="VoidCommand"/>.</summary>
   private sealed class _knowsVoidCommandDispatcher(IServiceProvider sp) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null)) {
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private int _own;
     public int OwnInvoked => Volatile.Read(ref _own);
 

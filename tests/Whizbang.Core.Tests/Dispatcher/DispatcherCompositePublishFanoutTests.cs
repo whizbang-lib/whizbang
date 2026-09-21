@@ -18,6 +18,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -68,7 +69,7 @@ public class DispatcherCompositePublishFanoutTests {
   // CascadeMessageAsync(Local), whose EventStore half lands here. Overriding it avoids needing a real event
   // store and lets us assert WHICH messages were fanned out locally and that they were sourced from the
   // composite (lineage). Inner events must NEVER reach the cascade-outbox seam (no rebroadcast).
-  private sealed class _fanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class _fanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     public List<_localCascade> LocalEventStores { get; } = [];
     public int InnerOutboxCascadeCount { get; private set; }
     public string? ThrowOnInnerId { get; set; }

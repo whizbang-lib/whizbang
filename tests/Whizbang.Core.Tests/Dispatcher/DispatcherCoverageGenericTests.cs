@@ -7,6 +7,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -30,7 +31,7 @@ public class DispatcherCoverageGenericTests {
   [DefaultRouting(DispatchModes.Local)]
   public record GenericEvent([property: StreamId] Guid OrderId) : IEvent;
 
-  private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(GenericCommand) && typeof(TResult) == typeof(GenericResult)) {
         return msg => {
@@ -291,7 +292,7 @@ public class DispatcherCoverageGenericTests {
         .ThrowsExactly<ArgumentException>();
   }
 
-  private sealed class GenericSyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class GenericSyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }

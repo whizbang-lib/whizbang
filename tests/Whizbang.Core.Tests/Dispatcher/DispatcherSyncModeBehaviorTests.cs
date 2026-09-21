@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Generated;
+using Microsoft.Extensions.Configuration;
 
 // Reuse the existing VoidCommand + VoidCommandReceptor declared by
 // DispatcherLocalInvokeAndSyncTests so the source-generated AddReceptors() registry
@@ -168,7 +169,7 @@ public sealed class DispatcherSyncModeBehaviorTests {
   private static IDispatcher _createDispatcher(IEventCompletionAwaiter? eventCompletionAwaiter) {
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     if (eventCompletionAwaiter != null) {
       services.AddSingleton(eventCompletionAwaiter);

@@ -41,7 +41,7 @@ public sealed partial class BackupTickCoordinator(
   // Startup barrier: registered backstop ticks poll the database. Optional only so existing
   // fixtures construct unchanged; DI always supplies it.
   ISchemaReadyGate schemaReadyGate,
-  INotifySignalingGate? gate = null,
+  INotifySignalingGate gate,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
@@ -50,7 +50,7 @@ public sealed partial class BackupTickCoordinator(
   private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
   private readonly BackupTickCoordinatorOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<BackupTickCoordinator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly INotifySignalingGate? _gate = gate;
+  private readonly INotifySignalingGate _gate = gate;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   private long _totalTickCycles;
@@ -141,7 +141,7 @@ public sealed partial class BackupTickCoordinator(
   // Effective polling cadence given the gate state. Public-internal so tests
   // can call it directly without spinning up the BackgroundService loop.
   internal TimeSpan ComputeEffectivePollingInterval() {
-    return _gate?.IsAvailable == false ? _options.FastPollingInterval : _options.PollingInterval;
+    return _gate.IsConfigured && !_gate.IsAvailable ? _options.FastPollingInterval : _options.PollingInterval;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,

@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -72,6 +73,7 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
       ILogger<WhizbangDatabaseInitializerService>? logger = null,
       int partitionCount = 10_000) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
     }

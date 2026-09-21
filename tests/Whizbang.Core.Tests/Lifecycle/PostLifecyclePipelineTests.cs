@@ -14,6 +14,8 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -46,6 +48,7 @@ public class PostLifecyclePipelineTests {
     registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     return (services.BuildServiceProvider(), tracker);
@@ -65,7 +68,7 @@ public class PostLifecyclePipelineTests {
   public async Task Dispatcher_NoWhenAll_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate Dispatcher._invokePostLifecycleReceptorsAsync
     using var scope = provider.CreateScope();
@@ -98,7 +101,7 @@ public class PostLifecyclePipelineTests {
   public async Task Dispatcher_WhenAll_WaitsForDistributedPathAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "route-both"));
 
@@ -143,7 +146,7 @@ public class PostLifecyclePipelineTests {
   public async Task OutboxWorker_NoWhenAll_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate OutboxWorker publishing 2 events that leave the service
     using var scope = provider.CreateScope();
@@ -179,7 +182,7 @@ public class PostLifecyclePipelineTests {
   public async Task OutboxWorker_WhenAll_WaitsForOtherPathsAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "outbox-whenall"));
 
@@ -223,7 +226,7 @@ public class PostLifecyclePipelineTests {
   public async Task TransportConsumer_NoWhenAll_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate TransportConsumer processing 3 events without perspectives
     using var scope = provider.CreateScope();
@@ -256,7 +259,7 @@ public class PostLifecyclePipelineTests {
   public async Task TransportConsumer_WhenAll_WaitsForLocalPathAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "inbox-whenall"));
 
@@ -300,7 +303,7 @@ public class PostLifecyclePipelineTests {
   public async Task PerspectiveWorker_NoWhenAll_FiresPostLifecycleDetachedAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
 
     // Act — simulate PerspectiveWorker Phase 5: 3 unique events
     using var scope = provider.CreateScope();
@@ -333,7 +336,7 @@ public class PostLifecyclePipelineTests {
   public async Task PerspectiveWorker_WhenAll_WaitsForLocalPathAsync() {
     // Arrange
     var (provider, tracker) = _createTestInfra();
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var envelope = _createEnvelope(new TestEvent(eventId, "perspective-whenall"));
 

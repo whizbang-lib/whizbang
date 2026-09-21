@@ -17,6 +17,9 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -196,17 +199,26 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       gate.MarkReady();
 
       var worker = new InboxDispatchWorker(
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        instance, inbox, handlerCommit, failure, gate,
-        Options.Create(new InboxDispatchWorkerOptions()),
-        Options.Create(new WorkCoordinatorOptions()),
-        NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        instanceProvider: instance,
+        inboxChannelWriter: inbox,
+        handlerCommitChannel: handlerCommit,
+        failureChannel: failure,
+        schemaReadyGate: gate,
+        options: Options.Create(new InboxDispatchWorkerOptions()),
+        coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+        logger: NullLogger<InboxDispatchWorker>.Instance,
+        integrityOptions: Options.Create(new StreamIntegrityOptions()),
         lifecycleMessageDeserializer: deserializer,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
         leaseRegistry: registry,
-        timeProvider: fakeTime);
+        timeProvider: fakeTime,
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        deadLetterStore: NullDeadLetterStore.Instance,
+        generationProvider: new DefaultGenerationProvider());
 
       using var workerCts = new CancellationTokenSource();
       await worker.StartAsync(workerCts.Token);

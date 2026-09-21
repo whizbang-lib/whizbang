@@ -45,7 +45,7 @@ public sealed class MaintenanceMetrics {
   /// <summary>Initializes a new instance of <see cref="MaintenanceMetrics"/>.</summary>
   public MaintenanceMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     RowsAffected = meter.CreatePassiveCounter<long>(
       "whizbang.maintenance.rows_affected",

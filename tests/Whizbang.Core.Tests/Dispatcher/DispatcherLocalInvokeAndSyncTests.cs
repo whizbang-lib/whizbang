@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Generated;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -207,7 +208,7 @@ public sealed class DispatcherLocalInvokeAndSyncTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register test receptors
     services.AddReceptors();

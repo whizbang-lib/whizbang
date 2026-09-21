@@ -4,6 +4,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
@@ -40,8 +42,7 @@ public class AsbAckDropTelemetryTests {
     var policyLogger = new RecordingLogger();
     var transportLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.AsbAckDropTelemetryTests.A");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
 
     long skippedCount = 0;
     using var listener = new MeterListener {
@@ -80,8 +81,7 @@ public class AsbAckDropTelemetryTests {
     var policyLogger = new RecordingLogger();
     var transportLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.AsbAckDropTelemetryTests.B");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
 
     long skippedCount = 0;
     using var listener = new MeterListener {

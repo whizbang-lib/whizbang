@@ -50,6 +50,7 @@ public static class SystemEventServiceCollectionExtensions {
   public static IServiceCollection AddSystemEvents(
       this IServiceCollection services,
       Action<SystemEventOptions>? configure = null) {
+    services.TryAddWhizbangDefaults();
     // Configure options
     var options = new SystemEventOptions();
     configure?.Invoke(options);
@@ -190,6 +191,7 @@ public static class SystemEventServiceCollectionExtensions {
   public static IServiceCollection DecorateEventStoreWithAuditing(
       this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangInstanceIdentity();
     // Turnkey default: no opinion, which is exactly how auditing behaved before hooks existed.
     // TryAdd lets an application's own hook win by simply being registered.

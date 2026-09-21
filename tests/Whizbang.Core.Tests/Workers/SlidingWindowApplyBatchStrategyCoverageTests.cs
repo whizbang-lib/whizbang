@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -104,7 +105,8 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         MaxSize = 100,
         IdleSweepInterval = TimeSpan.FromMilliseconds(50),
         IdleEvictionWindow = TimeSpan.FromMilliseconds(300),
-      });
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(staleStream, testToken);
     // Let the stale stream age well past the eviction window before the active one even exists.
@@ -147,7 +149,8 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromSeconds(30),
       },
-      timeProvider: clock);
+      timeProvider: clock,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
 
     await sut.AppendAsync(Guid.CreateVersion7(), testToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

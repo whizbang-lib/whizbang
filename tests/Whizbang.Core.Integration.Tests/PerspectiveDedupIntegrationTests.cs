@@ -15,6 +15,13 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -359,7 +366,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -415,7 +422,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -473,7 +480,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     const string perspectiveName = "Test.SinglePerspective";
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -642,10 +649,11 @@ public class PerspectiveDedupIntegrationTests {
     var instanceProvider = new _fakeInstanceProvider();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
-      : new InstantCompletionStrategy();
+      : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -669,10 +677,10 @@ public class PerspectiveDedupIntegrationTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
-      eventTypeProvider: eventTypeProvider,
-      processedEventCacheObserver: observer,
+      eventTypeProvider: eventTypeProvider ?? NullEventTypeProvider.Instance,
+      processedEventCacheObserver: observer ?? NullProcessedEventCacheObserver.Instance,
       timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -681,7 +689,23 @@ public class PerspectiveDedupIntegrationTests {
       // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
       // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      completionMeter: completionMeter);
+      completionMeter: completionMeter,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
     return (worker, harness);
   }
 

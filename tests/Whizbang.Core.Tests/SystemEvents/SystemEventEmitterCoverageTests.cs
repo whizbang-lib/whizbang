@@ -12,6 +12,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -29,7 +30,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Scope with UserId but no TenantId, exercising the null TenantId branch (line 71)
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
@@ -66,7 +67,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Envelope with CorrelationId on hop but no scope delta
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var correlationGuid = Guid.NewGuid();
     var envelope = new MessageEnvelope<string> {
@@ -103,7 +104,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Envelope with empty Hops list so GetCurrentScope() returns null
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
@@ -130,7 +131,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Complete scope with TenantId, UserId, and CorrelationId
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var correlationGuid = Guid.NewGuid();
     var envelope = new MessageEnvelope<string> {
@@ -170,7 +171,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Verifies OriginalEventType is set to typeof(TEvent).Name
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var envelope = _createTestEnvelope("test-value");
 
@@ -188,7 +189,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var streamId = Guid.NewGuid();
     var envelope = _createTestEnvelope("StreamIdTest");
@@ -208,7 +209,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Verifies TrackedGuid.NewMedo() generates a non-empty GUID for the audit event
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var envelope = _createTestEnvelope("IdTest");
 
@@ -230,7 +231,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Context with CorrelationId but null UserId and no TenantId in Metadata
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var context = new CoverageTestMessageContext();
     // UserId is null, no TenantId in Metadata, but CorrelationId is set automatically
@@ -254,7 +255,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Full context with TenantId, UserId, CorrelationId
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var context = new CoverageTestMessageContext {
       UserId = "cmd-user-all"
@@ -279,7 +280,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Verifies CommandType = typeof(TCommand).Name and ResponseType = typeof(TResponse).Name
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     // Act - Using int as TResponse to verify ResponseType
     await emitter.EmitCommandAuditedAsync("TypeCheckCmd", 42, "TypeReceptor", null);
@@ -297,7 +298,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     // Act
     await emitter.EmitCommandAuditedAsync("IdCmd", "ok", "Receptor", null);
@@ -313,7 +314,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var before = DateTimeOffset.UtcNow;
 
@@ -334,7 +335,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     using var cts = new CancellationTokenSource();
 
@@ -356,7 +357,7 @@ public class SystemEventEmitterCoverageTests {
     // but type is neither EventAudited nor CommandAudited, so it should NOT emit (line 162-164)
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var customEvent = new CustomSystemEvent {
       Id = Guid.NewGuid(),
@@ -376,7 +377,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Tests compound conditional with both AuditEnabled=false and IsEnabled=false
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Nothing enabled
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var customEvent = new CustomSystemEvent {
       Id = Guid.NewGuid(),
@@ -397,7 +398,7 @@ public class SystemEventEmitterCoverageTests {
     // and type IS EventAudited, so it should emit
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     // EventAuditEnabled=false, CommandAuditEnabled=true, AuditEnabled=true
     var systemEvent = new EventAudited {
@@ -423,7 +424,7 @@ public class SystemEventEmitterCoverageTests {
     // and type IS CommandAudited
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var systemEvent = new CommandAudited {
       Id = Guid.NewGuid(),
@@ -533,7 +534,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     using var cts = new CancellationTokenSource();
     var envelope = _createTestEnvelope("CancelTokenTest");
@@ -555,7 +556,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var event1 = new EventAudited {
       Id = Guid.NewGuid(),
@@ -593,7 +594,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Context with TenantId in metadata but no UserId
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     var context = new CoverageTestMessageContext();
     context.Metadata["TenantId"] = "tenant-only-cmd";
@@ -619,7 +620,7 @@ public class SystemEventEmitterCoverageTests {
   private static SystemEventEmitter _createEmitter() {
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions());
-    return new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    return new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
   }
 
   private static MessageEnvelope<T> _createTestEnvelope<T>(T payload) {
@@ -646,7 +647,7 @@ public class SystemEventEmitterCoverageTests {
     // Arrange - Scope with claims to exercise the claims iteration loop (line 84)
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     // Create a ScopeContext with claims
     var scopeContext = new ScopeContext {

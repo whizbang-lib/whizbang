@@ -97,10 +97,11 @@ public class FailureFlushWorkerTests {
     var provider = services.BuildServiceProvider();
 
     var worker = new FailureFlushWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
-      Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
-      logger ?? NullLogger<FailureFlushWorker>.Instance);
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
+      logger: logger ?? NullLogger<FailureFlushWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     return (worker, coordinator);
   }
@@ -227,13 +228,25 @@ public class FailureFlushWorkerTests {
     var options = Options.Create(new FailureFlushWorkerOptions());
 
     await Assert.That(() => new FailureFlushWorker(
-        null!, SchemaReadyGate.AlreadyReady(), options, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: null!,
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+        options: options,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(() => new FailureFlushWorker(
-        scopeFactory, null!, options, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: scopeFactory,
+        schemaReadyGate: null!,
+        options: options,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(() => new FailureFlushWorker(
-        scopeFactory, SchemaReadyGate.AlreadyReady(), null!, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: scopeFactory,
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+        options: null!,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 }

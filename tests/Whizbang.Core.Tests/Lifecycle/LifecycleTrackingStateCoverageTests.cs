@@ -7,6 +7,7 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
@@ -83,7 +84,7 @@ public class LifecycleTrackingStateCoverageTests {
       source: MessageSource.Local,
       streamId: null,
       perspectiveType: null,
-      logger: null);
+      logger: NullLogger.Instance);
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeDetached, provider, CancellationToken.None);
     await tracking.DrainDetachedAsync();

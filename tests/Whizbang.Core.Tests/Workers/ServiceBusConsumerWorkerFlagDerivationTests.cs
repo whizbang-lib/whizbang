@@ -13,6 +13,8 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -100,6 +102,7 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
     var transport = new FlagSbTransport();
     var strategy = new FlagSbStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
@@ -109,13 +112,17 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
       },
       eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()));
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));

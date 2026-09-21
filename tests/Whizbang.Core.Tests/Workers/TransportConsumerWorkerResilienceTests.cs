@@ -11,6 +11,11 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -299,6 +304,7 @@ public class TransportConsumerWorkerResilienceTests {
     var resilienceOptions = _createResilienceOptions();
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(new FakeDispatcher());
     serviceCollection.AddSingleton(resilienceOptions);
     var serviceProvider = serviceCollection.BuildServiceProvider();
@@ -321,6 +327,7 @@ public class TransportConsumerWorkerResilienceTests {
     var resilienceOptions = _createResilienceOptions();
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(new FakeDispatcher());
     serviceCollection.AddSingleton(resilienceOptions);
     var serviceProvider = serviceCollection.BuildServiceProvider();
@@ -365,6 +372,7 @@ public class TransportConsumerWorkerResilienceTests {
     resilienceOptions.InitialRetryDelay = TimeSpan.FromMilliseconds(10);
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(new FakeDispatcher());
     serviceCollection.AddSingleton(resilienceOptions);
     var serviceProvider = serviceCollection.BuildServiceProvider();
@@ -411,7 +419,7 @@ public class TransportConsumerWorkerResilienceTests {
   ) {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
 
     return new TransportConsumerWorker(
       transport: transport,
@@ -423,8 +431,16 @@ public class TransportConsumerWorkerResilienceTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   #endregion

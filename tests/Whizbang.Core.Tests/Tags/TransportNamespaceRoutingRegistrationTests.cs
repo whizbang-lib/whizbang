@@ -4,6 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Tags;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.SystemEvents;
 
 namespace Whizbang.Core.Tests.Tags;
 
@@ -97,7 +99,7 @@ public class TransportNamespaceRoutingRegistrationTests {
         ["Whizbang:Tags:RouteNamespace:sys-mine"] = "bulk"
       })
       .Build();
-    var validator = new TagPolicyStartupValidator(new TagOptions(), () => [], configuration);
+    var validator = new TagPolicyStartupValidator(new TagOptions(), () => [], Options.Create(new SystemEventOptions()), configuration);
 
     await Assert.That(async () => await validator.StartAsync(CancellationToken.None))
       .Throws<TagPolicyConfigurationException>();

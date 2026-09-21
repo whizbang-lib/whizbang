@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -20,7 +21,7 @@ namespace Whizbang.Core.Tests.Observability;
 public class InboxMetricsTests {
 
   private static InboxMetrics _newMetrics() =>
-    new(new WhizbangMetrics(meterFactory: null));
+    new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   /// <summary>
   /// The base contract: <see cref="InboxMetrics.RecordDispatch"/> writes one

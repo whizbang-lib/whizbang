@@ -127,8 +127,8 @@ public class DutyElectionE2ETests : EFCoreTestBase {
 
     var stepA = new _countingStep();
     var stepB = new _countingStep();
-    var runnerA = new StartupPipelineRunner([stepA], dutyElector: _electorFor(podA));
-    var runnerB = new StartupPipelineRunner([stepB], dutyElector: _electorFor(podB));
+    var runnerA = new StartupPipelineRunner(steps: [stepA], dutyElector: _electorFor(podA), observers: []);
+    var runnerB = new StartupPipelineRunner(steps: [stepB], dutyElector: _electorFor(podB), observers: []);
 
     // Both instances run their pipelines concurrently — the real race, through the real elector.
     var results = await Task.WhenAll(

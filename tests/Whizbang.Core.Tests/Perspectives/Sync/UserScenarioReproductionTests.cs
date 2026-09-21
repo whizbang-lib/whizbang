@@ -90,10 +90,12 @@ public class UserScenarioReproductionTests {
       var mockCoordinator = new MockWorkCoordinatorWithTracker(singletonTracker, perspectiveName);
 
       var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator,
-        new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
-        NullLogger<PerspectiveSyncAwaiter>.Instance,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
+        logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
       // Signal that sync is about to start waiting
       syncWaitingStarted.SetResult();
@@ -172,10 +174,12 @@ public class UserScenarioReproductionTests {
     var mockCoordinator = MockWorkCoordinator.WithSyncResults(pendingCount: 1);
 
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
-      NullLogger<PerspectiveSyncAwaiter>.Instance,
-      singletonTracker);
+      coordinator: mockCoordinator,
+      clock: new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
+      logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+      syncEventTracker: singletonTracker,
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - wait with short timeout (perspective never calls MarkProcessed)
     var result = await awaiter.WaitForStreamAsync(
@@ -212,10 +216,12 @@ public class UserScenarioReproductionTests {
     var mockCoordinator = MockWorkCoordinator.WithSyncResults(pendingCount: 0);
 
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
-      NullLogger<PerspectiveSyncAwaiter>.Instance,
-      singletonTracker);
+      coordinator: mockCoordinator,
+      clock: new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
+      logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+      syncEventTracker: singletonTracker,
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - no events tracked, should sync immediately
     var result = await awaiter.WaitForStreamAsync(

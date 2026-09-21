@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -48,7 +49,8 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
     await flushEntered.Task.WaitAsync(cancellationToken);
@@ -87,7 +89,8 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromSeconds(30),
       },
-      timeProvider: clock);
+      timeProvider: clock,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

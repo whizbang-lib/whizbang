@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -66,7 +67,7 @@ public class DispatcherComprehensiveCoverageTests {
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     DispatchModes? defaultRouting = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       envelopeRegistry: envelopeRegistry,

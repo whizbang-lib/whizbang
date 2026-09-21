@@ -22,7 +22,7 @@ public enum OccurrencePublishDecision {
 /// anything about schedules. The default implementation proceeds for everything; the temporal
 /// implementation claims only messages whose metadata marks them as schedule occurrences.
 /// </summary>
-/// <docs>fundamentals/temporal/pre-fire-hook</docs>
+/// <docs>fundamentals/dispatcher/dispatch-patterns</docs>
 public interface IOccurrencePublishGate {
   /// <summary>Decide what to do with <paramref name="work"/> before it is published.</summary>
   ValueTask<OccurrencePublishDecision> EvaluateAsync(OutboxWork work, CancellationToken cancellationToken = default);
@@ -30,7 +30,7 @@ public interface IOccurrencePublishGate {
 
 /// <summary>The default gate: never claims a message, so publishing is unchanged.</summary>
 /// <docs>fundamentals/temporal/pre-fire-hook</docs>
-public sealed class NoOpOccurrencePublishGate : IOccurrencePublishGate {
+public sealed class NoOpOccurrencePublishGate : IOccurrencePublishGate, INullDefault {
   /// <inheritdoc />
   public ValueTask<OccurrencePublishDecision> EvaluateAsync(OutboxWork work, CancellationToken cancellationToken = default) =>
     ValueTask.FromResult(OccurrencePublishDecision.Proceed);

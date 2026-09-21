@@ -5,6 +5,10 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -108,12 +112,13 @@ public class LifecycleStageTriggerIndependenceTests {
       int batchSize, int debounceMs) {
     var invoker = new RecordingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var provider = services.BuildServiceProvider();
     var strategy = new BatchWorkCoordinatorStrategy(
-      new SilentCoordinator(),
-      new Pod(),
-      new WorkCoordinatorOptions {
+      coordinator: new SilentCoordinator(),
+      instanceProvider: new Pod(),
+      options: new WorkCoordinatorOptions {
         Strategy = WorkCoordinatorStrategy.Batch,
         BatchSize = batchSize,
         IntervalMilliseconds = debounceMs,
@@ -122,7 +127,10 @@ public class LifecycleStageTriggerIndependenceTests {
         AbandonStaleInstanceThresholdSeconds = 300,
       },
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      lifecycleMessageDeserializer: new PassthroughDeserializer());
+      lifecycleMessageDeserializer: new PassthroughDeserializer(),
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     return (strategy, invoker);
   }
 

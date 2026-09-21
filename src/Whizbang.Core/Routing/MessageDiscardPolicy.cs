@@ -42,7 +42,7 @@ public readonly record struct MessageDiscardDecision(
 /// don't surface in production by default, while
 /// <see cref="MessageDiscardReason.DomainNotOwned"/> is a <c>Warning</c>.
 /// </remarks>
-/// <docs>internals/message-discard-policy</docs>
+/// <docs>messaging/topic-filters</docs>
 public interface IMessageDiscardPolicy {
   /// <summary>
   /// Decide whether a message just received from the transport should be skipped
@@ -87,7 +87,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly ILogger<MessageDiscardPolicy> _logger;
   private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
-  private readonly IEventMarkerResolver? _markerResolver;
+  private readonly IEventMarkerResolver _markerResolver;
 
   // Reason+type pairs already surfaced at Information. Value is unused — this is a set.
   private readonly System.Collections.Concurrent.ConcurrentDictionary<(MessageDiscardReason, string), byte> _seenDiscards = new();
@@ -119,14 +119,13 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       IReceptorRegistryQuery registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
-      IOptions<RoutingOptions>? routingOptions = null,
-      IEventMarkerResolver? markerResolver = null) {
+      IOptions<RoutingOptions> routingOptions,
+      IEventMarkerResolver markerResolver) {
     _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
-    _absorbedNamespaces = routingOptions?.Value.AbsorbedNamespaces
-      ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;
     _skippedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
@@ -216,9 +215,6 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// both no-consumer gates this policy backs must keep it. Null resolver = no exemption (legacy).
   /// </summary>
   private bool _isCompositeType(string payloadClrType) {
-    if (_markerResolver is null) {
-      return false;
-    }
     var name = EnvelopeTypeNameHelper.ExtractInnerTypeName(payloadClrType) ?? payloadClrType;
     return CompositeInboxFanout.IsCompositeWireType(name, _markerResolver);
   }

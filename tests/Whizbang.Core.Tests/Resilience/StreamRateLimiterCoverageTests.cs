@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Resilience;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 
@@ -30,7 +31,7 @@ public class StreamRateLimiterCoverageTests {
       CooldownDuration = TimeSpan.FromSeconds(30),
       StaleEntryTimeout = TimeSpan.Zero,
     };
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var staleStream = Guid.NewGuid();
 
     // Call #1: creates staleStream's entry (Count=1; allowed, since 1 > MaxEventsPerWindow(1) is false).

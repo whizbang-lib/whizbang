@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core;
 
 #pragma warning disable IDE0060, RCS1163 // Unused parameters: the fake transport implements interface members the test never exercises
 
@@ -106,6 +107,7 @@ public class ServiceBusConsumerSourceIdentityTests {
     var transport = new CapturingTransport();
     var strategy = new RecordingStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new FakeServiceInstanceProvider());
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     await using var sp = services.BuildServiceProvider();
@@ -114,11 +116,15 @@ public class ServiceBusConsumerSourceIdentityTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions { TypeInfoResolver = SourceIdentityTestJsonContext.Default },
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("test-topic", "test-sub")] },
       envelopeSerializer: new StubEnvelopeSerializer(),
-      receptorRegistry: new SubscribedRegistry());
+      receptorRegistry: new SubscribedRegistry(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

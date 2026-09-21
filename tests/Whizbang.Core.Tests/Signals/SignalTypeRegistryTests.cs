@@ -51,7 +51,7 @@ public class SignalTypeRegistryTests {
   public async Task Entry_Dispatch_DeliversDefaultDoorbellSignalToSinkAsync() {
     // The generator emits this Dispatch shape: reconstruct a default doorbell instance and hand it
     // to the sink (a wire subscriber then fetches authoritative state from the DB).
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     SigA? received = null;
     using var sub = bus.Subscribe<SigA>(s => { received = s; return ValueTask.CompletedTask; });
 

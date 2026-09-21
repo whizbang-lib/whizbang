@@ -49,17 +49,17 @@ public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IServiceInstanceProvider instanceProvider,
+  ILogger<CoalesceShipWorker> logger,
+  ICompositeFactory compositeFactory,
   CoalesceGroupResolver? coalesceResolver = null,
-  ILogger<CoalesceShipWorker>? logger = null,
-  TimeProvider? timeProvider = null,
-  ICompositeFactory? compositeFactory = null) : BackgroundService {
+  TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
-  private readonly ILogger<CoalesceShipWorker> _logger = logger ?? NullLogger<CoalesceShipWorker>.Instance;
+  private readonly ILogger<CoalesceShipWorker> _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
-  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
+  private readonly ICompositeFactory _compositeFactory = compositeFactory;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -67,9 +67,7 @@ public sealed partial class CoalesceShipWorker(
       // No enabled coalesce binding — the feature is unused in this host. Park (keep
       // ExecuteTask alive, the MaintenanceWorker killswitch idiom) rather than exit, so a
       // health probe never mistakes "unused" for "crashed".
-      if (_logger is not null) {
-        LogParkedNoBindings(_logger);
-      }
+      LogParkedNoBindings(_logger);
       try {
         await Task.Delay(Timeout.InfiniteTimeSpan, _timeProvider, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) { }
@@ -82,10 +80,8 @@ public sealed partial class CoalesceShipWorker(
       return;
     }
 
-    if (_logger is not null) {
-      var groups = string.Join(", ", _enabledGroups());
-      LogStarted(_logger, groups);
-    }
+    var groups = string.Join(", ", _enabledGroups());
+    LogStarted(_logger, groups);
 
     // Startup recovery: rows whose floor matured while no shipper ran degrade to individual
     // shipping NOW rather than waiting out a tick.
@@ -94,9 +90,7 @@ public sealed partial class CoalesceShipWorker(
     } catch (OperationCanceledException) {
       return;
     } catch (Exception ex) {
-      if (_logger is not null) {
-        LogRecoveryFailed(_logger, ex);
-      }
+      LogRecoveryFailed(_logger, ex);
     }
 
     // First tick runs immediately after recovery: a restart with an already-quiet backlog
@@ -108,9 +102,7 @@ public sealed partial class CoalesceShipWorker(
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
-        if (_logger is not null) {
-          LogTickFailed(_logger, ex);
-        }
+        LogTickFailed(_logger, ex);
       }
 
       try {
@@ -129,7 +121,7 @@ public sealed partial class CoalesceShipWorker(
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     foreach (var group in _enabledGroups()) {
       var released = await coordinator.ReleaseMaturedCoalesceAsync(group, cancellationToken).ConfigureAwait(false);
-      if (released > 0 && _logger is not null) {
+      if (released > 0) {
         LogReleasedMatured(_logger, released, group);
       }
     }
@@ -177,9 +169,7 @@ public sealed partial class CoalesceShipWorker(
           // composite JsonTypeInfo, a transient store error) must never abort the other
           // groups' folds or the release backstop below. Logged with the group named; the
           // rows stay claim-invisible until the fold heals or the release floor frees them.
-          if (_logger is not null) {
-            LogFoldFailed(_logger, groupStats.Group, ex);
-          }
+          LogFoldFailed(_logger, groupStats.Group, ex);
         }
       }
     }
@@ -188,7 +178,7 @@ public sealed partial class CoalesceShipWorker(
     // nobody binds anymore) and has blown its floor ships individually — degraded, never lost.
     foreach (var groupStats in stats) {
       var released = await coordinator.ReleaseMaturedCoalesceAsync(groupStats.Group, cancellationToken).ConfigureAwait(false);
-      if (released > 0 && _logger is not null) {
+      if (released > 0) {
         LogReleasedMatured(_logger, released, groupStats.Group);
       }
     }
@@ -246,9 +236,7 @@ public sealed partial class CoalesceShipWorker(
           partitionCount,
           cancellationToken).ConfigureAwait(false);
 
-        if (_logger is not null) {
-          LogFolded(_logger, plan.Constituents.Count, group, compositeMessage.MessageId);
-        }
+        LogFolded(_logger, plan.Constituents.Count, group, compositeMessage.MessageId);
       }
 
       if (singles.Count < binding.MaxBatchCount) {

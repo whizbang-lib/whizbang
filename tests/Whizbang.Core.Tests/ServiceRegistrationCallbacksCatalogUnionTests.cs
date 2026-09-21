@@ -54,6 +54,7 @@ public class ServiceRegistrationCallbacksCatalogUnionTests {
         services.AddSingleton<IMessageTypeCatalog, ContractsAssemblyCatalog>();
 
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
       await using var sp = services.BuildServiceProvider();
       var catalog = sp.GetRequiredService<IMessageTypeCatalog>();
@@ -80,6 +81,7 @@ public class ServiceRegistrationCallbacksCatalogUnionTests {
         services.AddSingleton<IMessageTypeCatalog, HostAssemblyCatalog>();
 
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
 
       // A lazily-loaded assembly's module initializer fires AFTER InvokeAll:

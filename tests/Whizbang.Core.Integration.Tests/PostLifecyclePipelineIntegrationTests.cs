@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -55,7 +56,7 @@ public class PostLifecyclePipelineIntegrationTests {
     // Arrange — real dispatcher with runtime-registered PostLifecycle receptor
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -88,7 +89,7 @@ public class PostLifecyclePipelineIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();

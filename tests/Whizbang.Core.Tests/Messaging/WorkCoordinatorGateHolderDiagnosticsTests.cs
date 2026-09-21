@@ -4,6 +4,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tests.Helpers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -17,7 +18,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class WorkCoordinatorGateHolderDiagnosticsTests {
   [Test]
   public async Task SnapshotHolders_NamesEveryCurrentHolder_AndForgetsReleasedOnesAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 1000);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 1000, logger: NullLogger<WorkCoordinatorGate>.Instance);
     var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     var b = await gate.AcquireAsync(CancellationToken.None, caller: "ReportPerspectiveCompletionAsync");
 
@@ -57,7 +58,7 @@ public class WorkCoordinatorGateHolderDiagnosticsTests {
 
   [Test]
   public async Task DisabledGate_HasNoHoldersAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 0);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 0, logger: NullLogger<WorkCoordinatorGate>.Instance);
     var pass = await gate.AcquireAsync(CancellationToken.None, caller: "Anything");
     await Assert.That(gate.SnapshotHolders()).IsEmpty()
       .Because("a disabled gate hands out no slots, so there is nothing to attribute");

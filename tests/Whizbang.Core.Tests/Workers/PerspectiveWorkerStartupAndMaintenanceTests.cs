@@ -12,6 +12,12 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -280,6 +286,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var instanceProvider = new _InstanceProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ILifecycleCoordinator>(lifecycle);
     services.AddSingleton(registry);
@@ -295,15 +302,33 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
         MaxConcurrentDrainConsumers = 1,
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new BatchedCompletionStrategy(),
-      rewindOptions: rewindOptions is null ? null : Options.Create(rewindOptions),
+      rewindOptions: (rewindOptions is null ? null : Options.Create(rewindOptions)) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       leaseRenewalChannel: harness.LeaseRenewalCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: notificationListener);
+      perspectiveNotificationListener: notificationListener ?? new NoOpWorkNotificationListener(),
+      eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options ?? new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      })).Value));
     return new _Fixture(worker, harness, coordinator, lifecycle);
   }
 

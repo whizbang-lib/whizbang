@@ -7,6 +7,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -31,7 +32,7 @@ public class DispatcherCoveragePublishTests {
   private static void _reset() { lock (_lock) { _publishedEvents.Clear(); } }
   private static int _snapshotCount() { lock (_lock) { return _publishedEvents.Count; } }
 
-  private sealed class PublishTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class PublishTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(TestCommand) && typeof(TResult) == typeof(TestResult)) {
         return msg => { var cmd = (TestCommand)msg; return ValueTask.FromResult((TResult)(object)new TestResult(cmd.OrderId, true)); };

@@ -10,6 +10,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -40,7 +41,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     var m1 = _make(streamId);
     var m2 = _make(streamId);
@@ -95,7 +97,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(streamA));
     await sut.AppendAsync(_make(streamB));
@@ -131,7 +134,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(10),
         MaxSize = 5,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     for (var i = 0; i < 5; i++) {
       await sut.AppendAsync(_make(streamId));
@@ -160,7 +164,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(streamId: null));
     await sut.AppendAsync(_make(streamId: null));
@@ -191,7 +196,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMinutes(1),  // very long; only Stop drains
         MaxSize = 1000,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(streamA));
     await sut.AppendAsync(_make(streamB));
@@ -217,7 +223,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: (_, _) => Task.CompletedTask);
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync();
 
@@ -252,7 +259,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => { flushed.TrySetResult(); return Task.CompletedTask; },
       options: _evictionOptions(),
-      timeProvider: clock);
+      timeProvider: clock,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
@@ -282,7 +290,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => { Interlocked.Increment(ref flushes); return Task.CompletedTask; },
       options: _evictionOptions(),
-      timeProvider: clock);
+      timeProvider: clock,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
 
@@ -327,7 +336,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
 
@@ -347,7 +357,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(null));
     await sut.AppendAsync(_make(null));
@@ -378,7 +389,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()));
     await sut.AppendAsync(_make(_idProvider.NewGuid()));
@@ -394,7 +406,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsObjectDisposedAsync() {
-    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(CancellationToken.None);
 
@@ -406,7 +418,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
   public async Task FlushAndStopAsync_CalledTwice_IsIdempotentAsync() {
     // DisposeAsync also routes here, so a using-block around an explicit stop must not
     // double-dispose the stop token source.
-    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(CancellationToken.None);
     await sut.FlushAndStopAsync(CancellationToken.None);
@@ -433,7 +445,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()));
     await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));

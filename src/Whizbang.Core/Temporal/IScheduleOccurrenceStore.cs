@@ -5,7 +5,7 @@ namespace Whizbang.Core.Temporal;
 /// defer an in-flight occurrence, record a gate outcome in the run log, and write back a refreshed
 /// authority snapshot.
 /// </summary>
-/// <docs>fundamentals/temporal/pre-fire-hook</docs>
+/// <docs>fundamentals/dispatcher/dispatch-patterns</docs>
 public interface IScheduleOccurrenceStore {
   /// <summary>
   /// Retry this same occurrence at <paramref name="until"/> instead of now: reschedules the pending

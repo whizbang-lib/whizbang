@@ -7,6 +7,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -181,7 +182,7 @@ public class DispatcherSecurityPropagationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Act - Only call AddWhizbangDispatcher (no explicit IScopeContextAccessor registration)
     services.AddReceptors();
@@ -204,7 +205,7 @@ public class DispatcherSecurityPropagationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // User registers their own implementation BEFORE AddWhizbangDispatcher
     var customAccessor = new ScopeContextAccessor();
@@ -293,7 +294,7 @@ public class DispatcherSecurityPropagationTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register security context accessor
     services.AddSingleton(scopeContextAccessor);
@@ -322,7 +323,7 @@ public class DispatcherSecurityPropagationTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Do NOT register IScopeContextAccessor - this is intentional
 

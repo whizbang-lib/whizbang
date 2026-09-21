@@ -56,9 +56,13 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
     // The gate is never marked ready, so a flush blocks holding its batch: the requests are either still
     // in the channel or taken up by the flusher, and the gauge must count them either way.
     var worker = new InboxHandlerWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new _noFailures(), new SchemaReadyGate(),
-      Options.Create(new InboxHandlerWorkerOptions()), NullLogger<InboxHandlerWorker>.Instance,
-      metrics: metrics);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      failureChannel: new _noFailures(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      metrics: metrics,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     await worker.EnqueueAsync(_request());
     await worker.EnqueueAsync(_request());

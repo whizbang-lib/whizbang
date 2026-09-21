@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -89,7 +90,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
 
   [Test]
   public async Task StoreOutboxMessagesAsync_SameMessageStoredTwice_CountsTheSkippedRowByTypeAsync() {
-    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     using var observer = new _dedupObserver(metrics);
     var logger = new _captureLogger();
 
@@ -127,7 +128,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
 
   [Test]
   public async Task StoreOutboxMessagesAsync_MixedBatch_CountsOnlyTheRowsThatAlreadyExistedAsync() {
-    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     using var observer = new _dedupObserver(metrics);
     var quiet = new _quietLogger();
 
@@ -167,7 +168,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
 
   [Test]
   public async Task StoreOutboxMessagesAsync_InsideAnOpenTransaction_StoresAndCountsOnTheSameConnectionAsync() {
-    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     using var observer = new _dedupObserver(metrics);
 
     await using var dbContext = CreateDbContext();

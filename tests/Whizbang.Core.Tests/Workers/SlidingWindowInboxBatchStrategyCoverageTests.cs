@@ -9,6 +9,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -148,7 +149,8 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
         IdleEvictionWindow = TimeSpan.Zero,
         IdleSweepInterval = TimeSpan.FromSeconds(10),
       },
-      timeProvider: timeProvider);
+      timeProvider: timeProvider,
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

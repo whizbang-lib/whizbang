@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -62,7 +63,7 @@ public class MaintenanceWorkerIntegrityGaugeTests {
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
       LedgerCoordinator coord, int maxAttempts = 8) {
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton(metrics);

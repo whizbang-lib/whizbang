@@ -180,17 +180,25 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await using var providerA = _servicesForPod();
     await using var providerB = _servicesForPod();
     var stepA = new TableRewriteStartupStep(
-      providerA.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerA.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     var stepB = new TableRewriteStartupStep(
-      providerB.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerB.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     // Post-ready means AFTER Migrate: each pod carries the full declared chain, its schema gate
     // already open — exactly the state a running instance is in when the rewrite band begins.
     var openGate = new SchemaReadyGate();
     openGate.MarkReady();
     var runnerA = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepA], dutyElector: _electorFor(podA));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepA],
+      dutyElector: _electorFor(podA),
+      observers: []);
     var runnerB = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepB], dutyElector: _electorFor(podB));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepB],
+      dutyElector: _electorFor(podB),
+      observers: []);
 
     var results = await Task.WhenAll(
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));

@@ -9,6 +9,7 @@ using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -147,7 +148,7 @@ public class AuditCoalesceRebaseTests {
     var tagOptions = new TagOptions();
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);  // REAL generated registry
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 
@@ -169,7 +170,7 @@ public class AuditCoalesceRebaseTests {
     var tagOptions = new TagOptions();
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 
@@ -192,7 +193,7 @@ public class AuditCoalesceRebaseTests {
     });
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);
-    var queues = new WorkCoordinatorQueues(logger: null, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 

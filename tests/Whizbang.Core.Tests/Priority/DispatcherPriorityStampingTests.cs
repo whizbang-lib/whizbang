@@ -8,6 +8,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Priority;
 
@@ -61,7 +62,7 @@ public class DispatcherPriorityStampingTests {
 
   /// <summary>No local receptors at all, so every send routes to the outbox strategy.</summary>
   private sealed class OutboxOnlyDispatcher(IServiceProvider sp) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null), envelopeSerializer: new StubEnvelopeSerializer()) {
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), envelopeSerializer: new StubEnvelopeSerializer()) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) => null;
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) => _ => Task.CompletedTask;
@@ -80,6 +81,7 @@ public class DispatcherPriorityStampingTests {
   private static (OutboxOnlyDispatcher Dispatcher, RecordingStrategy Strategy) _dispatcher(bool withChain = true, IPriorityProducerHook? hostHook = null) {
     var strategy = new RecordingStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceScopeFactory>(sp => new TestScopeFactory(sp));
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     if (withChain) {

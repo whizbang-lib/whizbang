@@ -27,6 +27,11 @@ namespace Whizbang.Core.Notifications;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public interface INotifySignalingGate {
+  /// <summary>True when a notification transport supplies this gate. Distinct from <see cref="IsAvailable"/>: a
+  /// configured gate that reports unavailable means the transport is broken and callers fall back to fast
+  /// polling; the framework's null default is simply not configured and callers keep the normal cadence.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// True when the gate's most recent probe succeeded AND the shared connection is currently
   /// usable. False when the probe never succeeded, timed out, or the connection has hit the
@@ -56,4 +61,31 @@ public interface INotifySignalingGate {
   /// re-probe now") and for deterministic tests.
   /// </summary>
   Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// The gate registered when no notification driver is present: signaling is reported as
+/// unavailable, so every consumer takes its polling path. This is exactly what a null gate meant
+/// before the dependency became required, made explicit and given a reason an operator can read.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+public sealed class NullNotifySignalingGate : INotifySignalingGate, INullDefault {
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullNotifySignalingGate Instance { get; } = new();
+  private NullNotifySignalingGate() { }
+  /// <inheritdoc />
+  public bool IsAvailable => false;
+  /// <inheritdoc />
+  public DateTimeOffset? LastVerifiedAt => null;
+  /// <inheritdoc />
+  public DateTimeOffset? LastFailureAt => null;
+  /// <inheritdoc />
+  public string? LastFailureReason => "No notification driver is registered; work is polled rather than signaled.";
+  /// <inheritdoc />
+  public event Action<bool>? OnAvailabilityChanged { add { } remove { } }
+  /// <inheritdoc />
+  public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
 }

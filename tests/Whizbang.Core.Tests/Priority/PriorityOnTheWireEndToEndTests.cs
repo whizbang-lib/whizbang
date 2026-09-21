@@ -16,6 +16,11 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Priority;
 
@@ -131,6 +136,7 @@ public class PriorityOnTheWireEndToEndTests {
     // 1. Producer: the real dispatcher with the framework's producer hooks and the real envelope serializer.
     var producerStrategy = new ProducerStrategy();
     var producerServices = new ServiceCollection();
+    producerServices.TryAddWhizbangDefaults();
     producerServices.AddSingleton<IServiceScopeFactory>(sp => new TestScopeFactory(sp));
     producerServices.AddSingleton<IWorkCoordinatorStrategy>(producerStrategy);
     producerServices.AddWhizbangPriority();
@@ -169,6 +175,7 @@ public class PriorityOnTheWireEndToEndTests {
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
     var consumerStrategy = new ConsumerStrategy();
     var consumerServices = new ServiceCollection();
+    consumerServices.TryAddWhizbangDefaults();
     consumerServices.AddSingleton<IServiceInstanceProvider>(new InstanceProvider());
     consumerServices.AddScoped<IWorkCoordinatorStrategy>(_ => consumerStrategy);
     consumerServices.AddWhizbangPriority();
@@ -178,11 +185,15 @@ public class PriorityOnTheWireEndToEndTests {
       scopeFactory: consumerProvider.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: options,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription(TOPIC, "wire-priority-sub")] },
       envelopeSerializer: serializer,
-      receptorRegistry: new SubscribedRegistry());
+      receptorRegistry: new SubscribedRegistry(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
     await consumer.StartAsync(cts.Token);
     await consumer.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -190,6 +201,7 @@ public class PriorityOnTheWireEndToEndTests {
     var coordinator = new PipelineCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
     coordinator.OutboxRowsByStream[streamId] = [outboxRow];
     var workerServices = new ServiceCollection();
+    workerServices.TryAddWhizbangDefaults();
     workerServices.AddSingleton<IWorkCoordinator>(coordinator);
     await using var workerProvider = workerServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -197,16 +209,22 @@ public class PriorityOnTheWireEndToEndTests {
     var drainChannel = new DrainChannel();
     var completion = new CompletionChannel();
     var drain = new OutboxDrainWorker(
-      workerProvider.GetRequiredService<IServiceScopeFactory>(),
-      new InstanceProvider(),
-      drainChannel,
-      completion,
-      new FailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
-      options,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new TransportPublishStrategy(transport, new DefaultTransportReadinessCheck(), "wire-priority-inbox"));
+      scopeFactory: workerProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new InstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: new FailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
+      jsonOptions: options,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new TransportPublishStrategy(transport: transport, readinessCheck: new DefaultTransportReadinessCheck(), inboxTopic: "wire-priority-inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value));
     await drain.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
     var wire = await wireCaptured.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -262,7 +280,7 @@ public class PriorityOnTheWireEndToEndTests {
   #region Producer side
 
   private sealed class OutboxOnlyDispatcher(IServiceProvider sp, IEnvelopeSerializer serializer) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null), envelopeSerializer: serializer) {
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), envelopeSerializer: serializer) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) => null;
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) => _ => Task.CompletedTask;

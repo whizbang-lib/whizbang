@@ -14,6 +14,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -338,7 +339,7 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task AuditCycle_EmitsGapRebuildAndManifestCountersAsync() {
     // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var meter = metrics.CoverageGapsDetected.Meter;
     var measurements = new Dictionary<string, long>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
@@ -495,7 +496,7 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task DigestDrift_IsCountedByKindSoHealingIsAttributableAsync() {
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var coordinator = new _auditCoordinator {
       DigestResult = new DigestVerificationResult {
         BucketsChecked = 7,
@@ -522,7 +523,7 @@ public class IntegrityAuditWorkerTests {
     // The companion. A clean sweep and a healed sweep are different operational events: one is
     // silence, the other is "something was wrong and I fixed it". Reporting a clean sweep through
     // the drift counters would show permanent healing activity against a healthy system.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var coordinator = new _auditCoordinator {
       DigestResult = new DigestVerificationResult {
         BucketsChecked = 5,
@@ -549,7 +550,7 @@ public class IntegrityAuditWorkerTests {
     // Epoch refolding is its own repair: buckets drift within an epoch, epochs drift against the
     // fold above them. Collapsing the two would tell an operator the wrong thing about which
     // level of the digest is disagreeing.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(4, 2) };
     var logger = new _messageLogger();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
@@ -569,7 +570,7 @@ public class IntegrityAuditWorkerTests {
     // Checked-and-clean and not-checked-at-all are different: the first is evidence the audit is
     // working, the second is evidence it is not running. Only a non-zero checked count separates
     // them, which is why this branch is guarded on EpochsChecked rather than on drift alone.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(6, 0) };
     var logger = new _messageLogger();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
@@ -616,7 +617,7 @@ public class IntegrityAuditWorkerTests {
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton(metrics
-      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);

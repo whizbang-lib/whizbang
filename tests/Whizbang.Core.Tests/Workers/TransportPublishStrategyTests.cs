@@ -15,6 +15,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -130,7 +131,7 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Act & Assert
-    await Assert.That(() => new TransportPublishStrategy(null!, readinessCheck))
+    await Assert.That(() => new TransportPublishStrategy(transport: null!, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance))
       .Throws<ArgumentNullException>()
       .Because("Transport cannot be null");
   }
@@ -142,7 +143,7 @@ public class TransportPublishStrategyTests {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     // Act & Assert
-    await Assert.That(() => new TransportPublishStrategy(transport, null!))
+    await Assert.That(() => new TransportPublishStrategy(transport: transport, readinessCheck: null!, loggerFactory: NullLoggerFactory.Instance))
       .Throws<ArgumentNullException>()
       .Because("ReadinessCheck cannot be null");
   }
@@ -153,7 +154,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Act
     var result = await strategy.IsReadyAsync();
@@ -169,7 +170,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -205,7 +206,7 @@ public class TransportPublishStrategyTests {
     };
     _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -238,7 +239,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -268,7 +269,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var streamId = Guid.CreateVersion7();
@@ -303,7 +304,7 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Routing is now AUTOMATIC - no explicit routing strategy needed
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     // Simulate a command being published - destination is the command type name,
@@ -339,7 +340,7 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Routing is now AUTOMATIC - events detected and use destination directly
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     // Events have namespace ending in "Events"
@@ -375,7 +376,7 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // No routing strategy - using simple constructor
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -410,7 +411,7 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Use custom inbox topic "whizbang" instead of default "inbox"
-    var strategy = new TransportPublishStrategy(transport, readinessCheck, "whizbang");
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, inboxTopic: "whizbang", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -443,7 +444,7 @@ public class TransportPublishStrategyTests {
     // A consumer uses nested types like AuthContracts+CreateTenantCommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -483,7 +484,7 @@ public class TransportPublishStrategyTests {
     // Event is stored in wh_event_store but should not be transported
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -516,7 +517,7 @@ public class TransportPublishStrategyTests {
     // Arrange - Empty string destination also indicates event-store-only mode
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -546,7 +547,7 @@ public class TransportPublishStrategyTests {
     // Arrange - Verify transport is never invoked for event-store-only messages
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -579,7 +580,7 @@ public class TransportPublishStrategyTests {
       PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport should not be called"))
     };
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -610,7 +611,7 @@ public class TransportPublishStrategyTests {
     // Arrange - Messages with valid destination should still use transport
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -649,7 +650,7 @@ public class TransportPublishStrategyTests {
     // This becomes the Subject property in Azure Service Bus
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -686,7 +687,7 @@ public class TransportPublishStrategyTests {
     // and SqlFilter patterns like '[Subject] LIKE 'myapp.orders.%' won't match
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -723,7 +724,7 @@ public class TransportPublishStrategyTests {
     // A consumer uses patterns like App.Contracts.Chat.ChatConversationsContracts+CreateCommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -758,7 +759,7 @@ public class TransportPublishStrategyTests {
     // should have RoutingKey set correctly for SqlFilter matching
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -795,7 +796,7 @@ public class TransportPublishStrategyTests {
     // RoutingKey: app.contracts.chat.activitytrackedcommand
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -837,7 +838,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Act & Assert
     await Assert.That(strategy.SupportsBulkPublish).IsTrue();
@@ -848,7 +849,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Act & Assert
     await Assert.That(strategy.SupportsBulkPublish).IsFalse();
@@ -859,7 +860,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Same StreamId → same batch group (stream-aware grouping)
     var sharedStreamId = Guid.CreateVersion7();
@@ -882,7 +883,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var eventWork1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
     var eventWork2 = _createEventOutboxWork("myapp.users.events", "MyApp.Users.Events.UserCreatedEvent, MyApp");
@@ -907,7 +908,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var eventStoreOnly = _createEventOutboxWork(null, "MyApp.Events.LocalEvent, MyApp");
     var normalEvent = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp");
@@ -927,7 +928,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Make transport throw for the orders topic
     transport.PublishBatchHandler = (items, destination) => {
@@ -958,7 +959,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var sharedStreamId = Guid.CreateVersion7();
     var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
@@ -980,7 +981,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     // Act
     var results = await strategy.PublishBatchAsync([], CancellationToken.None);
@@ -995,7 +996,7 @@ public class TransportPublishStrategyTests {
     // Arrange — transport returns mixed per-item results
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var sharedStreamId = Guid.CreateVersion7();
     var work1 = _createEventOutboxWork("myapp.orders.events", "MyApp.Orders.Events.OrderCreatedEvent, MyApp", sharedStreamId);
@@ -1026,7 +1027,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var work1 = _createEventOutboxWork(null, "MyApp.Events.Event1, MyApp");
     var work2 = _createEventOutboxWork("", "MyApp.Events.Event2, MyApp");
@@ -1067,7 +1068,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var streamId = Guid.CreateVersion7();
@@ -1102,7 +1103,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -1135,7 +1136,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var streamId = Guid.CreateVersion7();
     var messageId = Guid.CreateVersion7();
@@ -1167,7 +1168,7 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -1202,7 +1203,7 @@ public class TransportPublishStrategyTests {
     // Arrange — 2 messages same address, different streams → 2 separate batch calls
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var streamA = Guid.CreateVersion7();
     var streamB = Guid.CreateVersion7();
@@ -1241,7 +1242,7 @@ public class TransportPublishStrategyTests {
     // Arrange — 2 messages same address, same stream → 1 batch call
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var streamId = Guid.CreateVersion7();
     var msg1 = Guid.CreateVersion7();
@@ -1280,7 +1281,7 @@ public class TransportPublishStrategyTests {
     // Arrange — 3 messages: 1 with streamA, 1 with streamB, 1 with null → 3 groups
     var transport = new BulkPublishCapableTestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: readinessCheck, loggerFactory: NullLoggerFactory.Instance);
 
     var streamA = Guid.CreateVersion7();
     var streamB = Guid.CreateVersion7();
@@ -1360,8 +1361,11 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_FlippedNamespace_CommandRoutedToPerNamespaceInboxAsync() {
     var transport = new TestTransport();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     var result = await strategy.PublishAsync(work, CancellationToken.None);
@@ -1378,8 +1382,11 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_FlippedNamespace_DestinationMarkedRequireProvisionedEntityAsync() {
     var transport = new TestTransport();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     await strategy.PublishAsync(work, CancellationToken.None);
@@ -1394,8 +1401,11 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_FlippedNamespaceWithStreamId_MarkerSurvivesStreamIdMetadataMergeAsync() {
     var transport = new TestTransport();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     // _createCommandOutboxWork sets a StreamId, so _addStreamIdToMetadata runs.
@@ -1416,8 +1426,12 @@ public class TransportPublishStrategyTests {
     var legacy = new TestTransport();
     var readiness = new DefaultTransportReadinessCheck();
     var flipAwareStrategy = new TransportPublishStrategy(
-      flipAware, readiness, "inbox", namespaceRouting: _namespaceRouting("MyApp.Billing.Commands"));
-    var legacyStrategy = new TransportPublishStrategy(legacy, readiness, "inbox");
+      transport: flipAware,
+      readinessCheck: readiness,
+      inboxTopic: "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Billing.Commands"),
+      loggerFactory: NullLoggerFactory.Instance);
+    var legacyStrategy = new TransportPublishStrategy(transport: legacy, readinessCheck: readiness, inboxTopic: "inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
     var flipAwareWork = _createCommandOutboxWork(messageType);
@@ -1442,9 +1456,12 @@ public class TransportPublishStrategyTests {
     var noSeam = new TestTransport();
     var readiness = new DefaultTransportReadinessCheck();
     var viaSeamStrategy = new TransportPublishStrategy(
-      viaSeam, readiness, "inbox",
-      namespaceRouting: new Whizbang.Core.Routing.SharedTopicOutboxStrategy("inbox"));
-    var noSeamStrategy = new TransportPublishStrategy(noSeam, readiness, "inbox");
+      transport: viaSeam,
+      readinessCheck: readiness,
+      inboxTopic: "inbox",
+      namespaceRouting: new Whizbang.Core.Routing.SharedTopicOutboxStrategy("inbox"),
+      loggerFactory: NullLoggerFactory.Instance);
+    var noSeamStrategy = new TransportPublishStrategy(transport: noSeam, readinessCheck: readiness, inboxTopic: "inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
     await viaSeamStrategy.PublishAsync(_createCommandOutboxWork(messageType), CancellationToken.None);
@@ -1462,7 +1479,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithoutNamespaceRouting_FlipNeverEngagesAsync() {
     // DEFAULT LOCK: no seam, no flip — commands to the shared inbox exactly as today.
     var transport = new TestTransport();
-    var strategy = new TransportPublishStrategy(transport, new DefaultTransportReadinessCheck(), "inbox");
+    var strategy = new TransportPublishStrategy(transport: transport, readinessCheck: new DefaultTransportReadinessCheck(), inboxTopic: "inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     await strategy.PublishAsync(work, CancellationToken.None);
@@ -1475,8 +1492,11 @@ public class TransportPublishStrategyTests {
     var options = new Whizbang.Core.Routing.RoutingOptions().RouteAllCommandNamespacesToInbox();
     var transport = new TestTransport();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(options));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(options),
+      loggerFactory: NullLoggerFactory.Instance);
 
     // Framework system commands ride the Command kind at every production call site;
     // the strategy-internal classification must send them to the broadcast inbox — a
@@ -1493,8 +1513,11 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     var options = new Whizbang.Core.Routing.RoutingOptions().RouteAllCommandNamespacesToInbox();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(options));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(options),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -1521,8 +1544,11 @@ public class TransportPublishStrategyTests {
     // two transport groups — one per resolved address.
     var transport = new BulkPublishCapableTestTransport();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
+      loggerFactory: NullLoggerFactory.Instance);
 
     var streamId = Guid.CreateVersion7();
     var flippedWork = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp") with { StreamId = streamId };

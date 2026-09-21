@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Notifications;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -79,12 +80,13 @@ public class DeadLetterRecoveryWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     var gate = new _blockingGate();  // never opens
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new DeadLetterRecoveryOptions { Enabled = true, ScanIntervalMinutes = 1 }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new _fixedGenerationProvider("test/0.0.1"),
-      NullLogger<DeadLetterRecoveryWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new DeadLetterRecoveryOptions { Enabled = true, ScanIntervalMinutes = 1 }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new _fixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

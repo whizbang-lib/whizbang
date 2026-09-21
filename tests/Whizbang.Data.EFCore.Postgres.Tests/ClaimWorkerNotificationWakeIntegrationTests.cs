@@ -13,6 +13,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -81,6 +83,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     // OnSignal calls RequestImmediatePoll.
     var coord = new TimestampingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -104,11 +107,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof
         // structural instead of chronometric — CI scheduling jitter can slow a working wake
@@ -116,7 +119,16 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
         PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);
@@ -187,6 +199,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     // second store's edge doorbell.
     var coord = new TimestampingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -241,11 +254,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof
         // structural instead of chronometric — CI scheduling jitter can slow a working wake
@@ -253,7 +266,16 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
         PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);

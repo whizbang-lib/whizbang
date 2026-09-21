@@ -56,12 +56,12 @@ public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
   string inboxTopic,
-  ILoggerFactory? loggerFactory = null,
+  ILoggerFactory loggerFactory,
+  ICommandInboxAddressResolver namespaceRouting,
   ThrottleRetryOptions? throttleRetryOptions = null,
   TransportMetrics? metrics = null,
   Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
   System.Text.Json.JsonSerializerOptions? jsonOptions = null,
-  ICommandInboxAddressResolver? namespaceRouting = null,
   Whizbang.Core.Tags.TransportNamespaceResolver? transportNamespaces = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
@@ -74,12 +74,12 @@ public partial class TransportPublishStrategy(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-  private readonly ICommandInboxAddressResolver? _namespaceRouting = namespaceRouting;
+  private readonly ICommandInboxAddressResolver _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Tags.TransportNamespaceResolver? _transportNamespaces = transportNamespaces;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
-  private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+  private readonly ILogger _logger = loggerFactory.CreateLogger(LOG_CATEGORY);
 #pragma warning restore S4487
   private readonly ThrottleRetryOptions _throttleRetry = throttleRetryOptions ?? new ThrottleRetryOptions();
   private readonly TransportMetrics? _metrics = metrics;
@@ -128,8 +128,8 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory? loggerFactory = null)
-    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory) {
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory loggerFactory)
+    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory, NullCommandInboxAddressResolver.Instance) {
   }
 
   /// <summary>
@@ -496,7 +496,7 @@ public partial class TransportPublishStrategy(
       // (UnroutableDestinationException) instead of silently dropping when the handling
       // service never dark-provisioned the entity. Unflipped namespaces keep TODAY'S wire
       // shape byte-identical (no metadata) — rollback is removing the flip.
-      var flippedAddress = _namespaceRouting?.ResolveFlippedCommandInboxAddress(ns);
+      var flippedAddress = _namespaceRouting.ResolveFlippedCommandInboxAddress(ns);
       if (flippedAddress is not null) {
         return new TransportDestination(
           Address: flippedAddress,

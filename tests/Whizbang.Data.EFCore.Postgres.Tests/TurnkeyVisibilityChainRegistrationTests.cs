@@ -30,6 +30,7 @@ public class TurnkeyVisibilityChainRegistrationTests {
 
   private static ServiceCollection _composeTurnkey() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
     services.AddWhizbang();

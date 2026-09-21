@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Notifications;
 
 #pragma warning disable CA1707 // test method underscores
 
@@ -134,16 +135,17 @@ public sealed class RecoveryLifecycleHardeningTests {
     var collector = provider.GetFakeLogCollector();
 
     var worker = new DeadLetterRecoveryWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      new ImmediateGate(),
-      Options.Create(new DeadLetterRecoveryOptions {
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateGate(),
+      options: Options.Create(new DeadLetterRecoveryOptions {
         ScanIntervalMinutes = 1,
         WaitForIdle = false,
         EnableGenerationReplay = true
       }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGeneration(),
-      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGeneration(),
+      logger: provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

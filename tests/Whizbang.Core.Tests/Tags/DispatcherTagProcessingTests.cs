@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Generated;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Tags;
 
@@ -275,7 +276,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -305,7 +306,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -338,7 +339,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();

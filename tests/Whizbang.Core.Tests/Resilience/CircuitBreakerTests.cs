@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Resilience;
+using Microsoft.Extensions.Logging.Abstractions;
 
 #pragma warning disable CA1707 // Test method naming uses underscores by convention
 
@@ -28,7 +29,7 @@ public class CircuitBreakerTests {
 
   [Test]
   public async Task ExecuteAsync_Success_ReturnsResultAsync() {
-    var cb = new CircuitBreaker<bool>(_defaultOptions());
+    var cb = new CircuitBreaker<bool>(options: _defaultOptions(), logger: NullLogger.Instance);
     var result = await cb.ExecuteAsync(_ => Task.FromResult(true), fallbackValue: false, CancellationToken.None);
     await Assert.That(result).IsTrue();
     await Assert.That(cb.State).IsEqualTo(CircuitBreakerState.Closed);
@@ -38,7 +39,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_FailuresBelowThreshold_StaysClosedAsync() {
     var options = _defaultOptions();
     options.FailureThreshold = 3;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // 2 failures (below threshold of 3)
     for (var i = 0; i < 2; i++) {
@@ -57,7 +58,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_FailuresReachThreshold_OpensCircuitAsync() {
     var options = _defaultOptions();
     options.FailureThreshold = 3;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     for (var i = 0; i < 3; i++) {
       await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
@@ -70,7 +71,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_CircuitOpen_ReturnsFallbackWithoutExecutingAsync() {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
-    var cb = new CircuitBreaker<string>(options);
+    var cb = new CircuitBreaker<string>(options: options, logger: NullLogger.Instance);
 
     // Trip the circuit
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: "fallback", CancellationToken.None);
@@ -94,7 +95,7 @@ public class CircuitBreakerTests {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // Trip the circuit
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
@@ -118,7 +119,7 @@ public class CircuitBreakerTests {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // Trip, wait, succeed
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
@@ -139,7 +140,7 @@ public class CircuitBreakerTests {
     options.FailureThreshold = 1;
     options.InitialCooldownSeconds = 1;
     options.CooldownBackoffMultiplier = 2.0;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // First trip: 1s cooldown
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
@@ -162,7 +163,7 @@ public class CircuitBreakerTests {
     options.InitialCooldownSeconds = 1;
     options.CooldownBackoffMultiplier = 10.0;
     options.MaxCooldownSeconds = 5;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // Trip multiple times with escalation
     await cb.ExecuteAsync(_ => throw new InvalidOperationException("fail"), fallbackValue: false, CancellationToken.None);
@@ -180,7 +181,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_SuccessCached_SkipsExecutionAsync() {
     var options = _defaultOptions();
     options.SuccessCacheDurationSeconds = 2;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     var callCount = 0;
     await cb.ExecuteAsync(_ => { callCount++; return Task.FromResult(true); }, fallbackValue: false, CancellationToken.None);
@@ -194,7 +195,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_CacheExpired_ReexecutesAsync() {
     var options = _defaultOptions();
     options.SuccessCacheDurationSeconds = 1;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     var callCount = 0;
     await cb.ExecuteAsync(_ => { callCount++; return Task.FromResult(true); }, fallbackValue: false, CancellationToken.None);
@@ -214,7 +215,7 @@ public class CircuitBreakerTests {
     var options = _defaultOptions();
     options.FailureThreshold = 5;
     options.SuccessCacheDurationSeconds = 0; // Disable caching
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     // 3 failures
     for (var i = 0; i < 3; i++) {
@@ -235,7 +236,7 @@ public class CircuitBreakerTests {
   public async Task ExecuteAsync_OperationCanceled_CountsAsFailureAsync() {
     var options = _defaultOptions();
     options.FailureThreshold = 1;
-    var cb = new CircuitBreaker<bool>(options);
+    var cb = new CircuitBreaker<bool>(options: options, logger: NullLogger.Instance);
 
     await cb.ExecuteAsync(_ => throw new OperationCanceledException(), fallbackValue: false, CancellationToken.None);
     await Assert.That(cb.State).IsEqualTo(CircuitBreakerState.Open);

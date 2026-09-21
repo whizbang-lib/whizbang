@@ -9,6 +9,8 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Whizbang.Core.Minting;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -25,7 +27,7 @@ public class RedeliveryPumpPriorityTests {
   public async Task Publish_EveryBundlesEnvelopeIsBackground_BeforeSerializationAsync() {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
     var streamA = TrackedGuid.NewMedo().Value;
     var streamB = TrackedGuid.NewMedo().Value;
 
@@ -43,8 +45,7 @@ public class RedeliveryPumpPriorityTests {
   [Test]
   public async Task Publish_EveryBundleOnTheWireIsBackgroundAsync() {
     var transport = new _captureTransport();
-    var pump = new RedeliveryPump(transport, new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
-      new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
     var stream = TrackedGuid.NewMedo().Value;
 
     await pump.PublishAsync([_evt(stream, 1), _evt(stream, 2)], topic: "repair-topic", target: "svc-x");
@@ -57,7 +58,7 @@ public class RedeliveryPumpPriorityTests {
   public async Task Publish_InsideAnInteractiveHandling_TheBundleStaysBackgroundAsync() {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
       await pump.PublishAsync([_evt(TrackedGuid.NewMedo().Value, 1)], topic: "repair-topic", target: null);

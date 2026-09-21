@@ -11,6 +11,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
@@ -108,7 +109,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — configure owned domains to include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));
@@ -135,7 +136,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — owned domains do NOT include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.Configure<RoutingOptions>(opts => {
@@ -164,7 +165,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — owned domains include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));

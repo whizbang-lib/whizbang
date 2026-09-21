@@ -9,6 +9,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -25,7 +26,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var processedOrder = new List<Medo.Uuid7>();
 
@@ -62,7 +63,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var stream1 = _idProvider.NewGuid();
     var stream2 = _idProvider.NewGuid();
     var stream3 = _idProvider.NewGuid();
@@ -114,7 +115,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var stream1 = _idProvider.NewGuid();  // Will fail
     var stream2 = _idProvider.NewGuid();  // Should continue
 
@@ -163,7 +164,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
 
     MessageProcessingStatus? reportedPartialStatus = null;
@@ -206,7 +207,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var processedOrder = new List<Medo.Uuid7>();
 
@@ -247,7 +248,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_WithNullList_ReturnsEarlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processorCalled = false;
 
     // Act
@@ -268,7 +269,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_WithEmptyList_ReturnsEarlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processorCalled = false;
 
     // Act
@@ -289,7 +290,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_WithNullList_ReturnsEarlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processorCalled = false;
 
     // Act
@@ -310,7 +311,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_WithEmptyList_ReturnsEarlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processorCalled = false;
 
     // Act
@@ -335,7 +336,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_WithCancellation_StopsProcessingAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var cts = new CancellationTokenSource();
     var processedCount = 0;
@@ -372,7 +373,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_WithCancellation_StopsProcessingAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var cts = new CancellationTokenSource();
     var processedCount = 0;
@@ -412,7 +413,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processedOrder = new List<Medo.Uuid7>();
 
     // Create messages without stream IDs (null)
@@ -440,7 +441,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var processedOrder = new List<Medo.Uuid7>();
 
     // Create messages without stream IDs
@@ -472,7 +473,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var stream1 = _idProvider.NewGuid();  // Will fail
     var stream2 = _idProvider.NewGuid();  // Should continue
 
@@ -513,7 +514,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var stream1 = _idProvider.NewGuid();
     var stream2 = _idProvider.NewGuid();
     var stream3 = _idProvider.NewGuid();
@@ -565,7 +566,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessInboxWorkAsync_OnSuccess_CallsCompletionHandlerAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var completedMessages = new List<(Guid MessageId, MessageProcessingStatus Status)>();
 
@@ -591,7 +592,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_OnSuccess_CallsCompletionHandlerAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
     var completedMessages = new List<(Guid MessageId, MessageProcessingStatus Status)>();
 
@@ -616,7 +617,7 @@ public class OrderedStreamProcessorTests {
   [Test]
   public async Task ProcessOutboxWorkAsync_OnFailure_ReportsPartialStatusAsync() {
     // Arrange
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
 
     MessageProcessingStatus? reportedPartialStatus = null;

@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// reaper (<see cref="Destruction.WhenConsumed"/>) and the rebuild/rewind guards derive it from the
 /// catalog at startup through this seam rather than a database round-trip.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/events</docs>
 public interface IEphemeralModeResolver {
   /// <summary>
   /// The ephemeral mode of the event type whose CLR name is <paramref name="clrTypeName"/> (the

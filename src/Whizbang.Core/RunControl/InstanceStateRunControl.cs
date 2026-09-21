@@ -33,7 +33,7 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
 
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly ILibraryVersionProvider? _versionProvider;
+  private readonly ILibraryVersionProvider _versionProvider;
   private readonly ILogger<InstanceStateRunControl> _logger;
 
   /// <summary>Creates the participant over the scope factory the coordinator resolves from.
@@ -41,13 +41,13 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
   public InstanceStateRunControl(
       IServiceScopeFactory scopeFactory,
       IServiceInstanceProvider instanceProvider,
-      ILibraryVersionProvider? versionProvider = null,
-      ILogger<InstanceStateRunControl>? logger = null) {
+      ILibraryVersionProvider versionProvider,
+      ILogger<InstanceStateRunControl> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     _instanceProvider = instanceProvider;
     _versionProvider = versionProvider;
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<InstanceStateRunControl>.Instance;
+    _logger = logger;
   }
 
   /// <inheritdoc />
@@ -67,7 +67,7 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
       using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       timeout.CancelAfter(_writeTimeout);
       var recorded = await coordinator.RecordInstanceStateAsync(
-        _instanceProvider.InstanceId, phase.ToString(), _versionProvider?.LibraryVersion,
+        _instanceProvider.InstanceId, phase.ToString(), _versionProvider.LibraryVersion,
         timeout.Token).ConfigureAwait(false);
       if (!recorded) {
         // Expected before the first heartbeat registers the row; the next transition lands.

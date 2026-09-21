@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Common;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -377,7 +378,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that tracks cascade behavior with routing support.
   /// </summary>
-  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle RoutedTestCommand -> (RoutedTestResult, Routed<RoutedTestEvent>) for Local routing test
       if (messageType == typeof(RoutedTestCommand) && typeof(TResult) == typeof((RoutedTestResult, Routed<RoutedTestEvent>))) {
@@ -470,7 +471,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed<T> send path testing.
   /// </summary>
-  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private readonly List<object> _sentMessages = [];
     private readonly Lock _lock = new();
 
@@ -641,7 +642,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed&lt;T&gt; local invoke testing.
   /// </summary>
-  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private readonly List<object> _invokedMessages = [];
     private readonly Lock _lock = new();
 
@@ -756,7 +757,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
   /// Registers a trace store or receptor registry to trigger the tracing code path.
   /// </summary>
-  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
+  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: null, receptorRegistry: receptorRegistry) {
     private readonly List<object> _invokedMessages = [];
     private readonly Lock _lock = new();
 
@@ -944,7 +945,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that wires PlaceOrderReceptor and BatchProcessReceptor for integration testing.
   /// Tracks which events were cascaded locally vs to outbox.
   /// </summary>
-  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Wire PlaceOrderCommand → PlaceOrderReceptor
       if (messageType == typeof(PlaceOrderCommand)) {

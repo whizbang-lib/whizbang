@@ -20,6 +20,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -153,7 +154,7 @@ public class IntegrityReceptorsPriorityTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IDispatcher>(new _captureDispatcher());
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));

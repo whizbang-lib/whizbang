@@ -5,6 +5,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -43,7 +45,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task AcquireAsync_HasCapacity_ReturnsReleaserThatReleasesOnDisposeAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 10_000);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 10_000, logger: NullLogger<WorkCoordinatorGate>.Instance);
 
     var releaser = await gate.AcquireAsync(CancellationToken.None);
     releaser.Dispose();
@@ -95,7 +97,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task AcquireAsync_TimeoutDisabled_BlocksUntilSlotAvailableAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 0);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 0, logger: NullLogger<WorkCoordinatorGate>.Instance);
 
     var holding = await gate.AcquireAsync(CancellationToken.None);
 
@@ -137,7 +139,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task Constructor_PropertiesReflectArgumentsAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 17, acquireTimeoutMilliseconds: 42_000);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 17, acquireTimeoutMilliseconds: 42_000, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(17);
     await Assert.That(gate.AcquireTimeoutMilliseconds).IsEqualTo(42_000);
   }
@@ -152,8 +154,8 @@ public class WorkCoordinatorGateTests {
   [Test]
   public async Task AcquireAsync_OnDispose_RecordsHistogramObservationAsync() {
     var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(
-      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: null));
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, metrics: metrics);
+      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, metrics: metrics, logger: NullLogger<WorkCoordinatorGate>.Instance);
 
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
@@ -192,7 +194,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task FromPoolSize_DerivesMaxConcurrentAsPoolMinusReserveAsync() {
-    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 30, reserve: 5);
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 30, reserve: 5, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(25)
       .Because("Pool size 30 minus reserve 5 = 25. The reserve protects non-gated DB work (LISTEN connections, health-check pings, manual queries) from being starved by gated callers saturating the pool.");
   }
@@ -206,7 +208,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task FromPoolSize_TinyPool_ClampsToMinimumOneAsync() {
-    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 3, reserve: 5);
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 3, reserve: 5, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(1)
       .Because("(3 - 5) = -2 would disable the gate. Floor at 1 instead: a slow pipeline is recoverable; a silently-disabled gate is the production stuck-row class of bug the v0.654 hardening was supposed to prevent.");
   }
@@ -218,7 +220,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task FromPoolSize_DefaultReserveIsFiveAsync() {
-    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 50);
+    using var gate = WorkCoordinatorGate.FromPoolSize(maxPoolSize: 50, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await Assert.That(gate.MaxConcurrent).IsEqualTo(45)
       .Because("Default reserve must be 5 — documented in the connection-budget framing in plans/throughput-optimization.md. If this changes, the connection-pool-sizing doc must be updated in lockstep.");
   }
@@ -275,8 +277,8 @@ public class WorkCoordinatorGateTests {
   [Test]
   public async Task AcquireAsync_DegradedNoopReleaser_NoHistogramObservationAsync() {
     var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(
-      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: null));
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 100, metrics: metrics);
+      new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 100, metrics: metrics, logger: NullLogger<WorkCoordinatorGate>.Instance);
 
     var observed = new List<KeyValuePair<string, object?>[]>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();

@@ -1,5 +1,7 @@
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics.Metrics;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -18,7 +20,7 @@ public class PerspectiveMetricsTests {
 
   [Test]
   public async Task PerspectiveMetrics_Constructor_CreatesAllInstrumentsAsync() {
-    var metrics = new PerspectiveMetrics(new WhizbangMetrics());
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.BatchDuration).IsNotNull();
     await Assert.That(metrics.ClaimDuration).IsNotNull();

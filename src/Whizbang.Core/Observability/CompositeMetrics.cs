@@ -23,7 +23,7 @@ public sealed class CompositeMetrics {
   /// <exception cref="ArgumentNullException">Thrown when the holder is null.</exception>
   public CompositeMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     Received = meter.CreatePassiveCounter<long>("whizbang.composites.received",
       description: "Composite inbox rows the dispatcher took up");

@@ -10,6 +10,7 @@ using Whizbang.Core.RunControl;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -99,15 +100,22 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
-        [new InstanceStateRunControl(scopeFactory, pod, versionProvider)], lifecycleOptions),
+        [new InstanceStateRunControl(scopeFactory: scopeFactory, instanceProvider: pod, versionProvider: versionProvider, logger: NullLogger<InstanceStateRunControl>.Instance)], lifecycleOptions),
       lifecycleOptions);
     var assessor = new EFCorePostgresStartupAssessor(scopeFactory, typeof(WorkCoordinationDbContext), versionProvider);
     var reviveProbe = new _countingStep();
     var hostLifetime = new _stubHostLifetime();
     var watcher = new StandbyWatcher(
-      scopeFactory, lifecycle, hostLifetime, pod, Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      versionProvider: versionProvider, assessor: assessor,
-      pipelineRunner: new StartupPipelineRunner([reviveProbe]), options: _fastOptions());
+      scopeFactory: scopeFactory,
+      lifecycle: lifecycle,
+      hostLifetime: hostLifetime,
+      instanceProvider: pod,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      versionProvider: versionProvider,
+      assessor: assessor,
+      pipelineRunner: new StartupPipelineRunner(steps: [reviveProbe], observers: [], dutyElector: NullDutyElector.Instance),
+      options: _fastOptions(),
+      logger: NullLogger<StandbyWatcher>.Instance);
     return new _podRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
   }
 
@@ -116,6 +124,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     new EFCorePostgresStartupFleetStatusSource(
       rig.Services.GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext)),
     rig.Pod,
+    NullLogger<StandbyHandshake>.Instance,
     _fastOptions());
 
   private async Task<List<(int Id, string Version)>> _captureLedgerVersionsAsync(CancellationToken ct) {

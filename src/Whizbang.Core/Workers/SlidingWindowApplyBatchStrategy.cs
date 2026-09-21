@@ -51,14 +51,14 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowApplyBatchStrategy(
       ApplyBulkFlushCallback flush,
+      ILogger<SlidingWindowApplyBatchStrategy> logger,
       SlidingWindowApplyOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ILogger<SlidingWindowApplyBatchStrategy>? logger = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     _options = options ?? new SlidingWindowApplyOptions();
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _logger = (ILogger?)logger ?? NullLogger.Instance;
+    _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
       static state => ((SlidingWindowApplyBatchStrategy)state!)._fireAndForgetIdleSweep(),

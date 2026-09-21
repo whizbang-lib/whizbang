@@ -8,6 +8,10 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -29,6 +33,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       IntervalMilliseconds = 60_000 // long interval, we flush manually
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
@@ -87,6 +92,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       IntervalMilliseconds = 60_000
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
@@ -140,13 +146,16 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new IntervalWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        opts,
+        instanceProvider: instanceProvider,
+        options: opts,
         scopeFactory: scopeFactory,
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>(),
-        inboxChannelWriter: sp.GetService<IInboxChannelWriter>());
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+        logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()));
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -154,12 +163,15 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new BatchWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        opts,
+        instanceProvider: instanceProvider,
+        options: opts,
         scopeFactory: scopeFactory,
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>());
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()));
     });
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {

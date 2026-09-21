@@ -128,6 +128,8 @@ public static class TransportConsumerBuilderExtensions {
       this WhizbangBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
     ArgumentNullException.ThrowIfNull(builder);
+    // The consumer worker's collaborators are required; a pipeline composed without AddWhizbang gets the defaults.
+    builder.Services.TryAddWhizbangDefaults();
 
     // Apply custom configuration if provided
     var config = new TransportConsumerConfiguration();
@@ -157,7 +159,7 @@ public static class TransportConsumerBuilderExtensions {
 
       // Get event subscription discovery (may be null if not registered)
       var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetService<IEventNamespaceRegistry>());
+          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
 
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
@@ -170,8 +172,8 @@ public static class TransportConsumerBuilderExtensions {
           routingOptions,
           discovery,
           serviceName,
-          sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetService<Messaging.IReceptorRegistryQuery>());
+          sp.GetRequiredService<IInboxRoutingStrategy>(),
+          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -283,6 +285,8 @@ public static class TransportConsumerBuilderExtensions {
       this WhizbangPerspectiveBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
     ArgumentNullException.ThrowIfNull(builder);
+    // The consumer worker's collaborators are required; a pipeline composed without AddWhizbang gets the defaults.
+    builder.Services.TryAddWhizbangDefaults();
 
     // Apply custom configuration if provided
     var config = new TransportConsumerConfiguration();
@@ -311,7 +315,7 @@ public static class TransportConsumerBuilderExtensions {
 
       // Get event subscription discovery (may be null if not registered)
       var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetService<IEventNamespaceRegistry>());
+          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
 
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
@@ -324,8 +328,8 @@ public static class TransportConsumerBuilderExtensions {
           routingOptions,
           discovery,
           serviceName,
-          sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetService<Messaging.IReceptorRegistryQuery>());
+          sp.GetRequiredService<IInboxRoutingStrategy>(),
+          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 

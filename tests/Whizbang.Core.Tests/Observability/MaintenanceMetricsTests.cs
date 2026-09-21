@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -14,7 +15,7 @@ namespace Whizbang.Core.Tests.Observability;
 public class MaintenanceMetricsTests {
   [Test]
   public async Task Instruments_HaveStableNamesAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.RowsAffected.Name).IsEqualTo("whizbang.maintenance.rows_affected");
     await Assert.That(metrics.TaskDuration.Name).IsEqualTo("whizbang.maintenance.task_duration");
@@ -23,7 +24,7 @@ public class MaintenanceMetricsTests {
 
   [Test]
   public async Task Record_EmitsDurationAlways_RowsOnlyWhenPositiveAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var rowMeasurements = new List<long>();
     var durationMeasurements = new List<double>();
     using var listener = new MeterListener();

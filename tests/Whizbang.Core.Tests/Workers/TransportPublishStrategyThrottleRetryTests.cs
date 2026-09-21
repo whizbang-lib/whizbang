@@ -8,6 +8,8 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Routing;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -82,9 +84,12 @@ public class TransportPublishStrategyThrottleRetryTests {
   public async Task PublishAsync_OneThrottleThenSuccess_SucceedsAfterOneRetryAsync() {
     var transport = new ThrottleNTimesTransport(throttleCount: 1);
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts());
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -98,9 +103,12 @@ public class TransportPublishStrategyThrottleRetryTests {
   public async Task PublishAsync_FourThrottlesThenSuccess_SucceedsWithinDefaultBudgetAsync() {
     var transport = new ThrottleNTimesTransport(throttleCount: 4);
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -114,9 +122,12 @@ public class TransportPublishStrategyThrottleRetryTests {
     // Throttle 5 times → all 5 attempts exhausted → return Reason=Throttled to caller.
     var transport = new ThrottleNTimesTransport(throttleCount: 100);  // never succeeds
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -136,9 +147,12 @@ public class TransportPublishStrategyThrottleRetryTests {
       throw new InvalidOperationException("boom");
     });
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -159,9 +173,12 @@ public class TransportPublishStrategyThrottleRetryTests {
       throw new Azure.Messaging.ServiceBus.ServiceBusException("connection lost");
     });
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -184,9 +201,12 @@ public class TransportPublishStrategyThrottleRetryTests {
       // succeed on the 2nd call
     });
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts());
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -200,9 +220,12 @@ public class TransportPublishStrategyThrottleRetryTests {
     // Budget=3 → exactly 3 attempts before giving up
     var transport = new ThrottleNTimesTransport(throttleCount: 100);
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 3));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 3),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -216,9 +239,12 @@ public class TransportPublishStrategyThrottleRetryTests {
     var transport = new ThrottleNTimesTransport(throttleCount: 0);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts());
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
     sw.Stop();
@@ -278,9 +304,12 @@ public class TransportPublishStrategyThrottleRetryTests {
   public async Task PublishBatchAsync_TwoThrottlesThenSuccess_EveryItemSucceedsAsync() {
     var transport = new BulkThrottleNTimesTransport(batchThrottleCount: 2);
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts());
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var streamId = Guid.CreateVersion7();
     var works = Enumerable.Range(0, 5).Select(_ => _work() with { StreamId = streamId }).ToList();
@@ -297,9 +326,12 @@ public class TransportPublishStrategyThrottleRetryTests {
   public async Task PublishBatchAsync_AllAttemptsThrottled_AllItemsThrottledAsync() {
     var transport = new BulkThrottleNTimesTransport(batchThrottleCount: 100);
     var strategy = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      loggerFactory: null,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var streamId = Guid.CreateVersion7();
     var works = Enumerable.Range(0, 3).Select(_ => _work() with { StreamId = streamId }).ToList();

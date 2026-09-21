@@ -51,7 +51,7 @@ public class ServiceInstanceProviderTests {
   [Test]
   public async Task ServiceInstanceProvider_WithoutConfiguration_UsesAssemblyNameAsync() {
     // Arrange & Act
-    var provider = new ServiceInstanceProvider(configuration: null);
+    var provider = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
 
     // Assert
     // Service name should be entry assembly name (Whizbang.Core.Tests when running tests)
@@ -120,7 +120,7 @@ public class ServiceInstanceProviderTests {
   [Test]
   public async Task ServiceInstanceProvider_GeneratesUUIDv7_ForInstanceIdAsync() {
     // Arrange & Act
-    var provider = new ServiceInstanceProvider(configuration: null);
+    var provider = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
     var instanceId = provider.InstanceId;
 
     // Assert

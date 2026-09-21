@@ -43,10 +43,10 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_ExecutesInResolvedOrderNotRegistrationOrderAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([
+    var runner = new StartupPipelineRunner(steps: [
       new _recordingStep("Ready", log, ["Migrate"]),
       new _recordingStep("Migrate", log),
-    ]);
+    ], observers: [], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -57,10 +57,10 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_ReportsEveryStepsOutcomeAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([
+    var runner = new StartupPipelineRunner(steps: [
       new _recordingStep("Migrate", log),
       new _recordingStep("Repair", log, ["Migrate"], StartupStepOutcome.Skipped, "nothing to repair"),
-    ]);
+    ], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -75,10 +75,10 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_SkippedAndCompleted_AreDistinguishableAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([
+    var runner = new StartupPipelineRunner(steps: [
       new _recordingStep("Completed", log),
       new _recordingStep("Skipped", log, null, StartupStepOutcome.Skipped, "no origins known yet"),
-    ]);
+    ], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
     var completed = results.Single(r => r.Name == "Completed");
@@ -91,7 +91,7 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_RecordsDurationForEachStepAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([new _recordingStep("Migrate", log)]);
+    var runner = new StartupPipelineRunner(steps: [new _recordingStep("Migrate", log)], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -102,7 +102,7 @@ public class StartupPipelineRunnerTests {
   public async Task RunAsync_OmitsDisabledStepsAsync() {
     var log = new List<string>();
     var disabled = new _recordingStep("Disabled", log, null, enabled: false);
-    var runner = new StartupPipelineRunner([new _recordingStep("Migrate", log), disabled]);
+    var runner = new StartupPipelineRunner(steps: [new _recordingStep("Migrate", log), disabled], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -117,9 +117,9 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_WhenAStepThrows_ReportsFailedWithTheReasonAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([
+    var runner = new StartupPipelineRunner(steps: [
       new _recordingStep("Migrate", log, null, throws: new InvalidOperationException("schema unreachable")),
-    ]);
+    ], observers: [], dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
 
@@ -159,7 +159,7 @@ public class StartupPipelineRunnerTests {
     var log = new List<string>();
     var cancelling = new _cancellingStep("Migrate", log, stopping);
     var later = new _recordingStep("Later", log, ["Migrate"]);
-    var runner = new StartupPipelineRunner([cancelling, later]);
+    var runner = new StartupPipelineRunner(steps: [cancelling, later], observers: [], dutyElector: NullDutyElector.Instance);
 
     await Assert.That(async () => await runner.RunAsync(stopping.Token))
       .Throws<OperationCanceledException>()
@@ -181,7 +181,7 @@ public class StartupPipelineRunnerTests {
   public async Task RunAsync_RunTwice_ExecutesEveryStepAgainAsync() {
     var log = new List<string>();
     var migrate = new _recordingStep("Migrate", log);
-    var runner = new StartupPipelineRunner([migrate]);
+    var runner = new StartupPipelineRunner(steps: [migrate], observers: [], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
     var second = await runner.RunAsync(CancellationToken.None);
@@ -194,7 +194,7 @@ public class StartupPipelineRunnerTests {
   [Test]
   public async Task RunAsync_RunTwice_ReportsOnlyTheLatestRunAsync() {
     var log = new List<string>();
-    var runner = new StartupPipelineRunner([new _recordingStep("Migrate", log)]);
+    var runner = new StartupPipelineRunner(steps: [new _recordingStep("Migrate", log)], observers: [], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
     var second = await runner.RunAsync(CancellationToken.None);
@@ -207,12 +207,12 @@ public class StartupPipelineRunnerTests {
 
   [Test]
   public async Task RunAsync_WithNoSteps_ReturnsEmptyAsync() {
-    var runner = new StartupPipelineRunner([]);
+    var runner = new StartupPipelineRunner(steps: [], observers: [], dutyElector: NullDutyElector.Instance);
     await Assert.That(await runner.RunAsync(CancellationToken.None)).IsEmpty();
   }
 
   [Test]
   public async Task Constructor_WithNullSteps_ThrowsAsync() {
-    await Assert.That(() => new StartupPipelineRunner(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupPipelineRunner(steps: null!, observers: [], dutyElector: NullDutyElector.Instance)).Throws<ArgumentNullException>();
   }
 }

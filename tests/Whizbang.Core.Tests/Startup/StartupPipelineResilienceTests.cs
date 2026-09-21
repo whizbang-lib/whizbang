@@ -96,7 +96,7 @@ public class StartupPipelineResilienceTests {
   public async Task DutyAcquisition_ThatFailsTransiently_IsRetriedRatherThanUnwindingTheRunAsync() {
     var elector = new _throwsThenGrantsElector(throwCount: 2);
     var step = new _step("Migrate", "migrator");
-    var runner = new StartupPipelineRunner([step], dutyElector: elector) {
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
 
@@ -117,7 +117,7 @@ public class StartupPipelineResilienceTests {
       CancellationToken cancellationToken) {
     var elector = new _alwaysThrowsElector();
     var step = new _step("Migrate", "migrator");
-    var runner = new StartupPipelineRunner([step], dutyElector: elector) {
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(5),
     };
 
@@ -139,7 +139,7 @@ public class StartupPipelineResilienceTests {
   public async Task DutyAcquisition_ThatFailsTransientlyUnderSkip_DoesNotBlockAsync() {
     var elector = new _alwaysThrowsElector();
     var step = new _step("Rewrite", "maintainer", NonHolderBehavior.Skip);
-    var runner = new StartupPipelineRunner([step], dutyElector: elector) {
+    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
 
@@ -163,7 +163,7 @@ public class StartupPipelineResilienceTests {
   public async Task Worker_WhenTheRunThrows_DoesNotPropagateAndStopTheHostAsync() {
     // A step depending on a name nothing declares cannot be ordered.
     var unorderable = new _unorderableStep();
-    var runner = new StartupPipelineRunner([unorderable]);
+    var runner = new StartupPipelineRunner(steps: [unorderable], observers: [], dutyElector: NullDutyElector.Instance);
     var worker = new StartupPipelineWorker(runner, logger: NullLogger<StartupPipelineWorker>.Instance);
 
     // Captured explicitly rather than through a throws-nothing assertion over an async lambda:

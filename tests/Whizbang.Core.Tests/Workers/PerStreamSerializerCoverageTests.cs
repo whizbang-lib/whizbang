@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -51,7 +52,8 @@ public class PerStreamSerializerCoverageTests {
       },
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromMilliseconds(500),
-      });
+      },
+      logger: NullLogger.Instance);
 
     await sut.EnqueueAsync(item1, cancellationToken);
     // Real, short delay so the drain worker has certainly consumed item1 and entered its

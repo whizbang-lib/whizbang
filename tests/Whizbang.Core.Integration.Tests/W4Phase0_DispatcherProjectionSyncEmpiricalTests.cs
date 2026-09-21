@@ -13,6 +13,7 @@ using Whizbang.Core;
 using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -81,7 +82,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     // Arrange: minimal Whizbang surface — Dispatcher + Receptors + sync services.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -167,7 +168,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     var fakeAwaiter = new _capturingEventCompletionAwaiter();
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     services.AddSingleton<IEventCompletionAwaiter>(fakeAwaiter);

@@ -17,6 +17,7 @@ using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -146,6 +147,7 @@ public class ColdBootJourneyE2ETests {
   private ServiceProvider _buildPodServices(
       _pod pod, SchemaReadyGate schemaGate, ReadModelsReadyGate readGate, _recordingRunControl recorder) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     services.AddSingleton<IServiceInstanceProvider>(pod);
@@ -159,9 +161,12 @@ public class ColdBootJourneyE2ETests {
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
     services.AddScoped<IWorkCoordinatorStrategy>(sp => new ScopedWorkCoordinatorStrategy(
-      sp.GetRequiredService<IWorkCoordinator>(), pod, workChannelWriter: null,
-      new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
-      sp.GetService<ILogger<ScopedWorkCoordinatorStrategy>>()));
+      coordinator: sp.GetRequiredService<IWorkCoordinator>(),
+      instanceProvider: pod,
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
+      logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
+      inboxChannelWriter: new InboxChannelWriter()));
 
     // The write seam: the real generated dispatcher resolves this gate lazily.
     services.AddSingleton<ISchemaReadyGate>(schemaGate);
@@ -178,8 +183,10 @@ public class ColdBootJourneyE2ETests {
     services.AddSingleton<IWhizbangLifecycleState>(sp => new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
         [recorder, new InstanceStateRunControl(
-          sp.GetRequiredService<IServiceScopeFactory>(), pod,
-          new LibraryVersionProvider("999.9.9"))],
+          scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+          instanceProvider: pod,
+          versionProvider: new LibraryVersionProvider("999.9.9"),
+          logger: NullLogger<InstanceStateRunControl>.Instance)],
         lifecycleOptions),
       lifecycleOptions));
 
@@ -312,7 +319,9 @@ public class ColdBootJourneyE2ETests {
       var assessor = new EFCorePostgresStartupAssessor(
         scopeFactory, typeof(WorkCoordinationDbContext), new LibraryVersionProvider("999.9.9"));
       return new StartupPipelineRunner(
-        [new AssessStartupStep(assessor), new MigrateStartupStep(gate)], [state]);
+        steps: [new AssessStartupStep(assessor: assessor, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(gate)],
+        observers: [state],
+        dutyElector: NullDutyElector.Instance);
     }
 
     var stateA = new StartupPipelineState();

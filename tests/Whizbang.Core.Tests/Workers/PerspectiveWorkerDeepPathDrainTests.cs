@@ -12,6 +12,14 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -834,6 +842,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -862,10 +871,15 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
-      completionStrategy: useBatchedStrategy ? null : new InstantCompletionStrategy(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: useBatchedStrategy
+        ? new BatchedCompletionStrategy(
+            retryTimeout: TimeSpan.FromSeconds(options.RetryOptions.RetryTimeoutSeconds),
+            backoffMultiplier: options.RetryOptions.EnableExponentialBackoff ? options.RetryOptions.BackoffMultiplier : 1.0,
+            maxTimeout: TimeSpan.FromSeconds(options.RetryOptions.MaxBackoffSeconds))
+        : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
-      logger: logger,
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       metrics: metrics,
       timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -873,9 +887,23 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       failureChannel: failureChannelOverride ?? harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
       recentlyProcessedEventCache: cooldownCache,
-      leaseHandleOptions: leaseHandleOptions,
-      leaseRenewalOptions: leaseRenewalOptions,
-      storedFormFailures: storedFormFailures);
+      leaseHandleOptions: leaseHandleOptions ?? Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: leaseRenewalOptions ?? Options.Create(new LeaseRenewalWorkerOptions()),
+      storedFormFailures: storedFormFailures,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value));
     return (worker, harness, provider);
   }
 

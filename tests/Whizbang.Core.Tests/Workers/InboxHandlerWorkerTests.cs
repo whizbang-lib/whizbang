@@ -76,9 +76,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task DisabledCommits_EnqueueSaysSo_RatherThanSilentlyAcceptingWorkAsync() {
     var log = new _visibilityLogger();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(),
-      new SchemaReadyGate(),
-      Options.Create(new InboxHandlerWorkerOptions { Enabled = false }), log);
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -95,9 +98,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task DisabledCommits_MessageNamesTheConsequenceNotJustTheStateAsync() {
     var log = new _visibilityLogger();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(),
-      new SchemaReadyGate(),
-      Options.Create(new InboxHandlerWorkerOptions { Enabled = false }), log);
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     await worker.EnqueueAsync(_visibilityRequest());
 
@@ -141,8 +147,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullScopeFactoryAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      null!, new CapturingFailureChannel(), new SchemaReadyGate(), options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: null!,
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -150,8 +160,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullFailureChannelAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), null!, new SchemaReadyGate(), options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: null!,
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -159,16 +173,24 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullSchemaGateAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), null!, options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: null!,
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_ThrowsOnNullOptionsAsync() {
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), new SchemaReadyGate(), null!,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: null!,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -176,8 +198,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullLoggerAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), new SchemaReadyGate(), options,
-      null!))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: null!,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -194,8 +220,12 @@ public sealed class InboxHandlerWorkerTests {
     var log = new _visibilityLogger();
     var reachedDisabledArm = log.WaitFor("disabled via options");
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), new CapturingFailureChannel(), _markedReadyGate(),
-      Options.Create(opts), log);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(opts),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     // Act - Start, wait for ExecuteAsync's disabled arm to actually log (the body's first
     // statement on this path), enqueue a request, then stop. Without that wait a zero-commit
@@ -231,8 +261,12 @@ public sealed class InboxHandlerWorkerTests {
     });
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -256,8 +290,12 @@ public sealed class InboxHandlerWorkerTests {
       [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: "commit exploded")]);
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -283,8 +321,12 @@ public sealed class InboxHandlerWorkerTests {
       [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: null)]);
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -301,8 +343,12 @@ public sealed class InboxHandlerWorkerTests {
   [Test]
   public async Task EnqueueAsync_ThrowsOnNullRequestAsync() {
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     await Assert.That(async () => await worker.EnqueueAsync(null!)).Throws<ArgumentNullException>();
   }

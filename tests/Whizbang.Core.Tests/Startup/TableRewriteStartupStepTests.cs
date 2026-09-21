@@ -6,6 +6,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -56,8 +57,9 @@ public class TableRewriteStartupStepTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var provider = services.BuildServiceProvider();
     return new TableRewriteStartupStep(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow }));
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow }),
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
   }
 
   [Test]

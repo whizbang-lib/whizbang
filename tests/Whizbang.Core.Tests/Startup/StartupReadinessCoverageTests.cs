@@ -52,7 +52,7 @@ public class StartupReadinessCoverageTests {
     var state = new StartupPipelineState();
     await state.OnRunStartingAsync(new StartupRunPlan([_step("Migrate")]), cancellationToken);
     var logger = new _narrationLogger();
-    var service = new StartupReadyService(state, new StartupReadySignal(), logger: logger) {
+    var service = new StartupReadyService(pipelineState: state, signal: new StartupReadySignal(), logger: logger, contributors: []) {
       WaitProbeInterval = TimeSpan.FromMilliseconds(15),
     };
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -86,7 +86,7 @@ public class StartupReadinessCoverageTests {
     var state = new StartupPipelineState();
     await state.OnStepStartingAsync(new StartupStepContext(_step("SomeStep")), cancellationToken);
     var logger = new _narrationLogger();
-    var service = new StartupReadyService(state, new StartupReadySignal(), logger: logger) {
+    var service = new StartupReadyService(pipelineState: state, signal: new StartupReadySignal(), logger: logger, contributors: []) {
       WaitProbeInterval = TimeSpan.FromMilliseconds(15),
     };
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

@@ -48,11 +48,12 @@ public sealed class InboxHandlerWorkerCoverageTests {
     var coordinator = new _countingCoordinator();
     var log = new _disabledFlushCapturingLogger();
     var worker = new InboxHandlerWorker(
-      new _stubScopeFactory(coordinator),
-      new _noopFailureChannel(),
-      SchemaReadyGate.AlreadyReady(),
-      Options.Create(opts),
-      log);
+      scopeFactory: new _stubScopeFactory(coordinator),
+      failureChannel: new _noopFailureChannel(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(opts),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
@@ -79,11 +80,12 @@ public sealed class InboxHandlerWorkerCoverageTests {
     var coordinator = new _countingCoordinator(committed);
     var log = new _slowPhaseCapturingLogger();
     var worker = new InboxHandlerWorker(
-      new _stubScopeFactory(coordinator),
-      new _noopFailureChannel(),
-      new _slowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
-      Options.Create(_enabledOptions()),
-      log);
+      scopeFactory: new _stubScopeFactory(coordinator),
+      failureChannel: new _noopFailureChannel(),
+      schemaReadyGate: new _slowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
+      options: Options.Create(_enabledOptions()),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);

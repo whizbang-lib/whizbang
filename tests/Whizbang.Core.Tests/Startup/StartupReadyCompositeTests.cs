@@ -7,6 +7,11 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using Whizbang.Core;
+using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -155,7 +160,7 @@ public class StartupReadyCompositeTests {
   [Test]
   public async Task Runner_AnnouncesThePlan_BeforeTheFirstStepAsync() {
     var observer = new _recordingObserver();
-    var runner = new StartupPipelineRunner([new _inertStep("A"), new _inertStep("B", blocking: false)], [observer]);
+    var runner = new StartupPipelineRunner(steps: [new _inertStep("A"), new _inertStep("B", blocking: false)], observers: [observer], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -167,7 +172,7 @@ public class StartupReadyCompositeTests {
   [Test]
   public async Task Runner_DrivenState_ReportsReadyThroughTheRealNotificationsAsync() {
     var state = new StartupPipelineState();
-    var runner = new StartupPipelineRunner([new _inertStep("A"), new _inertStep("B", blocking: false)], [state]);
+    var runner = new StartupPipelineRunner(steps: [new _inertStep("A"), new _inertStep("B", blocking: false)], observers: [state], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 
@@ -189,7 +194,7 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var subscriptions = new _tcsContributor("subscriptions");
-    var service = new StartupReadyService(state, signal, [subscriptions]);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [subscriptions], logger: NullLogger<StartupReadyService>.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     var started = service.StartedAsync(cts.Token);
@@ -216,7 +221,7 @@ public class StartupReadyCompositeTests {
     // composite of the drained pipeline and the contributors, and neither is known before then.
     // The other five phases are deliberately no-ops, and they must stay that way: doing work in
     // StartingAsync would signal ready before the pipeline had run at all.
-    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal());
+    var service = new StartupReadyService(pipelineState: new StartupPipelineState(), signal: new StartupReadySignal(), contributors: [], logger: NullLogger<StartupReadyService>.Instance);
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
     await service.StartingAsync(cts.Token);
@@ -236,7 +241,7 @@ public class StartupReadyCompositeTests {
     // leaves an operator to guess which step stalled a deploy, which is the question they have.
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
-    var service = new StartupReadyService(state, signal);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
 
     // A plan whose blocking step never completes: the description must name it rather than
     // reporting the generic "the startup pipeline".
@@ -258,7 +263,7 @@ public class StartupReadyCompositeTests {
   public async Task ReadyService_WithNoContributors_SignalsOnBlockingDrainAloneAsync() {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
-    var service = new StartupReadyService(state, signal);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -281,12 +286,20 @@ public class StartupReadyCompositeTests {
       resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: gate);
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: gate,
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");
@@ -313,9 +326,15 @@ public class StartupReadyCompositeTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("servicebus-consumer");
@@ -357,7 +376,7 @@ public class StartupReadyCompositeTests {
   [Timeout(30000)]
   public async Task StartedAsync_WhileBlockedOnAContributor_NarratesWhatItIsWaitingOnAsync(CancellationToken cancellationToken) {
     var state = new StartupPipelineState();
-    await new StartupPipelineRunner([], [state]).RunAsync(cancellationToken);   // pipeline drained
+    await new StartupPipelineRunner(steps: [], observers: [state], dutyElector: NullDutyElector.Instance).RunAsync(cancellationToken);   // pipeline drained
     var slow = new _tcsContributor("slow-transport");
     var logger = new _capturingLogger();
     var service = new StartupReadyService(state, new StartupReadySignal(), [slow], logger) {
@@ -419,7 +438,7 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     // Never drained: the wait is still pending when cancellation arrives.
-    var service = new StartupReadyService(state, signal);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
 
     using var cts = new CancellationTokenSource();
     var started = service.StartedAsync(cts.Token);
@@ -440,7 +459,7 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var stuck = new _tcsContributor("subscriptions");
-    var service = new StartupReadyService(state, signal, [stuck]);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [stuck], logger: NullLogger<StartupReadyService>.Instance);
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
 
@@ -461,7 +480,7 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var faulting = new _faultingContributor("broken");
-    var service = new StartupReadyService(state, signal, [faulting]);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [faulting], logger: NullLogger<StartupReadyService>.Instance);
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
 

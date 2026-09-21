@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -28,6 +29,7 @@ public class MultiPerspectiveRegistryResolutionTests {
 
   private static IServiceProvider _buildSp() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton(typeof(Microsoft.Extensions.Options.IOptions<>), typeof(Microsoft.Extensions.Options.OptionsManager<>));
     services.AddSingleton(typeof(Microsoft.Extensions.Options.IOptionsFactory<>), typeof(Microsoft.Extensions.Options.OptionsFactory<>));

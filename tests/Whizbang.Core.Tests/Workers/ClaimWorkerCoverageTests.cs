@@ -9,6 +9,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Core.Signals;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -161,18 +163,26 @@ public class ClaimWorkerCoverageTests {
       ClaimChurnFeedback? churnFeedback = null,
       Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstance(),
-      new NoOpWorkNotificationListener(),
-      schemaGate ?? SchemaReadyGate.AlreadyReady(),
-      Options.Create(options),
-      logger ?? NullLogger<ClaimWorker>.Instance,
-      outboxChannel: outboxChannel,
-      perspectiveChannel: perspectiveChannel,
-      churnFeedback: churnFeedback);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstance(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate ?? SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(options),
+      logger: logger ?? NullLogger<ClaimWorker>.Instance,
+      outboxChannel: outboxChannel ?? new WorkChannelWriter(),
+      perspectiveChannel: perspectiveChannel ?? new PerspectiveChannelWriter(),
+      churnFeedback: churnFeedback,
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
     return (worker, coord);
   }
 

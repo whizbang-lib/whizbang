@@ -6,6 +6,16 @@ using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
+using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -47,7 +57,7 @@ public class ReadModelsReadyDriverTests {
     var schemaGate = new SchemaReadyGate();
     var readGate = new ReadModelsReadyGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
+    var driver = new ReadModelsReadyDriver(readModelsGate: readGate, schemaReadyGate: schemaGate, services: sp, logger: NullLogger<ReadModelsReadyDriver>.Instance);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);
@@ -73,11 +83,36 @@ public class ReadModelsReadyDriverTests {
       instanceProvider: new _stubInstanceProvider(),
       scopeFactory: inner.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions()),
-      schemaReadyGate: schemaGate);
+      schemaReadyGate: schemaGate,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: NullEventTypeProvider.Instance,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: new PerspectiveChannelWriter(),
+      perspectiveCompletionChannel: new CapturingPerspectiveCompletionChannel(),
+      failureChannel: new CapturingFailureChannel(),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(worker);
     await using var sp = services.BuildServiceProvider();
-    var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
+    var driver = new ReadModelsReadyDriver(readModelsGate: readGate, schemaReadyGate: schemaGate, services: sp, logger: NullLogger<ReadModelsReadyDriver>.Instance);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);
@@ -102,6 +137,7 @@ public class ReadModelsReadyDriverTests {
   public async Task ReadModelsGuard_RefusesWhileClosed_AndOnlyWhileClosedAsync() {
     var readGate = new ReadModelsReadyGate();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReadModelsReadyGate>(readGate);
     await using var sp = services.BuildServiceProvider();
 
