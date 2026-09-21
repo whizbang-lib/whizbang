@@ -34,6 +34,20 @@ namespace Whizbang.Core.Priority;
 /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
 /// <tests>tests/Whizbang.Core.Tests/Priority/IdleBandOptionsTests.cs</tests>
 public sealed class IdleBandOptions {
+  /// <summary>Default for <see cref="TrickleAfter"/> (30 minutes).</summary>
+  /// <remarks>
+  /// Named, because the claim's SQL declares the same value as a parameter default and the
+  /// coordinator sends this one whenever the caller did not choose. Two literals that must agree
+  /// are two literals that will disagree; the guard test pins them together.
+  /// </remarks>
+  public static readonly TimeSpan DEFAULT_TRICKLE_AFTER = TimeSpan.FromMinutes(30);
+
+  /// <summary>Default for <see cref="TrickleSlice"/> (10 rows).</summary>
+  public const int DEFAULT_TRICKLE_SLICE = 10;
+
+  /// <summary>Default for <see cref="ForceFullDrainAfter"/> (4 hours).</summary>
+  public static readonly TimeSpan DEFAULT_FORCE_FULL_DRAIN_AFTER = TimeSpan.FromHours(4);
+
   private readonly HashSet<string> _trickleTypes = new(StringComparer.Ordinal);
   private readonly List<string> _trickleNamespaces = [];
 
@@ -41,20 +55,20 @@ public sealed class IdleBandOptions {
   /// How long an idle row may wait before a busy service will take it anyway (default 30 minutes).
   /// Applies only to classes that opted into trickling.
   /// </summary>
-  public TimeSpan TrickleAfter { get; set; } = TimeSpan.FromMinutes(30);
+  public TimeSpan TrickleAfter { get; set; } = DEFAULT_TRICKLE_AFTER;
 
   /// <summary>
   /// How many rows past <see cref="TrickleAfter"/> one claim may take while the service is busy
   /// (default 10). The point of a trickle is that it is not a burst: this is deliberately far below
   /// the ordinary claim window.
   /// </summary>
-  public int TrickleSlice { get; set; } = 10;
+  public int TrickleSlice { get; set; } = DEFAULT_TRICKLE_SLICE;
 
   /// <summary>
   /// How long the band may go without a full drain before one is forced regardless of activity
   /// (default 4 hours). The floor that makes withholding safe.
   /// </summary>
-  public TimeSpan ForceFullDrainAfter { get; set; } = TimeSpan.FromHours(4);
+  public TimeSpan ForceFullDrainAfter { get; set; } = DEFAULT_FORCE_FULL_DRAIN_AFTER;
 
   /// <summary>Type names that trickle, as the shared helper renders them.</summary>
   public IReadOnlyCollection<string> TrickleTypes => _trickleTypes;

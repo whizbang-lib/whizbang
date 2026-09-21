@@ -93,6 +93,19 @@ COMMENT ON INDEX __SCHEMA__.idx_inbox_state_pending_arrival_idle IS
 'Pending idle-band rows in arrival order (167). Keyed on received_at because the bounds that keep a '
 'withheld band from starving are age tests, and a leading key makes them an index condition.';
 
+-- The perspective side of the idle probe. PARTIAL on the band itself, which is what makes it
+-- affordable on the hottest write path in the system: a perspective event outside the idle band
+-- fails the predicate and writes no index entry at all, so ordinary traffic pays nothing for it.
+-- Keyed on created_at because the probe asks for the OLDEST idle row, which is MIN(created_at) --
+-- an index walk that stops at the first qualifying entry rather than an aggregate over the band.
+CREATE INDEX IF NOT EXISTS idx_perspective_pending_idle
+  ON __SCHEMA__.wh_perspective_events (created_at)
+  WHERE processed_at IS NULL AND priority > 399;
+
+COMMENT ON INDEX __SCHEMA__.idx_perspective_pending_idle IS
+'Pending idle-band perspective events in arrival order (167), for the claim''s idle-admission probe. '
+'Partial on priority > 399 so ordinary perspective writes add no index entry.';
+
 -- claim_work is defined at more than one parameter count across the corpus, and this file changes
 -- its signature, so CREATE OR REPLACE would ADD an overload rather than replace one. The duplicate
 -- makes every unqualified reference ambiguous (42725), which fails the whole startup pass and
@@ -148,6 +161,8 @@ DECLARE
   -- inbox and the perspective lane loops below read it.
   v_idle_admitted BOOLEAN := FALSE;  -- may the idle band be claimed at all on this poll
   v_idle_capped BOOLEAN := FALSE;    -- admitted by trickle, so bounded to a slice
+  -- What to hand acquisition: 0 withheld, NULL full width, N a trickle slice.
+  v_idle_acquire_rows INTEGER := 0;
   v_idle_oldest INTERVAL;            -- age of the oldest idle row this instance can see
 BEGIN
   -- 157: this function runs under plan_cache_mode = force_custom_plan (see its closing clause), so
@@ -202,11 +217,34 @@ BEGIN
     --
     -- One probe against the held-lane index answers all three, and only when the instance holds idle
     -- work at all: no idle rows, no cost.
-    SELECT MAX(v_now - i.received_at) INTO v_idle_oldest
-    FROM __SCHEMA__.wh_inbox_state i
-    WHERE i.instance_id = p_instance_id
-      AND i.processed_at IS NULL
-      AND i.priority > 399;
+    -- CLAIMABLE idle work, not merely work this instance already holds. An earlier draft asked only
+    -- about held rows, which cannot admit anything: idle rows arrive unowned, so the band could
+    -- never be entered, nothing was ever leased, and the probe went on reporting nothing to do. The
+    -- band must be admitted on what this instance COULD take.
+    --
+    -- Both tables, because the band's first occupant is auditing and audit lands in perspective
+    -- events; a gate derived from the inbox alone would withhold a perspective backlog for ever.
+    --
+    -- MIN of the timestamp rather than MAX of the age: the aggregate has to be over an indexed
+    -- COLUMN for the planner to answer it by walking to the first qualifying entry and stopping.
+    -- MAX(v_now - received_at) is an expression, and costs a pass over the whole band instead.
+    -- LEAST ignores NULLs in Postgres, so a band empty on one side still reports the other, and
+    -- empty on both leaves this NULL, which is the "nothing to admit" case below.
+    SELECT v_now - LEAST(
+      (SELECT MIN(i.received_at)
+       FROM __SCHEMA__.wh_inbox_state i
+       WHERE i.processed_at IS NULL
+         AND i.is_event = TRUE
+         AND i.priority > 399
+         AND (i.instance_id = p_instance_id OR i.instance_id IS NULL OR i.lease_expiry < v_now)
+         AND (i.scheduled_for IS NULL OR i.scheduled_for <= v_now)),
+      (SELECT MIN(pe.created_at)
+       FROM __SCHEMA__.wh_perspective_events pe
+       WHERE pe.processed_at IS NULL
+         AND pe.priority > 399
+         AND (pe.instance_id = p_instance_id OR pe.instance_id IS NULL OR pe.lease_expiry < v_now)
+         AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= v_now))
+    ) INTO v_idle_oldest;
 
     IF v_idle_oldest IS NULL THEN
       v_idle_admitted := FALSE;
@@ -215,6 +253,15 @@ BEGIN
     ELSIF v_idle_oldest >= p_idle_trickle_after THEN
       v_idle_admitted := TRUE;
       v_idle_capped := TRUE;
+    END IF;
+
+    -- Acquisition and the re-offer must agree, so both are derived from the one decision above.
+    IF NOT v_idle_admitted THEN
+      v_idle_acquire_rows := 0;
+    ELSIF v_idle_capped THEN
+      v_idle_acquire_rows := GREATEST(p_idle_trickle_slice, 0);
+    ELSE
+      v_idle_acquire_rows := NULL;
     END IF;
     -- Self-heal this instance's own registration before ranking against it. When a pod's heartbeat
     -- lapses past the stale cutoff (a GC pause, thread-pool starvation, a database failover), the
@@ -309,10 +356,10 @@ BEGIN
       PERFORM __SCHEMA__.claim_orphaned_inbox(
         p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff,
         COALESCE(p_max_rows, p_max_streams), p_allow_steal,
-        -- 167: the same admission the lane loops below use, decided once per poll. Acquisition has
-        -- to agree with the re-offer, or the claim leases idle rows it will then withhold and the
-        -- outstanding budget is spent on work nobody will do.
-        v_idle_admitted
+        -- 167: the same admission the lane loops below use, decided once per poll, carrying its
+        -- size. Acquisition has to agree with the re-offer, or the claim leases idle rows it will
+        -- then withhold and the outstanding budget is spent on work nobody will do.
+        v_idle_acquire_rows
       );
     END IF;
 
@@ -837,10 +884,15 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_stale_cutoff TIMESTAMPTZ,
   p_max_rows INTEGER DEFAULT NULL,
   p_allow_steal BOOLEAN DEFAULT FALSE,
-  -- 167: whether the idle band may be acquired on this call. Defaulted off: a caller that has not
-  -- been taught about the band must never lease work it will then withhold, because a leased row
-  -- spends the outstanding budget whether or not it is ever worked.
-  p_include_idle BOOLEAN DEFAULT FALSE
+  -- 167: how much of the idle band may be ACQUIRED on this call. Zero withholds it, NULL admits it
+  -- at full width, and a positive number is a trickle slice. One parameter rather than a flag,
+  -- because admission and size are one decision: a trickle that is admitted but unbounded leases
+  -- the whole band and merely re-emits a slice of it, which holds the rows against every peer and
+  -- spends the outstanding budget on work this poll has already decided not to do.
+  --
+  -- Defaulted to zero: a caller that has not been taught about the band must never lease work it
+  -- will then withhold.
+  p_idle_max_rows INTEGER DEFAULT 0
 ) RETURNS TABLE(
   message_id UUID,
   stream_id UUID
@@ -1010,10 +1062,14 @@ BEGIN
      WHERE i.processed_at IS NULL AND i.instance_id IS NULL
        AND i.is_event = TRUE
        AND i.priority > 399
-       AND p_include_idle
+       AND (p_idle_max_rows IS NULL OR p_idle_max_rows > 0)
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.received_at, i.message_id
-     LIMIT (SELECT claim_window FROM params))
+     -- Bounded by the slice when there is one, by the ordinary window when the band is admitted
+     -- at full width. This is where "a trickle is bounded by its slice" is actually enforced.
+     LIMIT LEAST(
+       (SELECT claim_window FROM params),
+       COALESCE(p_idle_max_rows, (SELECT claim_window FROM params))))
     UNION ALL
     (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
      FROM __SCHEMA__.wh_inbox_state i

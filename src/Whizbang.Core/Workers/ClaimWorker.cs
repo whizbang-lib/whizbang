@@ -42,6 +42,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly TimeProvider _time;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
+  /// <summary>
+  /// How stale a settledness reading may be and still admit the idle band at full width. Readings
+  /// arrive on the MAINTENANCE cadence (default ten minutes), not the claim's, so this has to
+  /// exceed that interval or a quiet service would spend most of its time unable to act on the
+  /// last reading it took.
+  /// </summary>
+  /// <remarks>
+  /// Acting on a reading up to this old is safe because the bands share one budget and are walked
+  /// most-urgent-first: if the service went busy since the reading, interactive and standard work
+  /// takes that budget before the idle band is reached, so the worst a stale "settled" can do is
+  /// let idle work use what is left over. A service whose maintenance interval is longer than this
+  /// simply never drains on quiet and falls back to the store's time bounds, which is a slower
+  /// band, not a stalled one.
+  /// </remarks>
+  private static readonly TimeSpan _idleSettledReadingMaxAge = TimeSpan.FromMinutes(12);
+
   /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
   private double _rowsPerStream = 1.0;
   private int _lastOutstanding;
@@ -804,6 +820,16 @@ public sealed partial class ClaimWorker : BackgroundService {
     // of held work continues so the drain keeps moving; only NEW perspective leases wait.
     var maxPerspectiveStreams = _perspectiveDrainBacklogAboveCap() ? 0 : (int?)null;
 
+    // 167: the idle band drains at full width while the SERVICE reads settled. Settledness is a
+    // service property measured from the shared store, so it is read from the coordinator that
+    // already takes that measurement on the maintenance cadence rather than counted here -- a
+    // service-wide count on every poll is the cost this band exists to avoid. A reading older
+    // than the window below is not acted on, so a service that has gone busy since cannot have
+    // its band drained on stale evidence; the time bounds in the store still guarantee the band
+    // makes progress regardless.
+    var idleSettled = scope.ServiceProvider.GetService<HousekeepingCoordinator>()
+      ?.ServiceReadsSettled(_idleSettledReadingMaxAge) ?? false;
+
     var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
@@ -820,7 +846,8 @@ public sealed partial class ClaimWorker : BackgroundService {
       FreshWorkShare: _options.FreshWorkShare,
       MaxAcquireRows: maxAcquireRows,
       AllowSteal: allowSteal,
-      MaxPerspectiveStreams: maxPerspectiveStreams), ct);
+      MaxPerspectiveStreams: maxPerspectiveStreams,
+      IdleSettled: idleSettled), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
     _recordClaimShape(batch, allowSteal);

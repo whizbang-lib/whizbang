@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Priority;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
@@ -264,20 +265,43 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // The fourth and fifth columns are the other two work tables. A producer's load sits in its
     // outbox and a draining consumer's in its perspective events, and a gate that read only the
     // inbox took both for idle and swept at the peak of a bulk load.
+    // The idle band is counted APART from the three figures, never inside them (167). The band is
+    // drained when the service reads settled, so a band counted as backlog would hold closed the
+    // very gate that releases it and the work would never run at all. The lag measure skips it for
+    // the same reason: an idle row is old by design, and reporting its age as service lag would
+    // make every gate downstream read a service that is keeping up as one falling behind.
+    var idleBandStart = WorkPriority.BACKGROUND_BAND_END;
     cmd.CommandText = $@"
       SELECT
         (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) a),
+           AND (scheduled_for IS NULL OR scheduled_for <= now())
+           AND priority <= {idleBandStart} LIMIT 1000) a),
         (SELECT count(*) FROM (SELECT 1 FROM {inbox}
            WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
         COALESCE(EXTRACT(EPOCH FROM (now() - (
           SELECT received_at FROM {inbox} WHERE processed_at IS NULL
             AND (scheduled_for IS NULL OR scheduled_for <= now())
+            AND priority <= {idleBandStart}
           ORDER BY received_at LIMIT 1))), 0),
         (SELECT count(*) FROM (SELECT 1 FROM {outbox} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) c),
+           AND (scheduled_for IS NULL OR scheduled_for <= now())
+           AND priority <= {idleBandStart} LIMIT 1000) c),
         (SELECT count(*) FROM (SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
-           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) d)";
+           AND (scheduled_for IS NULL OR scheduled_for <= now())
+           AND priority <= {idleBandStart} LIMIT 1000) d),
+        (SELECT count(*) FROM (
+           SELECT 1 FROM {inbox} WHERE processed_at IS NULL
+             AND (scheduled_for IS NULL OR scheduled_for <= now())
+             AND priority > {idleBandStart}
+           UNION ALL
+           SELECT 1 FROM {outbox} WHERE processed_at IS NULL
+             AND (scheduled_for IS NULL OR scheduled_for <= now())
+             AND priority > {idleBandStart}
+           UNION ALL
+           SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
+             AND (scheduled_for IS NULL OR scheduled_for <= now())
+             AND priority > {idleBandStart}
+           LIMIT 1000) e)";
 #pragma warning restore S2077
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -294,6 +318,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       OldestUnprocessedAge = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(2))),
       PendingOutboxRows = reader.GetInt64(3),
       PendingPerspectiveRows = reader.GetInt64(4),
+      PendingIdleRows = reader.GetInt64(5),
     };
   }
 
@@ -2060,7 +2085,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2079,6 +2104,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_rows", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxAcquireRows ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("p_steal", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AllowSteal });
     cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxPerspectiveStreams ?? DBNull.Value });
+    // 167: the idle band. Null here means "the store's documented default", so the bounds are
+    // coalesced to the SAME values IdleBandOptions declares rather than passed as NULL -- a NULL
+    // interval compares as unknown, which would leave the band withheld for ever instead of
+    // draining on the schedule the defaults promise.
+    cmd.Parameters.Add(new NpgsqlParameter("p_idle_settled", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.IdleSettled });
+    cmd.Parameters.Add(new NpgsqlParameter("p_idle_trickle_after", NpgsqlTypes.NpgsqlDbType.Interval) {
+      Value = request.IdleTrickleAfter ?? IdleBandOptions.DEFAULT_TRICKLE_AFTER
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_idle_trickle_slice", NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = request.IdleTrickleSlice ?? IdleBandOptions.DEFAULT_TRICKLE_SLICE
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_idle_force_after", NpgsqlTypes.NpgsqlDbType.Interval) {
+      Value = request.IdleForceAfter ?? IdleBandOptions.DEFAULT_FORCE_FULL_DRAIN_AFTER
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
