@@ -107,11 +107,6 @@ public sealed class IdleBandOptions {
     if (_trickleTypes.Contains(clrTypeName)) {
       return true;
     }
-    foreach (var ns in _trickleNamespaces) {
-      if (clrTypeName.StartsWith(ns + ".", StringComparison.Ordinal)) {
-        return true;
-      }
-    }
-    return false;
+    return _trickleNamespaces.Exists(ns => clrTypeName.StartsWith(ns + ".", StringComparison.Ordinal));
   }
 }

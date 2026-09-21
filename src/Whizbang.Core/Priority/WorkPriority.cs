@@ -13,14 +13,17 @@ public enum WorkBucket {
   /// Work nobody waits for, withheld while the service is busy (band 400 and up).
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Distinct from <see cref="Background"/> because the two want opposite treatment under load.
   /// Background work is volume someone is waiting to see finish; idle work -- auditing, and the
   /// records a system keeps about itself -- has no reader with a deadline, and running it while a
   /// person waits spends capacity on the one thing nobody asked for. Band 200 and up used to mean
   /// both, and the busier of the two was the one nobody needed promptly.
-  ///
+  /// </para>
+  /// <para>
   /// A bucket that is withheld is a bucket that can starve, so idle work carries its own time
   /// bounds rather than relying on the service ever going quiet.
+  /// </para>
   /// </remarks>
   Idle,
 }

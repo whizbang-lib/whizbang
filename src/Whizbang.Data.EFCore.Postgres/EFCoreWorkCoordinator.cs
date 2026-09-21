@@ -270,7 +270,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // very gate that releases it and the work would never run at all. The lag measure skips it for
     // the same reason: an idle row is old by design, and reporting its age as service lag would
     // make every gate downstream read a service that is keeping up as one falling behind.
-    var idleBandStart = WorkPriority.BACKGROUND_BAND_END;
+    const int idleBandStart = WorkPriority.BACKGROUND_BAND_END;
     cmd.CommandText = $@"
       SELECT
         (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL

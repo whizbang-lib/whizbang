@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -30,7 +31,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Migrations")]
 [Category("Shard4")]
-public class ClaimKeepsItsPlanCacheModeTests {
+public partial class ClaimKeepsItsPlanCacheModeTests {
+
+  /// <summary>A function body that ends bare, with no attribute clause and no semicolon.</summary>
+  [GeneratedRegex(@"\$\$ LANGUAGE plpgsql[ \t]*(\r?\n|$)")]
+  private static partial Regex _unterminatedBody();
+
 
   private static IReadOnlyList<(string Migration, string Sql)> _definitionsOf(string function) =>
     new Whizbang.Data.Postgres.PostgresMigrationProvider(
@@ -80,8 +86,7 @@ public class ClaimKeepsItsPlanCacheModeTests {
       typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__");
 
     var unterminated = provider.GetMigrations()
-      .Where(m => System.Text.RegularExpressions.Regex.IsMatch(
-        m.Sql, @"\$\$ LANGUAGE plpgsql[ \t]*(\r?\n|$)"))
+      .Where(m => _unterminatedBody().IsMatch(m.Sql))
       .Select(m => m.Name)
       .ToList();
 

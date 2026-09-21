@@ -57,7 +57,7 @@ public class IdleBandDrainTests : EFCoreTestBase {
           (message_id, handler_name, message_type, event_data, metadata, received_at,
            stream_id, is_event, priority)
         SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
-               NOW() - (@age * INTERVAL '1 minute'), gen_random_uuid(), TRUE, @prio
+               NOW() - (@age * INTERVAL '1 minute'), gen_random_uuid(), TRUE, @priority
         FROM generate_series(1, @rows) g
         RETURNING message_id, stream_id, received_at, priority, is_event
       )
@@ -67,7 +67,7 @@ public class IdleBandDrainTests : EFCoreTestBase {
       SELECT message_id, stream_id, received_at, priority, is_event, 0, 0, 0, NULL, NULL
       FROM m
       """;
-    cmd.Parameters.AddWithValue("prio", priority);
+    cmd.Parameters.AddWithValue(nameof(priority), priority);
     cmd.Parameters.AddWithValue("rows", rows);
     cmd.Parameters.AddWithValue("age", ageMinutes);
     await cmd.ExecuteNonQueryAsync();
@@ -107,8 +107,8 @@ public class IdleBandDrainTests : EFCoreTestBase {
         p_idle_force_after => INTERVAL '{forceAfter}')
       """;
     cmd.Parameters.AddWithValue("i", instance);
-    cmd.Parameters.AddWithValue("settled", settled);
-    cmd.Parameters.AddWithValue("slice", slice);
+    cmd.Parameters.AddWithValue(nameof(settled), settled);
+    cmd.Parameters.AddWithValue(nameof(slice), slice);
     cmd.CommandTimeout = 120;
     await cmd.ExecuteScalarAsync();
   }
