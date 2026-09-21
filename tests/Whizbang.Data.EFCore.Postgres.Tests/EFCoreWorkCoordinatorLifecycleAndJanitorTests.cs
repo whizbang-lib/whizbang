@@ -265,13 +265,13 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
 
     // Branch 1: empty dictionary short-circuits before any SQL.
     var noTypes = await coordinator.GetOrphanedLifecycleEventsAsync(
-      new Dictionary<string, IReadOnlyList<string>>(), TimeSpan.FromHours(1));
+      [], TimeSpan.FromHours(1));
     await Assert.That(noTypes).IsEmpty();
 
     // Branch 2: event type registered with zero expected perspectives is skipped.
     var noPerspectives = await coordinator.GetOrphanedLifecycleEventsAsync(
       new Dictionary<string, IReadOnlyList<string>> {
-        ["Whizbang.Tests.OrphanEvent"] = Array.Empty<string>()
+        ["Whizbang.Tests.OrphanEvent"] = []
       },
       TimeSpan.FromHours(1));
     await Assert.That(noPerspectives).IsEmpty();

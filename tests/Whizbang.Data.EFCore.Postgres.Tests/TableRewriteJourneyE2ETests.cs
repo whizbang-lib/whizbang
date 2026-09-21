@@ -95,10 +95,9 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
       await carve.ExecuteNonQueryAsync(ct);
     }
     await _waitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
-    await using (var analyze = conn.CreateCommand()) {
-      analyze.CommandText = "ANALYZE wh_settings";
-      await analyze.ExecuteNonQueryAsync(ct);
-    }
+    await using var analyze = conn.CreateCommand();
+    analyze.CommandText = "ANALYZE wh_settings";
+    await analyze.ExecuteNonQueryAsync(ct);
   }
 
   /// <summary>

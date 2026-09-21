@@ -35,7 +35,7 @@ public class OpenTelemetrySpanHookTests {
 
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.MessageTags",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 

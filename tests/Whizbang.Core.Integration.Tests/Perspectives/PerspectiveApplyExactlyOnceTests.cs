@@ -589,7 +589,7 @@ public class PerspectiveApplyExactlyOnceTests {
   }
 
   private sealed class _stubCollectiveSessionAccessor : ICollectiveSessionAccessor {
-    public object GetSession(IServiceProvider scopedServiceProvider) => new object();
+    public object GetSession(IServiceProvider scopedServiceProvider) => new();
   }
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createCollectiveWorker(

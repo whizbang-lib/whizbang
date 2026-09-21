@@ -23,13 +23,9 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
       "Whizbang.Data.Dapper.Postgres.Tests.Perspectives.CheckpointCompleterPerspective";
 
   /// <summary>Captures every emitted log entry so the debug-branch test can assert it fired.</summary>
-  private sealed class RecordingLogger<T> : ILogger<T> {
+  private sealed class RecordingLogger<T>(bool debugEnabled) : ILogger<T> {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
-    private readonly bool _debugEnabled;
-
-    public RecordingLogger(bool debugEnabled) {
-      _debugEnabled = debugEnabled;
-    }
+    private readonly bool _debugEnabled = debugEnabled;
 
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.Debug || _debugEnabled;
@@ -179,8 +175,8 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
       new PerspectiveCursorCompletion { StreamId = goodStream, PerspectiveName = PERSPECTIVE_NAME, LastEventId = goodEvent, Status = PerspectiveProcessingStatus.Completed }
     ]);
 
-    var skipped = await _readCursorAsync(conn, skippedStream, PERSPECTIVE_NAME);
-    await Assert.That(skipped.status).IsNull();
+    var (status, lastEventId, error, rewindTrigger) = await _readCursorAsync(conn, skippedStream, PERSPECTIVE_NAME);
+    await Assert.That(status).IsNull();
 
     var good = await _readCursorAsync(conn, goodStream, PERSPECTIVE_NAME);
     await Assert.That(good.status).IsEqualTo((short)PerspectiveProcessingStatus.Completed);

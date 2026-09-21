@@ -378,7 +378,7 @@ public class DapperCollectiveUnitTests {
   public async Task AddCollectiveEventsDapper_RegistersDispatcherResolverAccessorAsync() {
     var services = new ServiceCollection();
     services.AddSingleton<IDbConnectionFactory>(new _factory());
-    services.AddCollectiveEventsDapper(System.Array.Empty<CollectiveApplyEntry>());
+    services.AddCollectiveEventsDapper([]);
     services.AddCollectiveExecutorDapper<_jobModel>("wh_per_job");
     var sp = services.BuildServiceProvider();
 
@@ -455,7 +455,7 @@ public class DapperCollectiveUnitTests {
     var services = new ServiceCollection();
     services.AddSingleton<IEventStore>(new _noOpEventStore());
     services.AddSingleton<IEventStoreQuery>(new _noOpEventStoreQuery());
-    services.AddCollectiveEventsDapper(System.Array.Empty<CollectiveApplyEntry>());
+    services.AddCollectiveEventsDapper([]);
     var sp = services.BuildServiceProvider();
 
     var applier = sp.GetService<ICollectiveReplayApplier>();

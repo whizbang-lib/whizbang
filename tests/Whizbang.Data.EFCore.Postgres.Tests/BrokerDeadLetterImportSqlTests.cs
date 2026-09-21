@@ -147,12 +147,11 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
       await Assert.That(reader.GetInt32(2)).IsEqualTo(0);
     }
 
-    await using (var statusCmd = conn.CreateCommand()) {
-      statusCmd.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id";
-      statusCmd.Parameters.AddWithValue("id", dlqId);
-      await Assert.That((int)(await statusCmd.ExecuteScalarAsync())!).IsEqualTo(3)
-        .Because("Recovered");
-    }
+    await using var statusCmd = conn.CreateCommand();
+    statusCmd.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id";
+    statusCmd.Parameters.AddWithValue("id", dlqId);
+    await Assert.That((int)(await statusCmd.ExecuteScalarAsync())!).IsEqualTo(3)
+      .Because("Recovered");
   }
 
   /// <summary>

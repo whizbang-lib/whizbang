@@ -298,14 +298,9 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
     ThrowUnrelated
   }
 
-  private sealed class JsonElementSabotagingResolver : IJsonTypeInfoResolver {
-    private readonly IJsonTypeInfoResolver _inner;
-    private readonly SabotageMode _mode;
-
-    public JsonElementSabotagingResolver(IJsonTypeInfoResolver inner, SabotageMode mode) {
-      _inner = inner;
-      _mode = mode;
-    }
+  private sealed class JsonElementSabotagingResolver(IJsonTypeInfoResolver inner, EFCoreWorkCoordinatorEnvelopeFallbackTests.SabotageMode mode) : IJsonTypeInfoResolver {
+    private readonly IJsonTypeInfoResolver _inner = inner;
+    private readonly SabotageMode _mode = mode;
 
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       if (type != typeof(JsonElement)) {

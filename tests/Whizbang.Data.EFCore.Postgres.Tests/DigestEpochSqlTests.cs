@@ -80,16 +80,15 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("flags", flags);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta",
-        deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue("meta",
+      deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
+    await body.ExecuteNonQueryAsync();
   }
 
   /// <summary>Seeds one RECEIVED-lane event carrying the origin's stamp; the local commit sequence
@@ -112,14 +111,13 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("oseq", originSeq);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn, int settleSeconds = 3600, int maxEpochs = 100) {
@@ -183,10 +181,10 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull()
       .Because("closing must materialize the bucket-epoch fold row");
-    var expected = await _expectedFoldAsync(conn, e1, e2);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
       .Because("the fold must be the XOR of exactly the epoch's events — lane 0");
-    await Assert.That(row.Value.Hi).IsEqualTo(expected.Hi)
+    await Assert.That(row.Value.Hi).IsEqualTo(Hi)
       .Because("and lane 1; a wrong fold silently corrupts every future range comparison");
     await Assert.That(row.Value.Count).IsEqualTo(2);
 
@@ -235,10 +233,10 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull();
-    var expected = await _expectedFoldAsync(conn, kept);
+    var (Lo, Hi) = await _expectedFoldAsync(conn, kept);
     await Assert.That(row!.Value.Count).IsEqualTo(1)
       .Because("ephemeral and at-most-once events must not be counted — they are outside the audited set");
-    await Assert.That(row.Value.Lo).IsEqualTo(expected.Lo)
+    await Assert.That(row.Value.Lo).IsEqualTo(Lo)
       .Because("and must not be folded — otherwise every reap would corrupt a sealed epoch");
   }
 
@@ -262,8 +260,8 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     var row = await _epochRowAsync(conn, origin.ToString(), "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull()
       .Because("each origin gets its own lane with its own frontier");
-    var expected = await _expectedFoldAsync(conn, e1, e2);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo);
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(row.Value.Count).IsEqualTo(2);
 
     await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNull()
@@ -318,8 +316,8 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     }
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
-    var expected = await _expectedFoldAsync(conn, e1, late);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, late);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
       .Because("after refold the epoch reflects the repaired reality, not the stale pre-repair fold");
     await Assert.That(row.Value.Count).IsEqualTo(2);
   }

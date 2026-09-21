@@ -585,7 +585,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
   /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
   private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
-    new Whizbang.Core.Routing.PoisonMessageDetector(
+    new(
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
         AgeThreshold = ageThreshold,
       }),

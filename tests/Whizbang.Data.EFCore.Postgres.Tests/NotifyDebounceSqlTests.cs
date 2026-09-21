@@ -87,11 +87,11 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     // This replaces the old "no row on fire" rule with a type-enforced NULL watermark: a woken-
     // but-empty claim's make-up doorbell can never be swallowed, since NULL fails the freshness
     // gate and cannot suppress (issue #677 part 1).
-    var s = await _readNotifyStateAsync(conn, inst);
-    await Assert.That(s.LastWorkIsNull).IsTrue()
+    var (FiredCount, SuppressedCount, RapidRun, EffectiveWindowMs, LastWorkIsNull) = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(LastWorkIsNull).IsTrue()
       .Because("a fire records rate state but must not arm suppression — a NULL watermark can "
              + "never satisfy the freshness gate, so the make-up doorbell is never swallowed");
-    await Assert.That(s.FiredCount).IsEqualTo(1L);
+    await Assert.That(FiredCount).IsEqualTo(1L);
   }
 
   [Test]
@@ -335,10 +335,10 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsFalse()
       .Because("a sustained rapid run toward a draining live target debounces at the ceiling — "
              + "the linger poll (which outlives the ceiling) delivers the suppressed store");
-    var s = await _readNotifyStateAsync(conn, inst);
-    await Assert.That(s.RapidRun).IsEqualTo(5);
-    await Assert.That(s.SuppressedCount).IsEqualTo(1L);
-    await Assert.That(s.EffectiveWindowMs).IsEqualTo(7000)
+    var (FiredCount, SuppressedCount, RapidRun, EffectiveWindowMs, LastWorkIsNull) = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(RapidRun).IsEqualTo(5);
+    await Assert.That(SuppressedCount).IsEqualTo(1L);
+    await Assert.That(EffectiveWindowMs).IsEqualTo(7000)
       .Because("crossing churn escalates the effective window to the ceiling (7s) — the regime gauge");
   }
 
@@ -360,10 +360,10 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
 
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
       .Because("a calm gap means the flood is over — the doorbell fires at the floor again");
-    var s = await _readNotifyStateAsync(conn, inst);
-    await Assert.That(s.RapidRun).IsEqualTo(0);
-    await Assert.That(s.FiredCount).IsEqualTo(1L);
-    await Assert.That(s.EffectiveWindowMs).IsEqualTo(50);
+    var (FiredCount, SuppressedCount, RapidRun, EffectiveWindowMs, LastWorkIsNull) = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(RapidRun).IsEqualTo(0);
+    await Assert.That(FiredCount).IsEqualTo(1L);
+    await Assert.That(EffectiveWindowMs).IsEqualTo(50);
     await Assert.That(await _watermarkAgeSecondsAsync(conn, inst)).IsLessThan(4)
       .Because("a fire must NOT reset the found-work watermark — claim_work alone owns last_work_at, "
              + "so it stays ~2s armed, not slid or cleared by the fire");
@@ -388,8 +388,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
       .Because("ceiling <= 0 is the global off switch: suppression is disabled entirely, even "
              + "under a sustained flood toward a draining target");
-    var s = await _readNotifyStateAsync(conn, inst);
-    await Assert.That(s.EffectiveWindowMs).IsEqualTo(0);
+    var (FiredCount, SuppressedCount, RapidRun, EffectiveWindowMs, LastWorkIsNull) = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(EffectiveWindowMs).IsEqualTo(0);
   }
 
   [Test]
@@ -408,8 +408,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     var first = await _captureNotificationsAsync(conn, [inst], async () =>
       await _notifyAsync(conn, "inbox", stream));
     await Assert.That(first.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue();
-    var afterFirst = await _readNotifyStateAsync(conn, inst);
-    await Assert.That(afterFirst.LastWorkIsNull).IsTrue()
+    var (FiredCount, SuppressedCount, RapidRun, EffectiveWindowMs, LastWorkIsNull) = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(LastWorkIsNull).IsTrue()
       .Because("a fire must never arm suppression — the fire-born row carries a NULL watermark");
 
     // Immediately again (no delay): the gap is tiny, so rapid_run climbs past churn — yet with a

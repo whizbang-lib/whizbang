@@ -58,8 +58,8 @@ public static class CollectiveEventsDapperExtensions {
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
       applyEntries,
-      sp.GetServices<ICollectiveScopeResolver>().ToList(),
-      sp.GetServices<ICollectiveEventExecutor>().ToList(),
+      [.. sp.GetServices<ICollectiveScopeResolver>()],
+      [.. sp.GetServices<ICollectiveEventExecutor>()],
       sp.GetService<EventCategoryMetrics>()));
     // Replay/rebuild seam — folds these collective events back into each stream's per-row rebuild so the
     // mutation survives a perspective rebuild. Driver-neutral applier (Whizbang.Data.Postgres); scoped for the
@@ -69,7 +69,7 @@ public static class CollectiveEventsDapperExtensions {
       sp,
       sp.GetRequiredService<IEventStore>(),
       sp.GetRequiredService<IEventStoreQuery>(),
-      sp.GetServices<ICollectiveInMemoryExecutor>().ToList()));
+      [.. sp.GetServices<ICollectiveInMemoryExecutor>()]));
     return services;
   }
 

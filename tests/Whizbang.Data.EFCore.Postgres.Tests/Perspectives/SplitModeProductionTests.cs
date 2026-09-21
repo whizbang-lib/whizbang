@@ -655,8 +655,8 @@ public class SplitModeProductionTests : IAsyncDisposable {
             category => category.Data.Code,           // JSONB field on category
             (product, category) => new {
               ProductName = product.Data.Name,
-              Category = product.Data.Category,
-              Price = product.Data.Price,
+              product.Data.Category,
+              product.Data.Price,
               CategoryDisplay = category.Data.DisplayName
             })
         .OrderBy(r => r.ProductName)

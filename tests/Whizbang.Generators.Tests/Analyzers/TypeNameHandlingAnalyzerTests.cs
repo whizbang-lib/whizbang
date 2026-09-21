@@ -33,7 +33,7 @@ public class TypeNameHandlingAnalyzerTests {
 
   private static async Task<List<string>> _idsAsync(string body) {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<TypeNameHandlingAnalyzer>(PRELUDE + body);
-    return diagnostics.Where(d => d.Id.StartsWith("WHIZ16", StringComparison.Ordinal)).Select(d => d.Id).ToList();
+    return [.. diagnostics.Where(d => d.Id.StartsWith("WHIZ16", StringComparison.Ordinal)).Select(d => d.Id)];
   }
 
   [Test]

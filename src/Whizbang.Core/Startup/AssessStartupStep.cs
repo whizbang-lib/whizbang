@@ -61,15 +61,10 @@ public interface IStartupAssessor {
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/AssessStartupStepTests.cs</tests>
-public sealed partial class AssessStartupStep : IStartupStep {
-  private readonly IStartupAssessor? _assessor;
-  private readonly ILogger<AssessStartupStep> _logger;
-
-  /// <summary>Creates the step over the driver-supplied assessor, when one is registered.</summary>
-  public AssessStartupStep(IStartupAssessor? assessor = null, ILogger<AssessStartupStep>? logger = null) {
-    _assessor = assessor;
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AssessStartupStep>.Instance;
-  }
+/// <remarks>Creates the step over the driver-supplied assessor, when one is registered.</remarks>
+public sealed partial class AssessStartupStep(IStartupAssessor? assessor = null, ILogger<AssessStartupStep>? logger = null) : IStartupStep {
+  private readonly IStartupAssessor? _assessor = assessor;
+  private readonly ILogger<AssessStartupStep> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AssessStartupStep>.Instance;
 
   /// <inheritdoc />
   public StartupStepDescriptor Descriptor { get; } = new() {

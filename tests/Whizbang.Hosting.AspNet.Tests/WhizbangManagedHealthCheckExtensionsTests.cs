@@ -24,7 +24,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
   }
 
   private static List<HealthCheckRegistration> _registrations(ServiceProvider provider)
-      => provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations.ToList();
+      => [.. provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations];
 
   [Test]
   public async Task AddWhizbangManagedHealthChecks_ReturnsSameBuilderForChainingAsync() {

@@ -549,11 +549,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       };
       await dlqChannel.BasicConsumeAsync(dlqQueue, autoAck: false, consumer: dlqConsumer, cancellationToken: ct);
 
-      var deadLettered = await deadLetteredTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+      var (DeliveryTag, Properties, Body) = await deadLetteredTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
       // It is OUR command sitting on THIS namespace's DLQ, not an unrelated arrival on a shared
       // broker: the dead-lettered copy carries the published message id.
-      await Assert.That(deadLettered.Properties.MessageId).IsEqualTo(work.MessageId.ToString());
+      await Assert.That(Properties.MessageId).IsEqualTo(work.MessageId.ToString());
       // MaxDeliveryAttempts=2 is the reason it got here: first delivery nacks and requeues, the
       // second dead-letters. One delivery would mean it never retried; three would mean the cap
       // is not being honored and a poison command loops.
@@ -563,15 +563,15 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       // the SAME flipped exchange, ack the DLQ copy.
       Volatile.Write(ref poisoned, false);
       var replayProperties = new BasicProperties {
-        MessageId = deadLettered.Properties.MessageId,
-        ContentType = deadLettered.Properties.ContentType,
+        MessageId = Properties.MessageId,
+        ContentType = Properties.ContentType,
         Persistent = true,
-        Headers = deadLettered.Properties.Headers?.ToDictionary(kv => kv.Key, kv => kv.Value)
+        Headers = Properties.Headers?.ToDictionary(kv => kv.Key, kv => kv.Value)
       };
       await dlqChannel.BasicPublishAsync(
         ORDERS_ENTITY, "wbtopo.orders.commands.placeorder", mandatory: false,
-        basicProperties: replayProperties, body: deadLettered.Body, cancellationToken: ct);
-      await dlqChannel.BasicAckAsync(deadLettered.DeliveryTag, multiple: false, ct);
+        basicProperties: replayProperties, body: Body, cancellationToken: ct);
+      await dlqChannel.BasicAckAsync(DeliveryTag, multiple: false, ct);
 
       await replayAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct);
 

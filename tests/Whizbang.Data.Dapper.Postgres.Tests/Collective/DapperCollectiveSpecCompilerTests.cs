@@ -311,7 +311,7 @@ public class DapperCollectiveSpecCompilerTests {
   // MethodInfo to construct a MethodCallExpression by hand.
   private static MethodInfo _constantSetPropertyMethod(Type propertyType) =>
     typeof(ICollectiveSetters<_jobModel>).GetMethods()
-      .Single(m => m.Name == nameof(ICollectiveSetters<_jobModel>.SetProperty) && m.GetParameters()[1].ParameterType.IsGenericParameter)
+      .Single(m => m.Name == nameof(ICollectiveSetters<>.SetProperty) && m.GetParameters()[1].ParameterType.IsGenericParameter)
       .MakeGenericMethod(propertyType);
 
   // A non-constant value source (a plain method call) for Compile_ConstantValueFromMethodCall_ThrowsNotSupportedAsync.

@@ -103,9 +103,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var row = await _digestRowAsync(connection, streamId);
     await Assert.That(row).IsNotNull()
       .Because("A locally-published sourced event must fold into the zero-uuid (local origin) bucket.");
-    var expected = await _expectedDigestAsync(connection, eventId);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo).Because("digest_lo = hashtextextended(event_id, 0).");
-    await Assert.That(row.Value.Hi).IsEqualTo(expected.Hi).Because("digest_hi = hashtextextended(event_id, 1).");
+    var (Lo, Hi) = await _expectedDigestAsync(connection, eventId);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo).Because("digest_lo = hashtextextended(event_id, 0).");
+    await Assert.That(row.Value.Hi).IsEqualTo(Hi).Because("digest_hi = hashtextextended(event_id, 1).");
     await Assert.That(row.Value.Count).IsEqualTo(1);
   }
 
@@ -293,10 +293,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var after = await _digestRowAsync(connection, streamId);
     await Assert.That(after).IsNotNull().Because("The surviving carry-forward keeps the bucket alive.");
     await Assert.That(after!.Value.Count).IsEqualTo(1).Because("close_stream subtracted the two truncated events.");
-    var expected = await _expectedDigestAsync(connection, survivorId);
-    await Assert.That(after.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, Hi) = await _expectedDigestAsync(connection, survivorId);
+    await Assert.That(after.Value.Lo).IsEqualTo(Lo)
       .Because("XOR-ing the truncated hashes back out leaves exactly the survivor's digest (XOR is self-inverse).");
-    await Assert.That(after.Value.Hi).IsEqualTo(expected.Hi);
+    await Assert.That(after.Value.Hi).IsEqualTo(Hi);
   }
 
   [Test]
@@ -506,9 +506,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(result.TotalDrift).IsEqualTo(3);
 
     // Healed: corrupted now matches the recompute; phantom gone; missing added.
-    var expected1 = await _expectedDigestAsync(connection, e1);
+    var (Lo, Hi) = await _expectedDigestAsync(connection, e1);
     var healed = await _digestRowAsync(connection, corruptedStream);
-    await Assert.That(healed!.Value.Lo).IsEqualTo(expected1.Lo);
+    await Assert.That(healed!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(healed.Value.Count).IsEqualTo(1);
     await Assert.That(await _digestRowAsync(connection, phantomStream)).IsNull();
     var added = await _digestRowAsync(connection, missingStream);
@@ -557,13 +557,12 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("version", version);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = connection.CreateCommand()) {
-      body.CommandText = """
+    await using var body = connection.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 }

@@ -1101,7 +1101,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     var captured = new List<Activity>();
     using var listener = new ActivityListener {
       ShouldListenTo = src => src.Name == "Whizbang.Tracing",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      Sample = (ref _) => ActivitySamplingResult.AllData,
       ActivityStopped = a => { lock (captured) { captured.Add(a); } },
     };
     ActivitySource.AddActivityListener(listener);

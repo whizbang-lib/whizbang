@@ -45,10 +45,7 @@ public class DapperSequenceProviderBaseCoverageTests {
   }
 
   /// <summary>Exists solely to reach the protected static <c>EnsureConnectionOpen</c> under test; never instantiated.</summary>
-  private sealed class _testableSequenceProvider : DapperSequenceProviderBase {
-    public _testableSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-      : base(connectionFactory, executor) { }
-
+  private sealed class _testableSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
     protected override string GetUpdateSequenceSql() => "";
     protected override string GetInsertOrUpdateSequenceSql() => "";
     protected override string GetCurrentSequenceSql() => "";

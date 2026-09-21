@@ -29,7 +29,7 @@ public class AzureServiceBusDeadLetterDrainerCoverageTests {
   [Test]
   public async Task DrainDeadLetterQueueAsync_ImportThrowsOperationCanceled_PropagatesWithoutAbandoningOrCompletingAsync() {
     var client = new _fakeDrainClient();
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(MESSAGE_ID) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(MESSAGE_ID)]);
     static Task<bool> throwingImport(BrokerDeadLetterImport import, CancellationToken ct) =>
       Task.FromException<bool>(new OperationCanceledException("import canceled"));
     await using var drainer = new AzureServiceBusDeadLetterDrainer(

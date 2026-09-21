@@ -203,7 +203,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var attribute = context.Attributes.FirstOrDefault();
     if (attribute is null) {
-      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+      return [];
     }
 
     var includeHooks = true;

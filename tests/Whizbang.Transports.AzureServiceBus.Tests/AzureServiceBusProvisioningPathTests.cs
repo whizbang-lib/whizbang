@@ -192,12 +192,12 @@ public class AzureServiceBusProvisioningPathTests {
 
     await Assert.That(adminClient.CreatedTopics).Contains("orders-topic");
     await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
-    var created = adminClient.CreatedSubscriptions[0];
-    await Assert.That(created.Topic).IsEqualTo("orders-topic");
-    await Assert.That(created.Subscription).IsEqualTo("unit-sub");
-    await Assert.That(created.RequiresSession is null).IsTrue()
+    var (Topic, Subscription, RequiresSession, MaxDeliveryCount, LockDuration) = adminClient.CreatedSubscriptions[0];
+    await Assert.That(Topic).IsEqualTo("orders-topic");
+    await Assert.That(Subscription).IsEqualTo("unit-sub");
+    await Assert.That(RequiresSession is null).IsTrue()
       .Because("non-session mode must use the overload without RequiresSession");
-    await Assert.That(created.MaxDeliveryCount).IsEqualTo(10);
+    await Assert.That(MaxDeliveryCount).IsEqualTo(10);
     await Assert.That(subscription.IsActive).IsTrue();
     await Assert.That(client.LastProcessor!.StartCalled).IsTrue();
   }
@@ -217,9 +217,9 @@ public class AzureServiceBusProvisioningPathTests {
     var subscription = await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
 
     await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
-    var created = adminClient.CreatedSubscriptions[0];
-    await Assert.That(created.RequiresSession == true).IsTrue();
-    await Assert.That(created.MaxDeliveryCount).IsEqualTo(7);
+    var (Topic, Subscription, RequiresSession, MaxDeliveryCount, LockDuration) = adminClient.CreatedSubscriptions[0];
+    await Assert.That(RequiresSession == true).IsTrue();
+    await Assert.That(MaxDeliveryCount).IsEqualTo(7);
     await Assert.That(adminClient.CreatedTopics).IsEmpty()
       .Because("the topic already exists; only the subscription is created");
     await Assert.That(subscription.IsActive).IsTrue();
@@ -530,9 +530,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "$Default"))).IsTrue()
       .Because("the default match-all rule must be removed before the SqlFilter is applied");
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
-    var rule = adminClient.CreatedRules[0];
-    await Assert.That(rule.Options.Name).IsEqualTo("RoutingPatternFilter");
-    var sqlFilter = rule.Options.Filter as SqlRuleFilter;
+    var (Topic, Subscription, Options) = adminClient.CreatedRules[0];
+    await Assert.That(Options.Name).IsEqualTo("RoutingPatternFilter");
+    var sqlFilter = Options.Filter as SqlRuleFilter;
     await Assert.That(sqlFilter).IsNotNull();
     await Assert.That(sqlFilter!.SqlExpression)
       .IsEqualTo("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'");
@@ -801,9 +801,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "DestinationFilter"))).IsTrue()
       .Because("a stale DestinationFilter rule is replaced, not duplicated");
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
-    var rule = adminClient.CreatedRules[0];
-    await Assert.That(rule.Options.Name).IsEqualTo("DestinationFilter");
-    var correlationFilter = rule.Options.Filter as CorrelationRuleFilter;
+    var (Topic, Subscription, Options) = adminClient.CreatedRules[0];
+    await Assert.That(Options.Name).IsEqualTo("DestinationFilter");
+    var correlationFilter = Options.Filter as CorrelationRuleFilter;
     await Assert.That(correlationFilter).IsNotNull();
     await Assert.That(correlationFilter!.ApplicationProperties["Destination"]).IsEqualTo("svc-a");
   }

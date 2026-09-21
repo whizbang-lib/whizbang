@@ -295,7 +295,7 @@ public class CollectivePredicateSqlCompilerTests {
     var foreign = Expression.Parameter(typeof(PerspectiveRow<_jobModel>), "other");
     var body = Expression.Equal(
       Expression.Property(
-        Expression.Property(foreign, nameof(PerspectiveRow<_jobModel>.Data)),
+        Expression.Property(foreign, nameof(PerspectiveRow<>.Data)),
         nameof(_jobModel.Status)),
       Expression.Constant("Draft"));
     var filter = Expression.Lambda<Func<PerspectiveRow<_jobModel>, bool>>(body, rowParam);

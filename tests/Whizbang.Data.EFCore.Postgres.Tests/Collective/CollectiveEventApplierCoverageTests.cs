@@ -31,8 +31,14 @@ public class CollectiveEventApplierCoverageTests {
   // permanently un-mutated for events that appeared to process cleanly.
   [Test]
   public async Task ApplyAsync_InvokerReturnsNonSpec_ThrowsInvalidOperationExceptionAsync() {
+    // IDE0039 (use a local function) is off here: this lambda takes three discards, and repeated
+    // `_` is legal for lambda parameters but not for local-function parameters, which are real
+    // parameters and must be uniquely named. Converting it is CS0100. Fenced rather than merely
+    // reverted because `dotnet format style` reapplies the conversion on every run.
+#pragma warning disable IDE0039
     Func<object, ICollectiveEvent, ICollectiveQuery, object> invoker =
       (_, _, _) => new object(); // not an ICollectiveSpec<_jobModel>
+#pragma warning restore IDE0039
     var entry = new CollectiveApplyEntry(
       ModelType: typeof(_jobModel),
       EventType: typeof(_evt),

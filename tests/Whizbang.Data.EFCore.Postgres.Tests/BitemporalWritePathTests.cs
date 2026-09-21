@@ -82,15 +82,15 @@ public class BitemporalWritePathTests : EFCoreTestBase {
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },
       new PerspectiveScope(), false, _eventAt(occurredAt));
 
-    var axes = await _readAxesAsync(conn, id);
+    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
 
-    await Assert.That(axes.Created).IsEqualTo(occurredAt)
+    await Assert.That(Created).IsEqualTo(occurredAt)
       .Because("created_at is business time — when the entity came into being, taken from the event, "
         + "not the moment the row happened to be written");
-    await Assert.That(axes.Updated).IsEqualTo(occurredAt)
+    await Assert.That(Updated).IsEqualTo(occurredAt)
       .Because("updated_at is business time — the applied event's own timestamp");
-    await Assert.That(axes.SysCreated).IsNotNull();
-    await Assert.That(axes.SysCreated!.Value).IsGreaterThanOrEqualTo(beforeWrite)
+    await Assert.That(SysCreated).IsNotNull();
+    await Assert.That(SysCreated!.Value).IsGreaterThanOrEqualTo(beforeWrite)
       .Because("sys_created_at is system time — the wall clock at write, which is 'now' regardless of "
         + "how long ago the event occurred");
   }
@@ -114,11 +114,11 @@ public class BitemporalWritePathTests : EFCoreTestBase {
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "second" },
       new PerspectiveScope(), false, _eventAt(secondEvent));
 
-    var axes = await _readAxesAsync(conn, id);
+    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
 
-    await Assert.That(axes.Created).IsEqualTo(firstEvent)
+    await Assert.That(Created).IsEqualTo(firstEvent)
       .Because("the entity still came into being when the FIRST event occurred");
-    await Assert.That(axes.Updated).IsEqualTo(secondEvent)
+    await Assert.That(Updated).IsEqualTo(secondEvent)
       .Because("last business activity moves to the newly applied event's timestamp — exact, not "
         + "'some time after the previous write', so there is nothing to sleep on");
   }
@@ -141,7 +141,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
       new PerspectiveScope(), false, _eventAt(firstEvent));
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "second" },
       new PerspectiveScope(), false, _eventAt(secondEvent));
-    var beforeReplay = await _readAxesAsync(conn, id);
+    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
 
     // A rebuild re-applies the SAME events through the SAME path, now.
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },
@@ -150,10 +150,10 @@ public class BitemporalWritePathTests : EFCoreTestBase {
       new PerspectiveScope(), false, _eventAt(secondEvent));
     var afterReplay = await _readAxesAsync(conn, id);
 
-    await Assert.That(afterReplay.Updated).IsEqualTo(beforeReplay.Updated)
+    await Assert.That(afterReplay.Updated).IsEqualTo(Updated)
       .Because("business time is a pure function of the event log, so a rebuild reproduces it exactly — "
         + "this is what makes retention, recency ordering and 'what changed' survive a rebuild");
-    await Assert.That(afterReplay.SysUpdated!.Value).IsGreaterThanOrEqualTo(beforeReplay.SysUpdated!.Value)
+    await Assert.That(afterReplay.SysUpdated!.Value).IsGreaterThanOrEqualTo(SysUpdated!.Value)
       .Because("system time legitimately advances — the row really was written again");
   }
 

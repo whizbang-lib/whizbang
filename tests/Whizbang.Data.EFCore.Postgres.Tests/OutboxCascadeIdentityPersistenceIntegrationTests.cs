@@ -95,7 +95,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
       var sentAt = payload.TryGetProperty("SentAt", out var s) && s.ValueKind == JsonValueKind.String
         ? s.GetDateTimeOffset()
         : default;
-      await Assert.That(sentAt).IsNotEqualTo(default(DateTimeOffset))
+      await Assert.That(sentAt).IsNotEqualTo(default)
         .Because("PublishAsync must run the same SentAt-phase AutoPopulate as dispatch — SentAt was left at 0001-01-01 (the production signature).");
     } finally {
       ScopeContextAccessor.CurrentInitiatingContext = null;

@@ -142,7 +142,7 @@ public class AzureServiceBusNamespaceRoutingRegistrationTests {
     var transport = provider.GetRequiredService<ITransport>();
 
     var router = await Assert.That(transport).IsTypeOf<NamespaceRoutingTransport>();
-    await Assert.That(router!.NamespaceKeys).IsEquivalentTo(new[] { TransportNamespaces.DefaultKey, "bulk" });
+    await Assert.That(router!.NamespaceKeys).IsEquivalentTo([TransportNamespaces.DefaultKey, "bulk"]);
   }
 
   [Test]
@@ -346,7 +346,7 @@ public class AzureServiceBusNamespaceRoutingRegistrationTests {
     await using var provider = _offline(services).BuildServiceProvider();
     var router = (NamespaceRoutingTransport)provider.GetRequiredService<ITransport>();
 
-    await Assert.That(router.NamespaceKeys).IsEquivalentTo(new[] { TransportNamespaces.DefaultKey, "bulk" })
+    await Assert.That(router.NamespaceKeys).IsEquivalentTo([TransportNamespaces.DefaultKey, "bulk"])
       .Because("an operator can add a traffic-class namespace without a code change");
   }
 

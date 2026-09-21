@@ -114,7 +114,7 @@ public class DapperPerspectiveMetadataTests : PostgresTestBase {
       var map = storeType.GetInterfaceMap(typeof(IPerspectiveStore<DapperPostgresPerspectiveStoreTests.TestModel>));
       for (var i = 0; i < map.InterfaceMethods.Length; i++) {
         var declared = map.InterfaceMethods[i];
-        if (declared.Name != nameof(IPerspectiveStore<DapperPostgresPerspectiveStoreTests.TestModel>.UpsertAsync)) {
+        if (declared.Name != nameof(IPerspectiveStore<>.UpsertAsync)) {
           continue;
         }
         if (!declared.GetParameters().Any(p => p.ParameterType == typeof(PerspectiveMetadata))) {

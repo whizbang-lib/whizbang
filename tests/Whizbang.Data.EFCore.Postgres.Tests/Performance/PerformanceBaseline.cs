@@ -58,15 +58,10 @@ public sealed class PerformanceBaseline {
   /// A run's measures against the baseline, as a table a person can read, plus the verdicts a gate
   /// acts on.
   /// </summary>
-  public sealed class Report {
+  public sealed class Report(PerformanceBaseline baseline, string scenario) {
     private readonly List<(string Name, double Value, string Unit, Entry? Baseline)> _rows = [];
-    private readonly PerformanceBaseline _baseline;
-    private readonly string _scenario;
-
-    public Report(PerformanceBaseline baseline, string scenario) {
-      _baseline = baseline;
-      _scenario = scenario;
-    }
+    private readonly PerformanceBaseline _baseline = baseline;
+    private readonly string _scenario = scenario;
 
     /// <summary>Records a measure, normalized to a unit of work.</summary>
     public Report Measure(string name, double value, string unit) {
@@ -75,12 +70,11 @@ public sealed class PerformanceBaseline {
     }
 
     /// <summary>The measures that passed a ceiling the baseline declares.</summary>
-    public IReadOnlyList<string> Breaches => _rows
+    public IReadOnlyList<string> Breaches => [.. _rows
       .Where(r => r.Baseline is { Ceiling: not null } b && r.Value > b.Ceiling!.Value)
       .Select(r => $"{r.Name} = {r.Value.ToString("N1", CultureInfo.InvariantCulture)} {r.Unit}, "
         + $"ceiling {r.Baseline!.Value.Ceiling!.Value.ToString("N1", CultureInfo.InvariantCulture)}"
-        + (r.Baseline!.Value.Note.Length > 0 ? $" ({r.Baseline!.Value.Note})" : ""))
-      .ToList();
+        + (r.Baseline!.Value.Note.Length > 0 ? $" ({r.Baseline!.Value.Note})" : ""))];
 
     /// <summary>The report, as a person reads it: the measure, the baseline, and the drift.</summary>
     public string Render() {

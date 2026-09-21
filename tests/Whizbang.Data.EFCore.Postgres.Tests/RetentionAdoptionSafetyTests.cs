@@ -22,7 +22,7 @@ public class RetentionAdoptionSafetyTests : EFCoreTestBase {
   private const string CLR_TYPE = "TestApp.AdoptionModel";
 
   private async Task _resetAsync(NpgsqlConnection conn, bool acknowledged, int rowCount, int idleDays) {
-    await using (var ddl = new NpgsqlCommand($@"
+    await using var ddl = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (
         id UUID NOT NULL PRIMARY KEY,
@@ -40,9 +40,8 @@ public class RetentionAdoptionSafetyTests : EFCoreTestBase {
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       SELECT gen_random_uuid(), '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb,
              NOW() - make_interval(days => {idleDays}), NOW() - make_interval(days => {idleDays}), 1
-      FROM generate_series(1, {rowCount});", conn)) {
-      await ddl.ExecuteNonQueryAsync();
-    }
+      FROM generate_series(1, {rowCount});", conn);
+    await ddl.ExecuteNonQueryAsync();
   }
 
   private static async Task<long> _countAsync(NpgsqlConnection conn) {

@@ -27,7 +27,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
   public async Task Constructor_NullTransport_ThrowsArgumentNullExceptionAsync() {
     var client = new TestServiceBusClient(isHealthy: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(null!, client, NullLogger<ServiceBusReadinessCheck>.Instance);
+    void act() => _ = new ServiceBusReadinessCheck(null!, client, NullLogger<ServiceBusReadinessCheck>.Instance);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("transport");
@@ -37,7 +37,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
   public async Task Constructor_NullClient_ThrowsArgumentNullExceptionAsync() {
     var transport = new TestTransport(isInitialized: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(transport, null!, NullLogger<ServiceBusReadinessCheck>.Instance);
+    void act() => _ = new ServiceBusReadinessCheck(transport, null!, NullLogger<ServiceBusReadinessCheck>.Instance);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("client");
@@ -48,7 +48,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
     var transport = new TestTransport(isInitialized: true);
     var client = new TestServiceBusClient(isHealthy: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(transport, client, null!);
+    void act() => _ = new ServiceBusReadinessCheck(transport, client, null!);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("logger");

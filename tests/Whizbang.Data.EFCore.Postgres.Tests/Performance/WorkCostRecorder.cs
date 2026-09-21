@@ -43,10 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </description></item>
 /// </list>
 /// </remarks>
-public sealed class WorkCostRecorder {
-  private readonly string _connectionString;
-
-  public WorkCostRecorder(string connectionString) => _connectionString = connectionString;
+public sealed class WorkCostRecorder(string connectionString) {
+  private readonly string _connectionString = connectionString;
 
   /// <summary>Per-table counters: what the tables gave up.</summary>
   public readonly record struct TableCost(

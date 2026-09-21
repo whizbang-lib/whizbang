@@ -216,7 +216,7 @@ namespace Shared.Events {
       .Because("each side contributes the namespace exactly once");
 
     // The union (_allNamespaces) must carry the namespace exactly once despite two contributors.
-    var allNamespacesSection = code!.Substring(code.IndexOf("_allNamespaces", StringComparison.Ordinal));
+    var allNamespacesSection = code![code.IndexOf("_allNamespaces", StringComparison.Ordinal)..];
     var occurrences = allNamespacesSection.Split(["\"shared.events\""], StringSplitOptions.None).Length - 1;
     await Assert.That(occurrences).IsEqualTo(1)
       .Because("_allNamespaces deduplicates the namespace shared by perspective and receptor");

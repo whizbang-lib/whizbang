@@ -383,7 +383,7 @@ public class RedeliveryRequestReceptorTests {
         query = query.Where(e => e.StreamId.CompareTo(afterStream) > 0
           || (e.StreamId == afterStream && e.Version > afterVersion));
       }
-      return query.Take(request.MaxEvents).ToList();
+      return [.. query.Take(request.MaxEvents)];
     }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>

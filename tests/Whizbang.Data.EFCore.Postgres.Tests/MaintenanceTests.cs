@@ -600,9 +600,9 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — the sweep reports itself and the row is gone.
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_recovered_dead_letters");
-    await Assert.That(task.TaskName).IsEqualTo("purge_recovered_dead_letters");
-    await Assert.That(task.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_recovered_dead_letters");
+    await Assert.That(TaskName).IsEqualTo("purge_recovered_dead_letters");
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
     await Assert.That(await _countDeadLetterAsync(conn, settledId)).IsEqualTo(0);
   }
 

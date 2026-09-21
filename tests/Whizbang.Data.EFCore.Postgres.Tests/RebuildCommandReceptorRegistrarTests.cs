@@ -51,11 +51,11 @@ public class RebuildCommandReceptorRegistrarTests {
     await _registrar(registry).StartAsync(CancellationToken.None);
 
     await Assert.That(registry.StagesFor(typeof(RebuildPerspectiveCommand)))
-      .IsEquivalentTo(new[] {
+      .IsEquivalentTo([
         LifecycleStage.LocalImmediateInline,
         LifecycleStage.PreOutboxInline,
         LifecycleStage.PostInboxInline,
-      })
+      ])
       .Because("these are the three stages a receptor without [FireAt] fires at, and the command "
              + "has to reach its receptor whether the dispatch is local or distributed");
   }

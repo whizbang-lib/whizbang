@@ -142,12 +142,12 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
       .Because("the publisher never declares the retired entity either");
 
     // ---------- Delivery: each published message reaches its entity's consumer ----------
-    foreach (var published in publisherChannel.PublishedMessages) {
-      var consumerChannel = consumerChannels[published.Exchange];
+    foreach (var (Exchange, RoutingKey, Body) in publisherChannel.PublishedMessages) {
+      var consumerChannel = consumerChannels[Exchange];
       var consumer = (AsyncEventingBasicConsumer)consumerChannel.LastRegisteredConsumer!;
       var (properties, body) = RabbitTestWire.ValidWireMessage("delivered");
       await consumer.HandleBasicDeliverAsync(
-        "retirement-consumer", 1UL, false, published.Exchange, published.RoutingKey, properties, body);
+        "retirement-consumer", 1UL, false, Exchange, RoutingKey, properties, body);
     }
 
     await Assert.That(deliveriesByExchange.GetValueOrDefault(flippedEntity)).IsEqualTo(1)

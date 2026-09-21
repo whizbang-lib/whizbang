@@ -91,11 +91,10 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();
     }
-    await using (var emit = conn.CreateCommand()) {
-      emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
-      emit.Parameters.AddWithValue("inst", instanceId);
-      _ = await emit.ExecuteScalarAsync();
-    }
+    await using var emit = conn.CreateCommand();
+    emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
+    emit.Parameters.AddWithValue("inst", instanceId);
+    _ = await emit.ExecuteScalarAsync();
   }
 
   private static async Task<(int Status, Guid? Trigger)> _cursorAsync(NpgsqlConnection conn, Guid streamId) {

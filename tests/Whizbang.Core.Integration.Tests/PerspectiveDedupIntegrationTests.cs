@@ -211,14 +211,15 @@ public class PerspectiveDedupIntegrationTests {
     var runner = new ApplyTrackingRunner();
     var fakeTime = new FakeTimeProvider();
     var observer = new AssertingDedupObserver();
-    var coordinator = new RedeliveryWorkCoordinator { SimulatedLatencyMs = 5 };
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.ObserverPerspective",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      SimulatedLatencyMs = 5,
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.ObserverPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
@@ -296,14 +297,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_BatchedStrategy_ProtectedByDedup_Async() {
     // BatchedCompletionStrategy is the most vulnerable to the bug — lock it in
     var runner = new ApplyTrackingRunner();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.BatchedLockIn",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.BatchedLockIn",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: true);
@@ -324,14 +325,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_InstantStrategy_ProtectedByDedup_Async() {
     // InstantCompletionStrategy should also be protected
     var runner = new ApplyTrackingRunner();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.InstantLockIn",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.InstantLockIn",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: false);
@@ -1122,14 +1123,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_ApplyFails_WorkIsStillRetried_Async() {
     var runner = new ThrowOnceApplyRunner();
     var observer = new AssertingDedupObserver();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.FailThenSucceedPerspective",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.FailThenSucceedPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);

@@ -112,8 +112,9 @@ public class IntegrityManifestReceptorTests {
     // and must be bounded the same way. Every existing comparator test runs at N=2-3, which is
     // exactly why this class of defect reached production: the behavior was correct, the VOLUME
     // was never asserted.
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedDigests = [];                       // every incoming stream is a divergence
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = []                       // every incoming stream is a divergence
+    };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
@@ -340,8 +341,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_TypesLevel_AnswersFromTypeTableAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)];
+    var coordinator = new _auditCoordinator {
+      OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)]
+    };
     var transport = new _captureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
@@ -393,8 +395,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_TypesLevelRecompute_RollsUpAtTheStoreAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
+    var coordinator = new _auditCoordinator {
+      OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)]
+    };
     var transport = new _captureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
@@ -416,8 +419,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_ConcurrentRequests_AnswerOneAtATimeAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
+    var coordinator = new _auditCoordinator {
+      OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)]
+    };
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     coordinator.BlockFirstCompute = gate;
     var transport = new _captureTransport();
@@ -530,8 +534,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMatch_NoDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)];
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)]
+    };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
@@ -548,8 +553,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_SendsCappedDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs; TypeY missing
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs; TypeY missing
+    };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
@@ -577,8 +583,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevel_SettleSkipsFreshBucketsAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs...
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs...
+    };
     var transport = new _captureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestReceptor(
@@ -711,8 +718,9 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_UnknownOriginTopic_SkipsDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]
+    };
     var transport = new _captureTransport();
     var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
@@ -734,11 +742,12 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_DrillDownCap_RotatesAcrossCycles_NoTypeStarvesAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [
-      _typeDigest("Contracts.TypeX", 99, 42, 4),   // differs from origin
-      _typeDigest("Contracts.TypeY", 98, 41, 3),   // differs from origin
-    ];
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [
+        _typeDigest("Contracts.TypeX", 99, 42, 4),   // differs from origin
+        _typeDigest("Contracts.TypeY", 98, 41, 3),   // differs from origin
+      ]
+    };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
@@ -811,10 +820,11 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_EmptyWindowedAnswer_LocalHasBuckets_DoesNotAdvanceTheSealAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],   // the consumer HOLDS data here
-      ComputedThrough = 300,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],   // the consumer HOLDS data here
+        ComputedThrough = 300,
+      }
     };
     var transport = new _captureTransport();
     var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
@@ -878,10 +888,11 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_TypeLevelBulkDeficit_SendsOneBulkBackfill_NotDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [],   // the consumer holds NOTHING for this type in the window
-      ComputedThrough = 5000,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds NOTHING for this type in the window
+        ComputedThrough = 5000,
+      }
     };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
@@ -927,10 +938,11 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_ExhaustedBulkLane_StillDrillsDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [],   // the consumer holds nothing — a pure, huge deficit
-      ComputedThrough = 5000,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds nothing — a pure, huge deficit
+        ComputedThrough = 5000,
+      }
     };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
@@ -1356,10 +1368,11 @@ public class IntegrityManifestReceptorTests {
     // The seal-advance rule: every bucket in the window matched, the answer was ONE complete
     // chunk with no resume cursor — only then has the whole window provably been verified, and
     // only then may the next audit start past it.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
-      ComputedThrough = 300,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+        ComputedThrough = 300,
+      }
     };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
@@ -1384,10 +1397,11 @@ public class IntegrityManifestReceptorTests {
     // A mismatch means the window is NOT verified: the seal stays put (the same window re-audits
     // after repair), and the drill-down inherits the window so the stream-level exchange — and
     // the repairs it spawns — stay bounded to the range that actually disagreed.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 99, 98, 5)],   // fold differs
-      ComputedThrough = 300,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 5)],   // fold differs
+        ComputedThrough = 300,
+      }
     };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
@@ -1421,10 +1435,11 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_MultiChunkWindow_NeverAdvancesTheSealAsync() {
     // Chunks carry no assembly protocol — a lost chunk's buckets simply never arrive. With more
     // than one chunk this receiver cannot know it saw the whole window, so it must not certify it.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
-      ComputedThrough = 300,
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+        ComputedThrough = 300,
+      }
     };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
@@ -2077,8 +2092,9 @@ public class IntegrityManifestReceptorTests {
   // than being silently dropped in a way indistinguishable from "everything matched."
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_NoRequesterIdentity_SkipsDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs
+    var coordinator = new _auditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs
+    };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var services = new ServiceCollection();
@@ -2504,7 +2520,7 @@ public class IntegrityManifestReceptorTests {
       if (ForChunkReturnsNull) {
         return null;
       }
-      return ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList();
+      return [.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))];
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
@@ -2612,8 +2628,9 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_ReportOnly_StillPublishesReportsAsync() {
     // ReportOnly is the operator's explicit report-and-decide opt-down. Bounding reports by
     // repairs must not silence the mode whose entire purpose is reporting without repairing.
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedDigests = [];
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = []
+    };
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();

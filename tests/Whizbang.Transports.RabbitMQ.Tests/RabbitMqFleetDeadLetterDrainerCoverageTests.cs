@@ -33,7 +33,7 @@ public class RabbitMqFleetDeadLetterDrainerCoverageTests {
   [Test]
   public async Task TransportName_IsRmqAsync() {
     var fleet = new RabbitMqFleetDeadLetterDrainer(
-      () => new List<string>(),
+      () => [],
       _ => throw new InvalidOperationException("no drain pass runs in this test"));
 
     await Assert.That(fleet.TransportName).IsEqualTo("rmq");
@@ -49,7 +49,7 @@ public class RabbitMqFleetDeadLetterDrainerCoverageTests {
   public async Task DrainDeadLetterQueueAsync_WithNonPositiveBudget_ReturnsZeroWithoutTouchingAnyQueueAsync() {
     var queueSnapshotReads = 0;
     var fleet = new RabbitMqFleetDeadLetterDrainer(
-      () => { queueSnapshotReads++; return new List<string> { "a.dlq" }; },
+      () => { queueSnapshotReads++; return ["a.dlq"]; },
       _ => throw new InvalidOperationException("must not be reached with a non-positive budget"));
 
     var drained = await fleet.DrainDeadLetterQueueAsync(0);

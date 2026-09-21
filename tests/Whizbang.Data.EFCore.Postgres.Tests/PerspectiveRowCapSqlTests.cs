@@ -190,11 +190,11 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
       await _seedAsync(conn, id, "alice", updatedDaysAgo: 10 + i);
     }
 
-    var first = await _sweepBatchedAsync(conn, batchSize: 2);
-    await Assert.That(first.Rows).IsEqualTo(2)
+    var (Rows, Status) = await _sweepBatchedAsync(conn, batchSize: 2);
+    await Assert.That(Rows).IsEqualTo(2)
       .Because("the sweep takes at most the batch bound per cycle — a first sweep over a large "
         + "backlog must not evict everything in one statement");
-    await Assert.That(first.Status).Contains("draining")
+    await Assert.That(Status).Contains("draining")
       .Because("hitting the bound is reported, so an operator watching the first enforcement "
         + "cycle can see the backlog draining rather than wondering why rows remain");
 

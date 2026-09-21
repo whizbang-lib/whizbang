@@ -136,7 +136,7 @@ public sealed class CoverageQuery {
 
   /// <summary>Has an "order" argument but hands back an already-materialized, non-queryable list.</summary>
   [UseOrderByStripping]
-  public IReadOnlyList<CoverageWidget> GetNonQueryableResult(string? order) => _widgets().ToList();
+  public IReadOnlyList<CoverageWidget> GetNonQueryableResult(string? order) => [.. _widgets()];
 
   /// <summary>Has an "order" argument and returns an IQueryable with no OrderBy call to strip.</summary>
   [UseOrderByStripping]

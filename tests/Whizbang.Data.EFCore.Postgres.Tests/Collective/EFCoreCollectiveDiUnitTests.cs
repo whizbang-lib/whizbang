@@ -23,8 +23,7 @@ public class EFCoreCollectiveDiUnitTests {
 
   private sealed class _jobModel { public string Status { get; set; } = ""; }
 
-  private sealed class _ctx : DbContext {
-    public _ctx(DbContextOptions<_ctx> options) : base(options) { }
+  private sealed class _ctx(DbContextOptions<EFCoreCollectiveDiUnitTests._ctx> options) : DbContext(options) {
   }
 
   private static _ctx _newCtx() => new(new DbContextOptionsBuilder<_ctx>().Options);
@@ -66,7 +65,7 @@ public class EFCoreCollectiveDiUnitTests {
   public async Task AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync() {
     var services = new ServiceCollection();
     services.AddSingleton(_newCtx());
-    services.AddCollectiveEventsEFCore<_ctx>(System.Array.Empty<CollectiveApplyEntry>());
+    services.AddCollectiveEventsEFCore<_ctx>([]);
     services.AddCollectiveExecutorEFCore<_jobModel>();
     var sp = services.BuildServiceProvider();
 

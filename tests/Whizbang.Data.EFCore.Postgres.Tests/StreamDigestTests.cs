@@ -207,16 +207,15 @@ public class StreamDigestTests : EFCoreTestBase {
       store.Parameters.AddWithValue("flags", flags);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
 
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
-      body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task _seedReceivedAsync(

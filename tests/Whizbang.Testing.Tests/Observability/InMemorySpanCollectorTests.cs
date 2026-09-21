@@ -45,7 +45,7 @@ public class InMemorySpanCollectorTests {
     // without stealing the collector's AsyncLocal scope.
     using var otherListener = new ActivityListener {
       ShouldListenTo = s => s.Name == otherName,
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
     };
     ActivitySource.AddActivityListener(otherListener);
 

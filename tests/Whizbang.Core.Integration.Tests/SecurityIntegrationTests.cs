@@ -703,8 +703,9 @@ public class SecurityIntegrationTests {
 
       // OLD BEHAVIOR (the bug): Set plain ScopeContext directly
       // This is what happened before the fix when PerspectiveWorker used envelope.GetCurrentScope() directly
-      var accessor = new ScopeContextAccessor();
-      accessor.Current = plainScope;
+      var accessor = new ScopeContextAccessor {
+        Current = plainScope
+      };
 
       // Also set on static accessor (what GetSecurityFromAmbient uses)
       ScopeContextAccessor.CurrentContext = plainScope;

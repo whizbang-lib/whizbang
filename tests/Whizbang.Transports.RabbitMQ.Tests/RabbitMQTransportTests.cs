@@ -86,8 +86,8 @@ public class RabbitMQTransportTests {
       cancellationToken: CancellationToken.None);
 
     await Assert.That(fakeChannel.PublishedMessages.Count).IsEqualTo(1);
-    var published = fakeChannel.PublishedMessages[0];
-    await Assert.That(published.Body.ToArray()).IsEquivalentTo(sentinel)
+    var (Exchange, RoutingKey, Body) = fakeChannel.PublishedMessages[0];
+    await Assert.That(Body.ToArray()).IsEquivalentTo(sentinel)
       .Because("The hint MUST be used as-is — re-serializing the envelope here would defeat the upstream hook chain (size measurement, body-offload claim envelope substitution).");
   }
 

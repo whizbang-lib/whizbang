@@ -315,9 +315,7 @@ public static class GeneratorTestHelper {
 
     _throwIfAnyGeneratorFailed(ran.GetRunResult());
 
-    return outputCompilation.GetDiagnostics()
-        .Where(d => d.Severity == DiagnosticSeverity.Error)
-        .ToImmutableArray();
+    return [.. outputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error)];
   }
 
   /// <summary>

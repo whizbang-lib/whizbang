@@ -78,7 +78,7 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     // The keys past the cap were never CONSULTED: asking again with a full budget must grant
     // them IMMEDIATELY (first attempt) — a burned attempt would have put them into backoff.
     var again = await coordinator.IntegrityTryBeginRepairBatchAsync(
-      origin, keys.Skip(2).ToList(), now.AddSeconds(1), TimeSpan.FromSeconds(300), maxAttempts: 8, maxGrants: 10);
+      origin, [.. keys.Skip(2)], now.AddSeconds(1), TimeSpan.FromSeconds(300), maxAttempts: 8, maxGrants: 10);
     await Assert.That(again!.All(granted => granted)).IsTrue()
       .Because("past-cap keys must not pay backoff for grants the caller never received");
   }
@@ -113,7 +113,7 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     var unknown = _key(origin, Guid.NewGuid());
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, known.Select(k => _obs(k)).ToList(), now, TimeSpan.FromMinutes(60));
+      origin, [.. known.Select(k => _obs(k))], now, TimeSpan.FromMinutes(60));
     await using (var conn = new Npgsql.NpgsqlConnection(ConnectionString)) {
       await conn.OpenAsync();
       await using var cmd = conn.CreateCommand();
@@ -130,7 +130,7 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
       .Because("each age is read from the destroyed row's ten-minute-old first_seen_at");
 
     var after = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, known.Select(k => _obs(k)).ToList(), now.AddMinutes(1), TimeSpan.FromMinutes(60));
+      origin, [.. known.Select(k => _obs(k))], now.AddMinutes(1), TimeSpan.FromMinutes(60));
     await Assert.That(after!.All(granted => granted)).IsTrue()
       .Because("healed buckets are forgotten — the age read must not survive as ledger state");
   }

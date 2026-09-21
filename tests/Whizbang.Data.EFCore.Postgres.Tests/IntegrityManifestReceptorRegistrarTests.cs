@@ -27,7 +27,7 @@ public class IntegrityManifestReceptorRegistrarTests {
     public List<(Type Message, LifecycleStage Stage)> Unregistrations { get; } = [];
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage)
-      => Array.Empty<ReceptorInfo>();
+      => [];
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage)
         where TMessage : IMessage

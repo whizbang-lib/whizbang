@@ -381,12 +381,11 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
         .Because("persisted-cs null + envelope-cs set is mixed-mode; defer to Apply, don't fall to event_id lex compare");
     }
 
-    await using (var verifyData = CreateDbContext()) {
-      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
-          .AsNoTracking()
-          .FirstAsync(r => r.Id == streamId);
-      await Assert.That(row.Data.Value).IsEqualTo(999);
-    }
+    await using var verifyData = CreateDbContext();
+    var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value).IsEqualTo(999);
   }
 
   /// <summary>
@@ -469,14 +468,13 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
         .Because("when metadata has cs but envelope's cs is null (stamper lag), we can't reliably tell duplicate from missed — let it through to Apply's idempotency guards");
     }
 
-    await using (var verifyData = CreateDbContext()) {
-      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
-          .AsNoTracking()
-          .FirstAsync(r => r.Id == streamId);
-      await Assert.That(row.Data.Value)
-        .IsEqualTo(999)
-        .Because("late event with unstamped commit_sequence must reach Apply to mutate the model");
-    }
+    await using var verifyData = CreateDbContext();
+    var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value)
+      .IsEqualTo(999)
+      .Because("late event with unstamped commit_sequence must reach Apply to mutate the model");
   }
 
   /// <summary>
