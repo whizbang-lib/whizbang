@@ -98,6 +98,43 @@ claim reads `wh_inbox_state`, which has no `flags` column**, and neither does
 store time (as `priority` already is) or joining back to the wide row, which is precisely what the
 state-table split removed. Do not join back.
 
+## Split the system-event declaration before moving any of it
+
+`SystemEventEmitter` writes to the `$wb-system` stream and covers four categories -- event audit,
+command audit, perspective events, and **error events** -- and sets `Priority = BACKGROUND`
+unconditionally for all of them at a single site.
+
+Audit is genuinely work nobody waits for. An error event is not: it is the input to alerting and to
+whoever is on call, and it matters most exactly when the system is under the load that would bury
+it. Declaring both the same way is the same conflation as the band itself, one level up.
+
+So the emitter's blanket constant has to become a per-type declaration BEFORE any of this moves to
+an idle band. Moving `SystemEventEmitter` wholesale would take error events from "behind bulk work"
+to "behind bulk work and withheld until quiet", which is worse than today. Audit to idle, errors to
+standard or better, perspective events on their own merits.
+
+## Nested band or its own bucket
+
+Both work; they trade different things.
+
+| | nested (numbers 400+ inside band 200+) | own `WorkBucket.Idle` |
+|---|---|---|
+| index cost | none -- the literal bound provably implies the lane's | likely its own lane, spending the last slot of the 11 of 12 gate |
+| scheduler surface | none | round robin, floors, reservations and meters each need a case |
+| semantics | `Background` quietly means two things | the intent is in the type |
+| observability | a meter cannot separate idle from bulk | it can |
+
+**Recommended: its own bucket in C#, nested lane in SQL.** The bucket enum and the index set do not
+have to be one to one. A distinct `WorkBucket.Idle` gives meters, reservations and anything that
+reasons about buckets something honest to read, while the claim's idle branch keeps using the
+background lane index -- which the EXPLAIN above shows it can, because both bounds are literals.
+Clarity without spending the index slot.
+
+One thing needs deciding either way, and it is not a detail: **whether Idle takes a turn in the
+round robin at all.** It should not while the service is busy -- that is the entire point -- so it
+is not simply a fourth equal turn. The trickle and forced-drain bounds are what give it turns, and
+they are time-based rather than rotation-based.
+
 ## What must not regress
 
 The cost suite already gates the properties this feature could damage. Any change here must leave
