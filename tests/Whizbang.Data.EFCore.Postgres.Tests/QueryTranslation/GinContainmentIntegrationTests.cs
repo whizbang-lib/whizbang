@@ -108,6 +108,8 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           scope jsonb NOT NULL
         );
         CREATE INDEX idx_gin_probe_data ON {TABLE} USING gin (data);
+        CREATE INDEX idx_gin_probe_metadata ON {TABLE} USING gin (metadata);
+        CREATE INDEX idx_gin_probe_scope ON {TABLE} USING gin (scope);
         """);
 
       // The real migration text, not a copy of it: if 152 stops producing a usable function the
@@ -144,8 +146,15 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           Rank = i,
           OccurredAt = i == 0 ? _needleInstant : _needleInstant.AddDays(i),
         },
-        Metadata = new PerspectiveMetadata(),
-        Scope = new PerspectiveScope(),
+        // Seeded so a filter on scope or metadata is as selective as the one on data. The generator
+        // builds a GIN index over all three columns, and whether the other two are ever ASKED a
+        // question a GIN index can answer is the measurement, not an assumption.
+        Metadata = new PerspectiveMetadata {
+          EventType = i == 0 ? "NeedleEvent" : $"HayEvent-{i.ToString(CultureInfo.InvariantCulture)}",
+        },
+        Scope = new PerspectiveScope {
+          TenantId = (i == 0 ? _needleTenant : Guid.NewGuid()).ToString(),
+        },
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow,
         Version = 1,
@@ -688,6 +697,75 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
   private static async Task _execAsync(NpgsqlConnection db, string sql) {
     await using var command = new NpgsqlCommand(sql, db);
     await command.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Whether a filter on the OTHER two jsonb columns reaches their GIN indexes, the way a filter on
+  /// the document does.
+  /// </summary>
+  /// <remarks>
+  /// The generator builds a GIN index over data, metadata and scope on every perspective table. The
+  /// containment rewrite is written against a jsonb member access rather than against a particular
+  /// column, so the question is not whether the rewrite COULD serve these two -- it is whether a
+  /// filter on them compiles to containment in practice. A measured answer either retires an issue
+  /// or tells us two thirds of the index cost on the hottest write path in the system is still
+  /// bought for nothing.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AFilterOnScopeOrMetadata_ReachesItsOwnGinIndexAsync(CancellationToken cancellationToken) {
+    var tenant = _needleTenant.ToString();
+
+    var scopeSql = _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Scope.TenantId == tenant)
+      .ToQueryString();
+    var metadataSql = _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Metadata.EventType == "NeedleEvent")
+      .ToQueryString();
+
+    var scopeRows = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Scope.TenantId == tenant).Select(r => r.Id).ToListAsync(cancellationToken);
+    var metadataRows = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Metadata.EventType == "NeedleEvent").Select(r => r.Id).ToListAsync(cancellationToken);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var scopePlan = await _explainAsync(db,
+      $"SELECT id FROM {TABLE} WHERE scope @> jsonb_build_object('TenantId', @p)", tenant);
+    var metadataPlan = await _explainAsync(db,
+      $"SELECT id FROM {TABLE} WHERE metadata @> jsonb_build_object('EventType', @p)", "NeedleEvent");
+
+    // Reported rather than asserted one way: this case exists to establish which of the three
+    // indexes is reachable, and a failure message that prints the evidence is worth more here than
+    // a pass. The rows are checked because a plan that returns the wrong rows is not an answer.
+    await Assert.That(scopeRows).Count().IsEqualTo(1)
+      .Because($"the scope filter must select the seeded row. SQL was: {scopeSql}");
+    await Assert.That(metadataRows).Count().IsEqualTo(1)
+      .Because($"the metadata filter must select the seeded row. SQL was: {metadataSql}");
+
+    await Assert.That(scopePlan).Contains("idx_gin_probe_scope", StringComparison.Ordinal)
+      .Because($"the scope GIN index is CAPABLE of answering a containment test, which is what makes "
+        + $"the gap below a missed opportunity rather than an impossibility. Plan was:\n{scopePlan}");
+    await Assert.That(metadataPlan).Contains("idx_gin_probe_metadata", StringComparison.Ordinal)
+      .Because($"same for metadata. Plan was:\n{metadataPlan}");
+
+    // Every one of the three GIN indexes the schema pass builds is now reachable. The rewrite was
+    // written against a jsonb member rather than against a column, so extending it to these two was
+    // routing rather than new SQL -- the document is built from the TRANSLATED path, which is what
+    // makes the next line work at all.
+    //
+    // Note the key: the scope document is stored with abbreviated names, so this has to be
+    // {"t": ...} and not {"TenantId": ...}. That it comes out right is the whole reason the
+    // containment document is built from Entity Framework's path instead of from the CLR member
+    // name. A rewrite that used the property name would match nothing and return no rows, which is
+    // worse than the missed index it set out to fix -- hence the row counts asserted above.
+    await Assert.That(scopeSql).Contains("@>", StringComparison.Ordinal)
+      .Because($"a scope filter is the tenant-isolation predicate on every perspective read, so this "
+        + $"is the one that had to reach its index. SQL was:\n{scopeSql}");
+    await Assert.That(scopeSql).Contains("'t'", StringComparison.Ordinal)
+      .Because($"built from the stored key, not the property name. SQL was:\n{scopeSql}");
+    await Assert.That(metadataSql).Contains("@>", StringComparison.Ordinal)
+      .Because($"same routing for metadata. SQL was:\n{metadataSql}");
   }
 
   private static async Task<string> _explainAsync(NpgsqlConnection db, string sql, string parameter) {
