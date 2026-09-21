@@ -68,7 +68,7 @@ public class IdleBandDrainTests : EFCoreTestBase {
       FROM m
       """;
     cmd.Parameters.AddWithValue(nameof(priority), priority);
-    cmd.Parameters.AddWithValue("rows", rows);
+    cmd.Parameters.AddWithValue(nameof(rows), rows);
     cmd.Parameters.AddWithValue("age", ageMinutes);
     await cmd.ExecuteNonQueryAsync();
     await using var analyze = conn.CreateCommand();
