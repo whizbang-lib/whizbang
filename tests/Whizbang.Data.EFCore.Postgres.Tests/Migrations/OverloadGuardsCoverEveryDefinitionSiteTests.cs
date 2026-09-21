@@ -44,7 +44,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 public class OverloadGuardsCoverEveryDefinitionSiteTests {
 
   // The arities 025/138 and 145-onward give claim_orphaned_inbox; see the scanner meta-test.
-  private static readonly int[] _claimOrphanedInboxArities = [8, 9];
+  // 167 adds the tenth parameter, p_include_idle: acquisition has to agree with the re-offer about whether the
+  // idle band may be taken, or the claim leases idle rows it will then withhold.
+  private static readonly int[] _claimOrphanedInboxArities = [8, 9, 10];
 
   private static readonly Regex _definition = new(
     @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+__SCHEMA__\.([a-z_0-9]+)\s*\(",

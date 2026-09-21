@@ -23,6 +23,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   // own 99 and 199 would be a fourth copy of the very literals these cases exist to keep in agreement.
   private const int _interactiveBandEnd = WorkPriority.INTERACTIVE_BAND_END;
   private const int _standardBandEnd = WorkPriority.STANDARD_BAND_END;
+  private const int _backgroundBandEnd = WorkPriority.BACKGROUND_BAND_END;
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {
     var connection = ctx.Database.GetDbConnection();
@@ -32,7 +33,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     return (NpgsqlConnection)connection;
   }
 
-  /// <summary>Seeds pending rows spread across all three bands, so every lane index has rows to offer.</summary>
+  /// <summary>Seeds pending rows spread across all four bands, so every lane index has rows to offer.</summary>
   private static async Task _seedEveryBandAsync(NpgsqlConnection conn) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
@@ -42,7 +43,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
            stream_id, is_event, priority)
         SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
                NOW() - (g * INTERVAL '1 second'), gen_random_uuid(), TRUE,
-               CASE g % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
+               CASE g % 4 WHEN 0 THEN 50 WHEN 1 THEN 150 WHEN 2 THEN 250 ELSE 450 END
         FROM generate_series(1, 600) g
         RETURNING message_id, stream_id, received_at, priority, is_event
       )
@@ -108,10 +109,15 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     // Read from the shipped migration, never copied: a copy of the claim's shape is a second shape, and it
     // passes happily once the real one moves. Identity substitution leaves the corpus verbatim. The bounds
     // are compared against WorkPriority, so the claim and the framework cannot drift apart.
+    // The LAST migration that defines this CTE, not a numbered one. A corpus has last-word semantics: the shape
+    // that runs is the one defined latest, so a rule pinned to "162_" keeps passing against a definition the
+    // database no longer has the moment a later migration redefines it. 167 did exactly that.
     var claim = new Whizbang.Data.Postgres.PostgresMigrationProvider(
         typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__")
       .GetMigrations()
-      .Single(m => m.Name.StartsWith("162_", StringComparison.Ordinal)).Sql;
+      .Where(m => m.Sql.Contains("claimable AS MATERIALIZED", StringComparison.Ordinal))
+      .OrderBy(m => int.Parse(m.Name.Split('_')[0], System.Globalization.CultureInfo.InvariantCulture))
+      .Last().Sql;
 
     var start = claim.IndexOf("claimable AS MATERIALIZED", StringComparison.Ordinal);
     await Assert.That(start).IsGreaterThan(-1)
@@ -127,13 +133,25 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       .Because("the interactive lane has to name its bound as a literal the planner can match to the index.");
     await Assert.That(cte).Contains($"i.priority <= {_standardBandEnd}");
     await Assert.That(cte).Contains($"i.priority > {_standardBandEnd}");
+    await Assert.That(cte).Contains($"i.priority <= {_backgroundBandEnd}")
+      .Because("the background lane names its upper bound as a literal too, or it selects idle rows as well and "
+        + "stops matching its own index.");
+    await Assert.That(cte).Contains($"i.priority > {_backgroundBandEnd}")
+      .Because("the idle lane names its bound as a literal the planner can match to the idle index.");
   }
 
 
   /// <summary>
-  /// The background lane. Its query says "greater than the standard band end" and its index must say the same, or
-  /// the index it exists for is never consulted and the lane reads the whole pending set through a broader index.
+  /// The background lane. Its query says "greater than the standard band end and no greater than the background
+  /// band end" and its index must say the same, or the index it exists for is never consulted and the lane reads
+  /// the whole pending set through a broader index.
   /// </summary>
+  /// <remarks>
+  /// The upper bound arrived with the idle band (167). Without it the background lane's predicate also selects
+  /// idle rows, so a band that exists to be withheld while the service is busy would be drained by the lane above
+  /// it -- and, because a predicate of <c>priority &gt; 199</c> cannot be proved to imply an index declared
+  /// <c>priority &gt; 199 AND priority &lt;= 399</c>, the lane would additionally stop reaching its own index.
+  /// </remarks>
   [Test]
   public async Task BackgroundLane_ReadsItsOwnIndex_NotTheWholePendingSetAsync() {
     await using var ctx = CreateDbContext();
@@ -141,7 +159,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await _seedEveryBandAsync(conn);
 
     var plan = await _planForAsync(conn,
-      $"i.is_event = TRUE AND i.priority > {_standardBandEnd}",
+      $"i.is_event = TRUE AND i.priority > {_standardBandEnd} AND i.priority <= {_backgroundBandEnd}",
       "i.received_at, i.message_id");
 
     await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_background")
@@ -175,6 +193,24 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// The idle lane (167). It is the band the claim withholds while the service is busy, which is precisely why it
+  /// needs its own index: the rows sit pending for as long as the service stays busy, and a lane that cannot reach
+  /// an index pays for that backlog on every poll that goes looking for it.
+  /// </summary>
+  [Test]
+  public async Task IdleLane_ReadsItsOwnIndexAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _seedEveryBandAsync(conn);
+
+    var plan = await _planForAsync(conn,
+      $"i.is_event = TRUE AND i.priority > {_backgroundBandEnd}",
+      "i.received_at, i.message_id");
+
+    await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_idle").Because($"plan was:\n{plan}");
+  }
+
+  /// <summary>
   /// The rule the three cases above enforce, stated directly against the catalog: every lane index's predicate is
   /// written with the same operator and constant the claim uses, so a later edit to either side that breaks the
   /// pairing fails here rather than silently costing a scan per claim.
@@ -201,6 +237,11 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await Assert.That(predicates["idx_inbox_state_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
     await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
     await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_background"]).Contains($"priority <= {_backgroundBandEnd}")
+      .Because("167 bounded the background lane at the top so the idle band is not drained by the lane above it; "
+        + "an index left open-ended no longer describes the set the lane asks for");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_idle"]).Contains($"priority > {_backgroundBandEnd}")
+      .Because("the idle lane filters with 'priority > c_background_band_end' and its index must say the same");
   }
 
   /// <summary>

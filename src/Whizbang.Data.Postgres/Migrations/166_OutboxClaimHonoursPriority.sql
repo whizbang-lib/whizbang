@@ -720,4 +720,4 @@ END;
 -- the tables filled those plans scanned them whole, nested, on every poll, until the next analyze
 -- invalidated them. Measured: a poll that takes well under a second with fresh plans did not finish
 -- inside the command timeout with the empty-table plans. Planning per call costs milliseconds.
-$$ LANGUAGE plpgsql 
+$$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
