@@ -1,14 +1,28 @@
 namespace Whizbang.Core.Priority;
 
-/// <summary>The three scheduling buckets a priority number falls in, plus the control plane outside them.</summary>
+/// <summary>The four scheduling buckets a priority number falls in, plus the control plane outside them.</summary>
 /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
 public enum WorkBucket {
   /// <summary>A person or a synchronous caller is waiting (band 1 to 99).</summary>
   Interactive,
   /// <summary>Domain work with no one waiting (band 100 to 199).</summary>
   Standard,
-  /// <summary>Work that exists because of volume or maintenance (band 200 and up).</summary>
+  /// <summary>Work that exists because of volume (band 200 to 399).</summary>
   Background,
+  /// <summary>
+  /// Work nobody waits for, withheld while the service is busy (band 400 and up).
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="Background"/> because the two want opposite treatment under load.
+  /// Background work is volume someone is waiting to see finish; idle work -- auditing, and the
+  /// records a system keeps about itself -- has no reader with a deadline, and running it while a
+  /// person waits spends capacity on the one thing nobody asked for. Band 200 and up used to mean
+  /// both, and the busier of the two was the one nobody needed promptly.
+  ///
+  /// A bucket that is withheld is a bucket that can starve, so idle work carries its own time
+  /// bounds rather than relying on the service ever going quiet.
+  /// </remarks>
+  Idle,
 }
 
 /// <summary>
@@ -32,14 +46,20 @@ public static class WorkPriority {
   /// <summary>Domain work with no one waiting. Band 100 to 199.</summary>
   public const int STANDARD = 150;
 
-  /// <summary>Work that exists because of volume or maintenance. Band 200 and up.</summary>
+  /// <summary>Work that exists because of volume. Band 200 to 399.</summary>
   public const int BACKGROUND = 250;
+
+  /// <summary>Work nobody waits for, withheld while the service is busy. Band 400 and up.</summary>
+  public const int IDLE = 450;
 
   /// <summary>Last number of the interactive band.</summary>
   public const int INTERACTIVE_BAND_END = 99;
 
   /// <summary>Last number of the standard band.</summary>
   public const int STANDARD_BAND_END = 199;
+
+  /// <summary>Last number of the background band; above it is <see cref="WorkBucket.Idle"/>.</summary>
+  public const int BACKGROUND_BAND_END = 399;
 #pragma warning restore CA1707
 
   /// <summary>The bucket a number falls in; an undeclared or negative number reads as <see cref="WorkBucket.Standard"/>.</summary>
@@ -50,7 +70,10 @@ public static class WorkPriority {
     if (priority <= INTERACTIVE_BAND_END) {
       return WorkBucket.Interactive;
     }
-    return priority <= STANDARD_BAND_END ? WorkBucket.Standard : WorkBucket.Background;
+    if (priority <= STANDARD_BAND_END) {
+      return WorkBucket.Standard;
+    }
+    return priority <= BACKGROUND_BAND_END ? WorkBucket.Background : WorkBucket.Idle;
   }
 
   /// <summary>The number to schedule with: the declared number, or <see cref="STANDARD"/> when none was declared.</summary>

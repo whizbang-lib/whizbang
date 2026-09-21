@@ -23,6 +23,7 @@ public class WorkPriorityTests {
       [WorkPriority.INTERACTIVE] = WorkBucket.Interactive,
       [WorkPriority.STANDARD] = WorkBucket.Standard,
       [WorkPriority.BACKGROUND] = WorkBucket.Background,
+      [WorkPriority.IDLE] = WorkBucket.Idle,
     };
     foreach (var (value, bucket) in constants) {
       await Assert.That(WorkPriority.Bucket(value)).IsEqualTo(bucket);
@@ -44,7 +45,13 @@ public class WorkPriorityTests {
   [Arguments(199, WorkBucket.Standard)]
   [Arguments(200, WorkBucket.Background)]
   [Arguments(250, WorkBucket.Background)]
-  [Arguments(10_000, WorkBucket.Background)]
+  [Arguments(399, WorkBucket.Background)]
+  // 400 and up is Idle. This case previously read Background, because the band was open-ended and
+  // meant both "volume" and "nobody waits" -- the conflation the idle band exists to end. A number
+  // a consumer picked above 399 therefore changes bucket on upgrade, which belongs in release notes.
+  [Arguments(400, WorkBucket.Idle)]
+  [Arguments(450, WorkBucket.Idle)]
+  [Arguments(10_000, WorkBucket.Idle)]
   public async Task Bucket_MapsTheBandsAsync(int priority, WorkBucket expected) {
     await Assert.That(WorkPriority.Bucket(priority)).IsEqualTo(expected);
   }
