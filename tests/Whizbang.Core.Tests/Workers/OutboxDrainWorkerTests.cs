@@ -1199,7 +1199,7 @@ public class OutboxDrainWorkerTests {
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
-    var stages = invoker.Invocations.Select(x => x.Stage).ToList();
+    var stages = invoker.Invocations.ConvertAll(x => x.Stage);
     await Assert.That(stages).Contains(LifecycleStage.PreOutboxInline)
       .Because("PreOutboxInline must fire before publish when a deserializer + receptor registry are wired.");
     await Assert.That(stages).Contains(LifecycleStage.PostOutboxInline)

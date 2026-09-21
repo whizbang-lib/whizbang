@@ -475,12 +475,12 @@ public class ClaimWorkerCoverageTests {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
         PerspectiveWork = [],
-        InboxWork = cleanRowIds.Select(id => new InboxWork {
+        InboxWork = cleanRowIds.ConvertAll(id => new InboxWork {
           MessageId = id,
           MessageType = "TestEvent",
           Envelope = null!,
           Attempts = 1,
-        }).ToList(),
+        }),
       }
     };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {

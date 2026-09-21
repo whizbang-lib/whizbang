@@ -38,7 +38,7 @@ public class SystemTypeConverterRegistrationTests {
     var missing = systemTypeConverters
       .Where(t => !registered.Contains(t))
       .Select(t => t.FullName!)
-      .OrderBy(s => s)
+      .Order()
       .ToList();
 
     await Assert.That(missing)

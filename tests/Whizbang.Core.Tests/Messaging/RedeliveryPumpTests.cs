@@ -85,8 +85,8 @@ public class RedeliveryPumpTests {
     await Assert.That(published).IsEqualTo(3)
       .Because("five events at a chunk bound of two → composites of 2 + 2 + 1.");
     var chunkIds = serializer.Captured
-      .Select(env => env.Payload.InnerEventIds)
-      .ToList();
+      .ConvertAll(env => env.Payload.InnerEventIds)
+;
     await Assert.That(chunkIds[0]).IsEquivalentTo([ids[0], ids[1]]);
     await Assert.That(chunkIds[1]).IsEquivalentTo([ids[2], ids[3]]);
     await Assert.That(chunkIds[2]).IsEquivalentTo([ids[4]]);

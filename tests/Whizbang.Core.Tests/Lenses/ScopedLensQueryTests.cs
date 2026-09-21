@@ -104,7 +104,7 @@ public class ScopedLensQueryTests {
     // Act
     var result = await scopedQuery.ExecuteAsync(async (query, _) => {
       var rows = query.Query.ToList();
-      return rows.Select(r => r.Data).ToList();
+      return rows.ConvertAll(r => r.Data);
     });
 
     // Assert - Result correct

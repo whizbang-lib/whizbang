@@ -127,7 +127,7 @@ public class CoalesceShipWorkerTests {
     // individually-shipped floor row at the consumer's inbox).
     var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
     var singles = _singles(2);
-    var expectedIds = singles.Select(m => m.MessageId).ToList();
+    var expectedIds = singles.ConvertAll(m => m.MessageId);
     var expectedType = singles[0].MessageType;
     var expectedDestination = singles[0].Destination;
     coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
@@ -848,7 +848,7 @@ public class CoalesceShipWorkerTests {
     var singles = _singles(2);
     // Capture BEFORE the run: the fake's fetch drains the shared list, and iterating it
     // afterwards silently asserts nothing.
-    var expectedStreams = singles.Select(m => m.StreamId).ToList();
+    var expectedStreams = singles.ConvertAll(m => m.StreamId);
     coordinator.PendingSingles["record-digest"] = singles;
 
     await worker.RunOnceAsync(CancellationToken.None);

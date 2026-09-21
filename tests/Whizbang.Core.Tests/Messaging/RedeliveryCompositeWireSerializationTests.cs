@@ -59,7 +59,7 @@ public class RedeliveryCompositeWireSerializationTests {
       json, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)))!;
     await Assert.That(back.InnerEventIds).IsEquivalentTo([e1, e2]);
     await Assert.That(back.InnerTypeNames).IsEquivalentTo(composite.InnerTypeNames);
-    await Assert.That(back.InnerPayloads.Select(pd => pd.GetProperty("x").GetInt32()).ToList()).IsEquivalentTo([2, 3])
+    await Assert.That(back.InnerPayloads.ConvertAll(pd => pd.GetProperty("x").GetInt32())).IsEquivalentTo([2, 3])
       .Because("the repaired bodies must survive the wire byte-for-byte.");
   }
 

@@ -1530,7 +1530,7 @@ public class TransportPublishStrategyTests {
 
     await strategy.PublishBatchAsync([flippedWork, legacyWork], CancellationToken.None);
 
-    var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).ToList();
+    var addresses = transport.PublishBatchCalls.ConvertAll(c => c.Destination.Address);
     await Assert.That(addresses).Contains("inbox.myapp.orders.commands");
     await Assert.That(addresses).Contains("inbox");
   }

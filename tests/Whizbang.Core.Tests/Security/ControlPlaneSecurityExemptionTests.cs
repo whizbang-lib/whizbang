@@ -139,7 +139,7 @@ public class ControlPlaneSecurityExemptionTests {
     var unmarked = frameworkComposites
       .Where(t => !typeof(IControlPlaneMessage).IsAssignableFrom(t))
       .Select(t => t.Name)
-      .OrderBy(n => n)
+      .Order()
       .ToList();
 
     await Assert.That(unmarked).IsEmpty()
