@@ -184,9 +184,11 @@ public class AuditEnvelopeScopeTests {
 
   private sealed class CaptureStore : IEventStore {
     public List<MessageEnvelope<EventAudited>> Envelopes { get; } = [];
+    public List<MessageEnvelope<PerspectiveIndexAdvised>> Advisories { get; } = [];
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
       if (envelope is MessageEnvelope<EventAudited> audited) { Envelopes.Add(audited); }
+      if (envelope is MessageEnvelope<PerspectiveIndexAdvised> advised) { Advisories.Add(advised); }
       return Task.CompletedTask;
     }
 
@@ -209,4 +211,29 @@ public class AuditEnvelopeScopeTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<Whizbang.Core.Messaging.StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       throw new NotSupportedException();
   }
+
+  [Test]
+  public async Task ASystemEventThatIsNotAnAuditRecordIsScopedToTheSystemWithoutATenantAsync() {
+    var store = new CaptureStore();
+    var options = Options.Create(new SystemEventOptions().EnablePerspectiveEvents());
+    var (emitter, _) = (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
+
+    await emitter.EmitAsync(new PerspectiveIndexAdvised {
+      ModelName = "Model",
+      TableName = "wh_per_model",
+      TableSizeBytes = 1,
+      ThresholdBytes = 1,
+      Exposure = "filter",
+      UnindexedFields = ["Name"],
+    });
+
+    await Assert.That(store.Advisories).IsNotEmpty()
+      .Because("the event is enabled, so it must reach the store");
+    var scope = store.Advisories[0].GetCurrentScope();
+    await Assert.That(scope!.Scope.IsSystem).IsTrue()
+      .Because("every system event is written under the system scope");
+    await Assert.That(scope.Scope.TenantId).IsNull()
+      .Because("only the two audit records carry a tenant; an advisory belongs to no tenant");
+  }
+
 }

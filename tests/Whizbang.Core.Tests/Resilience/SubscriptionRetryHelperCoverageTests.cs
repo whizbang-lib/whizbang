@@ -71,8 +71,8 @@ public class SubscriptionRetryHelperCoverageTests {
 
     await logger.ErrorLogged.WaitAsync(TimeSpan.FromSeconds(10));
 
-    var entry = logger.Entries.Single(e => e.Level == LogLevel.Error);
-    await Assert.That(entry.Message).Contains(destination.Address);
+    var (_, Message) = logger.Entries.Single(e => e.Level == LogLevel.Error);
+    await Assert.That(Message).Contains(destination.Address);
   }
 
   private sealed class ThrowingTransport(Exception exceptionToThrow) : ITransport {

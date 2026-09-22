@@ -25,7 +25,7 @@ public class PassiveCounterTests {
 
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] { ("passive.untagged", 0L, "") })
+    await Assert.That(observed.Readings).IsEquivalentTo([("passive.untagged", 0L, "")])
       .Because("a quiet counter reads as zero, never as a missing series");
   }
 
@@ -39,7 +39,7 @@ public class PassiveCounterTests {
     counter.Add(3);
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] { ("passive.sum", 5L, "") })
+    await Assert.That(observed.Readings).IsEquivalentTo([("passive.sum", 5L, "")])
       .Because("adds are not pushed; the meter reads the live total when it collects");
   }
 
@@ -54,11 +54,11 @@ public class PassiveCounterTests {
     counter.Add(1, new KeyValuePair<string, object?>("a", "other"));
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] {
+    await Assert.That(observed.Readings).IsEquivalentTo([
       ("passive.tagged", 0L, ""),
       ("passive.tagged", 2L, "a=x,b=y"),
       ("passive.tagged", 1L, "a=other"),
-    }).Because("the same tags in any order are one series; the untagged series still exists at zero");
+    ]).Because("the same tags in any order are one series; the untagged series still exists at zero");
   }
 
   [Test]
@@ -72,13 +72,13 @@ public class PassiveCounterTests {
     counter.Touch(new KeyValuePair<string, object?>("single", "s"));
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] {
+    await Assert.That(observed.Readings).IsEquivalentTo([
       ("passive.domain", 0L, ""),
       ("passive.domain", 0L, "kind=alpha"),
       ("passive.domain", 0L, "kind=beta"),
       ("passive.domain", 0L, "activity=x,verdict=y"),
       ("passive.domain", 0L, "single=s"),
-    }).Because("a dashboard panel per known value must exist before the first real count");
+    ]).Because("a dashboard panel per known value must exist before the first real count");
   }
 
   [Test]
@@ -94,10 +94,10 @@ public class PassiveCounterTests {
     counter.Add(1, ReadOnlySpan<KeyValuePair<string, object?>>.Empty);
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] {
+    await Assert.That(observed.Readings).IsEquivalentTo([
       ("passive.shapes", 2L, ""),
       ("passive.shapes", 2L, "k=v"),
-    }).Because("an empty tag set is the untagged series, whichever overload carried it");
+    ]).Because("an empty tag set is the untagged series, whichever overload carried it");
   }
 
   [Test]
@@ -110,7 +110,7 @@ public class PassiveCounterTests {
     counter.Add(-5);
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] { ("passive.updown", -2L, "") });
+    await Assert.That(observed.Readings).IsEquivalentTo([("passive.updown", -2L, "")]);
     await Assert.That(counter.Instrument).IsTypeOf<ObservableUpDownCounter<int>>();
   }
 
@@ -138,10 +138,10 @@ public class PassiveCounterTests {
     });
     observed.Collect();
 
-    await Assert.That(observed.Readings).IsEquivalentTo(new[] {
+    await Assert.That(observed.Readings).IsEquivalentTo([
       ("passive.parallel", 10_000L, ""),
       ("passive.parallel", 10_000L, "t=1"),
-    });
+    ]);
   }
 
   [Test]
@@ -183,5 +183,39 @@ public class PassiveCounterTests {
       }
       return string.Join(",", parts);
     }
+  }
+
+  [Test]
+  public async Task Touch_WithAnEmptyTagList_DeclaresNothingAsync() {
+    using var meter = new Meter("Whizbang.Tests.PassiveCounter.E");
+    using var observed = new Observed(meter);
+    var counter = meter.CreatePassiveCounter<long>("passive.empty");
+
+    counter.Touch(new TagList());
+    observed.Collect();
+
+    await Assert.That(observed.Readings).IsEquivalentTo([("passive.empty", 0L, "")])
+      .Because("an empty tag list names the untagged series, which already exists; nothing new is declared");
+  }
+
+  [Test]
+  public async Task TagSet_EqualityIsByKeyAndValueAsync() {
+    var a = new PassiveCounter<long>.TagSet([new("kind", "alpha"), new("verdict", "y")]);
+    var sameTags = new PassiveCounter<long>.TagSet([new("kind", "alpha"), new("verdict", "y")]);
+    var otherValue = new PassiveCounter<long>.TagSet([new("kind", "beta"), new("verdict", "y")]);
+    var fewerTags = new PassiveCounter<long>.TagSet([new("kind", "alpha")]);
+
+    await Assert.That(a.Equals(sameTags)).IsTrue()
+      .Because("two adds with the same tags must land on one series");
+    await Assert.That(a.GetHashCode()).IsEqualTo(sameTags.GetHashCode());
+    await Assert.That(a.Equals(otherValue)).IsFalse()
+      .Because("a different tag value is a different series");
+    await Assert.That(a.Equals(fewerTags)).IsFalse()
+      .Because("a subset of the tags is a different series");
+    PassiveCounter<long>.TagSet? missing = null;
+    object boxed = sameTags;
+    await Assert.That(a.Equals(missing)).IsFalse();
+    await Assert.That(a.Equals(boxed)).IsTrue();
+    await Assert.That(a.Equals("not a tag set")).IsFalse();
   }
 }

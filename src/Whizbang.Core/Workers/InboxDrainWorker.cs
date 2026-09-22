@@ -275,12 +275,7 @@ public sealed partial class InboxDrainWorker(
       return;
     }
     var live = new HashSet<Guid>(keep);
-    var stale = new List<Guid>();
-    foreach (var k in _observedDepth.Keys) {
-      if (!live.Contains(k)) {
-        stale.Add(k);
-      }
-    }
+    var stale = _observedDepth.Keys.Where(k => !live.Contains(k)).ToList();
     for (var i = 0; i < stale.Count; i++) {
       _observedDepth.Remove(stale[i]);
     }
@@ -332,6 +327,7 @@ public sealed partial class InboxDrainWorker(
     governor.Observe(rowsReturned, capRequested, reclaimed);
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The drain loop's admission, dispatch and completion branches read as one sequence, and the drain worker tests cover them branch by branch.")]
   private async Task _drainStreamBatchAsync(List<Guid> streamIds, CancellationToken ct) {
     foreach (var sid in streamIds) {
       _drainChannel.MarkDraining(sid);
@@ -664,6 +660,8 @@ public sealed partial class InboxDrainWorker(
     }
     return true;
   }
+
+  internal bool AdmitRowForTest(InboxBatchRow row, IReadOnlyList<InboxBatchRow> fetch) => _admitRow(row, fetch);
 
   internal bool[] AdmissionPlanForTest(IReadOnlyList<InboxBatchRow> rows) {
     var plan = new bool[rows.Count];

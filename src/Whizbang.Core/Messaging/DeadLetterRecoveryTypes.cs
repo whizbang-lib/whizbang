@@ -322,6 +322,8 @@ public sealed class DeadLetterRecoveryOptions {
   /// </remarks>
   public int LoopBreakerCooldownMinutes { get; set; } = 60;
 
+  private const string HOLD_FOR_REVIEW = "HoldForReview";
+
   /// <summary>
   /// Per-<see cref="MessageFailureReason"/> recovery rules. Defaults follow the
   /// design doc's matrix (see plans/dlq-recovery.md).
@@ -331,9 +333,9 @@ public sealed class DeadLetterRecoveryOptions {
     [MessageFailureReason.TransportException] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.LeaseExpired] = new("AggressiveRetry", 5, TimeSpan.FromSeconds(0), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.MaxAttemptsExceeded] = new("ConservativeRetry", 1, TimeSpan.FromHours(6), HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.EventStorageFailure] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.ValidationError] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.SerializationError] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.EventStorageFailure] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.ValidationError] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.SerializationError] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     [MessageFailureReason.TransportNotReady] = new("MediumRetry", 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.Unknown] = new("OneShotThenHold", 1, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
     // A broker dead-letter usually means "this build could not process the message" — retry on a
@@ -344,7 +346,7 @@ public sealed class DeadLetterRecoveryOptions {
     // re-driving it mints a fresh dead letter and recovery ping-pongs with the quarantine
     // (measured in production at ~190 rows/minute, throttled only by the loop breaker).
     // Hold it where an operator can see it; auto-re-drive is the one certainly-wrong answer.
-    [MessageFailureReason.PoisonRedeliveryLoop] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.PoisonRedeliveryLoop] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 

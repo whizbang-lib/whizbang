@@ -114,7 +114,7 @@ public class LifecycleTrackingStateTests {
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);
 
     await Assert.That(invoker.Stages).IsEquivalentTo(
-      new List<LifecycleStage> { LifecycleStage.PreDistributeInline, LifecycleStage.ImmediateDetached });
+      [LifecycleStage.PreDistributeInline, LifecycleStage.ImmediateDetached]);
   }
 
   [Test]

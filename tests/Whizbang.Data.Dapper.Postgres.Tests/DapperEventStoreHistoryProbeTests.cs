@@ -83,6 +83,12 @@ public class DapperEventStoreHistoryProbeTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task TypedProbe_NoEventTypes_ReturnsFalseWithoutAQueryAsync() {
+    await Assert.That(await _store().HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.CreateVersion7(), [])).IsFalse()
+      .Because("a perspective that folds no event types has no history to find, whatever the stream holds");
+  }
+
+  [Test]
   public async Task TypedProbe_OlderEventOfHandledType_ReturnsTrueAsync() {
     var streamId = Guid.NewGuid();
     await _seedPointerAsync(Guid.CreateVersion7(DateTimeOffset.UtcNow.AddDays(-62)), streamId, 1,

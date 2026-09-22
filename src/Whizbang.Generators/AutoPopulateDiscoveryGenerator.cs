@@ -99,6 +99,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts AutoPopulateInfo for all auto-populate attributes on a type's properties.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Walks every attribute shape the syntax allows for one property.")]
   private static IEnumerable<AutoPopulateInfo> _extractAutoPopulateInfos(
       GeneratorSyntaxContext context,
       CancellationToken ct) {

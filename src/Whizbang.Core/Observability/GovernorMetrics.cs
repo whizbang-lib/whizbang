@@ -36,6 +36,7 @@ public sealed class GovernorMetrics {
   /// <summary>Meter name used by <see cref="GovernorMetrics"/>.</summary>
 #pragma warning disable CA1707
   public const string METER_NAME = "Whizbang.Governor";
+  private const string GOVERNOR_TAG = "governor";
 #pragma warning restore CA1707
 
   private readonly ConcurrentDictionary<string, IConcurrencyGovernor> _tracked = new(StringComparer.Ordinal);
@@ -123,7 +124,7 @@ public sealed class GovernorMetrics {
       return;
     }
     _adjustments.Add(1,
-      new KeyValuePair<string, object?>("governor", name),
+      new KeyValuePair<string, object?>(GOVERNOR_TAG, name),
       new KeyValuePair<string, object?>("direction", to > from ? "grew" : "shrank"));
   }
 
@@ -138,7 +139,7 @@ public sealed class GovernorMetrics {
   /// <param name="name">The governor's series name.</param>
   /// <param name="signal">The observed cycle.</param>
   public void RecordObservation(string name, Whizbang.Core.Execution.GovernorSignal signal) {
-    var tag = new KeyValuePair<string, object?>("governor", name);
+    var tag = new KeyValuePair<string, object?>(GOVERNOR_TAG, name);
 
     _queueDepth.Record(signal.QueuedItems, tag);
 
@@ -158,14 +159,14 @@ public sealed class GovernorMetrics {
   private IEnumerable<Measurement<long>> _observeWidths() {
     foreach (var (name, governor) in _tracked) {
       yield return new Measurement<long>(governor.CurrentWidth,
-        new KeyValuePair<string, object?>("governor", name));
+        new KeyValuePair<string, object?>(GOVERNOR_TAG, name));
     }
   }
 
   private IEnumerable<Measurement<long>> _observeCeilings() {
     foreach (var (name, governor) in _tracked) {
       yield return new Measurement<long>(governor.Ceiling,
-        new KeyValuePair<string, object?>("governor", name));
+        new KeyValuePair<string, object?>(GOVERNOR_TAG, name));
     }
   }
 }

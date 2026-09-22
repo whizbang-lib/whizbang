@@ -70,6 +70,7 @@ public static class WorkerPipelineExtensions {
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
   /// <docs>operations/deployment/troubleshooting#workers-not-wired</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A registration list: each branch registers one worker, and the order is the wiring the documentation describes.")]
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 

@@ -47,8 +47,7 @@ public class ColdBootJourneyE2ETests {
   private DbContextOptions<WorkCoordinationDbContext> _dbOptions = null!;
   private string _connectionString = null!;
 
-  private sealed class ProbeModel {
-  }
+  private sealed class ProbeModel;
 
   private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();

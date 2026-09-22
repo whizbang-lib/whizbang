@@ -57,7 +57,6 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   public PinnedConnectionPool(
       WhizbangPinnedPoolOptions options,
       PinnedWorkerRegistry registry,
-      ILogger<PinnedConnectionPool>? logger = null,
       PinnedPoolMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(registry);

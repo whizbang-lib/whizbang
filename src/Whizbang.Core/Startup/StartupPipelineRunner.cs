@@ -206,6 +206,7 @@ public sealed class StartupPipelineRunner {
   /// observers are told through <see cref="IStartupStepObserver.OnStepWaitingAsync"/> on a
   /// backoff, so a long wait is narrated rather than a once-a-second Warning nobody sees.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The exclusive-step protocol in one place: acquire, run, report, retry with backoff; splitting it would separate the states the log narrates.")]
   private async ValueTask<StartupStepReport> _executeExclusiveAsync(
       IStartupStep step, StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
     var (attempt, transient) =

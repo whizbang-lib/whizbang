@@ -177,7 +177,7 @@ BEGIN
     -- generic hex), then long hex runs, then digit runs; whitespace collapses; 160 chars
     -- bounds the key.
     v_template := v_first_line;
-    v_template := regexp_replace(v_template, $q$'[^']*'$q$, '<q>', 'g');
+    v_template := regexp_replace(v_template, '''[^'']*''', '<q>', 'g');
     v_template := regexp_replace(v_template, '"[^"]*"', '<q>', 'g');
     v_template := regexp_replace(v_template,
       '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<g>', 'g');
@@ -192,7 +192,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
-'Algorithm v2 (P2 of plans/dlq-stack-intelligence.md). Typed errors hash "innermostType:frame1..frame3" with async state machines normalized (<M>d__N.MoveNext -> M) and consumer frames preferred (deepest Whizbang frame as fallback); prose errors hash a scrubbed first-line template so volatile values never split a cohort. First 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
+'Algorithm v2 (P2 of plans/dlq-stack-intelligence.md). Typed errors hash "innermostType:frame1..frame3" with async state machines normalized (<M>d__N.MoveNext -> M) and consumer frames preferred (deepest Whizbang frame as fallback); prose errors hash a scrubbed first-line template so volatile values never split a cohort. First 16 hex chars of SHA256. Called by the Slice 3 move_to_dead_letters extension (live capture) and the Slice 6 aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
 
 -- ============================================================================
 -- 4. wh_dead_letter_summary table (Slice 6)

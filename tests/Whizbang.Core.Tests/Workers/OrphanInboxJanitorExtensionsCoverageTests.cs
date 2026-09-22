@@ -10,8 +10,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Tail-of-round coverage for <see cref="OrphanInboxJanitorExtensions"/>: the snapshot walk must

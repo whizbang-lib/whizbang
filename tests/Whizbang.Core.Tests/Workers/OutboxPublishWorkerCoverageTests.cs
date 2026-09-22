@@ -122,10 +122,10 @@ public class OutboxPublishWorkerCoverageTests {
   /// <summary>Minimal deserializer that hands back a non-null placeholder — only used to satisfy the
   /// pre-outbox lifecycle's null-check gate so it proceeds to build a typed envelope.</summary>
   private sealed class FakeLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new object();
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new object();
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new object();
-    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new object();
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new();
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new();
   }
 
   /// <summary>Records every stage it is invoked with, so a test can assert exactly which lifecycle

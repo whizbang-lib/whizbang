@@ -81,7 +81,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       Type perspectiveType,
       PerspectiveSyncOptions options,
       CancellationToken ct) {
-    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
+    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
 
     // If no events match the filter, we're caught up
     if (pendingEvents.Count == 0) {
@@ -142,7 +142,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
 
     var stopwatch = _clock.StartNew();
-    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
+    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
 
     var perspectiveName = _getPerspectiveName(perspectiveType);
 

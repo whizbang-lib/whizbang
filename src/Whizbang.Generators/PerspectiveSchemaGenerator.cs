@@ -196,6 +196,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Discovers physical fields from [PhysicalField] and [VectorField] attributes on model properties.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads both field attributes with every optional argument in one pass over the properties.")]
   private static PhysicalFieldInfo[] _discoverPhysicalFields(System.Collections.Generic.List<IPropertySymbol> properties) {
     const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
     const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";

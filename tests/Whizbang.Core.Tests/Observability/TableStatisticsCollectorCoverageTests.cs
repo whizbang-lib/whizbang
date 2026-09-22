@@ -9,8 +9,7 @@ using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Observability;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Coverage round 23 tail: <see cref="TableStatisticsCollector.ExecuteAsync"/>'s early return when

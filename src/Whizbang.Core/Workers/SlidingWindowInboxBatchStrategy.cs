@@ -61,9 +61,9 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   /// Creates the strategy with the given flush callback and (optionally) tuned options + clock.
   /// </summary>
   /// <param name="flush">Called with each per-stream batch. Typically resolves <see cref="IWorkCoordinator"/> from a DI scope and calls <see cref="IWorkCoordinator.StoreInboxMessagesAsync"/>.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses the 300 ms / 3 s / 1000 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowInboxBatchStrategy(
       InboxBulkFlushCallback flush,
       ILogger<SlidingWindowInboxBatchStrategy> logger,

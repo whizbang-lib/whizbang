@@ -91,6 +91,9 @@ public static class SharedSelfTest {
   /// build whose copies agree -- which is the only build that ships -- so each duplicate of it was
   /// a permanently uncovered line, multiplied by the five hosts this assembly is merged into.
   /// </remarks>
+  // Excluded from coverage: the failing arm runs only in a build whose merged copies disagree, and such a build
+  // never ships (see the remarks above).
+  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
   private static void _expect(List<string> failures, bool holds, string whatFailed) {
     if (!holds) {
       failures.Add(whatFailed);

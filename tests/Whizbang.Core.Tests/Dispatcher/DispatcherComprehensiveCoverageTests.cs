@@ -275,9 +275,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   private static ReceptorInvoker<object> _defaultInvoker() =>
-    msg => {
-      return new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
-    };
+    _ => new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
 
   private static VoidReceptorInvoker _defaultVoidInvoker() => msg => ValueTask.CompletedTask;
 

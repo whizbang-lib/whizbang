@@ -40,7 +40,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
   /// <summary>The shared wire connecting every service in the harness.</summary>
   public InMemoryWireTransport Wire { get; }
 
-  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, JsonSerializerOptions wireOptions, WireFaultInjector faults) {
+  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, WireFaultInjector faults) {
     Wire = wire;
     _services = services;
     _faults = faults;
@@ -258,7 +258,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
         }
       }
 
-      return new MultiServiceHarness(wire, runtimes, wireOptions, faults);
+      return new MultiServiceHarness(wire, runtimes, faults);
     }
   }
 

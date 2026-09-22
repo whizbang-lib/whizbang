@@ -32,9 +32,10 @@ public class HousekeepingMetricsTests {
       _listen(IIdleActivityTracker? tracker = null) {
     var metrics = new HousekeepingMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()), tracker);
     var seen = new List<(string, long, string?, string?)>();
-    var listener = new MeterListener();
-    listener.InstrumentPublished = (inst, l) => {
-      if (inst.Meter == metrics.Decisions.Meter) { l.EnableMeasurementEvents(inst); }
+    var listener = new MeterListener {
+      InstrumentPublished = (inst, l) => {
+        if (inst.Meter == metrics.Decisions.Meter) { l.EnableMeasurementEvents(inst); }
+      }
     };
     listener.SetMeasurementEventCallback<long>((inst, value, tags, _) => {
       string? act = null, verd = null;

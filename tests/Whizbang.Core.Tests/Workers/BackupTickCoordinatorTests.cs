@@ -32,7 +32,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class BackupTickCoordinatorTests {
 
   private sealed class FakeGate(bool isAvailable) : INotifySignalingGate {
-    public bool IsAvailable { get; private set; } = isAvailable;
+    public bool IsAvailable { get; } = isAvailable;
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;

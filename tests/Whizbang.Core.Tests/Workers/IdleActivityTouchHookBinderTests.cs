@@ -127,7 +127,7 @@ public class IdleActivityTouchHookBinderTests {
 
     listener.RaiseSignal(WorkSignalCategory.Inbox);
 
-    await Assert.That(tracker.Touches).IsEquivalentTo(new List<string> { "notify" })
+    await Assert.That(tracker.Touches).IsEquivalentTo(["notify"])
       .Because("the source string is what makes the activity diagnosable after the fact");
   }
 

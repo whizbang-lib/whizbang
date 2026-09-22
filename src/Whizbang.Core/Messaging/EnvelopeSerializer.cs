@@ -32,17 +32,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
         $"TMessage type parameter: {TypeNameFormatter.DisplayName(typeof(TMessage))}. " +
         $"Payload runtime type: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "This is a bug - envelopes should only be serialized once before storage. " +
-        "Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message.");
-    }
-
-    // DEFENSIVE: Detect if TMessage is JsonElement (should never happen!)
-    if (typeof(TMessage) == typeof(JsonElement)) {
-      throw new InvalidOperationException(
-        "WRONG TYPE PARAMETER: TMessage is JsonElement. " +
-        $"MessageId: {envelope.MessageId}. " +
-        $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
-        "This indicates SerializeEnvelope was called with wrong type parameter. " +
-        "The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
+        "Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message, or if SerializeEnvelope was called with JsonElement as its type parameter.");
     }
 
     // CRITICAL: Construct envelope type from PAYLOAD runtime type, not TMessage

@@ -249,7 +249,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions: jsonOptions,
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),

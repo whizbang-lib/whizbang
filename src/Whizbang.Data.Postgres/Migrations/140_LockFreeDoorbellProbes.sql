@@ -161,7 +161,7 @@ BEGIN
         ON CONFLICT (stream_id) DO NOTHING;
       END IF;
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, TRUE AS was_newly_created;
-    END IF;  -- Close IF v_observations = 1 THEN
+    END IF;  -- closes the single-observation branch
   END LOOP;
 
   IF cardinality(v_notify_inbox_streams) > 0 THEN

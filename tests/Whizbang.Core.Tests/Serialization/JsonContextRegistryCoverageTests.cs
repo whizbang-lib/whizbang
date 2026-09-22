@@ -234,6 +234,42 @@ public class JsonContextRegistryCoverageTests {
     await Assert.That(result).IsNotNull();
     await Assert.That(result).IsEmpty();
   }
+
+  [Test]
+  public async Task RegisterTypeInfoModifier_RunsOverTheResolvedTypesOfItsProfileAsync() {
+    var seenByPersistence = new List<Type>();
+    JsonContextRegistry.RegisterTypeInfoModifier(info => seenByPersistence.Add(info.Type), SerializationProfile.Persistence);
+    var options = new JsonSerializerOptions();
+
+    var persistence = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Persistence);
+    _ = persistence.GetTypeInfo(typeof(Uri), options);
+    var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
+    _ = wire.GetTypeInfo(typeof(Uri), options);
+
+    await Assert.That(seenByPersistence).Contains(typeof(Uri))
+      .Because("a modifier registered for the persistence profile runs over every type the persistence resolver resolves");
+    await Assert.That(seenByPersistence.Count(t => t == typeof(Uri))).IsEqualTo(1)
+      .Because("the wire profile's resolver must not carry a persistence-only modifier");
+  }
+
+  [Test]
+  public async Task RegisterTypeInfoModifier_WithoutAProfile_RunsForEveryProfileAsync() {
+    var seen = new List<Type>();
+    JsonContextRegistry.RegisterTypeInfoModifier(info => seen.Add(info.Type));
+    var options = new JsonSerializerOptions();
+
+    var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
+    _ = wire.GetTypeInfo(typeof(Version), options);
+
+    await Assert.That(seen).Contains(typeof(Version))
+      .Because("a modifier with no profile applies to whichever profile is being built");
+  }
+
+  [Test]
+  public async Task RegisterTypeInfoModifier_RejectsANullModifierAsync() {
+    await Assert.That(() => JsonContextRegistry.RegisterTypeInfoModifier(null!)).Throws<ArgumentNullException>();
+  }
+
 }
 
 /// <summary>JSON context supplying the derived type for the list-materialization test.</summary>

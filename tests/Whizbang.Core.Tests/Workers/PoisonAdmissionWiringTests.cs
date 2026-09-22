@@ -61,6 +61,14 @@ public partial class PoisonAdmissionWiringTests {
   };
 
   [Test]
+  public async Task ARowOutsideItsFetchIsAdmittedAsync() {
+    var fetch = new List<InboxBatchRow> { _row(3), _row(3) };
+
+    await Assert.That(_worker().AdmitRowForTest(_row(0), fetch)).IsTrue()
+      .Because("the plan can only hold back rows it saw; a row the fetch does not contain has no deferral decision and flows through");
+  }
+
+  [Test]
   public async Task AllFreshRowsAreAdmittedAsync() {
     var plan = _worker().AdmissionPlanForTest([_row(1), _row(1), _row(1), _row(1)]);
 

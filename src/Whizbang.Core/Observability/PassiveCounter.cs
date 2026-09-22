@@ -155,7 +155,7 @@ public sealed class PassiveCounter<T> where T : struct, INumberBase<T> {
   }
 
   /// <summary>A tag set as a dictionary key: order-insensitive, compared by key and value text.</summary>
-  private sealed class TagSet : IEquatable<TagSet> {
+  internal sealed class TagSet : IEquatable<TagSet> {
     private readonly int _hash;
 
     public TagSet(ReadOnlySpan<KeyValuePair<string, object?>> tags) {
@@ -173,7 +173,8 @@ public sealed class PassiveCounter<T> where T : struct, INumberBase<T> {
     public KeyValuePair<string, object?>[] Tags { get; }
 
     public bool Equals(TagSet? other) {
-      if (other is null || other.Tags.Length != Tags.Length || other._hash != _hash) {
+      // The dictionary has already matched hashes before it asks; the tags themselves are the equality.
+      if (other is null || other.Tags.Length != Tags.Length) {
         return false;
       }
       for (var i = 0; i < Tags.Length; i++) {

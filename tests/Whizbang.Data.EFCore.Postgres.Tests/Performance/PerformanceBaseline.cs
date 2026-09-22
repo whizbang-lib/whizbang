@@ -80,8 +80,8 @@ public sealed class PerformanceBaseline {
     public string Render() {
       var sb = new StringBuilder();
       sb.Append("\n=== ").Append(_scenario).Append(" ===\n");
-      sb.Append(string.Format(CultureInfo.InvariantCulture,
-        "{0,-64}{1,14}{2,14}{3,11}  {4}\n", "measure", "this run", "baseline", "drift", "unit"));
+      sb.AppendFormat(CultureInfo.InvariantCulture,
+        "{0,-64}{1,14}{2,14}{3,11}  {4}\n", "measure", "this run", "baseline", "drift", "unit");
       foreach (var (name, value, unit, recorded) in _rows) {
         var thisRun = value.ToString("N1", CultureInfo.InvariantCulture);
         var was = recorded is { } b ? b.Value.ToString("N1", CultureInfo.InvariantCulture) : "-";
@@ -94,8 +94,8 @@ public sealed class PerformanceBaseline {
         var ceiling = recorded is { Ceiling: not null } cb
           ? $"  (ceiling {cb.Ceiling!.Value.ToString("N0", CultureInfo.InvariantCulture)})"
           : "";
-        sb.Append(string.Format(CultureInfo.InvariantCulture,
-          "{0,-64}{1,14}{2,14}{3,11}  {4}{5}\n", name, thisRun, was, drift, unit, ceiling));
+        sb.AppendFormat(CultureInfo.InvariantCulture,
+          "{0,-64}{1,14}{2,14}{3,11}  {4}{5}\n", name, thisRun, was, drift, unit, ceiling);
       }
       return sb.ToString();
     }

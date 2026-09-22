@@ -288,4 +288,14 @@ public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
       writer.WriteEndObject();
     }
   }
+
+  [Test]
+  public async Task HasStreamEventsBefore_WithoutAnOverride_AnswersNoHistoryAsync() {
+    var store = _createEventStore();
+    var streamId = Guid.NewGuid();
+
+    await Assert.That(await store.HasStreamEventsBeforeAsync(streamId, Guid.CreateVersion7())).IsFalse()
+      .Because("a driver that does not implement the history probe reports no history, so resurrection stays off rather than guessing");
+    await Assert.That(await store.HasStreamEventsBeforeAsync(streamId, Guid.CreateVersion7(), [typeof(object)])).IsFalse();
+  }
 }
