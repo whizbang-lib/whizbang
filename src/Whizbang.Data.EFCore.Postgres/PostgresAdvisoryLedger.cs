@@ -54,9 +54,9 @@ public sealed partial class PostgresAdvisoryLedger(
         connection);
 
       cmd.Parameters.AddWithValue("key", findingKey);
-      cmd.Parameters.AddWithValue("signature", signature);
-      cmd.Parameters.AddWithValue("now", now);
-      cmd.Parameters.AddWithValue("cooldown", cooldown);
+      cmd.Parameters.AddWithValue(nameof(signature), signature);
+      cmd.Parameters.AddWithValue(nameof(now), now);
+      cmd.Parameters.AddWithValue(nameof(cooldown), cooldown);
 
       var answer = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
 

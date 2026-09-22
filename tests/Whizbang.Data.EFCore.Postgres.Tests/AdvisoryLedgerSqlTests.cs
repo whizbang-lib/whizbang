@@ -44,10 +44,10 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
       NpgsqlConnection connection, string key, string signature, DateTimeOffset now, TimeSpan? cooldown = null) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = "SELECT wh_advisory_try_begin_report(@key, @sig, @now, @cooldown)";
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     cmd.Parameters.AddWithValue("sig", signature);
-    cmd.Parameters.AddWithValue("now", now);
-    cmd.Parameters.AddWithValue("cooldown", cooldown ?? _week);
+    cmd.Parameters.AddWithValue(nameof(now), now);
+    cmd.Parameters.AddWithValue(nameof(cooldown), cooldown ?? _week);
     return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
@@ -56,7 +56,7 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText =
       "SELECT first_seen_at, last_reported_at, last_touched, report_count FROM wh_advisory_ledger WHERE finding_key = @key";
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
     return (await reader.GetFieldValueAsync<DateTimeOffset>(0),
@@ -133,15 +133,15 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
 
     var seenAt = t0.AddDays(1);
     await _tryBeginAsync(connection, key, "JobName", seenAt);
-    var row = await _rowAsync(connection, key);
+    var (_, lastReported, lastTouched, reports) = await _rowAsync(connection, key);
 
-    await Assert.That(row.LastTouched).IsGreaterThanOrEqualTo(seenAt.AddSeconds(-1))
+    await Assert.That(lastTouched).IsGreaterThanOrEqualTo(seenAt.AddSeconds(-1))
       .Because("the gap between when a finding was last seen and last reported is how an operator "
              + "tells suppression from a finding that stopped being detected.");
-    await Assert.That(row.LastReported).IsLessThan(seenAt.AddSeconds(-1))
+    await Assert.That(lastReported).IsLessThan(seenAt.AddSeconds(-1))
       .Because("and the refusal must not move last_reported_at, or the cooldown would restart on "
              + "every cycle and the advice would never come back at all.");
-    await Assert.That(row.Count).IsEqualTo(1)
+    await Assert.That(reports).IsEqualTo(1)
       .Because("a refusal is not a report.");
   }
 
@@ -157,13 +157,13 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
     // Changed advice, then the cooldown elapsing: both paths through the upsert.
     await _tryBeginAsync(connection, key, "JobName,Status", t0.AddMinutes(1));
     await _tryBeginAsync(connection, key, "JobName,Status", t0 + _week + TimeSpan.FromMinutes(1));
-    var row = await _rowAsync(connection, key);
+    var (firstSeenNow, _, _, reports) = await _rowAsync(connection, key);
 
-    await Assert.That(row.FirstSeen).IsEqualTo(firstSeen)
+    await Assert.That(firstSeenNow).IsEqualTo(firstSeen)
       .Because("how long a finding has gone unaddressed is the question an operator acts on, and "
              + "adding first_seen_at to the columns the upsert moves would reset that clock on every "
              + "report while leaving the column populated and plausible.");
-    await Assert.That(row.Count).IsEqualTo(3)
+    await Assert.That(reports).IsEqualTo(3)
       .Because("and each granted report counts, so a finding that keeps coming back does not read "
              + "as a first sighting forever.");
   }
