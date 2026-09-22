@@ -28,6 +28,7 @@ public class ConsumerTranslatorSeamTests {
 
   /// <summary>A function a consumer ships, which Entity Framework cannot translate on its own.</summary>
   private static class ConsumerFunctions {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the shape the translator matches and Entity Framework translates; the body never runs.")]
     public static bool IsDistinctFrom(string? left, string? right) =>
       throw new NotSupportedException("translated on the server; never called");
   }
@@ -56,6 +57,7 @@ public class ConsumerTranslatorSeamTests {
   // Hoisted for CA1861: the framework probe below is evaluated once per test case.
   private static readonly string[] _candidates = ["b"];
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1144:Unused private types or members should be removed", Justification = "Entity Framework materializes the row through the setters.")]
   private sealed class ProbeRow {
     public Guid Id { get; set; }
     public string? Left { get; set; }
