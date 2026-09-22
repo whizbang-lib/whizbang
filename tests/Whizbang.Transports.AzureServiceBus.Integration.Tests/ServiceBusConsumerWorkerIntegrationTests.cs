@@ -53,7 +53,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
@@ -78,7 +79,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -146,7 +147,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] },
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -183,7 +184,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await transport.InitializeAsync();
 
     IScopeContext? capturedScope = null;
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(
       capturedInboxMessages,
       onFlush: sp => {
@@ -213,7 +215,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -232,7 +234,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       await transport.PublishAsync(envelope, destination);
 
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => !capturedInboxMessages.IsEmpty,
         TimeSpan.FromSeconds(30));
 
       await Assert.That(processed).IsTrue();
@@ -279,7 +281,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -342,7 +344,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -390,7 +392,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -442,7 +444,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -469,7 +471,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
@@ -494,7 +497,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -537,7 +540,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
@@ -562,7 +566,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      envelopeSerializer: new EnvelopeSerializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
@@ -695,9 +699,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   /// Work coordinator strategy that captures inbox messages and returns them as work items.
   /// </summary>
   private sealed class CapturingWorkCoordinatorStrategy(
-      List<InboxMessage> capturedMessages,
+      System.Collections.Concurrent.ConcurrentQueue<InboxMessage> capturedMessages,
       Action<IServiceProvider?>? onFlush = null) : IWorkCoordinatorStrategy {
-    private readonly List<InboxMessage> _capturedMessages = capturedMessages;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<InboxMessage> _capturedMessages = capturedMessages;
     private readonly Action<IServiceProvider?>? _onFlush = onFlush;
     private InboxMessage? _pendingMessage;
 
@@ -705,7 +709,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     public void QueueInboxMessage(InboxMessage message) {
       _pendingMessage = message;
-      _capturedMessages.Add(message);
+      _capturedMessages.Enqueue(message);
     }
 
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
