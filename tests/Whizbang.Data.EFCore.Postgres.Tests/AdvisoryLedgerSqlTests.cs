@@ -168,6 +168,111 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
              + "as a first sighting forever.");
   }
 
+  // ============================================================
+  // Through the wrapper, not just the function
+  // ============================================================
+
+  /// <summary>
+  /// The C# that calls the function agrees with it about parameters and about the answer.
+  /// </summary>
+  /// <remarks>
+  /// Every test above drives the SQL directly, which says nothing about the type that reaches it in
+  /// production. A wrapper can look correct and still bind the wrong parameter shape or mistranslate
+  /// the result, and this one turns anything unexpected into a fallback, which reads exactly like a
+  /// legitimate refusal.
+  /// </remarks>
+  [Test]
+  public async Task TheLedgerTypeAgreesWithTheFunctionAboutBothAnswersAsync() {
+    await using var ctx = CreateDbContext();
+    await _openAsync(ctx);
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var ledger = new PostgresAdvisoryLedger(dataSource);
+    var key = _key();
+    var t0 = DateTimeOffset.UtcNow;
+
+    var first = await ledger.TryBeginReportAsync(key, "JobName", t0, _week);
+    var repeat = await ledger.TryBeginReportAsync(key, "JobName", t0.AddDays(1), _week);
+    var changed = await ledger.TryBeginReportAsync(key, "JobName,Status", t0.AddDays(1), _week);
+
+    await Assert.That(first).IsTrue();
+    await Assert.That(repeat).IsFalse()
+      .Because("a refusal has to survive the round trip as a refusal; the fallback this type applies "
+             + "on any trouble would also answer true here, so a bound-parameter mistake would look "
+             + "like the feature working.");
+    await Assert.That(changed).IsTrue();
+  }
+
+  /// <summary>
+  /// A database it cannot reach degrades to per-process suppression, and does not throw.
+  /// </summary>
+  /// <remarks>
+  /// This is the whole reason the fallback is a real ledger rather than a hardcoded answer. Failing
+  /// open restores the flood the durable ledger exists to stop; failing closed silences a genuine
+  /// finding for as long as the fault lasts. Degrading to what the framework did before this existed
+  /// is the only behavior that is wrong in neither direction, and it has to hold for the LIFETIME of
+  /// the instance -- a fallback constructed per call would suppress nothing at all.
+  /// </remarks>
+  [Test]
+  public async Task AnUnreachableDatabaseDegradesToPerProcessSuppressionAsync() {
+    // Port 1 refuses immediately, so this is a connection failure and not a hang.
+    await using var unreachable = NpgsqlDataSource.Create(
+      "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1;Command Timeout=1");
+    var ledger = new PostgresAdvisoryLedger(unreachable);
+    var key = _key();
+    var t0 = DateTimeOffset.UtcNow;
+
+    var first = await ledger.TryBeginReportAsync(key, "JobName", t0, _week);
+    var repeat = await ledger.TryBeginReportAsync(key, "JobName", t0.AddDays(1), _week);
+
+    await Assert.That(first).IsTrue()
+      .Because("a fault must not silence a real finding, so the first sighting still goes out.");
+    await Assert.That(repeat).IsFalse()
+      .Because("and it must not restore the flood either: the fallback is held for the lifetime of "
+             + "this instance, so a persistent fault is once per process rather than once per cycle.");
+  }
+
+  /// <summary>
+  /// Cancellation is passed through, not swallowed into a decision.
+  /// </summary>
+  /// <remarks>
+  /// Every other kind of trouble here degrades to the process-local ledger, and cancellation must
+  /// not: a stopping service would otherwise record a report it never made, so the finding would be
+  /// suppressed for a week by a cycle that was cut short.
+  /// </remarks>
+  [Test]
+  public async Task ACanceledConsultIsPassedThroughRatherThanDegradedAsync() {
+    await using var ctx = CreateDbContext();
+    await _openAsync(ctx);
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var ledger = new PostgresAdvisoryLedger(dataSource);
+    var key = _key();
+    using var cancelled = new CancellationTokenSource();
+    await cancelled.CancelAsync();
+
+    await Assert.That(async () =>
+        await ledger.TryBeginReportAsync(key, "JobName", DateTimeOffset.UtcNow, _week, cancelled.Token))
+      .Throws<OperationCanceledException>();
+
+    await using var check = NpgsqlDataSource.Create(ConnectionString);
+    var afterwards = new PostgresAdvisoryLedger(check);
+    await Assert.That(await afterwards.TryBeginReportAsync(key, "JobName", DateTimeOffset.UtcNow, _week))
+      .IsTrue()
+      .Because("the canceled consult must leave no record, or a cycle cut short would suppress the "
+             + "finding for a week without ever having reported it.");
+  }
+
+  [Test]
+  public async Task ANullKeyOrSignatureIsRejectedByTheLedgerTypeAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var ledger = new PostgresAdvisoryLedger(dataSource);
+    var t0 = DateTimeOffset.UtcNow;
+
+    await Assert.That(async () => await ledger.TryBeginReportAsync(null!, "sig", t0, _week))
+      .Throws<ArgumentNullException>();
+    await Assert.That(async () => await ledger.TryBeginReportAsync("k", null!, t0, _week))
+      .Throws<ArgumentNullException>();
+  }
+
   /// <summary>Two findings are two rows, not one shared decision.</summary>
   [Test]
   public async Task ADifferentFindingIsTrackedSeparatelyAsync() {
