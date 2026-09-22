@@ -458,9 +458,8 @@ public class AzureServiceBusTransportUnitTests {
     var destination = new TransportDestination("batch-topic");
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-    IReadOnlyList<BulkPublishItemResult>? results = null;
     try {
-      results = await transport.PublishBatchAsync(items, destination, cts.Token);
+      _ = await transport.PublishBatchAsync(items, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException) {
       // May throw if batch send fails on no broker
     }
@@ -812,12 +811,18 @@ public class AzureServiceBusTransportUnitTests {
       // SubscriptionProperties has no public constructor — create via CreateSubscriptionOptions internal conversion
       var requiresSession = SessionRequiredSubscriptions.Contains((topicName, subscriptionName));
       var options = new CreateSubscriptionOptions(topicName, subscriptionName) { RequiresSession = requiresSession };
-      // Use reflection to create SubscriptionProperties from CreateSubscriptionOptions
-      // Azure SDK expects this to be constructed internally, but we need it for testing
-      var props = (SubscriptionProperties)typeof(SubscriptionProperties)
-        .GetConstructor(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-          null, [typeof(CreateSubscriptionOptions)], null)!
-        .Invoke([options]);
+      // The SDK's model factory builds the properties a real namespace would return
+      var props = ServiceBusModelFactory.SubscriptionProperties(
+        topicName, subscriptionName,
+        lockDuration: options.LockDuration,
+        requiresSession: options.RequiresSession,
+        defaultMessageTimeToLive: options.DefaultMessageTimeToLive,
+        autoDeleteOnIdle: options.AutoDeleteOnIdle,
+        deadLetteringOnMessageExpiration: options.DeadLetteringOnMessageExpiration,
+        maxDeliveryCount: options.MaxDeliveryCount,
+        enableBatchedOperations: options.EnableBatchedOperations,
+        status: options.Status,
+        userMetadata: options.UserMetadata ?? string.Empty);
       return Task.FromResult(props);
     }
 

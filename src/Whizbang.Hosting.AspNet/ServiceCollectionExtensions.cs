@@ -12,7 +12,10 @@ namespace Whizbang.Hosting.AspNet;
 /// <docs>data/work-coordinator-strategies</docs>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/ServiceCollectionExtensionsTests.cs</tests>
 public static class ServiceCollectionExtensions {
-  private sealed class ManagedHealthChecksMarker;
+  /// <summary>Registered once by <c>AddWhizbangHealthChecks</c> so a second call can see the first.</summary>
+  private sealed class ManagedHealthChecksMarker {
+    public static ManagedHealthChecksMarker Instance { get; } = new();
+  }
 
   /// <summary>
   /// Registers Whizbang's turnkey ASP.NET hosting: the flush, correlation and security-headers startup
@@ -57,7 +60,7 @@ public static class ServiceCollectionExtensions {
     // repeated AddWhizbangAspNet calls don't add duplicate-named checks.
     services.AddWhizbangManagedHealth();
     if (!services.Any(static d => d.ServiceType == typeof(ManagedHealthChecksMarker))) {
-      services.AddSingleton<ManagedHealthChecksMarker>();
+      services.AddSingleton(ManagedHealthChecksMarker.Instance);
       services.AddHealthChecks().AddWhizbangManagedHealthChecks();
     }
     return services;

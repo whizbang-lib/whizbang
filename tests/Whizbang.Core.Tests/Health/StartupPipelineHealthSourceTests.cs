@@ -35,7 +35,7 @@ public class StartupPipelineHealthSourceTests {
 
   [Test]
   public async Task NotStarted_ReportsStartingWithAStatedDetailAsync() {
-    var source = new StartupPipelineHealthSource(new StartupPipelineState());
+    var source = new StartupPipelineHealthSource(state: new StartupPipelineState(), readySignal: new StartupReadySignal());
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -51,7 +51,7 @@ public class StartupPipelineHealthSourceTests {
       _completed("Assess"));
     await state.OnStepStartingAsync(
       new StartupStepContext(_step(FrameworkStartupSteps.MIGRATE)), CancellationToken.None);
-    var source = new StartupPipelineHealthSource(state);
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -67,7 +67,7 @@ public class StartupPipelineHealthSourceTests {
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
       new StartupStepResult(FrameworkStartupSteps.MIGRATE, StartupStepOutcome.Failed,
         TimeSpan.FromMilliseconds(2), "42P01: relation tenant_secrets does not exist"));
-    var source = new StartupPipelineHealthSource(state);
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
 
     var health = await source.ReportAsync(CancellationToken.None);
 

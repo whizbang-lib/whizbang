@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// keeping the system in a safe halted state instead of running on a broken schema.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/startup-ordering</docs>
+/// <docs>operations/workers/database-readiness</docs>
 public interface ISchemaReadyGate {
   /// <summary>
   /// Awaits the schema-ready signal. Returns immediately when ready; otherwise blocks until

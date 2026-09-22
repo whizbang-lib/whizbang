@@ -96,7 +96,7 @@ public sealed class PerspectiveMetrics {
   /// <summary>Initializes a new instance of the <see cref="PerspectiveMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public PerspectiveMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full _processWorkBatchAsync cycle");
     ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");

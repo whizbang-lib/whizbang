@@ -1,10 +1,13 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Workers;
 
@@ -21,7 +24,7 @@ public class CoalesceShipWorkerCoverageTests {
   private static readonly DateTimeOffset _testNow = new(2026, 8, 18, 12, 0, 0, TimeSpan.Zero);
 
   /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
-  private sealed class _messageLogger : ILogger<CoalesceShipWorker> {
+  private sealed class MessageLogger : ILogger<CoalesceShipWorker> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -35,7 +38,7 @@ public class CoalesceShipWorkerCoverageTests {
   }
 
   /// <summary>A coordinator whose <c>ReleaseMaturedCoalesceAsync</c> throws instead of releasing.</summary>
-  private sealed class _canceledOnReleaseCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CanceledOnReleaseCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int ReleaseCalls { get; private set; }
 
     public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
@@ -48,7 +51,7 @@ public class CoalesceShipWorkerCoverageTests {
   /// Counts every coordinator call the shipper can make once it is past the barrier, so a
   /// gate-cancel test can assert that none of them happened.
   /// </summary>
-  private sealed class _countingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _calls;
     public int Calls => Volatile.Read(ref _calls);
 
@@ -64,7 +67,7 @@ public class CoalesceShipWorkerCoverageTests {
   }
 
   /// <summary>A coordinator whose release always reports rows released — for the LogReleasedMatured branch.</summary>
-  private sealed class _releasingCoordinator(int releasedCount) : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class ReleasingCoordinator(int releasedCount) : NoOpWorkCoordinator, IWorkCoordinator {
     public IReadOnlyList<CoalesceGroupStats> Stats { get; init; } = [];
 
     public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) =>
@@ -78,7 +81,7 @@ public class CoalesceShipWorkerCoverageTests {
   /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
   /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -92,7 +95,7 @@ public class CoalesceShipWorkerCoverageTests {
   }
 
   /// <summary>A coordinator whose fetch (the first call inside a fold) always cancels.</summary>
-  private sealed class _cancelingFoldCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CancelingFoldCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<string> ReleasedGroups { get; } = [];
     public IReadOnlyList<CoalesceGroupStats> Stats { get; init; } = [];
 
@@ -119,9 +122,9 @@ public class CoalesceShipWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new _countingCoordinator();
+    var coordinator = new CountingCoordinator();
     // Gate never marked ready — a host stopped mid-migration.
-    var gate = new _blockingGate();
+    var gate = new BlockingGate();
     var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, gate: gate);
 
     using var cts = new CancellationTokenSource();
@@ -153,7 +156,7 @@ public class CoalesceShipWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_StartupRecoveryCanceled_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new _canceledOnReleaseCoordinator();
+    var coordinator = new CanceledOnReleaseCoordinator();
     var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
 
     using var cts = new CancellationTokenSource();
@@ -179,8 +182,8 @@ public class CoalesceShipWorkerCoverageTests {
   [Test]
   public async Task RunStartupRecoveryAsync_ReleasedRows_LogsHowManyAndForWhichGroupAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new _releasingCoordinator(releasedCount: 4);
-    var logger = new _messageLogger();
+    var coordinator = new ReleasingCoordinator(releasedCount: 4);
+    var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, logger: logger);
 
     await worker.RunStartupRecoveryAsync(CancellationToken.None);
@@ -200,12 +203,12 @@ public class CoalesceShipWorkerCoverageTests {
   [Test]
   public async Task RunOnceAsync_ReleaseBackstopReleasesRows_LogsHowManyAndForWhichGroupAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new _releasingCoordinator(releasedCount: 2) {
+    var coordinator = new ReleasingCoordinator(releasedCount: 2) {
       // PendingCount 0 keeps the fold pass a no-op (binding lookup short-circuits on
       // `PendingCount <= 0`) so only the backstop pass below is under test.
       Stats = [_stats("record-digest", count: 0, oldestAge: 500, newestAge: 500)],
     };
-    var logger = new _messageLogger();
+    var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, logger: logger);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -225,7 +228,7 @@ public class CoalesceShipWorkerCoverageTests {
   [Test]
   public async Task RunOnceAsync_FoldCanceledMidGroup_PropagatesRatherThanTreatingItAsAGroupFailureAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new _cancelingFoldCoordinator {
+    var coordinator = new CancelingFoldCoordinator {
       Stats = [_stats("record-digest", count: 3, oldestAge: 40, newestAge: 20)],
     };
     var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
@@ -267,11 +270,12 @@ public class CoalesceShipWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
 
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? SchemaReadyGate.AlreadyReady(),
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate ?? SchemaReadyGate.AlreadyReady(),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: logger ?? NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
       coalesceResolver: resolver,
-      logger: logger,
       timeProvider: time);
   }
 }

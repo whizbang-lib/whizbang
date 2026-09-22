@@ -50,8 +50,8 @@ public class ServiceBusReadinessCheckTests {
     var transport = new TestTransport(isInitialized: true);
     var client = new TestServiceBusClient(isHealthy: true);
     var check = new ServiceBusReadinessCheck(transport, client, NullLogger<ServiceBusReadinessCheck>.Instance);
-    var cts = new CancellationTokenSource();
-    cts.Cancel(); // Cancel immediately
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync(); // Cancel immediately
 
     // Act & Assert
     // The cancellation token is checked during lock acquisition
@@ -133,10 +133,6 @@ internal sealed class TestTransport(bool isInitialized) : ITransport {
   }
 
   public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

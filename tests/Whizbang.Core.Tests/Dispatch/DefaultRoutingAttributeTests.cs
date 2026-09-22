@@ -159,21 +159,21 @@ public class DefaultRoutingAttributeTests {
   #region Test Types
 
   [DefaultRouting(DispatchModes.Local)]
-  private sealed class LocalRoutedEvent : IEvent { }
+  private sealed class LocalRoutedEvent : IEvent;
 
   [DefaultRouting(DispatchModes.Outbox)]
-  private sealed class OutboxRoutedEvent : IEvent { }
+  private sealed class OutboxRoutedEvent : IEvent;
 
   [DefaultRouting(DispatchModes.Both)]
-  private sealed class BothRoutedEvent : IEvent { }
+  private sealed class BothRoutedEvent : IEvent;
 
   [DefaultRouting(DispatchModes.Local)]
-  private struct LocalRoutedStructEvent : IEvent { }
+  private struct LocalRoutedStructEvent : IEvent;
 
   [DefaultRouting(DispatchModes.Local)]
   private sealed record LocalRoutedRecordEvent : IEvent;
 
-  private sealed class UnroutedEvent : IEvent { }
+  private sealed class UnroutedEvent : IEvent;
 
   #endregion
 }

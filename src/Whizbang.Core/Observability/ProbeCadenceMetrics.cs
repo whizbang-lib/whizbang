@@ -46,7 +46,7 @@ public sealed class ProbeCadenceMetrics {
   /// <exception cref="ArgumentNullException">Thrown when the holder is null.</exception>
   public ProbeCadenceMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     ProbeTicks = meter.CreatePassiveCounter<long>("whizbang.probes.ticks",
       description: "Periodic probe ticks by worker and outcome; the idle series are the service's idle footprint");

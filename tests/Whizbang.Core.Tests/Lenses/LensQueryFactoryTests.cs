@@ -28,7 +28,7 @@ public class LensQueryFactoryTests {
 
     var services = new ServiceCollection();
 
-    services.AddScoped<ILensQuery<TestModel>>(sp => {
+    services.AddScoped<ILensQuery<TestModel>>(_ => {
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModel(expectedModel);
       return mockQuery;
@@ -70,7 +70,7 @@ public class LensQueryFactoryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       return new MockLensQuery<TestModel>();
     });
 
@@ -106,7 +106,7 @@ public class LensQueryFactoryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       return new MockLensQuery<TestModel>();
     });
 
@@ -121,9 +121,9 @@ public class LensQueryFactoryTests {
     // Act - Multiple queries within same scope
     using var scopedQuery = factory.CreateScoped();
 
-    var query1 = scopedQuery.Value.Query.ToList();
-    var query2 = scopedQuery.Value.Query.ToList();
-    var query3 = scopedQuery.Value.Query.ToList();
+    _ = scopedQuery.Value.Query.ToList();
+    _ = scopedQuery.Value.Query.ToList();
+    _ = scopedQuery.Value.Query.ToList();
 
     // Assert - Only one scope created (all queries share it)
     await Assert.That(scopesCreated).IsEqualTo(1);
@@ -143,7 +143,7 @@ public class LensQueryFactoryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>();
+      _ = sp.GetRequiredService<ScopeTracker>();
       return new MockLensQuery<TestModel>();
     });
 

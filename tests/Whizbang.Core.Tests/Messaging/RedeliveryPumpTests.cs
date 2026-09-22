@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -29,10 +30,10 @@ public class RedeliveryPumpTests {
     var a1 = TrackedGuid.NewMedo().Value;
     var a2 = TrackedGuid.NewMedo().Value;
     var b1 = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     var origin = TrackedGuid.NewMedo().Value;
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync(
       [_evt(streamA, a1, 1), _evt(streamA, a2, 2), _evt(streamB, b1, 1)],
@@ -72,11 +73,9 @@ public class RedeliveryPumpTests {
   public async Task Publish_ChunksStreamsByMaxInnerEventsAsync() {
     var stream = TrackedGuid.NewMedo().Value;
     var ids = Enumerable.Range(0, 5).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
 
     var published = await pump.PublishAsync(
       [.. ids.Select((id, i) => _evt(stream, id, i + 1))],
@@ -85,8 +84,8 @@ public class RedeliveryPumpTests {
     await Assert.That(published).IsEqualTo(3)
       .Because("five events at a chunk bound of two → composites of 2 + 2 + 1.");
     var chunkIds = serializer.Captured
-      .Select(env => env.Payload.InnerEventIds)
-      .ToList();
+      .ConvertAll(env => env.Payload.InnerEventIds)
+;
     await Assert.That(chunkIds[0]).IsEquivalentTo([ids[0], ids[1]]);
     await Assert.That(chunkIds[1]).IsEquivalentTo([ids[2], ids[3]]);
     await Assert.That(chunkIds[2]).IsEquivalentTo([ids[4]]);
@@ -100,14 +99,12 @@ public class RedeliveryPumpTests {
   public async Task Publish_ChunksByRawBodyBytes_BelowTheCountBoundAsync() {
     var stream = TrackedGuid.NewMedo().Value;
     var ids = Enumerable.Range(0, 3).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     // Each event carries ~102 raw bytes (100-byte body + "{}" metadata); a 100-byte budget is
     // crossed by every single event, so each flushes alone — a count-only bound would build one
     // 3-event composite here.
-    var pump = new RedeliveryPump(transport, serializer,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
     var bigBody = "{\"pad\":\"" + new string('x', 90) + "\"}";
 
     var published = await pump.PublishAsync(
@@ -126,11 +123,9 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_SingleEventLargerThanByteBudget_StillShipsAloneAsync() {
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
 
     var published = await pump.PublishAsync(
       [_evt(stream, TrackedGuid.NewMedo().Value, 1) with { EventData = "{\"pad\":\"oversized-body\"}" }],
@@ -146,9 +141,9 @@ public class RedeliveryPumpTests {
     // The origin needs NO type knowledge to repair: a stored event whose type is not registered
     // anywhere on this host still ships verbatim. The typed design threw here and the repair
     // never left the origin.
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync(
       [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1) with { EventType = "Totally.Unregistered.Type, Nowhere" }],
@@ -173,9 +168,9 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_CarriesTheStoredScopeOntoTheWireHopAsync() {
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
       [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a"))],
@@ -194,9 +189,9 @@ public class RedeliveryPumpTests {
     // together would stamp one tenant's scope onto the other tenant's event — a cross-tenant
     // mis-attribution created by the repair path itself. Splitting is the only safe answer.
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     var published = await pump.PublishAsync([
         _scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a")),
@@ -219,9 +214,9 @@ public class RedeliveryPumpTests {
     // The other half of the contract: carrying what was stored must never become inventing what
     // was not. An event persisted without a scope stays without one.
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
       [_evt(stream, TrackedGuid.NewMedo().Value, 1)],
@@ -237,9 +232,9 @@ public class RedeliveryPumpTests {
     // The stored column holds the JSON null LITERAL, not SQL NULL, so the string reaching the pump
     // is "null" — four characters, not empty. A null-or-empty guard does not fire on it.
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     await pump.PublishAsync(
       [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, "null")],
@@ -268,11 +263,9 @@ public class RedeliveryPumpTests {
     Flags = 0
   };
 
-  internal sealed record _probeEvent(Guid Id) : IEvent;
-
   /// <summary>Captures the typed composite envelope at the serializer seam (the outbox's composite
   /// path) and returns a field-copied JsonElement envelope, as the real serializer does.</summary>
-  private sealed class _captureSerializer : IEnvelopeSerializer {
+  private sealed class CaptureSerializer : IEnvelopeSerializer {
     public List<IMessageEnvelope<RedeliveryComposite>> Captured { get; } = [];
 
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
@@ -303,8 +296,8 @@ public class RedeliveryPumpTests {
     // transient send failure must cost a retry, not the serve.
     var streamA = TrackedGuid.NewMedo().Value;
     var streamB = TrackedGuid.NewMedo().Value;
-    var transport = new _flakyTransport { FailFirst = 2 };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
+    var transport = new FlakyTransport { FailFirst = 2 };
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
     });
@@ -323,8 +316,8 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_ExhaustedRetries_RethrowsAfterTheConfiguredAttemptsAsync() {
-    var transport = new _flakyTransport { FailFirst = int.MaxValue };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
+    var transport = new FlakyTransport { FailFirst = int.MaxValue };
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 3,
       PublishRetryBaseDelayMs = 0,
     });
@@ -340,8 +333,8 @@ public class RedeliveryPumpTests {
 
   [Test]
   public async Task Publish_Cancellation_PropagatesWithoutRetryAsync() {
-    var transport = new _flakyTransport { FailFirst = int.MaxValue, ThrowCancellation = true };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
+    var transport = new FlakyTransport { FailFirst = int.MaxValue, ThrowCancellation = true };
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
     });
@@ -355,7 +348,7 @@ public class RedeliveryPumpTests {
       .Because("a canceled serve stops immediately — retrying it would fight the host's shutdown.");
   }
 
-  private sealed class _flakyTransport : ITransport {
+  private sealed class FlakyTransport : ITransport {
     public int FailFirst { get; set; }
     public bool ThrowCancellation { get; set; }
     public int Attempts { get; private set; }
@@ -374,12 +367,11 @@ public class RedeliveryPumpTests {
       Published.Add((envelope, destination, envelopeType));
       return Task.CompletedTask;
     }
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -390,7 +382,6 @@ public class RedeliveryPumpTests {
       }
       return Task.CompletedTask;
     }
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }

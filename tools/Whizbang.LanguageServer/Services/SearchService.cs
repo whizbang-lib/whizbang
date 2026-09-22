@@ -22,10 +22,10 @@ public sealed class SearchService : IDisposable {
 
   private RAMDirectory? _directory;
   private IndexSearcher? _searcher;
-  private Dictionary<string, List<string>> _synonymMap = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, List<string>> _synonymMap = new(StringComparer.OrdinalIgnoreCase);
 
   // Reverse map: synonym value -> canonical key
-  private Dictionary<string, string> _reverseSynonymMap = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, string> _reverseSynonymMap = new(StringComparer.OrdinalIgnoreCase);
 
   public void BuildIndex(IReadOnlyList<SearchDocument> documents) {
     _directory?.Dispose();

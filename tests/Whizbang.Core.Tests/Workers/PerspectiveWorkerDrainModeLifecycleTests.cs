@@ -1,20 +1,26 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -48,8 +54,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
       [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
 
-    public int InvocationCount => _invocations.Count;
-
     public bool HasStage(LifecycleStage stage) =>
       _invocations.Any(i => i.Stage == stage);
 
@@ -79,11 +83,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public List<StreamEventData> StreamEventsToReturn { get; set; } = [];
     public int GetStreamEventsCallCount { get; private set; }
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      await _batchCycleComplete.Task.WaitAsync(cts.Token);
-    }
-
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var batch = Interlocked.Increment(ref _batchCount);
       if (batch >= 2) {
@@ -112,7 +111,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     }
 
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
@@ -167,26 +166,26 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     private sealed class CapturingPerspectiveRunner(FilteringPerspectiveRunnerRegistry registry) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string name, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
-        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = name, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed });
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed });
 
-      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string name, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         Interlocked.Increment(ref registry._runWithEventsCount);
         var eventIds = events.Select(e => e.MessageId.Value).ToList();
-        registry._eventsPerPerspective.AddOrUpdate(name, eventIds, (_, existing) => { existing.AddRange(eventIds); return existing; });
+        registry._eventsPerPerspective.AddOrUpdate(perspectiveName, eventIds, (_, existing) => { existing.AddRange(eventIds); return existing; });
         return Task.FromResult(new PerspectiveCursorCompletion {
           StreamId = streamId,
-          PerspectiveName = name,
+          PerspectiveName = perspectiveName,
           LastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.NewGuid(),
           Status = PerspectiveProcessingStatus.Completed,
           PerspectiveType = typeof(object)
         });
       }
 
-      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string name, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-        RunAsync(streamId, name, null, cancellationToken);
+      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
 
-      public Task BootstrapSnapshotAsync(Guid streamId, string name, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
   }
 
@@ -248,6 +247,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     var resolvedInvoker = customInvoker ?? (IReceptorInvoker)invoker;
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -275,13 +275,33 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
         DrainLoopMaxIterations = 1
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
-      eventTypeProvider: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: eventTypeProvider,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        DrainLoopMaxIterations = 1
+      })).Value));
 
     var lifecycleCoordinator = serviceProvider.GetRequiredService<ILifecycleCoordinator>();
     return (worker, coordinator, registry, eventStore, invoker, lifecycleCoordinator, harness);
@@ -691,8 +711,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   /// </summary>
   private sealed class GatedReceptorInvoker(LifecycleStage gatedStage, TaskCompletionSource gate, TaskCompletionSource started) : IReceptorInvoker {
     private readonly ConcurrentBag<(Guid EventId, LifecycleStage Stage)> _invocations = [];
-    public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
-      [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
     public bool HasStage(LifecycleStage stage) => _invocations.Any(i => i.Stage == stage);
 
     public async ValueTask InvokeAsync(
@@ -791,7 +809,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, _, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
+    var (worker, _, _, _, _, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -994,7 +1012,7 @@ public class LifecycleCoordinatorPostAllPerspectivesIsolationTests {
   [Test]
   public async Task Coordinator_AfterAllPerspectivesSignaled_AdvanceToPostAllPerspectivesFires_Async() {
     // Arrange — use REAL coordinator, real tracking
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     var invoker = new CapturingInvoker();
 

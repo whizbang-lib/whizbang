@@ -208,7 +208,7 @@ public class NamespaceOutboxStrategyTests {
 
   [Test]
   public async Task Command_FlipConsultedLive_FlipAndRollbackWithoutReRegistrationAsync() {
-    // The migration story: flip and rollback are CONFIG-level acts on the options object;
+    // The migration story: flip and rollback are CONFIG-level acts on the options object —
     // the registered strategy instance must honor them immediately.
     var strategy = _strategy(out var options);
     var type = typeof(OutboxTestTypes.Orders.Commands.CreateOrder);

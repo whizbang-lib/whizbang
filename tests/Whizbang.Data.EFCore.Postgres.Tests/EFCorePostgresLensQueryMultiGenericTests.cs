@@ -26,7 +26,6 @@ public class EFCorePostgresLensQueryMultiGenericTests {
   private sealed record OrderModel {
     public required string OrderNumber { get; init; }
     public required decimal Total { get; init; }
-    public Guid? CustomerId { get; init; }
   }
 
   private sealed record CustomerModel {
@@ -35,9 +34,6 @@ public class EFCorePostgresLensQueryMultiGenericTests {
   }
 
   private sealed record ProductModel {
-    public required string Sku { get; init; }
-    public required string Name { get; init; }
-    public required decimal Price { get; init; }
   }
 
   #endregion
@@ -47,7 +43,6 @@ public class EFCorePostgresLensQueryMultiGenericTests {
   private sealed class MultiModelDbContext(DbContextOptions<EFCorePostgresLensQueryMultiGenericTests.MultiModelDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<OrderModel>> Orders => Set<PerspectiveRow<OrderModel>>();
     public DbSet<PerspectiveRow<CustomerModel>> Customers => Set<PerspectiveRow<CustomerModel>>();
-    public DbSet<PerspectiveRow<ProductModel>> Products => Set<PerspectiveRow<ProductModel>>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);

@@ -70,7 +70,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
 
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
-      // cost is the open window, not the store. A null result means the engine cannot window;
+      // cost is the open window, not the store. A null result means the engine cannot window —
       // the honest fallback is the legacy full answer below (correct, just unbounded) — never a
       // fabricated watermark the engine cannot stand behind.
       var windowed = message.Level == ManifestLevel.Types
@@ -347,7 +347,7 @@ public sealed partial class IntegrityManifestReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     var repairBudget = options.MaxAutoRepairRequestsPerAudit;
     var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<Guid>>();
-    var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), _divergenceTally>();
+    var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), DivergenceTally>();
     var reportCap = Math.Max(1, options.MaxDivergenceReportsPerManifest);
     var reportsPublished = 0;
     var divergentSeen = 0;
@@ -379,7 +379,11 @@ public sealed partial class IntegrityManifestReceptor(
       // say-so. Both alarm; neither repairs.
       var localCount = mine?.EventCount ?? 0;
       var isDeficit = localCount < origin.EventCount;
-      var reason = isDeficit ? "deficit" : localCount == origin.EventCount ? "identity_mismatch" : "local_extra";
+      var reason = (isDeficit, localCount == origin.EventCount) switch {
+        (true, _) => "deficit",
+        (false, true) => "identity_mismatch",
+        _ => "local_extra",
+      };
       divergent.Add((origin, mine, isDeficit, reason));
     }
 
@@ -474,7 +478,7 @@ public sealed partial class IntegrityManifestReceptor(
       // exactly when there was most to report, and switching publishing off would have silenced the
       // operator-facing log entirely rather than only the durable writes.
       if (!divergenceTallies.TryGetValue((origin.TenantScope, origin.EventType), out var tally)) {
-        tally = new _divergenceTally { SampleStreamId = origin.StreamId };
+        tally = new DivergenceTally { SampleStreamId = origin.StreamId };
         divergenceTallies[(origin.TenantScope, origin.EventType)] = tally;
       }
       tally.Count++;
@@ -929,7 +933,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// stream. Hundreds of near-identical lines cost real work on the thread that owes the liveness
   /// probe an answer, and bury the signal an operator is actually looking for.
   /// </summary>
-  private sealed class _divergenceTally {
+  private sealed class DivergenceTally {
     public int Count;
     public long OriginTotal;
     public long LocalTotal;

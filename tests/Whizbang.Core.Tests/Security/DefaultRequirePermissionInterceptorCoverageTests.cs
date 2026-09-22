@@ -29,11 +29,11 @@ public class DefaultRequirePermissionInterceptorCoverageTests {
 
   [RequirePermission("x", OnDenied = DeniedAction.Throw)]
   [RequirePermission("y", OnDenied = DeniedAction.Quarantine)]
-  private sealed class _throwThenQuarantineReceptor { }
+  private sealed class ThrowThenQuarantineReceptor;
 
   [RequirePermission("x", OnDenied = (DeniedAction)99)]
   [RequirePermission("y", OnDenied = DeniedAction.DropQuiet)]
-  private sealed class _unknownActionReceptor { }
+  private sealed class UnknownActionReceptor;
 
   /// <summary>What breaks: Quarantine (3) must outrank Throw (2) so a "must quarantine"
   /// requirement is never silently relaxed to a bare throw by a peer attribute on the same
@@ -43,7 +43,7 @@ public class DefaultRequirePermissionInterceptorCoverageTests {
     var interceptor = new DefaultRequirePermissionInterceptor();
 
     var result = await interceptor.CanInvokeAsync(
-      typeof(_throwThenQuarantineReceptor), null!, _emptyScope(), CancellationToken.None);
+      typeof(ThrowThenQuarantineReceptor), null!, _emptyScope(), CancellationToken.None);
 
     await Assert.That(result.Allow).IsFalse();
     await Assert.That(result.OnDenied).IsEqualTo(DeniedAction.Quarantine)
@@ -58,7 +58,7 @@ public class DefaultRequirePermissionInterceptorCoverageTests {
     var interceptor = new DefaultRequirePermissionInterceptor();
 
     var result = await interceptor.CanInvokeAsync(
-      typeof(_unknownActionReceptor), null!, _emptyScope(), CancellationToken.None);
+      typeof(UnknownActionReceptor), null!, _emptyScope(), CancellationToken.None);
 
     await Assert.That(result.Allow).IsFalse();
     await Assert.That(result.OnDenied).IsEqualTo(DeniedAction.DropQuiet)

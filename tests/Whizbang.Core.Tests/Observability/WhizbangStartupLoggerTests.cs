@@ -13,12 +13,14 @@ namespace Whizbang.Core.Tests.Observability;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for <see cref="WhizbangStartupLogger"/> — the IHostedService that
 /// fires once at host startup to print the banner + log the framework version.
 /// Coverage report showed 0/18 lines; the class only runs in the full DI host path
 /// (sample apps) so the StartAsync logic — config-vs-options precedence, the
 /// banner enable/disable, the version log line — was untested directly.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 ///   1. StartAsync logs Whizbang version + service name regardless of banner setting.
 ///   2. WhizbangCoreOptions.ShowBanner = false suppresses the banner.
@@ -26,18 +28,19 @@ namespace Whizbang.Core.Tests.Observability;
 ///   4. Bad appsettings value (non-bool) silently falls back to the code option.
 ///   5. Null configuration leaves the code option authoritative (no crash).
 ///   6. StopAsync is a no-op returning a completed task.
+/// </para>
 /// </summary>
 /// <docs>operations/observability/logging#startup</docs>
 public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_AlwaysLogsVersionAndServiceNameAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("Whizbang.Test.Service");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("Whizbang.Test.Service");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions);
+    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
 
     await sut.StartAsync(CancellationToken.None);
 
@@ -48,9 +51,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigShowBannerOverridesCodeOption_TrueAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcA");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcA");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -69,9 +72,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigShowBannerOverridesCodeOption_FalseAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcB");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcB");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = true };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -89,9 +92,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigNonBool_FallsBackToCodeOptionAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcC");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcC");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -109,12 +112,12 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_NullConfiguration_UsesCodeOptionAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcD");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcD");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
-    var sut = new WhizbangStartupLogger(loggerFactory, instanceProvider, coreOptions, configuration: null);
+    var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
 
     await sut.StartAsync(CancellationToken.None);
 
@@ -124,16 +127,17 @@ public class WhizbangStartupLoggerTests {
   [Test]
   public async Task StopAsync_ReturnsCompletedTaskAsync() {
     var sut = new WhizbangStartupLogger(
-      NullLoggerFactory.Instance,
-      new _StubInstanceProvider("SvcE"),
-      new WhizbangCoreOptions());
+      loggerFactory: NullLoggerFactory.Instance,
+      instanceProvider: new StubInstanceProvider("SvcE"),
+      coreOptions: new WhizbangCoreOptions(),
+      configuration: new ConfigurationBuilder().Build());
 
     var task = sut.StopAsync(CancellationToken.None);
 
     await Assert.That(task.IsCompletedSuccessfully).IsTrue();
   }
 
-  private sealed class _StubInstanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = serviceName;
     public string HostName { get; } = "test-host";
@@ -146,7 +150,7 @@ public class WhizbangStartupLoggerTests {
     };
   }
 
-  private sealed class _CapturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -160,7 +164,7 @@ public class WhizbangStartupLoggerTests {
     }
   }
 
-  private sealed class _FactoryReturning(ILogger logger) : ILoggerFactory {
+  private sealed class FactoryReturning(ILogger logger) : ILoggerFactory {
     public void AddProvider(ILoggerProvider provider) { }
     public ILogger CreateLogger(string categoryName) => logger;
     public void Dispose() { }

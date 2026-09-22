@@ -491,9 +491,9 @@ public class TypeNameFormatterTests {
   }
 
   // Helper nested class for testing
-  private sealed class NestedTestClass { }
+  private sealed class NestedTestClass;
 
   private sealed class DeeplyNested {
-    public sealed class Inner { }
+    public sealed class Inner;
   }
 }

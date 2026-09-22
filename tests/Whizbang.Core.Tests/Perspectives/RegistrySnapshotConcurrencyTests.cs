@@ -21,10 +21,12 @@ namespace Whizbang.Core.Tests.Perspectives;
 [Category("Unit")]
 public class RegistrySnapshotConcurrencyTests {
   /// <summary>Distinct types to register, without reflection: closed generics over a private marker are free.</summary>
-  private static Type _marker(int i) => typeof(_slot<>).MakeGenericType(i % 2 == 0 ? typeof(int) : typeof(long))
+  private static Type _marker(int i) => typeof(Slot<>).MakeGenericType(i % 2 == 0 ? typeof(int) : typeof(long))
     .MakeArrayType(Math.Max(1, i % 8));
 
-  private sealed class _slot<T>;
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "An open generic type is the shape under test; the parameter carries no data by design.")]
+
+  private sealed class Slot<T>;
 
   /// <summary>
   /// Registers continuously on one thread while snapshotting on another. Before the fix this throws
@@ -68,7 +70,7 @@ public class RegistrySnapshotConcurrencyTests {
     var before = PerspectiveTtlRegistry.RegisteredModels();
     var countBefore = before.Count;
 
-    PerspectiveTtlRegistry.Register(typeof(_slot<string>), 42);
+    PerspectiveTtlRegistry.Register(typeof(Slot<string>), 42);
 
     await Assert.That(before.Count).IsEqualTo(countBefore)
       .Because("a caller iterating a snapshot must not see the collection grow underneath it");

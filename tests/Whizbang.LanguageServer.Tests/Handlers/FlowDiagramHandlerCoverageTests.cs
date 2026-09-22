@@ -30,8 +30,7 @@ public class FlowDiagramHandlerCoverageTests {
         PerspectiveCount = 2
       }
     ]);
-    var generator = new MermaidGenerator();
-    var handler = new FlowDiagramHandler(resolver, generator);
+    var handler = new FlowDiagramHandler(resolver);
     var request = new GenerateFlowDiagramParams { MessageType = "OrderCreatedEvent" };
 
     // Act

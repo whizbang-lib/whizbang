@@ -1,10 +1,17 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -89,7 +96,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
+    _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert: Both messages included
     await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
@@ -131,7 +138,7 @@ public class WorkCoordinatorDrainTests {
     public OutboxMessage[] LastStoredOutbox { get; private set; } = [];
     public int FlushCount { get; private set; }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -140,21 +147,21 @@ public class WorkCoordinatorDrainTests {
       });
     }
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       FlushCount++;
       LastStoredOutbox = messages;
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       FlushCount++;
       return Task.CompletedTask;
     }
@@ -163,7 +170,7 @@ public class WorkCoordinatorDrainTests {
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
       return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
@@ -176,14 +183,16 @@ public class WorkCoordinatorDrainTests {
     IWorkCoordinator workCoordinator,
     IDeferredOutboxChannel? deferredChannel) {
     return new ImmediateWorkCoordinatorStrategy(
-      workCoordinator,
-      new ServiceInstanceProvider(configuration: null),
-      new WorkCoordinatorOptions(),
-      logger: null,
-      scopeFactory: null,
-      lifecycleMessageDeserializer: null,
-      tracingOptions: null,
-      deferredChannel: deferredChannel
+      coordinator: workCoordinator,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      options: new WorkCoordinatorOptions(),
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: deferredChannel ?? new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
   }
 

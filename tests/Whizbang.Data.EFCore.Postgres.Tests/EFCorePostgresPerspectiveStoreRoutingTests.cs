@@ -72,7 +72,7 @@ public class EFCorePostgresPerspectiveStoreRoutingTests : EFCoreTestBase {
 
   private const string TABLE = "wh_per_probe";
 
-  private (EFCorePostgresPerspectiveStore<ProbeModel> Store, RecordingStrategy Strategy) _store(
+  private static (EFCorePostgresPerspectiveStore<ProbeModel> Store, RecordingStrategy Strategy) _store(
       WorkCoordinationDbContext ctx) {
     var strategy = new RecordingStrategy();
     return (new EFCorePostgresPerspectiveStore<ProbeModel>(ctx, TABLE, strategy), strategy);

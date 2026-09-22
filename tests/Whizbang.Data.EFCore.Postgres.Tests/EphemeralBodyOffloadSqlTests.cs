@@ -126,13 +126,12 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
     }
 
     // fetch_events_by_ids must COALESCE the offloaded body back from wh_event_body (inline is NULL).
-    await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (out_event_data::jsonb ->> 'OrderId') FROM fetch_events_by_ids(ARRAY[@id]::uuid[])";
-      v.Parameters.AddWithValue("id", eventId);
-      var orderId = (string?)await v.ExecuteScalarAsync();
-      await Assert.That(orderId).IsEqualTo("42")
-        .Because("The read path COALESCEs the ephemeral body from wh_event_body — an ephemeral event is consumable end-to-end.");
-    }
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT (out_event_data::jsonb ->> 'OrderId') FROM fetch_events_by_ids(ARRAY[@id]::uuid[])";
+    v.Parameters.AddWithValue("id", eventId);
+    var orderId = (string?)await v.ExecuteScalarAsync();
+    await Assert.That(orderId).IsEqualTo("42")
+      .Because("The read path COALESCEs the ephemeral body from wh_event_body — an ephemeral event is consumable end-to-end.");
   }
 
   [Test]
@@ -175,18 +174,17 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
     }
 
     // get_stream_events (the perspective-apply read) must return the COALESCE'd ephemeral body.
-    await using (var v = connection.CreateCommand()) {
-      v.CommandText = @"
+    await using var v = connection.CreateCommand();
+    v.CommandText = @"
         SELECT (out_event_data::jsonb ->> 'OrderId')
         FROM get_stream_events(@inst, ARRAY[@sid]::uuid[], NOW(), 300)
         WHERE out_event_id = @id";
-      v.Parameters.AddWithValue("inst", instanceId);
-      v.Parameters.AddWithValue("sid", streamId);
-      v.Parameters.AddWithValue("id", eventId);
-      var orderId = (string?)await v.ExecuteScalarAsync();
-      await Assert.That(orderId).IsEqualTo("42")
-        .Because("The perspective-apply read path COALESCEs the ephemeral body from wh_event_body.");
-    }
+    v.Parameters.AddWithValue("inst", instanceId);
+    v.Parameters.AddWithValue("sid", streamId);
+    v.Parameters.AddWithValue("id", eventId);
+    var orderId = (string?)await v.ExecuteScalarAsync();
+    await Assert.That(orderId).IsEqualTo("42")
+      .Because("The perspective-apply read path COALESCEs the ephemeral body from wh_event_body.");
   }
 
   // ── Composition with the blob/claim-check body offload (transport-wire layer) ──────────────────────
@@ -288,13 +286,12 @@ public class EphemeralBodyOffloadSqlTests : EFCoreTestBase {
     }
 
     // Inline NULL, full body offloaded to wh_event_body and read back COALESCE'd at full length.
-    await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT length(out_event_data::jsonb ->> 'blob') FROM fetch_events_by_ids(ARRAY[@id]::uuid[])";
-      v.Parameters.AddWithValue("id", eventId);
-      var len = (int)(await v.ExecuteScalarAsync())!;
-      await Assert.That(len).IsEqualTo(bigLen)
-        .Because("The ephemeral event store keeps the full large body (offload is transport-only; the storage layer never truncates by size).");
-    }
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT length(out_event_data::jsonb ->> 'blob') FROM fetch_events_by_ids(ARRAY[@id]::uuid[])";
+    v.Parameters.AddWithValue("id", eventId);
+    var len = (int)(await v.ExecuteScalarAsync())!;
+    await Assert.That(len).IsEqualTo(bigLen)
+      .Because("The ephemeral event store keeps the full large body (offload is transport-only; the storage layer never truncates by size).");
   }
 
   [Test]

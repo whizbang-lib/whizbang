@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -54,6 +55,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     // Use capturing accessor to verify value is set (AsyncLocal behavior requires this)
     var capturingAccessor = new CapturingScopeContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IScopeContextAccessor>(capturingAccessor);
 
@@ -98,6 +100,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     // Use capturing accessor to verify IMessageContextAccessor.Current is set
     var capturingMessageAccessor = new CapturingMessageContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
 
@@ -135,6 +138,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     // Use capturing accessor to verify message context is set (even without security)
     var capturingMessageAccessor = new CapturingMessageContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(options => {
       options.AllowAnonymous = true;  // Allow messages without security context
     });
@@ -176,6 +180,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     var capturingMessageAccessor = new CapturingMessageContextAccessor();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);

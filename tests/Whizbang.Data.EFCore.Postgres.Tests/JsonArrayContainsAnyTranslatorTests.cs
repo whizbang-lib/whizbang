@@ -45,7 +45,7 @@ public class JsonArrayContainsAnyTranslatorTests : EFCoreTestBase {
       nameof(WhizbangJsonDbFunctions.AllowedPrincipalsContainsAny),
       [typeof(DbFunctions), typeof(List<string>), typeof(string[])])!;
 
-  private (JsonArrayContainsAnyTranslator Translator, NpgsqlSqlExpressionFactory Factory,
+  private static (JsonArrayContainsAnyTranslator Translator, NpgsqlSqlExpressionFactory Factory,
            IDiagnosticsLogger<DbLoggerCategory.Query> Logger) _build(WorkCoordinationDbContext ctx) {
     var services = ((IInfrastructure<IServiceProvider>)ctx).Instance;
     var factory = (NpgsqlSqlExpressionFactory)services.GetRequiredService<ISqlExpressionFactory>();

@@ -26,24 +26,24 @@ public class ReceptorInterceptorTests {
 
   // Test receptor types — attributes only, no IReceptor implementation needed.
   // The interceptor just reads the type's attributes via reflection.
-  private sealed class UnannotatedReceptor { }
+  private sealed class UnannotatedReceptor;
 
   [RequirePermission("foo:write")]
-  private sealed class AnnotatedDeadLetterReceptor { }
+  private sealed class AnnotatedDeadLetterReceptor;
 
   [RequirePermission("foo:write", OnDenied = DeniedAction.DropQuiet)]
-  private sealed class AnnotatedDropReceptor { }
+  private sealed class AnnotatedDropReceptor;
 
   [RequirePermission("foo:write", OnDenied = DeniedAction.Quarantine)]
-  private sealed class AnnotatedQuarantineReceptor { }
+  private sealed class AnnotatedQuarantineReceptor;
 
   [RequirePermission("foo:read")]
   [RequirePermission("foo:write")]
-  private sealed class MultiAttributeReceptor { }
+  private sealed class MultiAttributeReceptor;
 
   [RequirePermission("a", OnDenied = DeniedAction.DropQuiet)]
   [RequirePermission("b", OnDenied = DeniedAction.DeadLetter)]
-  private sealed class MixedSeverityReceptor { }
+  private sealed class MixedSeverityReceptor;
 
   // ===== No attributes => allow =====
 

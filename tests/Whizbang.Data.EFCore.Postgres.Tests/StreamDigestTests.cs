@@ -203,20 +203,19 @@ public class StreamDigestTests : EFCoreTestBase {
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-      store.Parameters.AddWithValue("version", version);
-      store.Parameters.AddWithValue("flags", flags);
+      store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
 
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
-      body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task _seedReceivedAsync(
@@ -231,7 +230,7 @@ public class StreamDigestTests : EFCoreTestBase {
     store.Parameters.AddWithValue("stream", streamId);
     store.Parameters.AddWithValue("type", eventType);
     store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-    store.Parameters.AddWithValue("version", version);
+    store.Parameters.AddWithValue(nameof(version), version);
     store.Parameters.AddWithValue("origin", originServiceId);
     await store.ExecuteNonQueryAsync();
   }

@@ -1,12 +1,22 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -66,6 +76,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       DeadLetterMetrics? metrics,
       Guid instanceId) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
     return new PerspectiveWorker(
@@ -73,8 +84,30 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      deadLetterStore: store,
-      generationProvider: gen,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: new PerspectiveChannelWriter(),
+      perspectiveCompletionChannel: new CapturingPerspectiveCompletionChannel(),
+      failureChannel: new CapturingFailureChannel(),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: store ?? NullDeadLetterStore.Instance,
+      generationProvider: gen ?? new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value),
       deadLetterMetrics: metrics);
   }
 
@@ -204,7 +237,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   [Test]
   public async Task MetricsIncrementedOnDeadLetterAsync() {
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
       metrics: metrics, instanceId: (Guid)TrackedGuid.NewMedo());
     var rows = new List<StreamEventData> { _row(attempts: 11, failures: 11) };

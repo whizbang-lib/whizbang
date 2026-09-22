@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -127,7 +128,7 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
     var envelopes = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, afterEventId: null, upToEventId: eventId, [typeof(OrderCreatedEvent)]);
 
-    var extraction = await new MessageHopSecurityExtractor()
+    var extraction = await new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance)
       .ExtractAsync(envelopes[0], new MessageSecurityOptions());
 
     await Assert.That(extraction).IsNotNull()
@@ -212,7 +213,7 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
     var raw = await _readStoredRowAsStreamEventAsync(streamId, ProductionScopeJson, withHop: true);
 
     var envelopes = eventStore.DeserializeStreamEvents([raw], [typeof(OrderCreatedEvent)]);
-    var extraction = await new MessageHopSecurityExtractor()
+    var extraction = await new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance)
       .ExtractAsync(envelopes[0], new MessageSecurityOptions());
 
     await Assert.That(extraction).IsNotNull()
@@ -352,8 +353,8 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
       EventWorkId = Guid.CreateVersion7(),
       EventType = reader.GetString(0),
       EventData = reader.GetString(1),
-      Metadata = reader.IsDBNull(2) ? null : reader.GetString(2),
-      Scope = reader.IsDBNull(3) ? null : reader.GetString(3),
+      Metadata = await reader.IsDBNullAsync(2) ? null : reader.GetString(2),
+      Scope = await reader.IsDBNullAsync(3) ? null : reader.GetString(3),
     };
   }
 

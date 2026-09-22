@@ -47,7 +47,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly IPoisonMessageDetector? _poisonDetector;
   private readonly TimeProvider _timeProvider;
 
-  /// <summary>Last age-capability value reported per queue — see <c>_tryQuarantinePoisonAsync</c>.</summary>
+  /// <summary>Last age-capability value reported per queue — see <c>TryQuarantinePoisonAsync</c>.</summary>
   private readonly ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -592,7 +592,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// backed by a shared buffer that RabbitMQ recycles after ReceivedAsync returns Task.CompletedTask.
   /// We must copy the body before the buffer is recycled.
   /// </summary>
-  private readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, byte[] BodyCopy, string QueueName);
+  internal readonly record struct PendingRabbitMessage(IChannel Channel, BasicDeliverEventArgs Args, byte[] BodyCopy, string QueueName);
 
   private async Task<ISubscription> _subscribeBatchCoreAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -635,14 +635,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     var collector = new TransportBatchCollector<PendingRabbitMessage>(
       batchOptions,
-      batch => _flushBatchAsync(batch, batchHandler, subscription, queueName)
+      batch => FlushBatchAsync(batch, batchHandler, subscription, queueName)
     );
 
     var consumer = new AsyncEventingBasicConsumer(channel);
 
     consumer.ReceivedAsync += (_, args) => {
       if (subscription is { IsActive: false }) {
-        return _nackPausedMessageAsync(channel, args, queueName);
+        return NackPausedMessageAsync(channel, args, queueName);
       }
 
       // Copy body BEFORE returning — RabbitMQ recycles the buffer after this handler returns
@@ -678,7 +678,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// then ACKs each message individually (multiple=false to avoid PRECONDITION_FAILED
   /// with AutorecoveringChannel).
   /// </summary>
-  private async Task _flushBatchAsync(
+  internal async Task FlushBatchAsync(
     IReadOnlyList<PendingRabbitMessage> pendingMessages,
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     RabbitMQSubscription? subscription,
@@ -721,7 +721,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private async Task _nackAllPausedMessagesAsync(IReadOnlyList<PendingRabbitMessage> pendingMessages) {
     foreach (var pending in pendingMessages) {
       try {
-        await _nackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
+        await NackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
       } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
         // Channel closed — message will be redelivered automatically
       }
@@ -743,7 +743,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       try {
         var envelope = _deserializeMessageFromBody(pending.Args, pending.BodyCopy, out var envelopeTypeName);
         if (envelope == null) {
-          await _nackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
+          await NackDeserializationFailureAsync(pending.Channel, pending.Args, pending.QueueName);
           continue;
         }
         deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
@@ -908,7 +908,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   ) {
     try {
       if (subscription is { IsActive: false }) {
-        await _nackPausedMessageAsync(channel, args, queueName);
+        await NackPausedMessageAsync(channel, args, queueName);
         return;
       }
 
@@ -929,7 +929,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// receives one last delivery between subscription pause and channel teardown. The
   /// broker's own redelivery mechanism handles the unacked message.
   /// </summary>
-  private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
+  internal async Task NackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
@@ -962,13 +962,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // hostage by a redelivery storm may be perfectly well-formed, so this cannot sit behind
       // deserialization or the no-consumer filter. Quarantine is BasicNack(requeue: false),
       // which routes to the queue's dead-letter exchange — requeueing would re-arm the loop.
-      if (await _tryQuarantinePoisonAsync(channel, args, queueName)) {
+      if (await TryQuarantinePoisonAsync(channel, args, queueName)) {
         return;
       }
 
       var envelope = _deserializeMessage(args, out var envelopeTypeName);
       if (envelope == null) {
-        await _nackDeserializationFailureAsync(channel, args, queueName);
+        await NackDeserializationFailureAsync(channel, args, queueName);
         return;
       }
 
@@ -1013,7 +1013,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// </para>
   /// </summary>
   /// <returns><c>true</c> when the message was quarantined and the caller must stop.</returns>
-  private async Task<bool> _tryQuarantinePoisonAsync(
+  internal async Task<bool> TryQuarantinePoisonAsync(
       IChannel channel, BasicDeliverEventArgs args, string queueName) {
     if (_poisonDetector is null) {
       return false;
@@ -1109,9 +1109,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <summary>
   /// Nacks a message that failed deserialization, sending it to the dead letter queue.
   /// Tolerates a closed/disposed channel — same shutdown-race rationale as
-  /// <see cref="_nackPausedMessageAsync"/>.
+  /// <see cref="NackPausedMessageAsync"/>.
   /// </summary>
-  private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
+  internal async Task NackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
@@ -1304,7 +1304,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // from the claim by downloading the original body via the registered
     // IMessageBodyStore. Keeping ENVELOPE_TYPE_HEADER unchanged on the wire
     // is intentional — receivers learn the original type from there.
-    var isClaimHeader = _tryReadStringHeader(args.BasicProperties.Headers,
+    var isClaimHeader = TryReadStringHeader(args.BasicProperties.Headers,
       Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY);
     var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
       envelopeTypeName, isClaimHeader, _jsonOptions);
@@ -1328,7 +1328,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// strings as byte[] over AMQP; the value comes through as either byte[]
   /// or already-decoded string depending on client version.
   /// </summary>
-  private static string? _tryReadStringHeader(IDictionary<string, object?>? headers, string key) {
+  internal static string? TryReadStringHeader(IDictionary<string, object?>? headers, string key) {
     if (headers is null) {
       return null;
     }
@@ -1356,7 +1356,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var json = Encoding.UTF8.GetString(args.Body.Span);
 
     // Body-offload claim detection (see _deserializeMessageFromBody for details).
-    var isClaimHeader = _tryReadStringHeader(args.BasicProperties.Headers,
+    var isClaimHeader = TryReadStringHeader(args.BasicProperties.Headers,
       Whizbang.Core.Offloads.BodyOffloadPostSerializeHook.IS_CLAIM_METADATA_KEY);
     var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
       envelopeTypeName, isClaimHeader, _jsonOptions);

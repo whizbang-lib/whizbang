@@ -129,10 +129,10 @@ public partial class OrderSaga {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("SagaCompletionWatchdogTickHandler")
+    await Assert.That(dispatcher).Contains("SagaCompletionWatchdogTickHandler")
       .Because("without the tick handler a stranded saga has nothing scheduled to recover it, and "
              + "the other receptors being present makes that look like a working generator");
-    await Assert.That(dispatcher!).Contains("SagaCompletionWatchdogTickEvent")
+    await Assert.That(dispatcher).Contains("SagaCompletionWatchdogTickEvent")
       .Because("the handler has to be bound to the framework tick type it actually receives");
   }
 

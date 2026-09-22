@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
+using Whizbang.Core;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
@@ -148,7 +149,7 @@ public static class ServiceCollectionExtensions {
         var connection = connectionRetry.CreateConnectionWithRetryAsync(factory).GetAwaiter().GetResult();
 
         // Wire up connection state monitoring for runtime reconnection visibility
-        _wireUpConnectionStateMonitoring(connection, logger);
+        WireUpConnectionStateMonitoring(connection, logger);
 
         return connection;
       });
@@ -285,7 +286,7 @@ public static class ServiceCollectionExtensions {
       var registryQuery = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistryQuery>();
 
       return new NamespaceRoutingTransport(
-        transport, peers, () => _activeConsumeNamespaceKeys(resolver, registryQuery));
+        transport, peers, () => ActiveConsumeNamespaceKeys(resolver, registryQuery));
     });
 
     // Register transport readiness check
@@ -298,10 +299,15 @@ public static class ServiceCollectionExtensions {
     // Register message publish strategy
     // Commands are AUTOMATICALLY routed to shared inbox topic
     // If IOutboxRoutingStrategy is configured (via WithRouting), use its inbox topic
-    services.AddSingleton<IMessagePublishStrategy>(sp => {
+    // Self-contained: a host that registers this transport without AddWhizbang still gets every
+    // default the publish strategy requires (logging, the inbox-address resolver); all TryAdd.
+    // The core's own default for the strategy is a null object; this displaces it while leaving a
+    // strategy the host registered itself in place.
+    services.TryAddWhizbangDefaults();
+    services.TryAddSingletonOverNullDefault<IMessagePublishStrategy>(sp => {
       var transport = sp.GetRequiredService<ITransport>();
       var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
-      var loggerFactory = sp.GetService<ILoggerFactory>();
+      var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
 
       // Post-serialize hook chain + JsonSerializerOptions are optional; when
       // AddWhizbangBodyOffload (or any AddWhizbangPostSerializeHook<T>) is
@@ -314,7 +320,7 @@ public static class ServiceCollectionExtensions {
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
-      var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      _ = sp.GetService<IOutboxRoutingStrategy>();
 
       // Strategy-agnostic command-inbox seam (topology arc phase 7): both built-in
       // command-routing strategies implement ICommandInboxAddressResolver — the default
@@ -323,7 +329,9 @@ public static class ServiceCollectionExtensions {
       // with a resolver that never flips (byte-identical wiring), Namespace consults its
       // live flip set, and a strategy outside the seam falls back to the default topic
       // with no flip hook — all three locked by registration tests.
-      var commandInboxResolver = outboxStrategy as ICommandInboxAddressResolver;
+      // The core's turnkey default derives this from the registered outbox strategy, which is what the
+      // cast here used to do; resolving it lets a host substitute the resolver on its own.
+      var commandInboxResolver = sp.GetRequiredService<ICommandInboxAddressResolver>();
 
       // TransportNamespace seam (topology arc phase 8): the strategy resolves the message
       // type's tag-bound broker namespace and stamps it on destination metadata; the transport
@@ -333,7 +341,7 @@ public static class ServiceCollectionExtensions {
 
       return new TransportPublishStrategy(
         transport, readinessCheck,
-        commandInboxResolver?.DefaultCommandInboxAddress ?? SharedTopicOutboxStrategy.DefaultInboxTopic,
+        commandInboxResolver.DefaultCommandInboxAddress,
         loggerFactory,
         throttleRetryOptions: null, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
@@ -373,7 +381,7 @@ public static class ServiceCollectionExtensions {
   /// handled message types resolve to. A namespace this service only PUBLISHES to is never
   /// subscribed, so it costs zero broker entities.
   /// </summary>
-  private static IReadOnlyList<string> _activeConsumeNamespaceKeys(
+  internal static IReadOnlyList<string> ActiveConsumeNamespaceKeys(
     Whizbang.Core.Tags.TransportNamespaceResolver? resolver,
     Whizbang.Core.Messaging.IReceptorRegistryQuery? registryQuery
   ) {
@@ -390,7 +398,7 @@ public static class ServiceCollectionExtensions {
   /// RabbitMQ's automatic recovery handles reconnection; this provides logging for observability.
   /// </summary>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Connection events are infrequent - high-performance logging not justified")]
-  private static void _wireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
+  internal static void WireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
     if (logger == null) {
       return;
     }

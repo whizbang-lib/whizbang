@@ -92,7 +92,7 @@ public class GuidInterceptorGeneratorCoverageTests {
     var generator = new GuidInterceptorGenerator();
     var driver = CSharpGeneratorDriver.Create(
         generators: [generator.AsSourceGenerator()],
-        optionsProvider: new _enabledOptionsProvider());
+        optionsProvider: new EnabledOptionsProvider());
 
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
     return driver.GetRunResult();
@@ -124,13 +124,13 @@ public class GuidInterceptorGeneratorCoverageTests {
       .Because("non-alphanumeric characters in the file name must become underscores in the generated identifier");
   }
 
-  private sealed class _enabledOptionsProvider : AnalyzerConfigOptionsProvider {
-    public override AnalyzerConfigOptions GlobalOptions => new _enabledOptions();
-    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => new _enabledOptions();
-    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => new _enabledOptions();
+  private sealed class EnabledOptionsProvider : AnalyzerConfigOptionsProvider {
+    public override AnalyzerConfigOptions GlobalOptions => new EnabledOptions();
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => new EnabledOptions();
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => new EnabledOptions();
   }
 
-  private sealed class _enabledOptions : AnalyzerConfigOptions {
+  private sealed class EnabledOptions : AnalyzerConfigOptions {
     public override bool TryGetValue(string key,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) {
       if (key == "build_property.WhizbangGuidInterceptionEnabled") {

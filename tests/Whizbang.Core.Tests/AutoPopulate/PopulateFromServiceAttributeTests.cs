@@ -227,7 +227,6 @@ public class PopulateFromServiceAttributeTests {
 
   // Derived record inherits the attribute
   private sealed record DerivedEventWithService : BaseEventWithService {
-    public string? AdditionalData { get; init; }
   }
 
   // Record with all service kinds

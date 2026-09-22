@@ -374,12 +374,14 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid streamId,
       Guid? instanceId = null, int partitionNumber = 0) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, instance_id, lease_expiry)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
-              NOW(), @stream, @partition, @inst, @lease)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
+              NOW(), @stream, @partition, @inst, @lease)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("partition", partitionNumber);
@@ -394,16 +396,18 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, string messageType, Guid streamId,
       int partitionNumber = 0) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       WITH m AS (
         INSERT INTO wh_inbox
           (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
-        VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', NOW(), @stream)
+        VALUES (@msg, 'TestHandler', @type, '{"payload":1}', '{"hop":1}', NOW(), @stream)
         RETURNING message_id, stream_id, received_at, priority, is_event
       )
       INSERT INTO wh_inbox_state
         (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
-      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, @partition FROM m";
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, @partition FROM m
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", streamId);
@@ -432,7 +436,7 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("evt", eventId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);
-    ins.Parameters.AddWithValue("version", version);
+    ins.Parameters.AddWithValue(nameof(version), version);
     await ins.ExecuteNonQueryAsync();
   }
 

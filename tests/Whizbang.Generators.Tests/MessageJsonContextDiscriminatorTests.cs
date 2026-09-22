@@ -44,9 +44,9 @@ public sealed class OrderShipped : OrderEventBase { public string OrderId { get;
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderPlaced), \"OrderPlaced\")")
+    await Assert.That(code).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderPlaced), \"OrderPlaced\")")
       .Because("The simple name is the discriminator already written into stored payloads — it must not change when nothing collides.");
-    await Assert.That(code!).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderShipped), \"OrderShipped\")");
+    await Assert.That(code).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderShipped), \"OrderShipped\")");
   }
 
   [Test]
@@ -79,12 +79,12 @@ namespace ConsumerApp.Events.Wholesale {
     await Assert.That(code).IsNotNull();
 
     // Both collide on "OrderPlaced" — each falls back to its fully qualified name, which is unique.
-    await Assert.That(code!).Contains(
+    await Assert.That(code).Contains(
         "new JsonDerivedType(typeof(global::ConsumerApp.Events.Retail.OrderPlaced), \"ConsumerApp.Events.Retail.OrderPlaced\")")
       .Because("A duplicate discriminator makes STJ throw when it configures the base, disabling polymorphism for every derived type under it — not just the colliding pair.");
-    await Assert.That(code!).Contains(
+    await Assert.That(code).Contains(
         "new JsonDerivedType(typeof(global::ConsumerApp.Events.Wholesale.OrderPlaced), \"ConsumerApp.Events.Wholesale.OrderPlaced\")");
-    await Assert.That(code!).DoesNotContain("), \"OrderPlaced\")")
+    await Assert.That(code).DoesNotContain("), \"OrderPlaced\")")
       .Because("Neither colliding type may keep the ambiguous short discriminator.");
   }
 
@@ -118,9 +118,9 @@ namespace ConsumerApp.Events.Wholesale {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderShipped), \"OrderShipped\")")
+    await Assert.That(code).Contains("new JsonDerivedType(typeof(global::ConsumerApp.Events.OrderShipped), \"OrderShipped\")")
       .Because("Disambiguation is scoped to the types that actually collide — an uninvolved sibling keeps its existing wire discriminator.");
-    await Assert.That(code!).Contains(
+    await Assert.That(code).Contains(
         "new JsonDerivedType(typeof(global::ConsumerApp.Events.Retail.OrderPlaced), \"ConsumerApp.Events.Retail.OrderPlaced\")");
   }
 }

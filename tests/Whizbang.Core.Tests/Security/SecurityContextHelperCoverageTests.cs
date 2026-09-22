@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Security;
 /// </summary>
 public class SecurityContextHelperCoverageTests {
 
-  private sealed class _immediateProvider : IMessageSecurityContextProvider {
+  private sealed class ImmediateProvider : IMessageSecurityContextProvider {
     public ValueTask<IScopeContext?> EstablishContextAsync(IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) =>
       ValueTask.FromResult<IScopeContext?>(null);
   }
@@ -30,7 +30,7 @@ public class SecurityContextHelperCoverageTests {
   /// <summary>Blocks on a caller-controlled gate, then throws — simulating a provider that
   /// outlives the caller's timeout and only fails afterward. The failure message carries a unique
   /// marker so a parallel run's unrelated unobserved exceptions can't produce a false positive.</summary>
-  private sealed class _lateFaultingProvider(TaskCompletionSource gate, string marker) : IMessageSecurityContextProvider {
+  private sealed class LateFaultingProvider(TaskCompletionSource gate, string marker) : IMessageSecurityContextProvider {
     public bool Faulted { get; private set; }
 
     public async ValueTask<IScopeContext?> EstablishContextAsync(IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
@@ -56,7 +56,7 @@ public class SecurityContextHelperCoverageTests {
   /// TimedOut results for a provider that was going to succeed given the time.</summary>
   [Test]
   public async Task TryEstablishFullContextWithTimeoutAsync_TimeoutDisabled_AwaitsProviderDirectlyAsync() {
-    var scopedProvider = _providerWith(new _immediateProvider());
+    var scopedProvider = _providerWith(new ImmediateProvider());
 
     var outcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(
       _envelope(), scopedProvider, timeoutSeconds: 0, CancellationToken.None);
@@ -74,7 +74,7 @@ public class SecurityContextHelperCoverageTests {
   public async Task TryEstablishFullContextWithTimeoutAsync_LateFailureAfterTimeout_IsObservedNotUnobservedAsync(CancellationToken testToken) {
     var marker = $"security-ctx-late-fault-{Guid.NewGuid():N}";
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var provider = new _lateFaultingProvider(gate, marker);
+    var provider = new LateFaultingProvider(gate, marker);
     var scopedProvider = _providerWith(provider);
 
     // Matched by the unique marker rather than "any unobserved exception fired" so a parallel

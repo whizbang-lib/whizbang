@@ -72,7 +72,7 @@ public sealed partial class StartupPipelineWorker : BackgroundService {
   private readonly ILogger<StartupPipelineWorker> _logger;
 
   /// <summary>Creates the worker over the runner.</summary>
-  public StartupPipelineWorker(StartupPipelineRunner runner, ILogger<StartupPipelineWorker>? logger = null) {
+  public StartupPipelineWorker(StartupPipelineRunner runner, ILogger<StartupPipelineWorker> logger) {
     ArgumentNullException.ThrowIfNull(runner);
     _runner = runner;
     _logger = logger ?? NullLogger<StartupPipelineWorker>.Instance;

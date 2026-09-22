@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -18,7 +19,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// main loop actually iterating a second time after a tick.
 /// </summary>
 public class HeartbeatWorkerCoverageTests {
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -33,7 +34,7 @@ public class HeartbeatWorkerCoverageTests {
 
   /// <summary>Counts calls; can throw a chosen exception shape on the first N calls and succeed
   /// afterward, so a test can prove the loop survives a failure and keeps ticking.</summary>
-  private sealed class _throwingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class ThrowingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _calls;
     public int Calls => Volatile.Read(ref _calls);
     public int ThrowOnCallsUpTo { get; init; }
@@ -60,7 +61,7 @@ public class HeartbeatWorkerCoverageTests {
   /// without ever invoking the delegate — which satisfies both <c>IsCompleted</c> and
   /// <c>!IsFaulted</c>, and trivially satisfies "the coordinator was never called" as well.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -79,25 +80,28 @@ public class HeartbeatWorkerCoverageTests {
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
     return new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _instanceProvider("origin-svc"),
-      gate,
-      Options.Create(options),
-      NullLogger<HeartbeatWorker>.Instance,
-      HeartbeatTestDependencies.LifecycleState,
-      HeartbeatTestDependencies.Version);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new InstanceProvider("origin-svc"),
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
   }
 
   // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the
-  // `catch (OperationCanceledException)` around `_schemaReadyGate.WaitForReadyAsync`. Without
+  // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
   // this, a pod stopped while still waiting for the schema would fault its BackgroundService
   // instead of exiting quietly — turning a routine fast restart into a logged crash.
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
       CancellationToken testToken) {
-    var coordinator = new _throwingCoordinator();
-    var gate = new _blockingGate();  // never opens
+    var coordinator = new ThrowingCoordinator();
+    var gate = new BlockingGate();  // never opens
     var worker = _buildWorker(coordinator, gate, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     using var cts = new CancellationTokenSource();
@@ -118,7 +122,7 @@ public class HeartbeatWorkerCoverageTests {
       .Because("nothing may heartbeat before the schema is ready");
   }
 
-  // Target: line 87 — `break;` in the `catch (OperationCanceledException)` around
+  // Target: line 87 — the break in the the OperationCanceledException handler around
   // `_heartbeatOnceAsync` inside the main loop. A cancellation surfacing from the tick itself
   // (not necessarily stoppingToken) must end the loop immediately rather than being retried —
   // retrying a call whose own cancellation already fired can never succeed.
@@ -126,7 +130,7 @@ public class HeartbeatWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_TickThrowsOperationCanceled_BreaksTheLoopWithoutRetryingAsync(
       CancellationToken testToken) {
-    var coordinator = new _throwingCoordinator {
+    var coordinator = new ThrowingCoordinator {
       ThrowOnCallsUpTo = int.MaxValue,
       ThrowWith = new OperationCanceledException("simulated tick-level cancellation"),
     };
@@ -154,7 +158,7 @@ public class HeartbeatWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_FirstTickThrowsGenericException_LogsAndKeepsTickingAsync(
       CancellationToken testToken) {
-    var coordinator = new _throwingCoordinator {
+    var coordinator = new ThrowingCoordinator {
       ThrowOnCallsUpTo = 1,
       ThrowWith = new InvalidOperationException("simulated transient heartbeat failure"),
     };

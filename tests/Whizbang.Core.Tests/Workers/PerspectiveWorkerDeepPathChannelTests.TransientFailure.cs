@@ -1,14 +1,22 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -32,9 +40,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var nextStreamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.DeadlockedPerspective";
 
-    var coordinator = new RecordingWorkCoordinator {
-      NextCursorException = FakeDbException.WithSqlState("40P01", message: "deadlock detected")
-    };
+    var coordinator = new RecordingWorkCoordinator();
+    coordinator.SetNextCursorException(FakeDbException.WithSqlState("40P01", message: "deadlock detected"));
     var instanceProvider = new FakeInstanceProvider();
     var runner = new RecordingRunner();
     var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
@@ -44,6 +51,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var time = new FakeTimeProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -61,15 +69,35 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         MaxConcurrentDrainConsumers = 1
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
       logger: logger,
-      timeProvider: time,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        // One consumer loop so the batch that fails and the batch that follows are the same loop's.
+        MaxConcurrentDrainConsumers = 1
+      })).Value),
+      timeProvider: time);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -119,6 +147,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

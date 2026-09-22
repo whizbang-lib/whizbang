@@ -296,9 +296,11 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     var allStarted = new SemaphoreSlim(0, 3);
 
     // Act - Start 3 async operations
-    var task1 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs1.Task; }, context).AsTask();
-    var task2 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs2.Task; }, context).AsTask();
-    var task3 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs3.Task; }, context).AsTask();
+    Task<int> Start(TaskCompletionSource<int> tcs) =>
+      executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs.Task; }, context).AsTask();
+    var task1 = Start(tcs1);
+    var task2 = Start(tcs2);
+    var task3 = Start(tcs3);
 
     // Wait for all 3 handlers to start (all semaphore slots taken)
     for (int i = 0; i < 3; i++) {
@@ -395,7 +397,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     await executor.StartAsync();
     var envelope = CreateTestEnvelope("test");
     var context = CreateTestContext();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
 
     var tcs = new TaskCompletionSource<int>();
 
@@ -407,7 +409,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     ).AsTask();
 
     // Try to execute with cancellation token
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - Should throw OperationCanceledException
     await Assert.That(async () => await executor.ExecuteAsync<int>(

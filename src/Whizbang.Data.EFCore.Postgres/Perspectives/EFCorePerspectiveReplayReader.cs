@@ -47,13 +47,12 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext>(TDbContext context
     ArgumentException.ThrowIfNullOrEmpty(perspectiveName);
     ArgumentNullException.ThrowIfNull(eventTypes);
 
-    return _readReplayEventsImplAsync(streamId, perspectiveName, fromVersionExclusive, eventTypes, cancellationToken);
+    return _readReplayEventsImplAsync(streamId, perspectiveName, eventTypes, cancellationToken);
   }
 
   private async IAsyncEnumerable<ReplayEventEnvelope> _readReplayEventsImplAsync(
       Guid streamId,
       string perspectiveName,
-      int fromVersionExclusive,
       IReadOnlyCollection<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken) {
 
@@ -62,11 +61,10 @@ public sealed class EFCorePerspectiveReplayReader<TDbContext>(TDbContext context
     //    handlers still owe them a lifecycle run.
     var pendingIds = await _fetchPendingEventIdsAsync(streamId, perspectiveName, cancellationToken);
 
-    // 2. Stream events from the event store using the existing polymorphic reader. We read
-    //    every event in the stream (upTo=Empty, after=null) and filter by version in-memory
-    //    — fromVersionExclusive is typically 0 (full replay) or the snapshot's version.
-    //    For large streams the caller can pass a higher fromVersionExclusive to start from
-    //    the snapshot point; we still fetch all events and keep those whose Version > bound.
+    // 2. Stream every event in the stream (upTo=Empty, after=null) through the existing
+    //    polymorphic reader. The version bound the interface accepts is not applied here: this
+    //    reader returns the whole stream and lets the pending-id set decide what is new, so a
+    //    caller replaying from a snapshot still sees every event.
     var envelopes = await _eventStore.GetEventsBetweenPolymorphicAsync(
         streamId,
         afterEventId: null,

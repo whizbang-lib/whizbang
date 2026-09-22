@@ -52,7 +52,7 @@ public sealed class BacklogAgeMetrics {
   /// <exception cref="ArgumentNullException">Thrown when the holder is null.</exception>
   public BacklogAgeMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     meter.CreateObservableGauge(
       "whizbang.traffic_class.backlog_depth",

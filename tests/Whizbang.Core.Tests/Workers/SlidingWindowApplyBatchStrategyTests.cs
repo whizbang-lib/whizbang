@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,11 +27,12 @@ public class SlidingWindowApplyBatchStrategyTests {
     var streamId = _idProvider.NewGuid();
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => {
+      flush: (sid, count, _) => {
         flushed.Add((sid, count));
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
@@ -66,6 +68,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
@@ -97,6 +100,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushed.Add(sid);
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         // Long window so we'd never flush in time without FlushAndStopAsync forcing it.
         SlidingWindow = TimeSpan.FromSeconds(30),
@@ -116,7 +120,8 @@ public class SlidingWindowApplyBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterDispose_ThrowsObjectDisposedAsync() {
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (_, _, _) => Task.CompletedTask);
+      flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
     await sut.DisposeAsync();
 
     await Assert.That(async () => await sut.AppendAsync(_idProvider.NewGuid()))
@@ -141,6 +146,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -186,6 +192,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushStarted.TrySetResult();
         await keepFlushBusy.Task.ConfigureAwait(false);
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -212,6 +219,7 @@ public class SlidingWindowApplyBatchStrategyTests {
   }
 
   /// <summary>
+  /// <para>
   /// The idle sweep evicts a stream buffer in two steps — remove from the active map, then
   /// complete its writer. <c>AppendAsync</c> reads the map and then writes, so a caller can be
   /// holding a buffer the sweep completes in between, and the write throws
@@ -219,10 +227,12 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// perspective apply path, not a test artifact: it surfaced as an intermittent CI failure in
   /// this class's own idle-sweep test, where a 20ms sweep interval made the window easy to hit
   /// under load.
-  ///
+  /// </para>
+  /// <para>
   /// Append must survive it — a stream being evicted for idleness is a normal, expected event
   /// and must never fail the append that raced it. Deterministic: the seam completes a still-
   /// mapped writer, exactly the state the sweep produces, with no sleeps or scheduling luck.
+  /// </para>
   /// </summary>
   [Test]
   public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync() {
@@ -236,6 +246,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),

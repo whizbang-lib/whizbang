@@ -63,7 +63,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await FakeClockPump.StepUntilAsync(time, runner.FirstRunWithEvents.WaitAsync(TimeSpan.FromSeconds(10)));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var reported = logger.LinesWith(expectedEventId);
     await Assert.That(reported).Count().IsEqualTo(1);

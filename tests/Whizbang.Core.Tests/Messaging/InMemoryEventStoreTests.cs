@@ -324,8 +324,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var streamId = Guid.NewGuid();
     await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
 
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => {
@@ -342,8 +342,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var streamId = Guid.NewGuid();
     await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
 
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => {
@@ -360,8 +360,8 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var streamId = Guid.NewGuid();
     await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
 
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
     var eventTypes = new List<Type> { typeof(TestEvent) };
 
     // Act & Assert

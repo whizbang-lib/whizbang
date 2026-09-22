@@ -18,7 +18,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("op")) { }
+    using (source.StartActivity("op")) { /* the scope's start and end are the behavior under test */ }
 
     collector.AssertHasSpans();
 
@@ -39,8 +39,8 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("op-1")) { }
-    using (source.StartActivity("op-2")) { }
+    using (source.StartActivity("op-1")) { /* the scope's start and end are the behavior under test */ }
+    using (source.StartActivity("op-2")) { /* the scope's start and end are the behavior under test */ }
 
     collector.AssertMinSpanCount(2);
 
@@ -52,7 +52,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("op")) { }
+    using (source.StartActivity("op")) { /* the scope's start and end are the behavior under test */ }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.AssertMinSpanCount(5));
 
@@ -65,7 +65,7 @@ public class TraceAssertionExtensionsTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
     using (source.StartActivity("parent")) {
-      using (source.StartActivity("child")) { }
+      using (source.StartActivity("child")) { /* the scope's start and end are the behavior under test */ }
     }
 
     collector.AssertNoOrphanedSpans();
@@ -78,7 +78,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("lost-child", ActivityKind.Internal, _remoteParentContext())) { }
+    using (source.StartActivity("lost-child", ActivityKind.Internal, _remoteParentContext())) { /* the scope's start and end are the behavior under test */ }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.AssertNoOrphanedSpans());
 
@@ -91,7 +91,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("the-span")) { }
+    using (source.StartActivity("the-span")) { /* the scope's start and end are the behavior under test */ }
 
     collector.AssertHasSpan("the-span");
 
@@ -103,7 +103,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("present")) { }
+    using (source.StartActivity("present")) { /* the scope's start and end are the behavior under test */ }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.AssertHasSpan("absent"));
 
@@ -117,7 +117,7 @@ public class TraceAssertionExtensionsTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
     for (var i = 0; i < 11; i++) {
-      using (source.StartActivity($"span-{i}")) { }
+      using (source.StartActivity($"span-{i}")) { /* the scope's start and end are the behavior under test */ }
     }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.AssertHasSpan("absent"));
@@ -130,7 +130,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("Dispatch SomeCommand")) { }
+    using (source.StartActivity("Dispatch SomeCommand")) { /* the scope's start and end are the behavior under test */ }
 
     collector.AssertHasSpanContaining("SomeCommand");
 
@@ -142,7 +142,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("something")) { }
+    using (source.StartActivity("something")) { /* the scope's start and end are the behavior under test */ }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.AssertHasSpanContaining("missing"));
 
@@ -155,7 +155,7 @@ public class TraceAssertionExtensionsTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
     using (source.StartActivity("root-op")) {
-      using (source.StartActivity("child-op")) { }
+      using (source.StartActivity("child-op")) { /* the scope's start and end are the behavior under test */ }
     }
     var baseline = collector.BuildTree().ToSnapshot();
 
@@ -169,7 +169,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("actual-op")) { }
+    using (source.StartActivity("actual-op")) { /* the scope's start and end are the behavior under test */ }
     const string baseline = """
       {
         "name": "expected-op",
@@ -202,7 +202,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("baseline-op")) { }
+    using (source.StartActivity("baseline-op")) { /* the scope's start and end are the behavior under test */ }
 
     var path = Path.Combine(Path.GetTempPath(), $"whizbang-baseline-{Guid.NewGuid():N}.json");
     try {
@@ -221,7 +221,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("saved-op")) { }
+    using (source.StartActivity("saved-op")) { /* the scope's start and end are the behavior under test */ }
 
     var directory = Path.Combine(Path.GetTempPath(), $"whizbang-baselines-{Guid.NewGuid():N}");
     var path = Path.Combine(directory, "baseline.json");
@@ -243,7 +243,7 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("findable")) { }
+    using (source.StartActivity("findable")) { /* the scope's start and end are the behavior under test */ }
 
     var span = collector.GetSpan("findable");
 
@@ -265,7 +265,7 @@ public class TraceAssertionExtensionsTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
     using (source.StartActivity("only-root")) {
-      using (source.StartActivity("nested")) { }
+      using (source.StartActivity("nested")) { /* the scope's start and end are the behavior under test */ }
     }
 
     var root = collector.GetSingleRoot();
@@ -287,8 +287,8 @@ public class TraceAssertionExtensionsTests {
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
-    using (source.StartActivity("root-1")) { }
-    using (source.StartActivity("root-2")) { }
+    using (source.StartActivity("root-1")) { /* the scope's start and end are the behavior under test */ }
+    using (source.StartActivity("root-2")) { /* the scope's start and end are the behavior under test */ }
 
     var ex = Assert.Throws<TraceAssertionException>(() => collector.GetSingleRoot());
 

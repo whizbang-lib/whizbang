@@ -45,12 +45,12 @@ public class InMemorySpanCollectorTests {
     // without stealing the collector's AsyncLocal scope.
     using var otherListener = new ActivityListener {
       ShouldListenTo = s => s.Name == otherName,
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
     };
     ActivitySource.AddActivityListener(otherListener);
 
-    using (listened.StartActivity("wanted")) { }
-    using (other.StartActivity("unwanted")) { }
+    using (listened.StartActivity("wanted")) { /* the scope's start and end are the behavior under test */ }
+    using (other.StartActivity("unwanted")) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(collector.Count).IsEqualTo(1);
     await Assert.That(collector.Spans[0].Name).IsEqualTo("wanted");
@@ -62,7 +62,7 @@ public class InMemorySpanCollectorTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector();
 
-    using (source.StartActivity("any-source-op")) { }
+    using (source.StartActivity("any-source-op")) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(collector.WithNameContaining("any-source-op").Any()).IsTrue();
   }
@@ -91,9 +91,9 @@ public class InMemorySpanCollectorTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
 
-    using (source.StartActivity("prefix-alpha")) { }
-    using (source.StartActivity("prefix-beta")) { }
-    using (source.StartActivity("other-gamma")) { }
+    using (source.StartActivity("prefix-alpha")) { /* the scope's start and end are the behavior under test */ }
+    using (source.StartActivity("prefix-beta")) { /* the scope's start and end are the behavior under test */ }
+    using (source.StartActivity("other-gamma")) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(collector.Where(s => s.Name.EndsWith("beta", StringComparison.Ordinal)).Count()).IsEqualTo(1);
     await Assert.That(collector.WithNamePrefix("prefix-").Count()).IsEqualTo(2);
@@ -109,7 +109,7 @@ public class InMemorySpanCollectorTests {
     using var collector = new InMemorySpanCollector(sourceName);
 
     using (source.StartActivity("parent")) {
-      using (source.StartActivity("child")) { }
+      using (source.StartActivity("child")) { /* the scope's start and end are the behavior under test */ }
     }
 
     var roots = collector.GetRoots().ToList();
@@ -131,7 +131,7 @@ public class InMemorySpanCollectorTests {
     using var collector = new InMemorySpanCollector(sourceName);
 
     using (source.StartActivity("root-op")) {
-      using (source.StartActivity("child-op")) { }
+      using (source.StartActivity("child-op")) { /* the scope's start and end are the behavior under test */ }
     }
 
     var tree = collector.BuildTree();
@@ -147,7 +147,7 @@ public class InMemorySpanCollectorTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
 
-    using (source.StartActivity("op")) { }
+    using (source.StartActivity("op")) { /* the scope's start and end are the behavior under test */ }
     await Assert.That(collector.Count).IsEqualTo(1);
 
     collector.Clear();
@@ -162,7 +162,7 @@ public class InMemorySpanCollectorTests {
     using var collector = new InMemorySpanCollector(sourceName);
 
     using (source.StartActivity("parent")) {
-      using (source.StartActivity("child")) { }
+      using (source.StartActivity("child")) { /* the scope's start and end are the behavior under test */ }
     }
 
     await Assert.That(collector.HasOrphanedSpans()).IsFalse();
@@ -175,7 +175,7 @@ public class InMemorySpanCollectorTests {
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
 
-    using (source.StartActivity("orphan", ActivityKind.Internal, _remoteParentContext())) { }
+    using (source.StartActivity("orphan", ActivityKind.Internal, _remoteParentContext())) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(collector.HasOrphanedSpans()).IsTrue();
     var orphans = collector.GetOrphanedSpans().ToList();
@@ -195,7 +195,7 @@ public class InMemorySpanCollectorTests {
     collector.Dispose();
     collector.Dispose(); // Double dispose must be safe.
 
-    using (source.StartActivity("after-dispose")) { }
+    using (source.StartActivity("after-dispose")) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(collector.Count).IsEqualTo(0);
   }
@@ -207,13 +207,13 @@ public class InMemorySpanCollectorTests {
     using var outer = new InMemorySpanCollector(sourceName);
 
     using (var inner = new InMemorySpanCollector(sourceName)) {
-      using (source.StartActivity("inner-op")) { }
+      using (source.StartActivity("inner-op")) { /* the scope's start and end are the behavior under test */ }
 
       await Assert.That(inner.Count).IsEqualTo(1);
       await Assert.That(outer.Count).IsEqualTo(0);
     }
 
-    using (source.StartActivity("outer-op")) { }
+    using (source.StartActivity("outer-op")) { /* the scope's start and end are the behavior under test */ }
 
     await Assert.That(outer.Count).IsEqualTo(1);
     await Assert.That(outer.Spans[0].Name).IsEqualTo("outer-op");

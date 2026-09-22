@@ -91,8 +91,8 @@ public class ScopedLensFactoryCoverageTests {
     var accessor = new ScopeContextAccessor();
 
     services.AddSingleton<IScopeContextAccessor>(accessor);
-    services.AddSingleton<ISystemEventEmitter, _nullSystemEventEmitter>();
-    services.AddScoped<ITestLensQuery, _testLensQuery>();
+    services.AddSingleton<ISystemEventEmitter, NullSystemEventEmitter>();
+    services.AddScoped<ITestLensQuery, TestLensQuery>();
 
     var lensOptions = new LensOptions();
     configureOptions?.Invoke(lensOptions);
@@ -131,7 +131,7 @@ public class ScopedLensFactoryCoverageTests {
     ScopeFilterInfo? AppliedFilter { get; }
   }
 
-  private sealed class _testLensQuery : ITestLensQuery {
+  private sealed class TestLensQuery : ITestLensQuery {
     public ScopeFilterInfo? AppliedFilter { get; private set; }
 
     public void ApplyFilter(ScopeFilterInfo filterInfo) {
@@ -139,7 +139,7 @@ public class ScopedLensFactoryCoverageTests {
     }
   }
 
-  private sealed class _nullSystemEventEmitter : ISystemEventEmitter {
+  private sealed class NullSystemEventEmitter : ISystemEventEmitter {
     public Task EmitEventAuditedAsync<TEvent>(
         Guid streamId,
         long streamPosition,

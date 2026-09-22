@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,11 +15,13 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CA1707 // Test method names use underscores by convention.
 
@@ -177,19 +180,24 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     ScopeContextAccessor.CurrentContext = null;
 
     var worker = new InboxDispatchWorker(
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      inbox,
-      handlerCommit,
-      failure,
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
@@ -281,16 +289,24 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     ScopeContextAccessor.CurrentContext = null;
 
     var worker = new InboxDispatchWorker(
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
@@ -381,16 +397,24 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     ScopeContextAccessor.CurrentContext = null;
 
     var worker = new InboxDispatchWorker(
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
@@ -430,7 +454,8 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped(_ => CreateDbContext());
 
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
@@ -444,11 +469,12 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp =>
       new ScopedWorkCoordinatorStrategy(
-        sp.GetRequiredService<IWorkCoordinator>(),
-        sp.GetRequiredService<IServiceInstanceProvider>(),
+        coordinator: sp.GetRequiredService<IWorkCoordinator>(),
+        instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
         workChannelWriter: null,
-        new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
-        sp.GetService<ILogger<ScopedWorkCoordinatorStrategy>>()));
+        options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
+        logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
+        inboxChannelWriter: new InboxChannelWriter()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();                  // IDispatcher, IReceptorInvoker
@@ -478,7 +504,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
     }
@@ -486,7 +512,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
     }

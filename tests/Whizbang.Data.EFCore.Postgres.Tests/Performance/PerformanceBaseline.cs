@@ -58,15 +58,10 @@ public sealed class PerformanceBaseline {
   /// A run's measures against the baseline, as a table a person can read, plus the verdicts a gate
   /// acts on.
   /// </summary>
-  public sealed class Report {
+  public sealed class Report(PerformanceBaseline baseline, string scenario) {
     private readonly List<(string Name, double Value, string Unit, Entry? Baseline)> _rows = [];
-    private readonly PerformanceBaseline _baseline;
-    private readonly string _scenario;
-
-    public Report(PerformanceBaseline baseline, string scenario) {
-      _baseline = baseline;
-      _scenario = scenario;
-    }
+    private readonly PerformanceBaseline _baseline = baseline;
+    private readonly string _scenario = scenario;
 
     /// <summary>Records a measure, normalized to a unit of work.</summary>
     public Report Measure(string name, double value, string unit) {
@@ -75,12 +70,11 @@ public sealed class PerformanceBaseline {
     }
 
     /// <summary>The measures that passed a ceiling the baseline declares.</summary>
-    public IReadOnlyList<string> Breaches => _rows
+    public IReadOnlyList<string> Breaches => [.. _rows
       .Where(r => r.Baseline is { Ceiling: not null } b && r.Value > b.Ceiling!.Value)
       .Select(r => $"{r.Name} = {r.Value.ToString("N1", CultureInfo.InvariantCulture)} {r.Unit}, "
         + $"ceiling {r.Baseline!.Value.Ceiling!.Value.ToString("N1", CultureInfo.InvariantCulture)}"
-        + (r.Baseline!.Value.Note.Length > 0 ? $" ({r.Baseline!.Value.Note})" : ""))
-      .ToList();
+        + (r.Baseline!.Value.Note.Length > 0 ? $" ({r.Baseline!.Value.Note})" : ""))];
 
     /// <summary>The report, as a person reads it: the measure, the baseline, and the drift.</summary>
     public string Render() {
@@ -88,13 +82,16 @@ public sealed class PerformanceBaseline {
       sb.Append("\n=== ").Append(_scenario).Append(" ===\n");
       sb.Append(string.Format(CultureInfo.InvariantCulture,
         "{0,-64}{1,14}{2,14}{3,11}  {4}\n", "measure", "this run", "baseline", "drift", "unit"));
-      foreach (var (name, value, unit, baseline) in _rows) {
+      foreach (var (name, value, unit, recorded) in _rows) {
         var thisRun = value.ToString("N1", CultureInfo.InvariantCulture);
-        var was = baseline is { } b ? b.Value.ToString("N1", CultureInfo.InvariantCulture) : "-";
-        var drift = baseline is { } bb && bb.Value > 0
-          ? ((value - bb.Value) / bb.Value * 100).ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + "%"
-          : baseline is { } zb && zb.Value == 0 && value > 0 ? "new cost" : "-";
-        var ceiling = baseline is { Ceiling: not null } cb
+        var was = recorded is { } b ? b.Value.ToString("N1", CultureInfo.InvariantCulture) : "-";
+        var drift = "-";
+        if (recorded is { } bb && bb.Value > 0) {
+          drift = ((value - bb.Value) / bb.Value * 100).ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + "%";
+        } else if (recorded is { } zb && zb.Value == 0 && value > 0) {
+          drift = "new cost";
+        }
+        var ceiling = recorded is { Ceiling: not null } cb
           ? $"  (ceiling {cb.Ceiling!.Value.ToString("N0", CultureInfo.InvariantCulture)})"
           : "";
         sb.Append(string.Format(CultureInfo.InvariantCulture,

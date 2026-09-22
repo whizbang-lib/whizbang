@@ -103,7 +103,7 @@ public class LeaseRenewalWorkerCapTests {
     }
   }
 
-  private static (LeaseRenewalWorker worker, FakeCoordinator coord, FakeTimeProvider time, LeaseRegistry registry) _build(int maxRenewals) {
+  private static (LeaseRenewalWorker worker, FakeCoordinator coord, FakeTimeProvider time, LeaseRegistry registry) _build() {
     var coord = new FakeCoordinator();
     var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero));
     var registry = new LeaseRegistry();
@@ -113,15 +113,16 @@ public class LeaseRenewalWorkerCapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new LeaseRenewalWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         LeaseSeconds = 60,
         Flusher = new BatchFlusherOptions { MaxBatchSize = 100, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 1000 }
       }),
-      NullLogger<LeaseRenewalWorker>.Instance,
-      registry,
-      time);
+      logger: NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: registry,
+      timeProvider: time);
     return (worker, coord, time, registry);
   }
 
@@ -139,7 +140,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task Renewal_BumpsHandleCountAndCallsRenewLeasesAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 6);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();
@@ -165,7 +166,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task RenewalCount_AtCap_StopsSubmittingToRenewLeasesAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 3);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 3);
     using var cts = new CancellationTokenSource();
@@ -198,7 +199,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task DisposedHandle_SkippedAtRenewalAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 6);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();
@@ -231,13 +232,15 @@ public class LeaseRenewalWorkerCapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new LeaseRenewalWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 }
       }),
-      NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry: null,  // not wired
+      logger: NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: null,
+      // not wired
       timeProvider: time);
 
     using var cts = new CancellationTokenSource();

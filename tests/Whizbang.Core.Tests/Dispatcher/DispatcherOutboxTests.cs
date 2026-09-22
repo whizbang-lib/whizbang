@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -961,7 +962,7 @@ public class DispatcherOutboxTests {
 
     // Register required dependencies
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register stub envelope serializer (avoids JSON configuration complexity)
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();

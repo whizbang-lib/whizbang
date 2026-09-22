@@ -16,7 +16,6 @@ namespace Whizbang.Observability.Tests.TraceStore;
 public abstract class TraceStoreContractTests {
   // Test messages
   private sealed record OrderCommand(string OrderId, decimal Amount);
-  private sealed record PaymentCommand(string PaymentId, decimal Amount);
 
   /// <summary>
   /// Factory method for creating the trace store implementation under test.

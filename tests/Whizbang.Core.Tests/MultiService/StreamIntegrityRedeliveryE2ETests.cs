@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -89,7 +90,7 @@ public class StreamIntegrityRedeliveryE2ETests {
     // service's captured rows stand in for the origin's event store: same ids, same payload JSON.
     var missing = healthyRows.Where(r => _x(r) is 2 or 3).OrderBy(_x).ToList();
     await Assert.That(missing.Count).IsEqualTo(2);
-    var missingIds = missing.Select(m => m.MessageId).ToList();
+    var missingIds = missing.ConvertAll(m => m.MessageId);
     var streamId = TrackedGuid.NewMedo().Value;
     var events = missing.Select((row, i) => new RedeliveryEvent {
       EventId = row.MessageId,
@@ -107,9 +108,10 @@ public class StreamIntegrityRedeliveryE2ETests {
     // DIRECTED at the damaged service, on the same topic the originals used. The REAL envelope
     // serializer converts the typed bundle exactly as the outbox's composite seam does.
     var pump = new RedeliveryPump(
-      harness.Wire,
-      new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      transport: harness.Wire,
+      envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      compositeFactory: new CompositeFactory());
     var originServiceId = TrackedGuid.NewMedo().Value;
     var published = await pump.PublishAsync(
       events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc", originServiceId: originServiceId);
@@ -132,8 +134,8 @@ public class StreamIntegrityRedeliveryE2ETests {
     await Assert.That(composite.InnerEventIds).IsEquivalentTo(missingIds)
       .Because("the ORIGINAL event ids crossed the real wire inside the bundle.");
     await Assert.That(composite.InnerPayloads
-        .Select(pd => pd.TryGetProperty("x", out var lower) ? lower.GetInt32() : pd.GetProperty("X").GetInt32())
-        .ToList()).IsEquivalentTo([2, 3])
+        .ConvertAll(pd => pd.TryGetProperty("x", out var lower) ? lower.GetInt32() : pd.GetProperty("X").GetInt32())
+).IsEquivalentTo([2, 3])
       .Because("the repaired bodies are the original stored bytes, carried RAW through real JSON — " +
                "the origin never rehydrated them.");
 

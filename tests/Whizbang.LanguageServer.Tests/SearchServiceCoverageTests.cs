@@ -12,7 +12,7 @@ namespace Whizbang.LanguageServer.Tests;
 /// the match.
 /// </summary>
 /// <tests>Whizbang.LanguageServer/Services/SearchService.cs:*</tests>
-public class SearchServiceCoverageTests : IDisposable {
+public sealed class SearchServiceCoverageTests : IDisposable {
   private readonly SearchService _sut = new();
 
   // A synonym search that only works when the synonym is the entire query would miss the

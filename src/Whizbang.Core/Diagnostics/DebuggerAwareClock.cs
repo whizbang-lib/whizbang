@@ -31,9 +31,6 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   public DebuggerAwareClock() : this(new DebuggerAwareClockOptions()) {
   }
 
-  /// <summary>Reads accumulated CPU time from the configured source, or the process.</summary>
-  private TimeSpan _readCpuTime() => _options.CpuTimeSource?.Invoke() ?? _process.TotalProcessorTime;
-
   /// <summary>
   /// Initializes a new instance of <see cref="DebuggerAwareClock"/> with the specified options.
   /// </summary>
@@ -53,6 +50,9 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _sampler = new Timer(_sampleCpuTime, null, interval, interval);
     }
   }
+
+  /// <summary>Reads accumulated CPU time from the configured source, or the process.</summary>
+  private TimeSpan _readCpuTime() => _options.CpuTimeSource?.Invoke() ?? _process.TotalProcessorTime;
 
   /// <inheritdoc />
   public DebuggerDetectionMode Mode => _options.Mode;

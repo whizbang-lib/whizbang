@@ -36,15 +36,8 @@ public class BackupTickCoordinatorTests {
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;
-    public event Action<bool>? OnAvailabilityChanged;
+    public event Action<bool>? OnAvailabilityChanged { add { /* the fake never raises this event */ } remove { /* nothing was attached */ } }
     public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsAvailable);
-    public void Set(bool available) {
-      if (IsAvailable == available) {
-        return;
-      }
-      IsAvailable = available;
-      OnAvailabilityChanged?.Invoke(available);
-    }
   }
 
   private static BackupTickCoordinator _build(
@@ -58,7 +51,7 @@ public class BackupTickCoordinatorTests {
       Options.Create(options ?? new BackupTickCoordinatorOptions()),
       NullLogger<BackupTickCoordinator>.Instance,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      gate: gate,
+      gate: gate ?? NullNotifySignalingGate.Instance,
       timeProvider: timeProvider);
 
   // ============================================================================

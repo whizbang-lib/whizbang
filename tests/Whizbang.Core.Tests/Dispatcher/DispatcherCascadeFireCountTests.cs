@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -50,7 +51,7 @@ public class DispatcherCascadeFireCountTests {
   /// Command receptor that returns an unwrapped event (default cascade).
   /// </summary>
   public class FireCountCommandHandler : IReceptor<FireCountCommand, FireCountEvent> {
-    public ValueTask<FireCountEvent> HandleAsync(FireCountCommand message, CancellationToken cancellationToken) {
+    public ValueTask<FireCountEvent> HandleAsync(FireCountCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new FireCountEvent(message.EntityId));
     }
   }
@@ -60,7 +61,7 @@ public class DispatcherCascadeFireCountTests {
   /// This is the handler that should fire exactly ONCE per event.
   /// </summary>
   public class FireCountEventReceptor : IReceptor<FireCountEvent> {
-    public ValueTask HandleAsync(FireCountEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(FireCountEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _handlerFireCount);
       return ValueTask.CompletedTask;
     }
@@ -122,7 +123,7 @@ public class DispatcherCascadeFireCountTests {
     // Arrange — command receptor returns unwrapped event, void event handler counts invocations
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();
@@ -145,7 +146,7 @@ public class DispatcherCascadeFireCountTests {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();

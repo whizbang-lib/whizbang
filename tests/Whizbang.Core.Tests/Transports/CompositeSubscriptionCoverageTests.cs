@@ -15,7 +15,7 @@ namespace Whizbang.Core.Tests.Transports;
 /// <code-under-test>src/Whizbang.Core/Transports/CompositeSubscription.cs</code-under-test>
 public class CompositeSubscriptionCoverageTests {
 
-  private sealed class _FakeSubscription : ISubscription {
+  private sealed class FakeSubscription : ISubscription {
     public bool IsActive { get; private set; } = true;
     public int DisposeCallCount { get; private set; }
 
@@ -43,7 +43,7 @@ public class CompositeSubscriptionCoverageTests {
   /// </summary>
   [Test]
   public async Task Dispose_CalledTwice_OnlyDisposesUnderlyingSubscriptionsOnceAsync() {
-    var inner = new _FakeSubscription();
+    var inner = new FakeSubscription();
     var composite = new CompositeSubscription([inner]);
 
     composite.Dispose();
@@ -61,7 +61,7 @@ public class CompositeSubscriptionCoverageTests {
   /// </summary>
   [Test]
   public async Task OnDisconnected_WhenAnUnderlyingSubscriptionDisconnects_ForwardsTheEventAsync() {
-    var inner = new _FakeSubscription();
+    var inner = new FakeSubscription();
     var composite = new CompositeSubscription([inner]);
     SubscriptionDisconnectedEventArgs? received = null;
     object? sender = null;

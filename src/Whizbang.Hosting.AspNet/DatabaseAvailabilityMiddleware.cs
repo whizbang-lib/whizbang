@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Whizbang.Core.Workers;
@@ -66,11 +67,7 @@ public class DatabaseAvailabilityMiddleware(
   };
 
   private bool _isExempt(PathString path) {
-    foreach (var exempt in _exemptPaths) {
-      if (path.StartsWithSegments(exempt, StringComparison.OrdinalIgnoreCase)) {
-        return true;
-      }
-    }
-    return _dynamicExemptions?.IsExempt(path) == true;
+    return _exemptPaths.Any(exempt => path.StartsWithSegments(exempt, StringComparison.OrdinalIgnoreCase))
+      || _dynamicExemptions?.IsExempt(path) == true;
   }
 }

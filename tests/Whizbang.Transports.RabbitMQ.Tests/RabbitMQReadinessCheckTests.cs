@@ -43,8 +43,8 @@ public class RabbitMQReadinessCheckTests {
     // Arrange
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel()), isOpen: true);
     var readinessCheck = new RabbitMQReadinessCheck(fakeConnection);
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert - should not throw, just return current state
     var result = await readinessCheck.IsReadyAsync(cts.Token);

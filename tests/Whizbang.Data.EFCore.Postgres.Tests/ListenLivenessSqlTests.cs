@@ -331,7 +331,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     return sideConn;
   }
 
-  private async Task<(Guid InstanceId, bool ListenAlive)?> _readLiveInstanceRowAsync(
+  private static async Task<(Guid InstanceId, bool ListenAlive)?> _readLiveInstanceRowAsync(
       NpgsqlConnection conn, Guid instanceId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT instance_id, listen_alive FROM wh_live_instances WHERE instance_id = @id";

@@ -20,7 +20,6 @@ namespace Whizbang.Core.Tests.Common;
 /// - Command-line parameter: dotnet test -- --test-parameter ShowDiagnostics=true</para>
 /// </summary>
 public class DiagnosticTestBase {
-  private static readonly ConcurrentDictionary<Type, bool> _diagnosticsPrintedByClass = new();
 
   /// <summary>
   /// Override this property to specify which diagnostic categories to display.

@@ -68,9 +68,9 @@ public class ScopeDefinitionTests {
   [Test]
   public async Task FilterInterfaceType_SetAndGetAsync() {
     var def = new ScopeDefinition("Tenant") {
-      FilterInterfaceType = typeof(_ITenantScopedMarker),
+      FilterInterfaceType = typeof(ITenantScopedMarker),
     };
-    await Assert.That(def.FilterInterfaceType).IsEqualTo(typeof(_ITenantScopedMarker));
+    await Assert.That(def.FilterInterfaceType).IsEqualTo(typeof(ITenantScopedMarker));
   }
 
   [Test]
@@ -79,17 +79,17 @@ public class ScopeDefinitionTests {
     var def = new ScopeDefinition("Tenant") {
       FilterPropertyName = "TenantId",
       ContextKey = "TenantId",
-      FilterInterfaceType = typeof(_ITenantScopedMarker),
+      FilterInterfaceType = typeof(ITenantScopedMarker),
     };
 
     await Assert.That(def.Name).IsEqualTo("Tenant");
     await Assert.That(def.FilterPropertyName).IsEqualTo("TenantId");
     await Assert.That(def.ContextKey).IsEqualTo("TenantId");
-    await Assert.That(def.FilterInterfaceType).IsEqualTo(typeof(_ITenantScopedMarker));
+    await Assert.That(def.FilterInterfaceType).IsEqualTo(typeof(ITenantScopedMarker));
     await Assert.That(def.FilterMode).IsEqualTo(FilterMode.Equals);
     await Assert.That(def.NoFilter).IsFalse();
   }
 
   /// <summary>Marker only — no members; lives here so the FilterInterfaceType tests don't have to depend on a production type.</summary>
-  private interface _ITenantScopedMarker { }
+  private interface ITenantScopedMarker;
 }

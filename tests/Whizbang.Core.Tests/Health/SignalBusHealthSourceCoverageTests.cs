@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Health;
 /// </summary>
 public class SignalBusHealthSourceCoverageTests {
 
-  private sealed class _fakeLifecycle : IWhizbangLifecycleState {
+  private sealed class FakeLifecycle : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; set; } = LifecyclePhase.Starting;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
       Phase = phase;
@@ -32,7 +32,7 @@ public class SignalBusHealthSourceCoverageTests {
 
   [Test]
   public async Task ReportAsync_Faulted_ReportsFaultedAsync() {
-    var lifecycle = new _fakeLifecycle { Phase = LifecyclePhase.Faulted };
+    var lifecycle = new FakeLifecycle { Phase = LifecyclePhase.Faulted };
     var source = new SignalBusHealthSource(new SignalBusLivenessState(), lifecycle);
 
     var health = await source.ReportAsync(CancellationToken.None);
@@ -43,7 +43,7 @@ public class SignalBusHealthSourceCoverageTests {
 
   [Test]
   public async Task ReportAsync_Stopping_ReportsDrainingAsync() {
-    var lifecycle = new _fakeLifecycle { Phase = LifecyclePhase.Stopping };
+    var lifecycle = new FakeLifecycle { Phase = LifecyclePhase.Stopping };
     var source = new SignalBusHealthSource(new SignalBusLivenessState(), lifecycle);
 
     var health = await source.ReportAsync(CancellationToken.None);
@@ -54,7 +54,7 @@ public class SignalBusHealthSourceCoverageTests {
 
   [Test]
   public async Task ReportAsync_Starting_ReportsConnectingAsync() {
-    var lifecycle = new _fakeLifecycle { Phase = LifecyclePhase.Starting };
+    var lifecycle = new FakeLifecycle { Phase = LifecyclePhase.Starting };
     var source = new SignalBusHealthSource(new SignalBusLivenessState(), lifecycle);
 
     var health = await source.ReportAsync(CancellationToken.None);

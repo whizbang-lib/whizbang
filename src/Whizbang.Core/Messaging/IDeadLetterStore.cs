@@ -11,6 +11,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AtCap_NoDeadLetterStoreWired_FallsBackToFailureChannelAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEFCoreDeadLetterStoreTests.cs:MoveAsync_OutboxRow_AdapterOpensScopeAndDelegatesToInnerStoreAsync</tests>
 public interface IDeadLetterStore {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Atomically moves a failing row from its source work table (<c>wh_outbox</c>,
   /// <c>wh_inbox</c>, or <c>wh_perspective_events</c>) into <c>wh_dead_letters</c> with a

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -48,10 +49,12 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
     var inboxChannelWriter = new RecordingInboxChannelWriter();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      coordinator,
-      instanceProvider,
-      null, // IWorkChannelWriter — not needed for this test
-      options,
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      // IWorkChannelWriter — not needed for this test
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: inboxChannelWriter);
 
     sut.QueueInboxMessage(_inboxMessage());

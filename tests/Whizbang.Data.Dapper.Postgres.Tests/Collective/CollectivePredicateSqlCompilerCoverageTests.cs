@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 /// </summary>
 public class CollectivePredicateSqlCompilerCoverageTests {
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = "";
   }
 
@@ -31,9 +31,9 @@ public class CollectivePredicateSqlCompilerCoverageTests {
     // Two characters deliberately: StartsWith("A") trips CA1866 (prefer the char overload), and
     // switching to the char overload would change which MethodInfo the compiler sees. A
     // multi-character prefix keeps the unsupported-string-method shape this test is about.
-    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Data.Status.StartsWith("Ar", StringComparison.Ordinal);
+    Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => row.Data.Status.StartsWith("Ar", StringComparison.Ordinal);
 
-    await Assert.That(() => CollectivePredicateSqlCompiler<_jobModel>.Compile(filter))
+    await Assert.That(() => CollectivePredicateSqlCompiler<JobModel>.Compile(filter))
       .Throws<NotSupportedException>();
   }
 }

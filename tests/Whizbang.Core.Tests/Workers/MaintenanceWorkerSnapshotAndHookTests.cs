@@ -52,11 +52,11 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     public int AttemptToReport { get; init; } = 1;
 
     public Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>(AboutToReap);
 
     public Task HoldEphemeralDestructionAsync(
-        IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken ct = default) {
+        IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) {
       lock (Held) { Held.AddRange(eventIds); HeldUntil = holdUntil; }
       return Task.CompletedTask;
     }
@@ -64,7 +64,7 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     public Task<int> RecordDestructionFailureAsync(
         IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
         Whizbang.Core.Lifecycle.OnDestroyFailure onFailure = Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete,
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref FailuresRecorded);
       return Task.FromResult(AttemptToReport);
     }
@@ -74,22 +74,22 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     public int SnapshotTargetQueries;
 
     public Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref SnapshotTargetQueries);
       return Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>(Targets);
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -98,22 +98,22 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     public Type PerspectiveType => typeof(object);
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default)
       => throw new NotImplementedException();
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
-        Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default)
       => throw new NotImplementedException();
 
     public Task BootstrapSnapshotAsync(
-        Guid streamId, string perspectiveName, Guid lastEventId, CancellationToken ct = default) {
+        Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
       lock (Snapshots) { Snapshots.Add((streamId, perspectiveName)); }
       return snapshotThrows is not null ? Task.FromException(snapshotThrows) : Task.CompletedTask;
     }
   }
 
   private sealed class StubRegistry(Dictionary<string, IPerspectiveRunner?> runners) : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider sp)
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider)
       => runners.TryGetValue(perspectiveName, out var r) ? r : null;
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
@@ -128,14 +128,14 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     public int AfterCalls;
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(
-        DestructionContext context, CancellationToken ct = default) {
+        DestructionContext context, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref BeforeCalls);
       return beforeThrows is not null
         ? ValueTask.FromException<DestructionResult>(beforeThrows)
         : ValueTask.FromResult(before ?? new DestructionResult());
     }
 
-    public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken ct = default) {
+    public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref AfterCalls);
       return afterThrows is not null ? ValueTask.FromException(afterThrows) : ValueTask.CompletedTask;
     }

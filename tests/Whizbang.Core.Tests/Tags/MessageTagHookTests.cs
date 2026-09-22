@@ -146,7 +146,7 @@ public class MessageTagHookTests {
   public async Task Hook_CancellationToken_IsPassedThroughAsync() {
     // Arrange
     var hook = new CancellationAwareHook();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var context = _createContext("test", new { });
 
     // Act
@@ -225,7 +225,7 @@ public class MessageTagHookTests {
   private sealed class PassThroughHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -233,7 +233,7 @@ public class MessageTagHookTests {
   private sealed class PayloadModifyingHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       var modified = new Dictionary<string, object> {
         ["original"] = context.Payload,
         ["modified"] = true
@@ -249,7 +249,7 @@ public class MessageTagHookTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       LastReceivedTag = context.Attribute.Tag;
       LastReceivedGroup = context.Attribute.Group;
       LastReceivedPriority = context.Attribute.Priority;
@@ -263,7 +263,7 @@ public class MessageTagHookTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       LastReceivedTenantId = context.Scope?.Scope?.TenantId;
       LastReceivedUserId = context.Scope?.Scope?.UserId;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -276,7 +276,7 @@ public class MessageTagHookTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       LastReceivedMessage = context.Message;
       LastReceivedMessageType = context.MessageType;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -301,7 +301,7 @@ public class MessageTagHookTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       LastSpanName = context.Attribute.SpanName;
       LastSpanKind = context.Attribute.Kind;
       LastRecordAsEvent = context.Attribute.RecordAsEvent;
@@ -317,7 +317,7 @@ public class MessageTagHookTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       LastMetricName = context.Attribute.MetricName;
       LastMetricType = context.Attribute.Type;
       LastValueProperty = context.Attribute.ValueProperty;

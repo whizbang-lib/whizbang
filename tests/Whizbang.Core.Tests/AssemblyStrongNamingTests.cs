@@ -57,7 +57,7 @@ public class AssemblyStrongNamingTests {
       .Where(reference => (reference.GetPublicKeyToken()?.Length ?? 0) == 0)
       .Select(reference => reference.Name ?? "<unnamed>")
       .Where(name => !_unsignedReferenceAllowlist.Contains(name))
-      .OrderBy(name => name)
+      .Order()
       .ToList();
 
     // Assert

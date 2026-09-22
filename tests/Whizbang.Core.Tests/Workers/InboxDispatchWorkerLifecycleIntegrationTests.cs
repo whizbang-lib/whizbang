@@ -13,8 +13,10 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -75,7 +77,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
     }
@@ -83,7 +85,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> Failures { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       Failures.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -115,7 +117,8 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
         var count = Invocations.Count(i => i.Stage == stage);
         for (var i = _waiters.Count - 1; i >= 0; i--) {
           if (_waiters[i].Stage == stage && count >= _waiters[i].Target) {
-            (toRelease ??= []).Add(_waiters[i].Tcs);
+            toRelease ??= [];
+            toRelease.Add(_waiters[i].Tcs);
             _waiters.RemoveAt(i);
           }
         }
@@ -166,8 +169,8 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName)
       => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType)
-      => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
+      => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
       => jsonElement;
   }
@@ -219,6 +222,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     var invoker = new CapturingReceptorInvoker();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     if (registeredPerspectives is not null) {
       services.AddScoped<IPerspectiveRunnerRegistry>(_ => new StubPerspectiveRunnerRegistry(registeredPerspectives));
@@ -226,13 +230,24 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new PassThroughLifecycleDeserializer());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new PassThroughLifecycleDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     return (worker, inbox, handlerCommit, invoker);
   }

@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -33,18 +34,21 @@ public class GovernorMetricsTests {
   /// Starts a listener scoped to ONE governor series.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The listener can only subscribe by meter NAME, and every <see cref="GovernorMetrics"/>
   /// instance publishes under the same one. Under parallel execution that means
   /// <c>RecordObservableInstruments</c> polls the gauges of every other live instance too, and a
   /// test reading "the first width measurement" can read a sibling test's governor. That is a real
   /// cross-test leak, not a flake: it failed only in CI, where these tests actually overlap.
-  ///
+  /// </para>
+  /// <para>
   /// Each test therefore registers under its own series name and the callback drops measurements
   /// tagged for anything else, so a test observes only what it created.
+  /// </para>
   /// </remarks>
   private static (GovernorMetrics Metrics, MeterListener Listener, List<(string Name, long Value, string? Direction)> Captured) _listen(string series) {
     var captured = new List<(string, long, string?)>();
-    var metrics = new GovernorMetrics(new WhizbangMetrics());
+    var metrics = new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var listener = new MeterListener {
       InstrumentPublished = (inst, l) => {
         if (inst.Meter.Name == GovernorMetrics.METER_NAME) { l.EnableMeasurementEvents(inst); }
@@ -129,7 +133,7 @@ public class GovernorMetricsTests {
 
   [Test]
   public async Task MeterIsRegisteredSoConsumersGetItAutomaticallyAsync() {
-    _ = new GovernorMetrics(new WhizbangMetrics());
+    _ = new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(WhizbangMeters.All).Contains(GovernorMetrics.METER_NAME)
       .Because("a meter absent from the central list is one every consumer must remember to add "

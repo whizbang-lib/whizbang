@@ -22,7 +22,7 @@ public sealed class InstanceLivenessMetrics {
   /// <exception cref="ArgumentNullException">Thrown when the holder is null.</exception>
   public InstanceLivenessMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     WatchdogBeats = meter.CreatePassiveCounter<long>("whizbang.liveness.watchdog_beats",
       description: "Heartbeats forced ahead of cadence because the regular beat ran late enough to approach the stale threshold");

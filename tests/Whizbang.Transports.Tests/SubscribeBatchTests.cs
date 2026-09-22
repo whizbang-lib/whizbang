@@ -153,7 +153,7 @@ public class SubscribeBatchTests {
     var destination = new TransportDestination("test-topic");
     var batchOptions = new TransportBatchOptions();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

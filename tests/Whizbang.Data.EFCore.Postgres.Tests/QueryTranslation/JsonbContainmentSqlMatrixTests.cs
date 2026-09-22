@@ -254,8 +254,10 @@ public class JsonbContainmentSqlMatrixTests {
     Base("eq/guid/member-first/param", rows => rows.Where(x => x.Data.Gid == g), Destination.Containment);
     Base("eq/guid/value-first/param", rows => rows.Where(x => g == x.Data.Gid), Destination.Containment);
 
+#pragma warning disable S1125 // the literal-comparison spellings are the translations under test
     Base("eq/bool/member-first/const", rows => rows.Where(x => x.Data.Flag == true), Destination.Containment);
     Base("eq/bool/value-first/const", rows => rows.Where(x => true == x.Data.Flag), Destination.Containment);
+#pragma warning restore S1125
     Base("eq/bool/member-first/param", rows => rows.Where(x => x.Data.Flag == b), Destination.Containment);
     Base("eq/bool/value-first/param", rows => rows.Where(x => b == x.Data.Flag), Destination.Containment);
 
@@ -400,7 +402,7 @@ public class JsonbContainmentSqlMatrixTests {
     Base("physical/string/equal", rows => rows.Where(x => x.Data.PhysString == s), Destination.PhysicalColumn);
     Base("physical/string/like", rows => rows.Where(x => x.Data.PhysString.Contains("val")), Destination.PhysicalColumn);
     OrderingBase("physical/int/ordered", rows => rows.OrderBy(x => x.Data.PhysInt), Destination.PhysicalColumn);
-    Base("physical/negated", rows => rows.Where(x => !(x.Data.PhysInt == 1)), Destination.PhysicalColumn);
+    Base("physical/negated", rows => rows.Where(x => x.Data.PhysInt != 1), Destination.PhysicalColumn);
 
     // --- Operators containment cannot express.
     Base("op/short/not-equal", rows => rows.Where(x => x.Data.Small != (short)1), Destination.Extraction);
@@ -443,14 +445,16 @@ public class JsonbContainmentSqlMatrixTests {
     OrderingBase("nested/ordered", rows => rows.OrderBy(x => x.Data.Inner.City), Destination.Extraction);
 
     // --- Negation, which is where containment and equality stop agreeing.
-    Base("negated/string", rows => rows.Where(x => !(x.Data.Str == "v")), Destination.Extraction);
-    Base("negated/guid", rows => rows.Where(x => !(x.Data.Gid == _probeGuid)), Destination.Extraction);
-    Base("negated/int", rows => rows.Where(x => !(x.Data.Num == 1)), Destination.Extraction);
-    Base("negated/nested", rows => rows.Where(x => !(x.Data.Inner.City == "v")), Destination.Extraction);
+    Base("negated/string", rows => rows.Where(x => x.Data.Str != "v"), Destination.Extraction);
+    Base("negated/guid", rows => rows.Where(x => x.Data.Gid != _probeGuid), Destination.Extraction);
+    Base("negated/int", rows => rows.Where(x => x.Data.Num != 1), Destination.Extraction);
+    Base("negated/nested", rows => rows.Where(x => x.Data.Inner.City != "v"), Destination.Extraction);
     Base("negated/around-and", rows => rows.Where(x => !(x.Data.Str == "v" && x.Data.Num == 1)), Destination.Extraction);
     Base("negated/around-or", rows => rows.Where(x => !(x.Data.Str == "v" || x.Data.Num == 1)), Destination.Extraction);
-    Base("negated/double", rows => rows.Where(x => !!(x.Data.Str == "v")), Destination.Extraction);
-    Base("negated/beside-positive", rows => rows.Where(x => !(x.Data.Str == "v") || x.Data.Num == 1), Destination.Containment);
+#pragma warning disable S1940 // the double negation is the spelling under test
+    Base("negated/double", rows => rows.Where(x => !(!(x.Data.Str == "v"))), Destination.Extraction);
+#pragma warning restore S1940
+    Base("negated/beside-positive", rows => rows.Where(x => x.Data.Str != "v" || x.Data.Num == 1), Destination.Containment);
 
     // --- Composition within a single predicate.
     Base("compose/and-two", rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num == 1), Destination.Containment);
@@ -473,7 +477,7 @@ public class JsonbContainmentSqlMatrixTests {
     // --- Query syntax is the same tree in different clothes.
     Base("query-syntax/where-eligible", rows => from x in rows where x.Data.Str == "v" select x, Destination.Containment);
     Base("query-syntax/where-range", rows => from x in rows where x.Data.Num > 1 select x, Destination.Extraction);
-    Base("query-syntax/where-negated", rows => from x in rows where !(x.Data.Str == "v") select x, Destination.Extraction);
+    Base("query-syntax/where-negated", rows => from x in rows where x.Data.Str != "v" select x, Destination.Extraction);
     Base("query-syntax/orderby-eligible", rows => from x in rows where x.Data.Gid == _probeGuid orderby x.Version select x, Destination.Containment);
     Base("query-syntax/nested", rows => from x in rows where x.Data.Inner.City == "v" select x, Destination.Containment);
 

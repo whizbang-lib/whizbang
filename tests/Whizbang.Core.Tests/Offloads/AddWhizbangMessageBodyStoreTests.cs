@@ -26,7 +26,7 @@ public class AddWhizbangMessageBodyStoreTests {
   [Test]
   public async Task AddWhizbangMessageBodyStore_RegistersByProviderName_ResolvesByNameAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangMessageBodyStore<_fakeStore>("in-memory-test");
+    services.AddWhizbangMessageBodyStore<FakeStore>("in-memory-test");
     var provider = services.BuildServiceProvider();
 
     var store = provider.GetKeyedService<IMessageBodyStore>("in-memory-test");
@@ -39,8 +39,8 @@ public class AddWhizbangMessageBodyStoreTests {
   [Test]
   public async Task AddWhizbangMessageBodyStore_TwoProviders_CoexistAndResolveByKeyAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangMessageBodyStore<_fakeStore>("azure-blob-prod");
-    services.AddWhizbangMessageBodyStore<_fakeStore>("azure-blob-archive");
+    services.AddWhizbangMessageBodyStore<FakeStore>("azure-blob-prod");
+    services.AddWhizbangMessageBodyStore<FakeStore>("azure-blob-archive");
     var provider = services.BuildServiceProvider();
 
     var prod = provider.GetKeyedService<IMessageBodyStore>("azure-blob-prod");
@@ -55,7 +55,7 @@ public class AddWhizbangMessageBodyStoreTests {
   [Test]
   public async Task AddWhizbangMessageBodyStore_SingletonLifetime_ReturnsSameInstanceAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangMessageBodyStore<_fakeStore>("test");
+    services.AddWhizbangMessageBodyStore<FakeStore>("test");
     var provider = services.BuildServiceProvider();
 
     var first = provider.GetKeyedService<IMessageBodyStore>("test");
@@ -82,8 +82,8 @@ public class AddWhizbangMessageBodyStoreTests {
   [Test]
   public async Task AddWhizbangPostSerializeHook_MultipleHooks_AllRegisteredInChainAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangPostSerializeHook<_orderTenHook>();
-    services.AddWhizbangPostSerializeHook<_orderTwentyHook>();
+    services.AddWhizbangPostSerializeHook<OrderTenHook>();
+    services.AddWhizbangPostSerializeHook<OrderTwentyHook>();
     services.AddOptions<MessageBodyOffloadOptions>();   // hook ctors don't need to bind anything
 
     var provider = services.BuildServiceProvider();
@@ -92,13 +92,13 @@ public class AddWhizbangMessageBodyStoreTests {
     await Assert.That(chain.IsEmpty).IsFalse();
   }
 
-  private sealed class _orderTenHook : IPostSerializeHook {
+  private sealed class OrderTenHook : IPostSerializeHook {
     public int Order => 10;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken)
       => Task.FromResult(PostSerializeResult.PassThrough());
   }
 
-  private sealed class _orderTwentyHook : IPostSerializeHook {
+  private sealed class OrderTwentyHook : IPostSerializeHook {
     public int Order => 20;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken)
       => Task.FromResult(PostSerializeResult.PassThrough());
@@ -107,7 +107,7 @@ public class AddWhizbangMessageBodyStoreTests {
   [Test]
   public async Task AddWhizbangMessageBodyStore_UnknownKey_ReturnsNullAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangMessageBodyStore<_fakeStore>("known");
+    services.AddWhizbangMessageBodyStore<FakeStore>("known");
     var provider = services.BuildServiceProvider();
 
     var store = provider.GetKeyedService<IMessageBodyStore>("unknown");
@@ -122,11 +122,9 @@ public class AddWhizbangMessageBodyStoreTests {
   /// .NET keyed services pass the key as [FromKeyedServices] constructor
   /// param via Microsoft.Extensions.DI infrastructure.
   /// </summary>
-  private sealed class _fakeStore : IMessageBodyStore {
-    public _fakeStore([Microsoft.Extensions.DependencyInjection.ServiceKey] string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+  [method: System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1144:Unused private types or members should be removed", Justification = "The container constructs it, passing the registration's service key.")]
+  private sealed class FakeStore([Microsoft.Extensions.DependencyInjection.ServiceKey] string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName;
     public Task<MessageBodyClaim> UploadAsync(
       ReadOnlyMemory<byte> body, string contentType,
       MessageBodyUploadOptions? options = null,

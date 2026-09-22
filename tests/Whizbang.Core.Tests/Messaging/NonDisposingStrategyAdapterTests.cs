@@ -62,7 +62,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueOutboxMessage_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var msg = _outbox();
 
@@ -74,7 +74,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueInboxMessage_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var msg = _inbox();
 
@@ -86,7 +86,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueOutboxCompletion_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var id = Guid.NewGuid();
 
@@ -99,7 +99,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueInboxCompletion_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var id = Guid.NewGuid();
 
@@ -111,7 +111,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueOutboxFailure_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var id = Guid.NewGuid();
 
@@ -124,7 +124,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task QueueInboxFailure_DelegatesToInnerAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     var id = Guid.NewGuid();
 
@@ -137,7 +137,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task FlushAsync_DelegatesAndReturnsInnerResultAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
 
     await adapter.FlushAsync(WorkBatchOptions.None);
@@ -148,7 +148,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task FlushAndGetBatchAsync_DelegatesAndReturnsInnerBatchAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
 
     var batch = await adapter.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming);
@@ -165,7 +165,7 @@ public class NonDisposingStrategyAdapterTests {
   /// </summary>
   [Test]
   public async Task IWorkFlusher_FlushAsync_RoutesThroughInnerFlushAndGetBatchAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
     IWorkFlusher flusher = adapter;
 
@@ -177,7 +177,7 @@ public class NonDisposingStrategyAdapterTests {
 
   [Test]
   public async Task DisposeAsync_DoesNotDisposeInner_ReturnsCompletedAsync() {
-    var inner = new _RecordingStrategy();
+    var inner = new RecordingStrategy();
     var adapter = new NonDisposingStrategyAdapter(inner);
 
     await adapter.DisposeAsync();
@@ -190,7 +190,7 @@ public class NonDisposingStrategyAdapterTests {
   /// Stub <see cref="IWorkCoordinatorStrategy"/> that records every call so
   /// adapter forwarding can be asserted.
   /// </summary>
-  private sealed class _RecordingStrategy : IWorkCoordinatorStrategy {
+  private sealed class RecordingStrategy : IWorkCoordinatorStrategy {
     public List<OutboxMessage> QueuedOutbox { get; } = [];
     public List<InboxMessage> QueuedInbox { get; } = [];
     public List<(Guid MessageId, MessageProcessingStatus Status)> OutboxCompletions { get; } = [];

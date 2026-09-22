@@ -6,11 +6,14 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -58,29 +61,28 @@ public class PublishTimeoutTests {
 
   // --- fakes ---
 
-  private sealed class _FakeOutboxDrainChannel : IOutboxDrainChannel {
+  private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
-  private sealed class _FakeOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
+  private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
     public TaskCompletionSource<MessageFailure> FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       FirstFailure.TrySetResult(failure);
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -97,15 +99,15 @@ public class PublishTimeoutTests {
   /// PublishBatchAsync awaits a Task.Delay(Timeout.Infinite, ct); only completes
   /// when the CT cancels. The worker's per-call timeout MUST cancel that CT, or
   /// the test hangs forever and the assertion times out.</summary>
-  private sealed class _HangingPublishStrategy : IMessagePublishStrategy {
+  private sealed class HangingPublishStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
-      await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
       return new MessagePublishResult { MessageId = work.MessageId, Success = false, CompletedStatus = work.Status };
     }
-    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
       return [];
     }
   }
@@ -117,16 +119,16 @@ public class PublishTimeoutTests {
   /// what we observed on a consumer's service in production (hundreds of attempts, error column empty, no logs).
   /// v0.651's <c>WaitAsync(TimeSpan, ct)</c> hardening MUST throw TimeoutException
   /// regardless of inner cooperation — that's the invariant this test locks.</summary>
-  private sealed class _UncooperativeHangingPublishStrategy : IMessagePublishStrategy {
+  private sealed class UncooperativeHangingPublishStrategy : IMessagePublishStrategy {
     private readonly TaskCompletionSource<MessagePublishResult> _tcsOne = new();
     private readonly TaskCompletionSource<IReadOnlyList<MessagePublishResult>> _tcsBatch = new();
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       // CT intentionally ignored — never completes, never observes cancellation.
       return _tcsOne.Task;
     }
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
       // CT intentionally ignored — same pattern as the production transport hang.
       return _tcsBatch.Task;
     }
@@ -175,34 +177,45 @@ public class PublishTimeoutTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_PublishBatchHangs_TimesOutAndEnqueuesFailurePerRowAsync() {
-    var failure = new _FakeFailureChannel();
-    var hangingStrategy = new _HangingPublishStrategy();
+    var failure = new FakeFailureChannel();
+    var hangingStrategy = new HangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      hangingStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: hangingStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
     var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);
 
-    // Drive the bulk publish path with two rows. The hanging transport blocks;
+    // Drive the bulk publish path with two rows. The hanging transport blocks —
     // the per-call timeout fires at ~1s and the failure-channel enqueue should
     // land for each row in the batch.
     var bulkTask = worker.PublishBulkAsync([row1, row2], CancellationToken.None);
@@ -231,29 +244,40 @@ public class PublishTimeoutTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_PublishSingularHangs_TimesOutAndEnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
-    var hangingStrategy = new _HangingPublishStrategy();
+    var failure = new FakeFailureChannel();
+    var hangingStrategy = new HangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      hangingStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: hangingStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
 
@@ -283,29 +307,40 @@ public class PublishTimeoutTests {
   /// </summary>
   [Test]
   public async Task OutboxDrainWorker_PublishStrategyIgnoresCt_StillTimesOutAndEnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
-    var uncooperativeStrategy = new _UncooperativeHangingPublishStrategy();
+    var failure = new FakeFailureChannel();
+    var uncooperativeStrategy = new UncooperativeHangingPublishStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      uncooperativeStrategy);
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: uncooperativeStrategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        PublishTimeoutSeconds = 1,
+      })).Value));
 
     var row1 = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
     var row2 = _row((Guid)TrackedGuid.NewMedo(), row1.StreamId!.Value);

@@ -342,7 +342,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT * FROM claim_work(@p_inst, 'test-svc', 'test-host', 100, 100, 100, 100)";
     cmd.Parameters.AddWithValue("p_inst", instanceId);
     await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync()) { }
+    while (await reader.ReadAsync()) { /* drain */ }
   }
 
   private static async Task<Dictionary<Guid, int>> _readVersionsAsync(NpgsqlConnection conn, Guid streamId) {
@@ -360,12 +360,14 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   private static async Task _insertOutboxEventAsync(
       NpgsqlConnection conn, Guid messageId, Guid streamId, Guid instanceId, DateTimeOffset createdAt) {
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, scope, status, attempts,
          created_at, stream_id, partition_number, instance_id, lease_expiry, is_event)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnv', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
-              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', true)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnv', '{"p":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
+              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', true)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);
@@ -376,12 +378,13 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   private static async Task _insertInboxEventAsync(
       NpgsqlConnection conn, Guid messageId, Guid streamId, Guid instanceId, DateTimeOffset receivedAt) {
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       WITH m AS (
         INSERT INTO wh_inbox
           (message_id, handler_name, message_type, event_data, metadata, scope,
            received_at, stream_id, is_event)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{"p":1}'::jsonb, '{}'::jsonb, '{}'::jsonb,
                 @received, @stream, true)
         RETURNING message_id, stream_id, received_at, priority, is_event
       )
@@ -389,7 +392,8 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
         (message_id, stream_id, received_at, priority, is_event,
          status, attempts, instance_id, lease_expiry, partition_number)
       SELECT message_id, stream_id, received_at, priority, is_event,
-             1, 0, @inst, NOW() + INTERVAL '5 minutes', 0 FROM m";
+             1, 0, @inst, NOW() + INTERVAL '5 minutes', 0 FROM m
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

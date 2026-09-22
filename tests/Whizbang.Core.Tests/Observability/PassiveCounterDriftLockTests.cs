@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -109,7 +110,7 @@ public class PassiveCounterDriftLockTests {
     var recorder = new CounterRecorder(meterName: meter.Name);
     recorder.Start();
 
-    _ = new MessageDiscardPolicy(new NoReceptors(), NullLogger<MessageDiscardPolicy>.Instance, meter);
+    _ = new MessageDiscardPolicy(registry: new NoReceptors(), logger: NullLogger<MessageDiscardPolicy>.Instance, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     recorder.Collect();
 
     var gates = recorder.Measurements
@@ -166,11 +167,13 @@ public class PassiveCounterDriftLockTests {
   private static object _construct(Type metricsClass, TestMeterFactory factory) {
     var ctor = metricsClass.GetConstructors()
       .First(c => c.GetParameters().Length > 0 && c.GetParameters()[0].ParameterType == typeof(WhizbangMetrics));
-    var args = ctor.GetParameters()
-      .Select(p => p.ParameterType == typeof(WhizbangMetrics) ? new WhizbangMetrics(factory)
-                 : p.HasDefaultValue ? p.DefaultValue
-                 : null)
-      .ToArray();
+    object? ArgumentFor(System.Reflection.ParameterInfo p) {
+      if (p.ParameterType == typeof(WhizbangMetrics)) {
+        return new WhizbangMetrics(factory);
+      }
+      return p.HasDefaultValue ? p.DefaultValue : null;
+    }
+    var args = ctor.GetParameters().Select(ArgumentFor).ToArray();
     return ctor.Invoke(args);
   }
 
@@ -227,7 +230,7 @@ public class PassiveCounterDriftLockTests {
     public List<string> CountersWithoutAMeasurement() {
       Collect();
       lock (_counters) {
-        return _counters.Where(c => !_measured.Contains(c)).Select(c => c.Name).Distinct(StringComparer.Ordinal).ToList();
+        return [.. _counters.Where(c => !_measured.Contains(c)).Select(c => c.Name).Distinct(StringComparer.Ordinal)];
       }
     }
 

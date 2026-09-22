@@ -465,6 +465,5 @@ public partial class JsonLifecycleMessageDeserializerTests {
   [JsonSerializable(typeof(LifecycleTestMsg))]
   [JsonSerializable(typeof(MessageEnvelope<LifecycleTestMsg>))]
   [JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
-  internal sealed partial class LifecycleTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class LifecycleTestJsonContext : JsonSerializerContext;
 }

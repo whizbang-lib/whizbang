@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,7 +27,7 @@ public class DispatcherCascadeFlushTests {
   public record CascadeFlushEvent([property: StreamId] Guid EntityId) : IEvent;
 
   public class CascadeFlushCommandHandler : IReceptor<CascadeFlushCommand, CascadeFlushEvent> {
-    public ValueTask<CascadeFlushEvent> HandleAsync(CascadeFlushCommand message, CancellationToken cancellationToken) {
+    public ValueTask<CascadeFlushEvent> HandleAsync(CascadeFlushCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new CascadeFlushEvent(message.EntityId));
     }
   }
@@ -83,7 +84,7 @@ public class DispatcherCascadeFlushTests {
   public async Task CascadeToOutbox_UsesFireAndForgetFlushAsync_NotFlushAndGetBatchAsyncAsync() {
     var strategy = new MethodRecordingStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();

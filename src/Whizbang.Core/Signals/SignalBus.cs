@@ -21,10 +21,10 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
   /// <summary>Create a bus over the given push transports and pull sources.</summary>
   public SignalBus(
     IEnumerable<ISignalTransport> transports,
-    IEnumerable<ISignalSource>? pullSources = null) {
+    IEnumerable<ISignalSource> pullSources) {
     ArgumentNullException.ThrowIfNull(transports);
     _transports = [.. transports];
-    _pullSources = pullSources?.ToArray() ?? [];
+    _pullSources = [.. pullSources];
   }
 
   /// <summary>

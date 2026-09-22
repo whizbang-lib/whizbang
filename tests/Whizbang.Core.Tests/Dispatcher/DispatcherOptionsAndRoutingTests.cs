@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -79,7 +80,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -94,7 +95,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var command = new TestCommand("test data");
     var context = MessageContext.New();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -145,7 +146,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -358,7 +359,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register test receptors
     services.AddReceptors();

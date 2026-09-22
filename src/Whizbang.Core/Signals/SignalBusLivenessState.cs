@@ -14,7 +14,6 @@ namespace Whizbang.Core.Signals;
 /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:Report_ConsecutiveMissedDoorbells_DegradesAtThreshold_DoorbellWakeResetsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeTests.cs:HostedStart_DeadTransport_ProbeMarksWireRouteFailedAsync</tests>
 public sealed class SignalBusLivenessState {
-  private const int VERDICT_UNKNOWN = 0;
   private const int VERDICT_VERIFIED = 1;
   private const int VERDICT_FAILED = 2;
 

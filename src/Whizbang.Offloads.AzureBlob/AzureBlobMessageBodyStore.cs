@@ -32,7 +32,6 @@ namespace Whizbang.Offloads.AzureBlob;
 /// <docs>fundamentals/offloads/providers/azure-blob</docs>
 public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   private readonly AzureBlobOffloadOptions _options;
-  private readonly ILogger<AzureBlobMessageBodyStore>? _logger;
   private readonly BlobContainerClient _containerClient;
   private int _containerEnsured;
 
@@ -51,7 +50,6 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
       // Fall back to the unnamed default binding for tests / single-provider setups.
       _options = options.CurrentValue;
     }
-    _logger = logger;
 
     if (string.IsNullOrWhiteSpace(_options.ConnectionString)) {
       throw new InvalidOperationException(
@@ -76,7 +74,6 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
     ProviderName = providerName;
     _options = options;
     _containerClient = containerClient;
-    _logger = logger;
   }
 
   /// <inheritdoc />

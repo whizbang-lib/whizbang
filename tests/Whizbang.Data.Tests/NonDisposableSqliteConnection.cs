@@ -9,7 +9,7 @@ namespace Whizbang.Data.Tests;
 /// Wraps a SqliteConnection but prevents disposal.
 /// Required for in-memory SQLite testing where the connection must remain open.
 /// </summary>
-public class NonDisposableSqliteConnection : IDbConnection {
+public sealed class NonDisposableSqliteConnection : IDbConnection {
   private readonly SqliteConnection _inner;
 
   public NonDisposableSqliteConnection(SqliteConnection inner) {

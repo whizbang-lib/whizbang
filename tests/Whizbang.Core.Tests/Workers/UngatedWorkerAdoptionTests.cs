@@ -1,14 +1,20 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -38,7 +44,7 @@ public class UngatedWorkerAdoptionTests {
   /// "no work yet": the worker is parked on <see cref="WaitForReadyAsync"/> and cannot proceed until
   /// <see cref="MarkReady"/>, so anything it did before that point has already been counted.
   /// </summary>
-  private sealed class _observableGate : ISchemaReadyGate {
+  private sealed class ObservableGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _waiterArrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -53,11 +59,11 @@ public class UngatedWorkerAdoptionTests {
     public void MarkReady() => _ready.TrySetResult();
   }
 
-  private sealed class _countingScopeFactory : IServiceScopeFactory {
-    private readonly IServiceScopeFactory _inner;
+  private sealed class CountingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
+    private readonly IServiceScopeFactory _inner = inner;
     private readonly TaskCompletionSource _firstUse = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _count;
-    public _countingScopeFactory(IServiceScopeFactory inner) { _inner = inner; }
+
     public int Count => Volatile.Read(ref _count);
     public Task FirstUse => _firstUse.Task;
     public IServiceScope CreateScope() {
@@ -68,7 +74,7 @@ public class UngatedWorkerAdoptionTests {
   }
 
   private static async Task _assertGatedAsync(
-      Func<int> observed, Task firstObservation, Func<Task> start, _observableGate gate, string because) {
+      Func<int> observed, Task firstObservation, Func<Task> start, ObservableGate gate, string because) {
     await start();
 
     // The worker is now parked on the gate — provably, not probably.
@@ -86,12 +92,12 @@ public class UngatedWorkerAdoptionTests {
   [Test]
   public async Task DeadLetterDrain_DoesNotDrainUntilTheGateOpensAsync() {
     var inner = new ServiceCollection().BuildServiceProvider();
-    var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
-    var gate = new _observableGate();
+    var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
+    var gate = new ObservableGate();
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory,
       Options.Create(new TransportDeadLetterDrainWorkerOptions { IntervalMinutes = 1 }),
-      new WhizbangMetrics(),
+      new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
       NullLogger<TransportDeadLetterDrainWorker>.Instance,
       schemaReadyGate: gate);
 
@@ -111,11 +117,11 @@ public class UngatedWorkerAdoptionTests {
 
   [Test]
   public async Task PerspectiveMigration_DoesNotQueryPendingRebuildsUntilTheGateOpensAsync() {
-    var gate = new _observableGate();
+    var gate = new ObservableGate();
     var calls = 0;
     var firstQuery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new PerspectiveMigrationWorker(
-      new _noOpRebuilder(),
+      new NoOpRebuilder(),
       NullLogger<PerspectiveMigrationWorker>.Instance,
       schemaReadyGate: gate) {
       GetPendingRebuilds = _ => {
@@ -142,14 +148,15 @@ public class UngatedWorkerAdoptionTests {
 
   [Test]
   public async Task BackupTickCoordinator_DoesNotStartItsLoopUntilTheGateOpensAsync() {
-    var gate = new _observableGate();
-    var tracker = new _countingTracker();
+    var gate = new ObservableGate();
+    var tracker = new CountingTracker();
     var worker = new BackupTickCoordinator(
-      tracker,
-      new BackupTickRegistry(),
-      Options.Create(new BackupTickCoordinatorOptions()),
-      NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: gate);
+      tracker: tracker,
+      registry: new BackupTickRegistry(),
+      options: Options.Create(new BackupTickCoordinatorOptions()),
+      logger: NullLogger<BackupTickCoordinator>.Instance,
+      schemaReadyGate: gate,
+      gate: NullNotifySignalingGate.Instance);
 
     using var cts = new CancellationTokenSource();
     await _assertGatedAsync(
@@ -167,15 +174,20 @@ public class UngatedWorkerAdoptionTests {
 
   [Test]
   public async Task ServiceBusConsumer_DoesNotSubscribeUntilTheGateOpensAsync() {
-    var gate = new _observableGate();
+    var gate = new ObservableGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
       transport: new Whizbang.Core.Transports.InProcessTransport(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: gate,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
 
     using var cts = new CancellationTokenSource();
@@ -197,7 +209,7 @@ public class UngatedWorkerAdoptionTests {
 
   [Test]
   public async Task TransportConsumer_DoesNotSubscribeUntilTheGateOpensAsync() {
-    var gate = new _observableGate();
+    var gate = new ObservableGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
@@ -207,12 +219,20 @@ public class UngatedWorkerAdoptionTests {
       resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: gate);
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: gate,
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -231,7 +251,7 @@ public class UngatedWorkerAdoptionTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class _noOpRebuilder : IPerspectiveRebuilder {
+  private sealed class NoOpRebuilder : IPerspectiveRebuilder {
     private static Task<RebuildResult> _empty(string name) =>
       Task.FromResult(new RebuildResult(name, 0, 0, TimeSpan.Zero, true, null));
     public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) => _empty(perspectiveName);
@@ -241,7 +261,7 @@ public class UngatedWorkerAdoptionTests {
       Task.FromResult<RebuildStatus?>(null);
   }
 
-  private sealed class _countingTracker : IIdleActivityTracker {
+  private sealed class CountingTracker : IIdleActivityTracker {
     private readonly TaskCompletionSource _firstRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _reads;
     public int Reads => Volatile.Read(ref _reads);

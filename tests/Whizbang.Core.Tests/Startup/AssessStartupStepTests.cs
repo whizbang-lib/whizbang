@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -16,14 +17,14 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class AssessStartupStepTests {
 
-  private sealed class _fixedAssessor(StartupAssessment assessment) : IStartupAssessor {
+  private sealed class FixedAssessor(StartupAssessment assessment) : IStartupAssessor {
     public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) =>
       Task.FromResult(assessment);
   }
 
   [Test]
   public async Task Descriptor_RunsOnEveryInstance_BeforeTheMigrationBarrierAsync() {
-    var step = new AssessStartupStep();
+    var step = new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance);
 
     await Assert.That(step.Descriptor.Name).IsEqualTo(FrameworkStartupSteps.ASSESS);
     await Assert.That(step.Descriptor.RequiredCapability).IsEqualTo(StartupCapabilities.EVERY_INSTANCE)
@@ -39,7 +40,7 @@ public class AssessStartupStepTests {
 
   [Test]
   public async Task WithoutAnAssessor_SkipsWithTheStatedReasonAsync() {
-    var report = await new AssessStartupStep().ExecuteAsync(CancellationToken.None);
+    var report = await new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance).ExecuteAsync(CancellationToken.None);
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
     await Assert.That(report.Reason).Contains("no assessor registered");
@@ -49,7 +50,7 @@ public class AssessStartupStepTests {
   [Arguments(StartupVerdict.Serve)]
   [Arguments(StartupVerdict.Migrate)]
   public async Task ServeAndMigrateVerdicts_CompleteWithTheReasonAsync(StartupVerdict verdict) {
-    var step = new AssessStartupStep(new _fixedAssessor(new StartupAssessment(verdict, "clear to proceed")));
+    var step = new AssessStartupStep(assessor: new FixedAssessor(new StartupAssessment(verdict, "clear to proceed")), logger: NullLogger<AssessStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);
 
@@ -59,8 +60,8 @@ public class AssessStartupStepTests {
 
   [Test]
   public async Task StandDownVerdict_FailsTheBlockingStep_WhichIsNotReadyWhileAliveAsync() {
-    var step = new AssessStartupStep(new _fixedAssessor(
-      new StartupAssessment(StartupVerdict.StandDown, "the ledger records a newer version")));
+    var step = new AssessStartupStep(assessor: new FixedAssessor(
+      new StartupAssessment(StartupVerdict.StandDown, "the ledger records a newer version")), logger: NullLogger<AssessStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);
 
@@ -73,9 +74,9 @@ public class AssessStartupStepTests {
   [Test]
   public async Task StandDown_ThroughTheRealPipeline_KeepsReadinessPendingForeverAsync() {
     var state = new StartupPipelineState();
-    var assess = new AssessStartupStep(new _fixedAssessor(
-      new StartupAssessment(StartupVerdict.StandDown, "newer version recorded")));
-    var runner = new StartupPipelineRunner([assess], [state]);
+    var assess = new AssessStartupStep(assessor: new FixedAssessor(
+      new StartupAssessment(StartupVerdict.StandDown, "newer version recorded")), logger: NullLogger<AssessStartupStep>.Instance);
+    var runner = new StartupPipelineRunner(steps: [assess], observers: [state], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 

@@ -112,5 +112,4 @@ public class CrossServiceFlagsE2ETests {
 /// <summary>JSON context for the cross-service E2E contracts (production-parity registration).</summary>
 [JsonSerializable(typeof(CrossServiceFlagsE2ETests.CrossServiceCollectiveMarker))]
 [JsonSerializable(typeof(MessageEnvelope<CrossServiceFlagsE2ETests.CrossServiceCollectiveMarker>))]
-public sealed partial class CrossServiceE2EJsonContext : JsonSerializerContext {
-}
+public sealed partial class CrossServiceE2EJsonContext : JsonSerializerContext;

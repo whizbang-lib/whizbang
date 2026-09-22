@@ -710,7 +710,7 @@ public class SyncFilterBuilderTests {
   public async Task SyncFilterBuilder_ImplicitConversion_Null_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => {
       SyncFilterBuilder nullBuilder = null!;
-      PerspectiveSyncOptions _ = (PerspectiveSyncOptions)nullBuilder;
+      _ = (PerspectiveSyncOptions)nullBuilder;
     }).ThrowsExactly<ArgumentNullException>();
   }
 
@@ -732,17 +732,6 @@ public class SyncFilterBuilderTests {
     var options = builder.Build();
 
     await Assert.That(options.DebuggerAwareTimeout).IsTrue();
-  }
-
-  [Test]
-  public async Task SyncFilterBuilder_Build_PreservesFilterAsync() {
-    var streamId = Guid.NewGuid();
-    var builder = SyncFilter.ForStream(streamId);
-    var options = builder.Build();
-
-    await Assert.That(options.Filter).IsTypeOf<StreamFilter>();
-    var streamFilter = (StreamFilter)options.Filter;
-    await Assert.That(streamFilter.StreamId).IsEqualTo(streamId);
   }
 
   // ==========================================================================

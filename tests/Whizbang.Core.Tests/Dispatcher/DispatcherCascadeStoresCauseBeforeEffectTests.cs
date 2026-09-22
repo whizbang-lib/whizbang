@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -41,31 +42,31 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Dispatcher")]
 public class DispatcherCascadeStoresCauseBeforeEffectTests {
 
-  private sealed record _cause(string Id) : IEvent;
-  private sealed record _effect(string Id) : IEvent;
+  private sealed record Cause(string Id) : IEvent;
+  private sealed record Effect(string Id) : IEvent;
 
-  private sealed class _scopeFactory(IServiceProvider provider) : IServiceScopeFactory {
-    public IServiceScope CreateScope() => new _scope(provider);
-    private sealed class _scope(IServiceProvider provider) : IServiceScope {
+  private sealed class ScopeFactory(IServiceProvider provider) : IServiceScopeFactory {
+    public IServiceScope CreateScope() => new Scope(provider);
+    private sealed class Scope(IServiceProvider provider) : IServiceScope {
       public IServiceProvider ServiceProvider { get; } = provider;
       public void Dispose() { }
     }
   }
 
   /// <summary>
-  /// Records the order events reach the event-store seam, and gives <c>_cause</c> a receptor that
-  /// cascades an <c>_effect</c> — the shape that exposes the inversion. A composite of inert events
+  /// Records the order events reach the event-store seam, and gives <c>Cause</c> a receptor that
+  /// cascades an <c>Effect</c> — the shape that exposes the inversion. A composite of inert events
   /// cannot show it, which is why the original case needed a receptor cascade to reproduce.
   /// </summary>
-  private sealed class _orderRecordingDispatcher(IServiceProvider sp)
-      : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class OrderRecordingDispatcher(IServiceProvider sp)
+      : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     public List<string> Stored { get; } = [];
 
     protected override Task CascadeToEventStoreOnlyAsync(
         IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
       Stored.Add(message switch {
-        _cause c => $"cause:{c.Id}",
-        _effect e => $"effect:{e.Id}",
+        Cause c => $"cause:{c.Id}",
+        Effect e => $"effect:{e.Id}",
         _ => messageType.Name,
       });
       return Task.CompletedTask;
@@ -76,12 +77,12 @@ public class DispatcherCascadeStoresCauseBeforeEffectTests {
       Task.CompletedTask;
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      if (eventType != typeof(_cause)) {
+      if (eventType != typeof(Cause)) {
         return null;
       }
       return async (msg, env, ct) => {
-        var cause = (_cause)msg;
-        await CascadeMessageAsync(new _effect(cause.Id), env, DispatchModes.Local, ct);
+        var cause = (Cause)msg;
+        await CascadeMessageAsync(new Effect(cause.Id), env, DispatchModes.Local, ct);
       };
     }
 
@@ -94,19 +95,19 @@ public class DispatcherCascadeStoresCauseBeforeEffectTests {
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
-  private static _orderRecordingDispatcher _build() {
+  private static OrderRecordingDispatcher _build() {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceScopeFactory>(sp => new _scopeFactory(sp));
+    services.AddSingleton<IServiceScopeFactory>(sp => new ScopeFactory(sp));
     services.AddSingleton<IWorkCoordinator>(new NoOpWorkCoordinator());
     var sp = services.BuildServiceProvider();
-    return new _orderRecordingDispatcher(sp);
+    return new OrderRecordingDispatcher(sp);
   }
 
   [Test]
   public async Task ACascadedEvent_IsStoredBeforeTheEventsItsReceptorCascadesAsync() {
     var dispatcher = _build();
 
-    await dispatcher.CascadeMessageAsync(new _cause("a"), sourceEnvelope: null, DispatchModes.Local);
+    await dispatcher.CascadeMessageAsync(new Cause("a"), sourceEnvelope: null, DispatchModes.Local);
 
     // Compared as one ORDERED string, deliberately. A collection-equivalence assertion here passes
     // against the defect: it treats ["effect:a", "cause:a"] as equivalent to ["cause:a", "effect:a"],
@@ -125,7 +126,7 @@ public class DispatcherCascadeStoresCauseBeforeEffectTests {
     var dispatcher = _build();
 
     foreach (var id in new[] { "first", "second" }) {
-      await dispatcher.CascadeMessageAsync(new _cause(id), sourceEnvelope: null, DispatchModes.Local);
+      await dispatcher.CascadeMessageAsync(new Cause(id), sourceEnvelope: null, DispatchModes.Local);
     }
 
     await Assert.That(string.Join(" -> ", dispatcher.Stored))

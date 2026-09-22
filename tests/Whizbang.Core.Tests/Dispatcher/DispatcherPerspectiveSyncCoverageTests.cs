@@ -133,8 +133,6 @@ public class DispatcherPerspectiveSyncCoverageTests {
 
   private sealed class StubEventCompletionAwaiter : IEventCompletionAwaiter {
     public Guid AwaiterId { get; } = Guid.NewGuid();
-    public string AwaiterName => "StubAwaiter";
-    public string AwaiterType => "Stub";
 
     public Task<bool> WaitForEventsAsync(
       IReadOnlyList<Guid> eventIds,
@@ -143,7 +141,5 @@ public class DispatcherPerspectiveSyncCoverageTests {
       Task.FromResult(true);
 
     public bool AreEventsFullyProcessed(IReadOnlyList<Guid> eventIds) => true;
-    public void SignalEventCompleted(Guid eventId) { }
-    public void TrackEvent(Guid eventId, int expectedPerspectiveCount) { }
   }
 }

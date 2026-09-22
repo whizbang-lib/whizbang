@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -507,7 +508,7 @@ public class SecurityIntegrationTests {
 
       // OLD behavior: Set CurrentContext but don't clear InitiatingContext
       ScopeContextAccessor.CurrentContext = explicitSystemContext;
-      // NOT clearing: ScopeContextAccessor.CurrentInitiatingContext = null;
+      // NOT clearing: ScopeContextAccessor.CurrentInitiatingContext = null —
 
       // Act - Read CurrentContext (this is what GetSecurityFromAmbient uses)
       // The getter reads InitiatingContext.ScopeContext FIRST, then falls back to _current
@@ -703,8 +704,9 @@ public class SecurityIntegrationTests {
 
       // OLD BEHAVIOR (the bug): Set plain ScopeContext directly
       // This is what happened before the fix when PerspectiveWorker used envelope.GetCurrentScope() directly
-      var accessor = new ScopeContextAccessor();
-      accessor.Current = plainScope;
+      _ = new ScopeContextAccessor {
+        Current = plainScope
+      };
 
       // Also set on static accessor (what GetSecurityFromAmbient uses)
       ScopeContextAccessor.CurrentContext = plainScope;
@@ -788,6 +790,7 @@ public class SecurityIntegrationTests {
 
       // Build service provider with test callback
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<ISecurityContextCallback>(testCallback);
       var provider = services.BuildServiceProvider();
 
@@ -909,6 +912,7 @@ public class SecurityIntegrationTests {
 
     // Setup DI without any security extractors (extraction will fail)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(testCallback);
@@ -922,22 +926,8 @@ public class SecurityIntegrationTests {
       .Because("IMessageContextAccessor should be registered in service provider");
 
     // Capture values INSIDE the same sync context as EstablishFullContextAsync
-    IMessageContext? capturedMessageContext = null;
-    IScopeContext? capturedScopeContext = null;
-    IMessageContext? capturedStaticMessage = null;
-    IScopeContext? capturedStaticScope = null;
-
     // Act: Call EstablishFullContextAsync and capture values immediately after
     await SecurityContextHelper.EstablishFullContextAsync(envelope, serviceProvider);
-
-    // Capture SYNCHRONOUSLY right after the await
-    var messageContextAccessor = serviceProvider.GetRequiredService<IMessageContextAccessor>();
-    var scopeContextAccessor = serviceProvider.GetRequiredService<IScopeContextAccessor>();
-
-    capturedMessageContext = messageContextAccessor.Current;
-    capturedScopeContext = scopeContextAccessor.Current;
-    capturedStaticMessage = MessageContextAccessor.CurrentContext;
-    capturedStaticScope = ScopeContextAccessor.CurrentContext;
 
     // FIRST: Check if callback was invoked - this proves the code path was executed
     await Assert.That(callbackInvoked).IsTrue()
@@ -1011,6 +1001,7 @@ public class SecurityIntegrationTests {
 
     // Setup DI with callback but no extractors
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(callback);
@@ -1306,6 +1297,7 @@ public class SecurityIntegrationTests {
     // Setup DI WITHOUT any security extractors (simulates extraction failing)
     // This forces the code to fall back to envelope.GetCurrentScope()
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(new MessageContextAccessor());
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     services.AddSingleton<ISecurityContextCallback>(testCallback);

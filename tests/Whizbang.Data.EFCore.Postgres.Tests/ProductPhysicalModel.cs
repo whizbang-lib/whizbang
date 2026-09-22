@@ -42,6 +42,6 @@ public class ProductPhysicalPerspective : IPerspectiveFor<ProductPhysicalModel, 
   public ProductPhysicalModel Apply(ProductPhysicalModel currentData, ProductPhysicalCreatedEvent @event) =>
     new() { Id = @event.Id, Name = @event.Name, Price = @event.Price };
 
-  public Task Update(ProductPhysicalCreatedEvent @event, CancellationToken cancellationToken = default) =>
+  public static Task Update(ProductPhysicalCreatedEvent @event, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 }

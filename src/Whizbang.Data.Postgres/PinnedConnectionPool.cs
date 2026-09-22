@@ -42,7 +42,6 @@ namespace Whizbang.Data.Postgres;
 public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposable {
   private readonly WhizbangPinnedPoolOptions _options;
   private readonly PinnedWorkerRegistry _registry;
-  private readonly ILogger<PinnedConnectionPool>? _logger;
   private readonly PinnedPoolMetrics? _metrics;
   private readonly NpgsqlDataSource _dataSource;
   private bool _disposed;
@@ -65,7 +64,6 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
 
     _options = options;
     _registry = registry;
-    _logger = logger;
     _metrics = metrics;
 
     if (string.IsNullOrWhiteSpace(options.ConnectionString)) {
@@ -90,7 +88,7 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
     cancellationToken.ThrowIfCancellationRequested();
 
     if (!_registry.IsEligible(workerType, _options)) {
-      return new _noOpBorrow();
+      return new NoOpBorrow();
     }
 
     var borrowDeadline = _options.BorrowTimeoutMilliseconds > 0
@@ -117,7 +115,7 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
     sw.Stop();
     _metrics?.BorrowDuration.Record(sw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("worker", workerType.Name));
 
-    return new _activeBorrow(conn);
+    return new ActiveBorrow(conn);
   }
 
   /// <inheritdoc />
@@ -130,13 +128,13 @@ public sealed class PinnedConnectionPool : IPinnedConnectionPool, IAsyncDisposab
   }
 
   /// <summary>Borrow handle for an ineligible worker; <see cref="Connection"/> is always null and dispose is a no-op.</summary>
-  private sealed class _noOpBorrow : IBorrowedConnection {
+  private sealed class NoOpBorrow : IBorrowedConnection {
     public DbConnection? Connection => null;
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
   }
 
   /// <summary>Borrow handle for an eligible worker; <see cref="Connection"/> is the borrowed Npgsql conn; dispose returns it to the pool.</summary>
-  private sealed class _activeBorrow(NpgsqlConnection conn) : IBorrowedConnection {
+  private sealed class ActiveBorrow(NpgsqlConnection conn) : IBorrowedConnection {
     private readonly NpgsqlConnection _conn = conn;
     private bool _disposed;
 

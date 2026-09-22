@@ -318,12 +318,10 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Minimal store impl that captures bytes by claim's StorageKey so tests can introspect.</summary>
-  internal sealed class InMemoryStoreImpl : IMessageBodyStore {
+  internal sealed class InMemoryStoreImpl(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
-    public InMemoryStoreImpl(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+
+    public string ProviderName { get; } = providerName;
     public Task<MessageBodyClaim> UploadAsync(
         ReadOnlyMemory<byte> body, string contentType,
         MessageBodyUploadOptions? options = null,
@@ -346,10 +344,8 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Store whose DownloadAsync always throws a non-CT exception — exercises the rehydrator's TransportException dead-letter path.</summary>
-  private sealed class ThrowingStore : IMessageBodyStore {
-    public ThrowingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  private sealed class ThrowingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
       => throw new InvalidOperationException("simulated provider failure");
@@ -358,10 +354,8 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Store whose DownloadAsync throws OperationCanceledException — exercises the rehydrator's cancellation-propagation behavior.</summary>
-  private sealed class CancelingStore : IMessageBodyStore {
-    public CancelingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  private sealed class CancelingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
       => throw new OperationCanceledException();
@@ -370,10 +364,8 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Store whose DownloadAsync never completes until canceled — exercises the rehydrator's bounded download timeout.</summary>
-  private sealed class HangingStore : IMessageBodyStore {
-    public HangingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  private sealed class HangingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public async Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default) {
       await Task.Delay(Timeout.Infinite, cancellationToken);  // returns only when the (linked timeout) token cancels

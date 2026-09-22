@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -18,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class EFCoreCommitHandlerTests : EFCoreTestBase {
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
     new(ctx, JsonContextRegistry.CreateCombinedOptions());
 
   private static OutboxMessage MakeOutbox(Guid messageId, Guid streamId) =>
@@ -136,7 +138,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
     await Assert.That(results.Count).IsEqualTo(0);
   }
 
-  private sealed class _captureLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+  private sealed class CaptureLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
     public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
@@ -153,8 +155,8 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
     // an operator can alert on. Fault injection: a test-owned trigger raises on a sentinel
     // outbox destination — the raise escapes the bulk tier whole; the savepoint loop then
     // isolates it to the one poisoned handler.
-    var logger = new _captureLogger();
-    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var logger = new CaptureLogger();
+    var metrics = new Whizbang.Core.Observability.WorkCoordinatorMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     long fallbacks = 0;
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {

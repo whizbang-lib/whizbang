@@ -122,7 +122,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
 
   private sealed class ProbeSource : IConfigurationSource {
     public ProbeProvider? Provider;
-    public IConfigurationProvider Build(IConfigurationBuilder b) => Provider = new ProbeProvider();
+    public IConfigurationProvider Build(IConfigurationBuilder builder) => Provider = new ProbeProvider();
   }
 
   private sealed class ProbeProvider : ConfigurationProvider {

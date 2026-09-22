@@ -684,7 +684,7 @@ public class SyncEventTrackerTests {
     var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var result = await waitTask;
     await Assert.That(result).IsFalse();
@@ -740,7 +740,7 @@ public class SyncEventTrackerTests {
     var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var result = await waitTask;
     await Assert.That(result).IsFalse();
@@ -782,7 +782,7 @@ public class SyncEventTrackerTests {
     var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var result = await waitTask;
     await Assert.That(result).IsFalse();
@@ -906,24 +906,6 @@ public class SyncEventTrackerTests {
     // Unregister should cancel the TCS
     tracker.UnregisterAwaiter(awaiterId);
 
-    var result = await task;
-    await Assert.That(result).IsFalse();
-  }
-
-  [Test]
-  public async Task UnregisterAwaiter_CancelsTcsEntriesAsync() {
-    var tracker = new SyncEventTracker();
-    var eventId = Guid.NewGuid();
-    var streamId = Guid.NewGuid();
-    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
-
-    var awaiterId = Guid.NewGuid();
-    var task = tracker.WaitForPerspectiveEventsAsync(
-        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
-
-    tracker.UnregisterAwaiter(awaiterId);
-
-    // Task should complete with false (cancellation handled internally)
     var result = await task;
     await Assert.That(result).IsFalse();
   }

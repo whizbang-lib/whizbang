@@ -59,7 +59,7 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
     await Assert.That(await reader.ReadAsync()).IsTrue();
 
     await Assert.That(reader.GetString(0)).IsEqualTo("sys-audit");
-    await Assert.That(reader.IsDBNull(1)).IsFalse()
+    await Assert.That(await reader.IsDBNullAsync(1)).IsFalse()
       .Because("the max-delay floor rides scheduled_for so an unfolded single ships at the deadline");
   }
 
@@ -212,7 +212,7 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
-    await using var cmd = ((NpgsqlConnection)connection).CreateCommand();
+    await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
       SELECT indexname, COALESCE(pg_get_expr(i.indpred, i.indrelid), '')
       FROM pg_indexes x

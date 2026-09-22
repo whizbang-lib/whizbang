@@ -13,22 +13,16 @@ namespace Whizbang.Core.Temporal;
 /// minimum) and on arm-on-mutation NOTIFY, so a freshly-created near-term schedule wakes without waiting.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
-public sealed partial class ScheduleTimer : IDisposable {
-  private readonly TimeProvider _timeProvider;
-  private readonly Func<ValueTask> _onDue;
-  private readonly ILogger<ScheduleTimer> _logger;
+/// <remarks>Creates the timer. <paramref name="onDue"/> must be fast/non-blocking (enqueue-and-return).</remarks>
+public sealed partial class ScheduleTimer(TimeProvider timeProvider, Func<ValueTask> onDue, ILogger<ScheduleTimer> logger) : IDisposable {
+  private readonly TimeProvider _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+  private readonly Func<ValueTask> _onDue = onDue ?? throw new ArgumentNullException(nameof(onDue));
+  private readonly ILogger<ScheduleTimer> _logger = logger ?? NullLogger<ScheduleTimer>.Instance;
   private readonly Lock _gate = new();
   private ITimer? _timer;
   private DateTimeOffset? _armedFor;
   private long _wakeCount;
   private bool _disposed;
-
-  /// <summary>Creates the timer. <paramref name="onDue"/> must be fast/non-blocking (enqueue-and-return).</summary>
-  public ScheduleTimer(TimeProvider timeProvider, Func<ValueTask> onDue, ILogger<ScheduleTimer>? logger = null) {
-    _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
-    _onDue = onDue ?? throw new ArgumentNullException(nameof(onDue));
-    _logger = logger ?? NullLogger<ScheduleTimer>.Instance;
-  }
 
   /// <summary>The current armed fire time, or <c>null</c> when disarmed. For diagnostics/tests.</summary>
   public DateTimeOffset? ArmedFor {

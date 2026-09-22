@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Dispatch;
@@ -18,7 +19,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithSingleTarget_ShouldCreateSubscriptionAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -60,7 +61,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -89,7 +90,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -114,7 +115,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.ServiceBus, transport);
 
@@ -138,7 +139,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.ServiceBus, transport);
 
@@ -163,7 +164,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
@@ -187,7 +188,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -211,7 +212,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
@@ -235,7 +236,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithAllMetadata_ShouldIncludeAllInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -261,7 +262,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_HandlerReceivesEnvelope_ShouldWorkAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -281,7 +282,7 @@ public class TransportManagerSubscriptionTests {
     }
 
     // Act
-    var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
+    _ = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Publish a test message
     var testEnvelope = new MessageEnvelope<string> {
@@ -305,7 +306,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var targets = new List<SubscriptionTarget> {
       new() {
         TransportType = TransportType.Kafka, // Not registered
@@ -323,7 +324,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithEmptyStringsInMetadata_ShouldNotIncludeThemAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 

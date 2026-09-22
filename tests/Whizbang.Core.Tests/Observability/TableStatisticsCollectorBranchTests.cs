@@ -1,6 +1,8 @@
+using System.Diagnostics.Metrics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,7 +27,7 @@ namespace Whizbang.Core.Tests.Observability;
 [Category("Observability")]
 public class TableStatisticsCollectorBranchTests {
 
-  private static TableStatisticsMetrics _newMetrics() => new(new WhizbangMetrics());
+  private static TableStatisticsMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   [Test]
   public async Task NoProvider_LogsAndExitsLoopAsync() {
@@ -36,7 +38,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
@@ -48,7 +50,7 @@ public class TableStatisticsCollectorBranchTests {
   public async Task ProviderRegistered_PopulatesMetricsThenWaitsAsync() {
     // Happy path: provider returns sizes + depths, both land on the metrics
     // before the collector enters its 30s Task.Delay.
-    var fakeProvider = new _RecordingProvider {
+    var fakeProvider = new RecordingProvider {
       SizesToReturn = new Dictionary<string, long> { ["wh_outbox"] = 4096, ["wh_inbox"] = 8192 },
       DepthsToReturn = new Dictionary<string, long> { ["outbox"] = 3, ["inbox"] = 7 },
     };
@@ -60,7 +62,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -69,7 +71,7 @@ public class TableStatisticsCollectorBranchTests {
     // exits its Task.Delay and we don't sit through 30s.
     await fakeProvider.SizesCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
     await fakeProvider.DepthsCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fakeProvider.SizesCallCount).IsGreaterThanOrEqualTo(1);
@@ -81,7 +83,7 @@ public class TableStatisticsCollectorBranchTests {
     // Generic exception in the provider should be logged and the loop should
     // continue to the Task.Delay. Cancel the token after the first throw so
     // the test exits promptly instead of waiting 30s for the next tick.
-    var fakeProvider = new _RecordingProvider {
+    var fakeProvider = new RecordingProvider {
       ThrowOnNextCall = new InvalidOperationException("simulated db error"),
     };
     var services = new ServiceCollection();
@@ -90,13 +92,13 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
     await fakeProvider.SizesCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fakeProvider.SizesCallCount).IsEqualTo(1);
@@ -104,7 +106,7 @@ public class TableStatisticsCollectorBranchTests {
 
   // ---------------- fakes ----------------
 
-  private sealed class _RecordingProvider : ITableStatisticsProvider {
+  private sealed class RecordingProvider : ITableStatisticsProvider {
     public IReadOnlyDictionary<string, long> SizesToReturn { get; set; } = new Dictionary<string, long>();
     public IReadOnlyDictionary<string, long> DepthsToReturn { get; set; } = new Dictionary<string, long>();
     public Exception? ThrowOnNextCall { get; set; }

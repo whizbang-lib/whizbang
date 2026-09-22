@@ -30,7 +30,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)] // 240s timeout for integration tests using shared emulator fixture
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   // ========================================
   // SHARED TOPIC OUTBOX STRATEGY TESTS

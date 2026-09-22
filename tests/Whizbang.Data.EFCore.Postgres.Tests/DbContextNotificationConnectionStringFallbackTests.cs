@@ -18,18 +18,18 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class DbContextNotificationConnectionStringFallbackTests {
 
-  private sealed class _FallbackTestDbContext(DbContextOptions<_FallbackTestDbContext> options) : DbContext(options) { }
+  private sealed class FallbackTestDbContext(DbContextOptions<FallbackTestDbContext> options) : DbContext(options) { }
 
-  private sealed class _NotADbContext;
+  private sealed class NotADbContext;
 
   [Test]
   public async Task GetConnectionString_WithNpgsqlConfiguredDbContext_ReturnsConnectionStringAsync() {
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o =>
+    services.AddDbContext<FallbackTestDbContext>(o =>
       o.UseNpgsql("Host=test.local;Database=mydb;Username=u;Password=p"));
     await using var sp = services.BuildServiceProvider();
 
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var result = fallback.GetConnectionString();
 
@@ -39,10 +39,10 @@ public class DbContextNotificationConnectionStringFallbackTests {
   [Test]
   public async Task GetConnectionString_CachesAfterFirstCallAsync() {
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o =>
+    services.AddDbContext<FallbackTestDbContext>(o =>
       o.UseNpgsql("Host=test;Database=mydb"));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var first = fallback.GetConnectionString();
     var second = fallback.GetConnectionString();
@@ -56,10 +56,10 @@ public class DbContextNotificationConnectionStringFallbackTests {
     // InMemory provider has no connection string — fallback returns null and resolver
     // treats it as "no fallback available" (precedence falls through to None).
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o => o.UseInMemoryDatabase("test"));
+    services.AddDbContext<FallbackTestDbContext>(o => o.UseInMemoryDatabase("test"));
     await using var sp = services.BuildServiceProvider();
 
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var result = fallback.GetConnectionString();
 
@@ -69,7 +69,7 @@ public class DbContextNotificationConnectionStringFallbackTests {
   [Test]
   public async Task Constructor_NullServiceProvider_ThrowsArgumentNullExceptionAsync() {
     var ex = await Assert.That(() =>
-        new DbContextNotificationConnectionStringFallback(null, typeof(_FallbackTestDbContext)))
+        new DbContextNotificationConnectionStringFallback(null, typeof(FallbackTestDbContext)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex.ParamName).IsEqualTo("serviceProvider");
   }
@@ -87,7 +87,7 @@ public class DbContextNotificationConnectionStringFallbackTests {
   public async Task Constructor_NonDbContextType_ThrowsArgumentExceptionAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var ex = await Assert.That(() =>
-        new DbContextNotificationConnectionStringFallback(sp, typeof(_NotADbContext)))
+        new DbContextNotificationConnectionStringFallback(sp, typeof(NotADbContext)))
       .Throws<ArgumentException>();
     await Assert.That(ex.ParamName).IsEqualTo("dbContextType");
   }
@@ -105,7 +105,7 @@ public class DbContextNotificationConnectionStringFallbackTests {
     const string originalConnString =
       "Host=stripped.example.com;Database=mydb;Username=u;Password=secret;Include Error Detail=true";
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(originalConnString));
+    services.AddDbContext<FallbackTestDbContext>(o => o.UseNpgsql(originalConnString));
     await using var sp = services.BuildServiceProvider();
 
     // Touch the connection so Npgsql strips the password from
@@ -114,11 +114,11 @@ public class DbContextNotificationConnectionStringFallbackTests {
     // some setups; on others we'd need OpenAsync. The fallback's RelationalOptionsExtension
     // path returns the original regardless.
     await using (var probeScope = sp.CreateAsyncScope()) {
-      var probeCtx = probeScope.ServiceProvider.GetRequiredService<_FallbackTestDbContext>();
+      var probeCtx = probeScope.ServiceProvider.GetRequiredService<FallbackTestDbContext>();
       _ = probeCtx.Database.GetDbConnection();  // creates the NpgsqlConnection wrapper
     }
 
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
     var result = fallback.GetConnectionString();
 
     await Assert.That(result).IsEqualTo(originalConnString);
@@ -129,10 +129,10 @@ public class DbContextNotificationConnectionStringFallbackTests {
     // End-to-end through NotificationConnectionStringResolver: no explicit config, fallback
     // picks up the DbContext's connection string and reports DbContextFallback as source.
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o =>
+    services.AddDbContext<FallbackTestDbContext>(o =>
       o.UseNpgsql("Host=dbcontext.local;Database=resolved"));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var emptyConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
     var resolution = NotificationConnectionStringResolver.Resolve(
@@ -153,10 +153,10 @@ public class DbContextNotificationConnectionStringFallbackTests {
   public async Task GetDataSource_UseNpgsqlDataSource_ReturnsTheDbContextsDataSourceAsync() {
     await using var dataSource = Npgsql.NpgsqlDataSource.Create("Host=test.local;Database=mydb;Username=u;Password=p");
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
+    services.AddDbContext<FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
     await using var sp = services.BuildServiceProvider();
     Whizbang.Data.Postgres.Notifications.INotificationDataSourceFallback fallback =
-      new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+      new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var result = fallback.GetDataSource();
 
@@ -168,10 +168,10 @@ public class DbContextNotificationConnectionStringFallbackTests {
     // A string-configured context has no data source to lend; the string path already carries
     // credentials for it (layer 1 of the resolution above).
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o =>
+    services.AddDbContext<FallbackTestDbContext>(o =>
       o.UseNpgsql("Host=test.local;Database=mydb;Username=u;Password=p"));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     await Assert.That(fallback.GetDataSource()).IsNull();
   }
@@ -179,9 +179,9 @@ public class DbContextNotificationConnectionStringFallbackTests {
   [Test]
   public async Task GetDataSource_InMemoryDbContext_ReturnsNullAsync() {
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o => o.UseInMemoryDatabase("no-data-source"));
+    services.AddDbContext<FallbackTestDbContext>(o => o.UseInMemoryDatabase("no-data-source"));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     await Assert.That(fallback.GetDataSource()).IsNull();
   }
@@ -190,9 +190,9 @@ public class DbContextNotificationConnectionStringFallbackTests {
   public async Task GetDataSource_CachesAfterFirstCallAsync() {
     await using var dataSource = Npgsql.NpgsqlDataSource.Create("Host=test.local;Database=mydb;Username=u;Password=p");
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
+    services.AddDbContext<FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var first = fallback.GetDataSource();
     var second = fallback.GetDataSource();

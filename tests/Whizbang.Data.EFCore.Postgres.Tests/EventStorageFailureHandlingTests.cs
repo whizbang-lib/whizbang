@@ -15,7 +15,7 @@ public class EventStorageFailureHandlingTests {
   [Test]
   public async Task ProcessResults_WithErrorRows_LogsErrorsAsync() {
     // Arrange
-    var logger = new TestLogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>>();
+    _ = new TestLogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>>();
     var results = new List<WorkBatchRow> {
       // Valid outbox work
       new() {

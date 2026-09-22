@@ -21,7 +21,7 @@ public class ITransportSubscribeToDeadLetterAsyncDefaultTests {
 
   [Test]
   public async Task DefaultImplementation_ThrowsNotSupportedAsync() {
-    ITransport transport = new _legacyTransport();
+    ITransport transport = new LegacyTransport();
 
     await Assert.That(async () => await transport.SubscribeToDeadLetterAsync(
         handler: (_, _) => Task.CompletedTask,
@@ -33,7 +33,7 @@ public class ITransportSubscribeToDeadLetterAsyncDefaultTests {
 
   [Test]
   public async Task DefaultImplementation_ExceptionMessageNamesTransportTypeAsync() {
-    ITransport transport = new _legacyTransport();
+    ITransport transport = new LegacyTransport();
 
     try {
       await transport.SubscribeToDeadLetterAsync(
@@ -42,7 +42,7 @@ public class ITransportSubscribeToDeadLetterAsyncDefaultTests {
         CancellationToken.None);
       throw new InvalidOperationException("Expected exception");
     } catch (NotSupportedException ex) {
-      await Assert.That(ex.Message).Contains(nameof(_legacyTransport))
+      await Assert.That(ex.Message).Contains(nameof(LegacyTransport))
         .Because("The default exception MUST name the transport type so operator-facing logs/CI surfaces immediately tell ops which transport needs the push-DLQ implementation.");
       await Assert.That(ex.Message).Contains("polling")
         .Because("The exception MUST mention the polling fallback so callers reading the log know the system isn't broken — just running on the legacy cadence.");
@@ -50,7 +50,7 @@ public class ITransportSubscribeToDeadLetterAsyncDefaultTests {
   }
 
   /// <summary>Transport that doesn't override SubscribeToDeadLetterAsync — exercises the default.</summary>
-  private sealed class _legacyTransport : ITransport {
+  private sealed class LegacyTransport : ITransport {
     public bool IsInitialized => true;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public TransportCapabilities Capabilities => TransportCapabilities.None;

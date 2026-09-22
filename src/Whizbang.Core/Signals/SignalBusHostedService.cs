@@ -32,7 +32,7 @@ public sealed partial class SignalBusHostedService(
   IEnumerable<ISignalTransport> transports,
   ILogger<SignalBusHostedService> logger,
   IServiceInstanceProvider instanceProvider,
-  IOptions<SignalBusOptions>? options = null,
+  IOptions<SignalBusOptions> options,
   TimeProvider? timeProvider = null
 ) : IHostedService, IDisposable {
   private readonly SignalBus _bus = bus ?? throw new ArgumentNullException(nameof(bus));

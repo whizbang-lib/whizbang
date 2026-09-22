@@ -136,5 +136,5 @@ public class LifecycleContextTests {
   internal sealed record TestMessage : IMessage;
 
   // Test perspective for type testing
-  internal sealed class TestPerspective { }
+  internal sealed class TestPerspective;
 }

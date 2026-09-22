@@ -31,6 +31,7 @@ namespace Whizbang.Core.Tests.DependencyInjection;
 public class LoggerFieldNullabilityTests {
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields", Justification = "Reads field metadata across the assembly to enforce a structural rule; nothing is invoked or assigned.")]
   public async Task NoFrameworkTypeStoresItsLoggerInANullableFieldAsync() {
     var assembly = typeof(Whizbang.Core.IEvent).Assembly;
     var nullability = new NullabilityInfoContext();

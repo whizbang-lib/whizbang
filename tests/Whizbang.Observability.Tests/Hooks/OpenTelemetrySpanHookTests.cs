@@ -35,7 +35,7 @@ public class OpenTelemetrySpanHookTests {
 
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.MessageTags",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 
@@ -164,7 +164,7 @@ public class OpenTelemetrySpanHookTests {
     };
     var processedCount = 0;
 
-    foreach (var (spanKind, expectedActivityKind) in testCases) {
+    foreach (var (spanKind, _) in testCases) {
       var attribute = new TelemetryTagAttribute { Tag = "test", Kind = spanKind };
       var message = new TestEvent { Id = Guid.NewGuid(), Name = "Test" };
       var payload = JsonSerializer.SerializeToElement(message);

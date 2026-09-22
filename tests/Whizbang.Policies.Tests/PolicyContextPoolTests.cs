@@ -115,12 +115,7 @@ public class PolicyContextPoolTests {
     // Use a tolerance range because:
     // 1. ConcurrentBag may have slight timing variations
     // 2. Static pool state may have residual items from test infrastructure
-    var reusedCount = 0;
-    foreach (var rented in rentedAfterReturn) {
-      if (contexts.Contains(rented)) {
-        reusedCount++;
-      }
-    }
+    var reusedCount = rentedAfterReturn.Count(contexts.Contains);
 
     // Pool max size is 1024, so we expect close to that many reused (allowing ±5% tolerance)
     await Assert.That(reusedCount).IsGreaterThanOrEqualTo(970)

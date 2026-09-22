@@ -159,7 +159,7 @@ public class EFCorePostgresLensQueryScopeTests {
     await context.SaveChangesAsync();
   }
 
-  private EFCorePostgresLensQuery<ScopedItem> CreateLensQuery(
+  private static EFCorePostgresLensQuery<ScopedItem> CreateLensQuery(
       DbContext context,
       IScopeContextAccessor accessor,
       QueryScope defaultScope = QueryScope.Tenant) {

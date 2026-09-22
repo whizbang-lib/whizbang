@@ -36,11 +36,11 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class CommandAuditPipelineBehavior<TCommand, TResponse>(
     ISystemEventEmitter emitter,
     IOptions<SystemEventOptions> options,
-    IMessageContext? context = null) : PipelineBehavior<TCommand, TResponse>
+    IMessageContext context) : PipelineBehavior<TCommand, TResponse>
     where TCommand : notnull {
   private readonly ISystemEventEmitter _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly IMessageContext? _context = context;
+  private readonly IMessageContext _context = context;
 
   /// <inheritdoc />
   public override async Task<TResponse> HandleAsync(
@@ -80,7 +80,7 @@ public sealed class CommandAuditPipelineBehavior<TCommand, TResponse>(
   /// </summary>
   private string _extractReceptorName() {
     // Try to get from context metadata
-    if (_context?.Metadata.TryGetValue("ReceptorName", out var receptorNameObj) == true &&
+    if (_context.Metadata.TryGetValue("ReceptorName", out var receptorNameObj) &&
         receptorNameObj is string receptorName &&
         !string.IsNullOrEmpty(receptorName)) {
       return receptorName;

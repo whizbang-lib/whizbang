@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -29,7 +30,7 @@ public class OrderedStreamProcessorCoverageTests {
   /// </summary>
   [Test]
   public async Task ProcessInboxWorkAsync_CancelledBeforeStart_ProcessesNoStreamsAsync() {
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
     var messages = new List<InboxWork> {
       _createInboxWork(_idProvider.NewGuid()),
       _createInboxWork(_idProvider.NewGuid()),
@@ -61,7 +62,7 @@ public class OrderedStreamProcessorCoverageTests {
   /// </summary>
   [Test]
   public async Task ProcessOutboxWorkAsync_CancelledBeforeStart_ProcessesNoStreamsAsync() {
-    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var sut = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
     var messages = new List<OutboxWork> {
       _createOutboxWork(_idProvider.NewGuid()),
       _createOutboxWork(_idProvider.NewGuid()),

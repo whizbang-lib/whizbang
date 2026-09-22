@@ -258,14 +258,14 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
     };
 
     // Act - Queue first batch
-    var unitId1 = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
+    _ = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
     await strategy.QueueMessageAsync(new TestMessage { Value = "1b" });
 
     // Wait for first flush (signal-based)
     await firstFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Queue second batch
-    var unitId2 = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
+    _ = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
 
     // Wait for second flush (signal-based)
     await secondFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));

@@ -142,7 +142,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
         // then fails with the database still in use. One pass left 21 databases behind across a
         // 2,675-test run; the ones that survive are droppable moments later, so what is needed is
         // another attempt rather than a different statement.
-        for (var attempt = 1; ; attempt++) {
+        var attempt = 1;
+        while (true) {
           try {
             await adminConnection.ExecuteAsync(
               $"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
@@ -150,6 +151,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
           } catch when (attempt < 3) {
             NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
             await Task.Delay(TimeSpan.FromMilliseconds(150));
+            attempt++;
           }
         }
       } catch {

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -263,7 +264,7 @@ public class StreamIdCascadeFromLocalInvokeTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

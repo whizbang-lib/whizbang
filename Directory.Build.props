@@ -154,8 +154,10 @@
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.Generators.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and $(MSBuildProjectName.Contains('Generators'))" />
   </ItemGroup>
 
-  <!-- Roslynator Analyzers - Code quality and style enforcement -->
+  <!-- Analyzers. SonarAnalyzer is here so Sonar's own rules fail the build locally and in CI
+       rather than only surfacing on the SonarCloud scan, where they are found far later. -->
   <ItemGroup>
+    <PackageReference Include="SonarAnalyzer.CSharp" PrivateAssets="all" />
     <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
     <PackageReference Include="Roslynator.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="Roslynator.Formatting.Analyzers" PrivateAssets="all" />

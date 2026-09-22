@@ -3,12 +3,14 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -28,12 +30,15 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_NoHookChain_SkipsPreSerializeFastPathAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: null,                          // no chain
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: null,
+      // no chain
       jsonOptions: null);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
@@ -45,12 +50,15 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_EmptyChainAndNoTransportCeiling_SkipsPreSerializeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),    // empty
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      // empty
       jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
@@ -62,11 +70,13 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_TransportHasCeiling_AlwaysSerializesAndStampsBodySizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: 256 * 1024);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 256 * 1024);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions());
 
@@ -85,11 +95,13 @@ public class TransportPublishStrategyHookChainTests {
   [Test]
   public async Task PublishAsync_OversizedAndNoOffload_FailsWithMessageBodyTooLargeAsync() {
     // Set the transport ceiling tiny so the envelope's serialized form exceeds it.
-    var transport = new _captureTransport(maxMessageSizeBytes: 10);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 10);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions());
 
@@ -111,11 +123,13 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishBatchAsync_PerItemChainRunsAndStampsPerItemBodySizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: 256 * 1024);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 256 * 1024);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions());
 
@@ -137,11 +151,13 @@ public class TransportPublishStrategyHookChainTests {
   [Test]
   public async Task PublishBatchAsync_OversizedItem_FailsOnlyThatItemAsync() {
     // Set a tiny ceiling and feed two items — both will exceed.
-    var transport = new _captureTransport(maxMessageSizeBytes: 10);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 10);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions());
 
@@ -156,15 +172,17 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_HookReplacesBody_TransportReceivesReplacementAndUpdatedSizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var replacementBytes = "REPLACED_BY_HOOK"u8.ToArray();
     var chain = new PostSerializeHookChain([
-      new _substituteHook(order: 1000, replacement: replacementBytes)
+      new SubstituteHook(order: 1000, replacement: replacementBytes)
     ]);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: chain,
       jsonOptions: _buildJsonOptions());
 
@@ -204,13 +222,10 @@ public class TransportPublishStrategyHookChainTests {
     };
   }
 
-  private sealed class _captureTransport : ITransport {
-    public _captureTransport(long? maxMessageSizeBytes) {
-      MaxMessageSizeBytes = maxMessageSizeBytes;
-    }
+  private sealed class CaptureTransport(long? maxMessageSizeBytes) : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.BulkPublish;
-    public long? MaxMessageSizeBytes { get; }
+    public long? MaxMessageSizeBytes { get; } = maxMessageSizeBytes;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public int PublishCallCount { get; private set; }
@@ -254,17 +269,14 @@ public class TransportPublishStrategyHookChainTests {
           => throw new NotImplementedException();
   }
 
-  private sealed class _alwaysReadyReadinessCheck : ITransportReadinessCheck {
+  private sealed class AlwaysReadyReadinessCheck : ITransportReadinessCheck {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class _substituteHook : IPostSerializeHook {
-    private readonly byte[] _replacement;
-    public _substituteHook(int order, byte[] replacement) {
-      Order = order;
-      _replacement = replacement;
-    }
-    public int Order { get; }
+  private sealed class SubstituteHook(int order, byte[] replacement) : IPostSerializeHook {
+    private readonly byte[] _replacement = replacement;
+
+    public int Order { get; } = order;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) {
       return Task.FromResult(new PostSerializeResult {
         NewSerializedBytes = _replacement,

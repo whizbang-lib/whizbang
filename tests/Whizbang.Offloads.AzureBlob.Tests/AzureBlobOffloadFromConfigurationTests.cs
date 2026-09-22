@@ -91,7 +91,7 @@ public class AzureBlobOffloadFromConfigurationTests {
   [Test]
   public async Task FromConfiguration_NoProviders_IsNoOpAsync() {
     var services = new ServiceCollection();
-    services.AddWhizbangAzureBlobOffloadsFromConfiguration(_config(new()));
+    services.AddWhizbangAzureBlobOffloadsFromConfiguration(_config([]));
     var provider = services.BuildServiceProvider();
 
     // No provider configured → no store, no hook chain — offload stays off and publish is inline.
@@ -121,9 +121,9 @@ public class AzureBlobOffloadFromConfigurationTests {
 
   [Test]
   public async Task FromConfiguration_NullServices_ThrowsAsync() {
-    var configuration = _config(new());
+    var configuration = _config([]);
 
-    Action act = () => ((IServiceCollection)null!).AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    void act() => ((IServiceCollection)null!).AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("services");
@@ -133,7 +133,7 @@ public class AzureBlobOffloadFromConfigurationTests {
   public async Task FromConfiguration_NullConfiguration_ThrowsAsync() {
     var services = new ServiceCollection();
 
-    Action act = () => services.AddWhizbangAzureBlobOffloadsFromConfiguration(null!);
+    void act() => services.AddWhizbangAzureBlobOffloadsFromConfiguration(null!);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("configuration");

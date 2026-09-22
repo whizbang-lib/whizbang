@@ -136,7 +136,7 @@ public sealed class RecentlyProcessedEventCache {
       // the source for OrderBy via Enumerable.ToArray, which sees ICollection<KeyValuePair<,>>
       // and takes the CopyTo fast path -- and CopyTo sizes the destination from Count and then
       // copies, so a concurrent MarkProcessed adding an entry in between throws
-      // ArgumentException straight out of this method. The eviction lock does not prevent that;
+      // ArgumentException straight out of this method. The eviction lock does not prevent that —
       // it serializes evictions against each other, not against inserts.
       var toEvict = _entries.ToArray()
         .OrderBy(static p => p.Value)

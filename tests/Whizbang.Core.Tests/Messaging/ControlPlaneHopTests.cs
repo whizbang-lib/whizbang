@@ -13,15 +13,15 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Messaging")]
 public class ControlPlaneHopTests {
 
-  private sealed record _plainEvent : Whizbang.Core.IEvent;
+  private sealed record PlainEvent : Whizbang.Core.IEvent;
 
-  private sealed record _controlSignal : Whizbang.Core.IEvent, IControlPlaneMessage;
+  private sealed record ControlSignal : Whizbang.Core.IEvent, IControlPlaneMessage;
 
   private static readonly DateTimeOffset _at = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
   [Test]
   public async Task AControlPlaneHopIsMarkedSystemAsync() {
-    var hop = ControlPlaneHop.Create(typeof(_controlSignal), instanceProvider: null, _at);
+    var hop = ControlPlaneHop.Create(typeof(ControlSignal), instanceProvider: null, _at);
 
     await Assert.That(hop.Type).IsEqualTo(HopType.Current);
     await Assert.That(hop.Timestamp).IsEqualTo(_at);
@@ -33,7 +33,7 @@ public class ControlPlaneHopTests {
 
   [Test]
   public async Task AnOrdinaryPayloadIsLeftUnscopedAsync() {
-    var hop = ControlPlaneHop.Create(typeof(_plainEvent), instanceProvider: null, _at);
+    var hop = ControlPlaneHop.Create(typeof(PlainEvent), instanceProvider: null, _at);
 
     await Assert.That(hop.Scope).IsNull()
       .Because("the factory must not mark whatever it is handed — marking a domain event would "
@@ -55,7 +55,7 @@ public class ControlPlaneHopTests {
     // The fallback lives here now instead of at each call site. A publisher running without a
     // registered provider must still emit a well-formed hop -- losing the whole control-plane
     // message over missing telemetry identity would be a worse failure than an unknown instance.
-    var hop = ControlPlaneHop.Create(typeof(_controlSignal), instanceProvider: null, _at);
+    var hop = ControlPlaneHop.Create(typeof(ControlSignal), instanceProvider: null, _at);
 
     await Assert.That(hop.ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
     await Assert.That(hop.Scope).IsNotNull()

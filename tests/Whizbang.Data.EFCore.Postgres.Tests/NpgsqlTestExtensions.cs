@@ -78,7 +78,13 @@ internal static class NpgsqlTestExtensions {
     if (result is T typed) {
       return typed;
     }
+    // The null-forgiving operator is load-bearing here. ExecuteScalarAsync returns object?,
+    // the `is T typed` test above does not narrow it on this path, and Convert.ChangeType's
+    // first parameter is non-nullable, so removing it is CS8600 plus CS8603. RCS1249 judges it
+    // unnecessary and strips it on every sweep, hence the fence rather than a bare revert.
+#pragma warning disable RCS1249
     return (T)Convert.ChangeType(result!, typeof(T), CultureInfo.InvariantCulture);
+#pragma warning restore RCS1249
   }
 
   /// <summary>
@@ -120,9 +126,9 @@ internal static class NpgsqlTestExtensions {
   /// Executes a query and returns the first row as a dynamic ExpandoObject, or null if no rows.
   /// Replaces Dapper's <c>conn.QueryFirstOrDefaultAsync&lt;dynamic&gt;(sql)</c> for existence checks.
   /// </summary>
-#pragma warning disable RCS1164 // Keeps Dapper-compatible generic signature so callers can retain <dynamic> without rewriting call sites.
+#pragma warning disable RCS1164, S2326 // Keeps Dapper-compatible generic signature so callers can retain <dynamic> without rewriting call sites.
   public static async Task<dynamic?> QueryFirstOrDefaultAsync<T>(this NpgsqlConnection conn, string sql) {
-#pragma warning restore RCS1164
+#pragma warning restore RCS1164, S2326
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
     await using var reader = await cmd.ExecuteReaderAsync();

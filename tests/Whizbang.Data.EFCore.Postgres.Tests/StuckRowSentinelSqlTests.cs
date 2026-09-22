@@ -172,7 +172,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
           VALUES (@msg, 'topic', 'Stuck.TestEvent', 'Stuck.TestEnvelope', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -192,7 +192,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
       SELECT message_id, stream_id, received_at, priority, is_event, 1, @attempts, 0 FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 

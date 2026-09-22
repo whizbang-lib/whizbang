@@ -12,16 +12,16 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// </summary>
 public class SyncFilterBuilderFullCoverageTests {
   // Dummy types for generic overloads
-  private sealed record _typeA;
-  private sealed record _typeB;
-  private sealed record _typeC;
-  private sealed record _typeD;
-  private sealed record _typeE;
-  private sealed record _typeF;
-  private sealed record _typeG;
-  private sealed record _typeH;
-  private sealed record _typeI;
-  private sealed record _typeJ;
+  private sealed record TypeA;
+  private sealed record TypeB;
+  private sealed record TypeC;
+  private sealed record TypeD;
+  private sealed record TypeE;
+  private sealed record TypeF;
+  private sealed record TypeG;
+  private sealed record TypeH;
+  private sealed record TypeI;
+  private sealed record TypeJ;
 
   // ==========================================================================
   // AND generic overloads — verify event type count and builder chaining
@@ -30,30 +30,30 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_1Generic_ReturnsBuilderAndContainsCorrectTypeAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
     var typeFilter = (EventTypeFilter)andFilter.Right;
     await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(1);
-    await Assert.That(typeFilter.EventTypes).Contains(typeof(_typeA));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(TypeA));
   }
 
   [Test]
   public async Task AndEventTypes_2Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
     var typeFilter = (EventTypeFilter)andFilter.Right;
     await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(2);
-    await Assert.That(typeFilter.EventTypes).Contains(typeof(_typeA));
-    await Assert.That(typeFilter.EventTypes).Contains(typeof(_typeB));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(TypeA));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(TypeB));
   }
 
   [Test]
   public async Task AndEventTypes_3Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -63,7 +63,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_4Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -73,7 +73,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_5Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -83,7 +83,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_6Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -93,7 +93,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_7Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -103,7 +103,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_8Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -113,7 +113,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_9Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -123,7 +123,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task AndEventTypes_10Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().AndEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI, _typeJ>();
+    var builder = SyncFilter.All().AndEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI, TypeJ>();
     var options = builder.Build();
 
     var andFilter = (AndFilter)options.Filter;
@@ -137,18 +137,18 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_1Generic_ContainsCorrectTypeAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
     var typeFilter = (EventTypeFilter)orFilter.Right;
     await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(1);
-    await Assert.That(typeFilter.EventTypes).Contains(typeof(_typeA));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(TypeA));
   }
 
   [Test]
   public async Task OrEventTypes_2Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -158,7 +158,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_3Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -168,7 +168,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_4Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -178,7 +178,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_5Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -188,7 +188,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_6Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -198,7 +198,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_7Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -208,7 +208,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_8Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -218,7 +218,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_9Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -228,7 +228,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task OrEventTypes_10Generic_ContainsCorrectTypesAsync() {
-    var builder = SyncFilter.All().OrEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI, _typeJ>();
+    var builder = SyncFilter.All().OrEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI, TypeJ>();
     var options = builder.Build();
 
     var orFilter = (OrFilter)options.Filter;
@@ -243,17 +243,17 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_1Generic_WithDummyType_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA>();
+    var builder = SyncFilter.ForEventTypes<TypeA>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
     await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(1);
-    await Assert.That(typeFilter.EventTypes).Contains(typeof(_typeA));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(TypeA));
   }
 
   [Test]
   public async Task SyncFilter_ForEventTypes_2Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -262,7 +262,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_3Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -271,7 +271,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_4Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -280,7 +280,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_5Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -289,7 +289,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_6Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -298,7 +298,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_7Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -307,7 +307,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_8Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -316,7 +316,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_9Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -325,7 +325,7 @@ public class SyncFilterBuilderFullCoverageTests {
 
   [Test]
   public async Task SyncFilter_ForEventTypes_10Generic_WithDummyTypes_CreatesFilterAsync() {
-    var builder = SyncFilter.ForEventTypes<_typeA, _typeB, _typeC, _typeD, _typeE, _typeF, _typeG, _typeH, _typeI, _typeJ>();
+    var builder = SyncFilter.ForEventTypes<TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeH, TypeI, TypeJ>();
     var options = builder.Build();
 
     var typeFilter = (EventTypeFilter)options.Filter;
@@ -379,7 +379,7 @@ public class SyncFilterBuilderFullCoverageTests {
     var timeout = TimeSpan.FromSeconds(42);
 
     var builder = SyncFilter.ForStream(streamId)
-        .AndEventTypes<_typeA, _typeB>()
+        .AndEventTypes<TypeA, TypeB>()
         .OrStream(Guid.NewGuid())
         .AndCurrentScope()
         .WithTimeout(timeout);
@@ -398,7 +398,7 @@ public class SyncFilterBuilderFullCoverageTests {
   [Test]
   public async Task ImplicitConversion_ProducesSameResultAsBuildAsync() {
     var builder = SyncFilter.ForStream(Guid.NewGuid())
-        .AndEventTypes<_typeA>()
+        .AndEventTypes<TypeA>()
         .WithTimeout(TimeSpan.FromSeconds(7));
 
     var built = builder.Build();

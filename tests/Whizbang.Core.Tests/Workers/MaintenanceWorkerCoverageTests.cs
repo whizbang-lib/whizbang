@@ -75,26 +75,26 @@ public class MaintenanceWorkerCoverageTests {
     public int PerformMaintenanceCallCount => _performCalls;
     public TimeSpan? CleanupLifecycleCompletionsRetentionSeen { get; private set; }
 
-    public Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken ct = default) {
+    public Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref _syncCalls);
       return SyncDebugRetentionSettingHook?.Invoke(n) ?? Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref _performCalls);
       OnPerformMaintenanceCall?.Invoke(n);
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
     }
 
-    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default)
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
       => ValueTask.FromResult(Backlog);
 
-    public Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken ct = default) {
+    public Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default) {
       CleanupLifecycleCompletionsRetentionSeen = retentionPeriod;
       return Task.FromResult(CleanupLifecycleCompletionsResult);
     }
 
-    public Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>(EphemeralBodiesAboutToReap);
 
     // Abstract members with no interface default.
@@ -113,11 +113,6 @@ public class MaintenanceWorkerCoverageTests {
       => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
-        IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
   }
 
   // ============================================================
@@ -309,15 +304,15 @@ public class MaintenanceWorkerCoverageTests {
     public List<string> Removed { get; } = [];
     public int ScanCalls { get; private set; }
 
-    public Task<bool> TryClaimOffloadSweepAsync(TimeSpan claimWindow, CancellationToken ct = default) => Task.FromResult(true);
+    public Task<bool> TryClaimOffloadSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) => Task.FromResult(true);
 
     public Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
-        TimeSpan olderThan, int batchSize, CancellationToken ct = default) {
+        TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) {
       ScanCalls++;
       return Task.FromResult<IReadOnlyList<OffloadClaimRecord>>(Batch);
     }
 
-    public Task RemoveOffloadClaimsAsync(IReadOnlyCollection<string> storageKeys, CancellationToken ct = default) {
+    public Task RemoveOffloadClaimsAsync(IReadOnlyCollection<string> storageKeys, CancellationToken cancellationToken = default) {
       lock (Removed) { Removed.AddRange(storageKeys); }
       return Task.CompletedTask;
     }
@@ -337,28 +332,23 @@ public class MaintenanceWorkerCoverageTests {
       => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
-        IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
   }
 
   private sealed class RecordingStore(string providerName) : IMessageBodyStore {
     public string ProviderName => providerName;
     public List<string> Deleted { get; } = [];
 
-    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken ct = default) {
+    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default) {
       lock (Deleted) { Deleted.Add(claim.StorageKey); }
       return Task.CompletedTask;
     }
 
     public Task<MessageBodyClaim> UploadAsync(
         ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null,
-        CancellationToken ct = default) => throw new NotImplementedException();
+        CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task<ReadOnlyMemory<byte>> DownloadAsync(
         MessageBodyClaim claim, MessageBodyDownloadOptions? options = null,
-        CancellationToken ct = default) => throw new NotImplementedException();
+        CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 
   private sealed class StaticOptionsMonitor(MessageBodyOffloadOptions value) : IOptionsMonitor<MessageBodyOffloadOptions> {
@@ -415,14 +405,14 @@ public class MaintenanceWorkerCoverageTests {
     public List<PerspectiveTableName> Tables { get; init; } = [];
     public List<(string Table, IReadOnlyCollection<Guid> Ids)> Deleted { get; } = [];
 
-    public Task<IReadOnlyList<PerspectiveRowRef>> DrainRowEvictionJournalAsync(int limit = 1000, CancellationToken ct = default)
+    public Task<IReadOnlyList<PerspectiveRowRef>> DrainRowEvictionJournalAsync(int limit = 1000, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<PerspectiveRowRef>>(Journal);
 
     public Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
-        IReadOnlyCollection<string> clrTypeNames, CancellationToken ct = default)
+        IReadOnlyCollection<string> clrTypeNames, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<PerspectiveTableName>>(Tables);
 
-    public Task<int> CascadeDeletePerspectiveRowsAsync(string tableName, IReadOnlyCollection<Guid> rowIds, CancellationToken ct = default) {
+    public Task<int> CascadeDeletePerspectiveRowsAsync(string tableName, IReadOnlyCollection<Guid> rowIds, CancellationToken cancellationToken = default) {
       lock (Deleted) { Deleted.Add((tableName, rowIds)); }
       return Task.FromResult(rowIds.Count);
     }
@@ -442,11 +432,6 @@ public class MaintenanceWorkerCoverageTests {
       => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
-        IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
   }
 
   private static MaintenanceWorker _buildCascadeWorker(CascadeCoordinator coord) {
@@ -524,10 +509,10 @@ public class MaintenanceWorkerCoverageTests {
   private sealed class ProceedHook : IDestructionHook {
     public int AfterCalls { get; private set; }
 
-    public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken ct = default)
+    public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default)
       => ValueTask.FromResult(DestructionResult.Proceed());
 
-    public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken ct = default) {
+    public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       AfterCalls++;
       return ValueTask.CompletedTask;
     }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,6 +14,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -100,6 +102,7 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
     var transport = new FlagSbTransport();
     var strategy = new FlagSbStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
@@ -107,15 +110,18 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: scopeFactory,
-      jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
       options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
-      },
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()));
+      });
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
@@ -199,10 +205,10 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
 
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) => CapturedInboxMessages.Add(message);
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default)
       => FlushAndGetBatchAsync(flags, ct);

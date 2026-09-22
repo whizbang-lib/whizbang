@@ -22,8 +22,8 @@ public class TransportBatchGuardTests {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => Noop.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> fmt)
-      => Entries.Add((level, fmt(state, ex)));
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception)));
     private sealed class Noop : IDisposable { public static readonly Noop Instance = new(); public void Dispose() { } }
   }
 
@@ -35,7 +35,7 @@ public class TransportBatchGuardTests {
   [Test]
   public async Task AStatementTimeoutDoesNotEscapeAsync() {
     var logger = new CapturingLogger();
-    var cts = new CancellationTokenSource();   // NOT canceled
+    using var cts = new CancellationTokenSource();   // NOT canceled
 
     Exception? escaped = null;
     try {
@@ -55,7 +55,7 @@ public class TransportBatchGuardTests {
   [Test]
   public async Task AnOrdinaryFaultDoesNotEscapeEitherAsync() {
     var logger = new CapturingLogger();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
 
     Exception? escaped = null;
     try {

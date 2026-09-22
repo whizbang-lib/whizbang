@@ -3,9 +3,8 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Handlers;
 
-public sealed class FlowDiagramHandler(SymbolResolver symbolResolver, MermaidGenerator mermaidGenerator) {
+public sealed class FlowDiagramHandler(SymbolResolver symbolResolver) {
   private readonly SymbolResolver _symbolResolver = symbolResolver;
-  private readonly MermaidGenerator _mermaidGenerator = mermaidGenerator;
 
   public FlowDiagramResult Handle(GenerateFlowDiagramParams request) {
     var symbolInfo = _symbolResolver.Resolve(request.MessageType);
@@ -36,7 +35,7 @@ public sealed class FlowDiagramHandler(SymbolResolver symbolResolver, MermaidGen
         .Select(i => $"Perspective{i + 1}")
         .ToList();
 
-    var mermaid = _mermaidGenerator.Generate(
+    var mermaid = MermaidGenerator.Generate(
         symbolInfo.Name,
         symbolInfo.IsCommand,
         symbolInfo.IsEvent,

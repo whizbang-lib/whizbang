@@ -83,7 +83,8 @@ public sealed class EventUpcasterPipeline {
       }
       foreach (var s in c.SourceTypes) {
         if (!requested.Contains(s)) {
-          (extra ??= []).Add(s);
+          extra ??= [];
+          extra.Add(s);
         }
       }
     }
@@ -108,7 +109,8 @@ public sealed class EventUpcasterPipeline {
       }
       foreach (var s in c.SourceTypeNames) {
         if (!requested.Contains(s)) {
-          (extra ??= []).Add(s);
+          extra ??= [];
+          extra.Add(s);
         }
       }
     }
@@ -126,11 +128,10 @@ public sealed class EventUpcasterPipeline {
     ArgumentNullException.ThrowIfNull(@event);
 
     var current = @event;
-    foreach (var upcaster in _upcasters) {
-      if (upcaster.CanUpcast(current)) {
-        current = upcaster.Upcast(current);
-        ArgumentNullException.ThrowIfNull(current, nameof(current));
-      }
+    // Where is lazy, so each upcaster is asked about the event as it stands after the ones before it.
+    foreach (var upcaster in _upcasters.Where(u => u.CanUpcast(current))) {
+      current = upcaster.Upcast(current);
+      ArgumentNullException.ThrowIfNull(current);
     }
     return current;
   }

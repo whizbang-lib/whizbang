@@ -40,7 +40,7 @@ public sealed partial class PostgresSignalTransport(
   INotificationDataSource? notificationDataSource = null,
   SignalBusLivenessState? busLiveness = null,
   TimeProvider? timeProvider = null
-) : ISignalTransport {
+) : ISignalTransport, IDisposable {
   /// <summary>Broadcast channel every instance listens on.</summary>
   internal const string BROADCAST_CHANNEL = "wh_signal_broadcast";
 
@@ -248,4 +248,10 @@ public sealed partial class PostgresSignalTransport(
     Message = "PostgresSignalTransport.PublishAsync: transport not started — StartAsync has not run, so signal {SignalType} cannot be routed to the wire. " +
               "The signal bus is hosted by SignalBusHostedService (AddWhizbangSignalBus); if this repeats after startup, the bus was never started")]
   static partial void LogPublishBeforeStart(ILogger logger, string signalType);
+
+  /// <summary>Releases the broadcast and per-instance LISTEN registrations on the shared connection.</summary>
+  public void Dispose() {
+    _broadcastSubscription?.Dispose();
+    _instanceSubscription?.Dispose();
+  }
 }

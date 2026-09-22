@@ -16,7 +16,6 @@ namespace Whizbang.Observability.Tests;
 public class MessageTracingTests {
   // Test message types
   private sealed record TestMessage(string Value);
-  private sealed record CreateOrder(Guid OrderId, string ProductName);
 
   #region MessageEnvelope Tests
 
@@ -2101,7 +2100,7 @@ public class MessageTracingTests {
     var serviceInstance = new ServiceInstanceInfo {
       ServiceName = "TestService",
       InstanceId = Guid.NewGuid(),
-      HostName = "test-host",
+      HostName = "other-host",
       ProcessId = 12345
     };
     return MessageTracing.RecordHop(new HopContext(serviceInstance, "test-topic", "test-stream", "TestExecutor"));

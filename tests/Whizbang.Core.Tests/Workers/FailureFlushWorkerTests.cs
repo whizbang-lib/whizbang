@@ -45,7 +45,7 @@ public class FailureFlushWorkerTests {
         PerspectiveWork = [],
         SyncInquiryResults = null,
       });
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
@@ -75,14 +75,14 @@ public class FailureFlushWorkerTests {
   /// "nothing was reported", which a body that never ran satisfies just as well. Waiting on a log
   /// line the body itself emits is what makes those assertions discriminating.
   /// </summary>
-  private sealed class EventIdWaiter(int eventId) : ILogger<FailureFlushWorker> {
+  private sealed class EventIdWaiter(int expectedEventId) : ILogger<FailureFlushWorker> {
     public TaskCompletionSource Seen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (id.Id == eventId) {
+      if (eventId.Id == expectedEventId) {
         Seen.TrySetResult();
       }
     }
@@ -97,10 +97,11 @@ public class FailureFlushWorkerTests {
     var provider = services.BuildServiceProvider();
 
     var worker = new FailureFlushWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
-      Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
-      logger ?? NullLogger<FailureFlushWorker>.Instance);
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
+      logger: logger ?? NullLogger<FailureFlushWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     return (worker, coordinator);
   }
@@ -227,13 +228,25 @@ public class FailureFlushWorkerTests {
     var options = Options.Create(new FailureFlushWorkerOptions());
 
     await Assert.That(() => new FailureFlushWorker(
-        null!, SchemaReadyGate.AlreadyReady(), options, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: null!,
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+        options: options,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(() => new FailureFlushWorker(
-        scopeFactory, null!, options, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: scopeFactory,
+        schemaReadyGate: null!,
+        options: options,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(() => new FailureFlushWorker(
-        scopeFactory, SchemaReadyGate.AlreadyReady(), null!, NullLogger<FailureFlushWorker>.Instance))
+        scopeFactory: scopeFactory,
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+        options: null!,
+        logger: NullLogger<FailureFlushWorker>.Instance,
+        pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 }

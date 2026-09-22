@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -33,7 +34,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
   private const string OLD_VERSION = "999.0.0";
   private const string NEW_VERSION = "999.1.0";
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class FakePod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "handshake-svc";
     public string HostName => "handshake-host";
@@ -46,7 +47,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     };
   }
 
-  private sealed class _stubHostLifetime : IHostApplicationLifetime {
+  private sealed class StubHostLifetime : IHostApplicationLifetime {
     public bool StopRequested { get; private set; }
     public CancellationToken ApplicationStarted => CancellationToken.None;
     public CancellationToken ApplicationStopping => CancellationToken.None;
@@ -54,7 +55,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     public void StopApplication() => StopRequested = true;
   }
 
-  private sealed class _countingStep : IStartupStep {
+  private sealed class CountingStep : IStartupStep {
     private int _executions;
     public int Executions => Volatile.Read(ref _executions);
     public StartupStepDescriptor Descriptor { get; } = new() { Name = "ReviveProbe" };
@@ -64,9 +65,9 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     }
   }
 
-  private sealed record _podRig(
-    _pod Pod, StandbyWatcher Watcher, _stubHostLifetime HostLifetime,
-    IWhizbangLifecycleState Lifecycle, _countingStep ReviveProbe, IServiceProvider Services);
+  private sealed record PodRig(
+    FakePod Pod, StandbyWatcher Watcher, StubHostLifetime HostLifetime,
+    IWhizbangLifecycleState Lifecycle, CountingStep ReviveProbe, IServiceProvider Services);
 
   private IServiceProvider _servicesForPod() {
     var services = new ServiceCollection();
@@ -84,8 +85,8 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
 
   /// <summary>A complete simulated instance: real coordinator, assessor, lifecycle machine (with
   /// the REAL instance-state participant, so StandingBy lands on its row), and watcher.</summary>
-  private async Task<_podRig> _bootPodAsync(string version, CancellationToken ct) {
-    var pod = new _pod();
+  private async Task<PodRig> _bootPodAsync(string version, CancellationToken ct) {
+    var pod = new FakePod();
     var services = _servicesForPod();
     var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
 
@@ -99,23 +100,31 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
-        [new InstanceStateRunControl(scopeFactory, pod, versionProvider)], lifecycleOptions),
+        [new InstanceStateRunControl(scopeFactory: scopeFactory, instanceProvider: pod, versionProvider: versionProvider, logger: NullLogger<InstanceStateRunControl>.Instance)], lifecycleOptions),
       lifecycleOptions);
     var assessor = new EFCorePostgresStartupAssessor(scopeFactory, typeof(WorkCoordinationDbContext), versionProvider);
-    var reviveProbe = new _countingStep();
-    var hostLifetime = new _stubHostLifetime();
+    var reviveProbe = new CountingStep();
+    var hostLifetime = new StubHostLifetime();
     var watcher = new StandbyWatcher(
-      scopeFactory, lifecycle, hostLifetime, pod, Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      versionProvider: versionProvider, assessor: assessor,
-      pipelineRunner: new StartupPipelineRunner([reviveProbe]), options: _fastOptions());
-    return new _podRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
+      scopeFactory: scopeFactory,
+      lifecycle: lifecycle,
+      hostLifetime: hostLifetime,
+      instanceProvider: pod,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      versionProvider: versionProvider,
+      assessor: assessor,
+      logger: NullLogger<StandbyWatcher>.Instance,
+      pipelineRunner: new StartupPipelineRunner(steps: [reviveProbe], observers: [], dutyElector: NullDutyElector.Instance),
+      options: _fastOptions());
+    return new PodRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
   }
 
-  private StandbyHandshake _handshakeFor(_podRig rig) => new(
+  private static StandbyHandshake _handshakeFor(PodRig rig) => new(
     rig.Services.GetRequiredService<IServiceScopeFactory>(),
     new EFCorePostgresStartupFleetStatusSource(
       rig.Services.GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext)),
     rig.Pod,
+    NullLogger<StandbyHandshake>.Instance,
     _fastOptions());
 
   private async Task<List<(int Id, string Version)>> _captureLedgerVersionsAsync(CancellationToken ct) {

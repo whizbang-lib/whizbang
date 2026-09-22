@@ -231,7 +231,7 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseHook<SignalTagAttribute, CancellationTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(CancellationTrackingHook) ? hook : null);
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { }
@@ -329,7 +329,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -341,7 +341,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -352,7 +352,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -364,7 +364,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       _executionOrder.Add(_name);
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -373,7 +373,7 @@ public class MessageTagProcessorTests {
   private sealed class PayloadModifyingHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       var modified = new { Modified = true };
       return ValueTask.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(modified));
     }
@@ -384,7 +384,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       ReceivedPayload = context.Payload;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -406,7 +406,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       ReceivedScope = context.Scope;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -415,7 +415,7 @@ public class MessageTagProcessorTests {
   private sealed class PassThroughHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -427,7 +427,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -936,7 +936,6 @@ public class MessageTagProcessorTests {
   }
 
   private sealed class TrackingScope(Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
-    private readonly Func<Type, object?> _resolver = resolver;
 
     public bool Disposed { get; private set; }
     public IServiceProvider ServiceProvider { get; } = new TrackingServiceProvider(resolver);
@@ -1106,12 +1105,12 @@ public class MessageTagProcessorTests {
   }
 
   // Custom test attribute type (simulates a consumer's custom attributes)
-  private sealed class CustomTestTagAttribute : MessageTagAttribute {
-  }
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
+  private sealed class CustomTestTagAttribute : MessageTagAttribute;
 
   // Another custom attribute type with no dispatcher
-  private sealed class UnknownTestTagAttribute : MessageTagAttribute {
-  }
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
+  private sealed class UnknownTestTagAttribute : MessageTagAttribute;
 
   // Test message types
   private sealed record CustomTaggedMessage(string Value);
@@ -1164,7 +1163,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<CustomTestTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1539,7 +1538,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       AllReceivedStages.Add(context.Stage);
@@ -1556,7 +1555,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       TotalCallCount++;
 
       // Only act on PostPerspectiveInline — the consumer pattern
@@ -1576,7 +1575,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1590,7 +1589,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1604,7 +1603,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1617,7 +1616,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -1628,7 +1627,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }

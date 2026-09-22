@@ -21,4 +21,10 @@
     <!-- single compilation that is not one service. -->
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
+
+  <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings
+       are errors here exactly as they are in src/. Test code gets no downgraded rule list: a rule
+       either holds for the whole repository or is turned off for the whole repository, with the
+       reason recorded next to the setting in .editorconfig. -->
+
 </Project>

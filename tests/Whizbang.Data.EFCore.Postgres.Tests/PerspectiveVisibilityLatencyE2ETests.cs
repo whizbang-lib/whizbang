@@ -11,15 +11,21 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Signals;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Notifications;
+using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -88,6 +94,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddScoped(_ => CreateDbContext());
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -157,15 +164,21 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     // NotifyHealthyPollingIntervalMilliseconds (5 s default) and doorbell wakes carry the
     // fast path — the same shape a booting pod runs.
     var claimWorker = new ClaimWorker(
-      scopeFactory,
-      instanceProvider,
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions()),
-      NullLogger<ClaimWorker>.Instance,
+      scopeFactory: scopeFactory,
+      instanceProvider: instanceProvider,
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions()),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: harness.ChannelWriter,
       perspectiveDrainChannel: harness.DrainChannel,
-      signalingGate: sharedConnection);
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: sharedConnection,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Production defaults on purpose (300 ms drain sliding window, 4 drain consumers,
     // burst-driven wake via the NOTIFY listener) — this test locks latency under real
@@ -175,12 +188,32 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: gate,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      // The registry registration above also registers the real event-type provider; the worker used to
+      // pick it up lazily from a scope, which the required parameter no longer does.
+      eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener);
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: listener,
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
 
     return new RealPipeline {
       Services = provider,

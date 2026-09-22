@@ -78,7 +78,7 @@ public sealed partial class PostgresConnectionRetry {
         }
 
         return;
-      } catch (Exception ex) when (_isTransientException(ex)) {
+      } catch (Exception ex) when (IsTransientException(ex)) {
         if (_shouldRethrowAfterRetry(ex, attempt, currentDelay)) {
           throw;
         }
@@ -123,7 +123,7 @@ public sealed partial class PostgresConnectionRetry {
 
         await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
         currentDelay = CalculateNextDelay(currentDelay);
-      } catch (Exception ex) when (_isTransientException(ex)) {
+      } catch (Exception ex) when (IsTransientException(ex)) {
         if (_logger is not null) {
           LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
         }
@@ -270,9 +270,9 @@ public sealed partial class PostgresConnectionRetry {
   /// <summary>
   /// Determines if an exception is transient and should be retried.
   /// </summary>
-  private static bool _isTransientException(Exception ex) =>
+  internal static bool IsTransientException(Exception ex) =>
     _isTransientExceptionDirect(ex) ||
-    (ex.InnerException is not null && _isTransientException(ex.InnerException));
+    (ex.InnerException is not null && IsTransientException(ex.InnerException));
 
   /// <summary>
   /// Checks if the exception itself (without inner exceptions) is a transient type.

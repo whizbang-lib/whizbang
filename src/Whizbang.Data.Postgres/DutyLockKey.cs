@@ -23,6 +23,6 @@ public static class DutyLockKey {
   public static long Compute(string? schema, string duty) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
     var effectiveSchema = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", "", StringComparison.Ordinal);
-    return Fnv1a64.Compute(KEY_NAMESPACE + effectiveSchema + ":" + duty);
+    return FnvHash64.Compute(KEY_NAMESPACE + effectiveSchema + ":" + duty);
   }
 }

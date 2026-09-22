@@ -33,14 +33,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class IntegrityCheckpointReceptorCoverageTests {
 
-  private sealed record _coverageEvent : IEvent {
+  private sealed record CoverageEvent : IEvent {
     [StreamId]
     public Guid Sid { get; init; }
   }
 
   // The wire form ("Type, Assembly") — checkpoint buckets are built from wh_event_store.event_type,
   // so the subscribed-type filter must match THAT form.
-  private static readonly string _verifiedType = TypeNameFormatter.Format(typeof(_coverageEvent));
+  private static readonly string _verifiedType = TypeNameFormatter.Format(typeof(CoverageEvent));
 
   /// <summary>
   /// If this guard regressed (stopped short-circuiting, or fired when it shouldn't), a host that
@@ -50,10 +50,10 @@ public class IntegrityCheckpointReceptorCoverageTests {
   /// </summary>
   [Test]
   public async Task GapDetectionDisabled_NeverCountsTheServiceBacklogAsync() {
-    var coordinator = new _fakeCoordinator();
+    var coordinator = new FakeCoordinator();
     var backlogCalls = 0;
     coordinator.OnCountServiceBacklog = () => backlogCalls++;
-    var dispatcher = new _fakeDispatcher();
+    var dispatcher = new FakeDispatcher();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -90,8 +90,8 @@ public class IntegrityCheckpointReceptorCoverageTests {
   /// </summary>
   [Test]
   public async Task NoEventTypeProviderRegistered_TreatsEveryBucketAsUnsubscribedAsync() {
-    var coordinator = new _fakeCoordinator();
-    var dispatcher = new _fakeDispatcher();
+    var coordinator = new FakeCoordinator();
+    var dispatcher = new FakeDispatcher();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -125,10 +125,10 @@ public class IntegrityCheckpointReceptorCoverageTests {
   /// </summary>
   [Test]
   public async Task AutoRepairConfirmedGap_MissingOwnReplyTopic_SkipsSendWithoutThrowingAsync() {
-    var coordinator = new _fakeCoordinator { Counts = _ => [] };   // never heals -> confirms every time
-    var dispatcher = new _fakeDispatcher();
-    var transport = new _fakeTransport();
-    var logger = new _captureLogger();
+    var coordinator = new FakeCoordinator { Counts = _ => [] };   // never heals -> confirms every time
+    var dispatcher = new FakeDispatcher();
+    var transport = new FakeTransport();
+    var logger = new CaptureLogger();
 
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -138,8 +138,8 @@ public class IntegrityCheckpointReceptorCoverageTests {
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IntegrityRepairLedger>();
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new _fakeEventTypeProvider());
-    services.AddSingleton<IServiceInstanceProvider>(new _fakeInstanceProvider("consumer-svc"));
+    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider());
+    services.AddSingleton<IServiceInstanceProvider>(new FakeInstanceProvider("consumer-svc"));
     // Deliberately NOT registered: TransportConsumerOptions, and StreamIntegrityOptions.RepairTopic
     // is left null below. Together those are THIS service's own reply address; with neither
     // configured, _sendRepairRequestAsync has nowhere to tell the origin to send the redelivery.
@@ -192,11 +192,11 @@ public class IntegrityCheckpointReceptorCoverageTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class _fakeEventTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(_coverageEvent)];
+  private sealed class FakeEventTypeProvider : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(CoverageEvent)];
   }
 
-  private sealed class _fakeInstanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -216,7 +216,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
   /// <see cref="CountReceivedFromOriginAsync"/>) and the one call-counted for proof of
   /// short-circuiting (<see cref="CountServiceBacklogAsync"/>).
   /// </summary>
-  private sealed class _fakeCoordinator : IWorkCoordinator {
+  private sealed class FakeCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; init; } = Guid.NewGuid();
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
     public Action? OnCountServiceBacklog { get; set; }
@@ -241,7 +241,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class _fakeTransport : ITransport {
+  private sealed class FakeTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -257,12 +257,12 @@ public class IntegrityCheckpointReceptorCoverageTests {
   }
 
   /// <summary>Captures PublishAsync payloads; every other dispatcher member is unused here.</summary>
-  private sealed class _fakeDispatcher : IDispatcher {
+  private sealed class FakeDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => PublishAsync(eventData);
@@ -288,7 +288,6 @@ public class IntegrityCheckpointReceptorCoverageTests {
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
@@ -298,7 +297,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;
@@ -310,7 +309,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
     }
   }
 
-  private sealed class _captureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
+  private sealed class CaptureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
     public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;

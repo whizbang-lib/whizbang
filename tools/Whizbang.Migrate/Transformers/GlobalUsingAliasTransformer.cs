@@ -104,13 +104,7 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
       return false;
     }
 
-    foreach (var prefix in _targetNamespacePrefixes) {
-      if (typeName.StartsWith(prefix, StringComparison.Ordinal)) {
-        return true;
-      }
-    }
-
-    return false;
+    return _targetNamespacePrefixes.Any(prefix => typeName.StartsWith(prefix, StringComparison.Ordinal));
   }
 
   /// <summary>

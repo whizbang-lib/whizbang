@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -19,7 +21,7 @@ public class DispatcherMetricsTests {
   [Test]
   public async Task DispatcherMetrics_Constructor_CreatesAllInstrumentsAsync() {
     // Arrange & Act
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     // Assert
     await Assert.That(metrics.SendDuration).IsNotNull();

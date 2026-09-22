@@ -383,7 +383,7 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, JsonElement> {
-      ["dateTime"] = JsonSerializer.SerializeToElement(new DateTime(2025, 1, 1)) // DateTime gets serialized as string in JsonElement
+      ["dateTime"] = JsonSerializer.SerializeToElement(new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)) // DateTime gets serialized as string in JsonElement
     };
 
     var envelope = new MessageEnvelope<TestMessage> {

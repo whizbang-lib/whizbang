@@ -43,7 +43,7 @@ public class AsyncTimeoutHelperTests {
   public async Task WaitWithTimeoutAsync_ExternalCancellation_ThrowsOperationCanceledExceptionAsync() {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await AsyncTimeoutHelper.WaitWithTimeoutAsync(
@@ -89,7 +89,7 @@ public class AsyncTimeoutHelperTests {
   public async Task WaitWithTimeoutAsyncGeneric_ExternalCancellation_ThrowsOperationCanceledExceptionAsync() {
     var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await AsyncTimeoutHelper.WaitWithTimeoutAsync(

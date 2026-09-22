@@ -53,6 +53,7 @@ public class TransportConsumerServiceNameFallbackTests {
   /// </summary>
   private static TransportConsumerOptions _resolveOptions(string? providerName) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     var builder = new WhizbangBuilder(services);

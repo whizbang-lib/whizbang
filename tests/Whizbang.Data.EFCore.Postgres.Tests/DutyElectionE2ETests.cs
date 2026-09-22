@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class DutyElectionE2ETests : EFCoreTestBase {
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "duty-svc";
     public string HostName => "duty-host";
@@ -43,13 +43,13 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     };
   }
 
-  private PgDutyElector _electorFor(_pod pod) => new(
+  private PgDutyElector _electorFor(Pod pod) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgDutyElector>.Instance);
 
-  private async Task _joinFleetAsync(_pod pod, CancellationToken ct) {
+  private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), ct);
@@ -60,7 +60,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await conn.OpenAsync(ct);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM wh_instance_capabilities WHERE capability = @duty AND instance_id = @id)";
-    cmd.Parameters.AddWithValue("duty", duty);
+    cmd.Parameters.AddWithValue(nameof(duty), duty);
     cmd.Parameters.AddWithValue("id", instanceId);
     return (bool)(await cmd.ExecuteScalarAsync(ct))!;
   }
@@ -68,7 +68,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Contention_ExactlyOneWins_AndTheRowReportsTheLockHolderAsync(CancellationToken cancellationToken) {
-    var pods = new[] { new _pod(), new _pod(), new _pod(), new _pod(), new _pod() };
+    var pods = new[] { new Pod(), new Pod(), new Pod(), new Pod(), new Pod() };
     foreach (var pod in pods) {
       await _joinFleetAsync(pod, cancellationToken);
     }
@@ -103,7 +103,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await Assert.That(await _holdsAsync(loser.InstanceId, "migrator", cancellationToken)).IsTrue();
   }
 
-  private sealed class _countingStep : IStartupStep {
+  private sealed class CountingStep : IStartupStep {
     private int _executions;
     public int Executions => Volatile.Read(ref _executions);
     public StartupStepDescriptor Descriptor { get; } = new() {
@@ -120,15 +120,15 @@ public class DutyElectionE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task TwoPipelines_RaceADutyStep_ExactlyOneInstanceRunsItAsync(CancellationToken cancellationToken) {
-    var podA = new _pod();
-    var podB = new _pod();
+    var podA = new Pod();
+    var podB = new Pod();
     await _joinFleetAsync(podA, cancellationToken);
     await _joinFleetAsync(podB, cancellationToken);
 
-    var stepA = new _countingStep();
-    var stepB = new _countingStep();
-    var runnerA = new StartupPipelineRunner([stepA], dutyElector: _electorFor(podA));
-    var runnerB = new StartupPipelineRunner([stepB], dutyElector: _electorFor(podB));
+    var stepA = new CountingStep();
+    var stepB = new CountingStep();
+    var runnerA = new StartupPipelineRunner(steps: [stepA], observers: [], dutyElector: _electorFor(podA));
+    var runnerB = new StartupPipelineRunner(steps: [stepB], observers: [], dutyElector: _electorFor(podB));
 
     // Both instances run their pipelines concurrently — the real race, through the real elector.
     var results = await Task.WhenAll(
@@ -150,7 +150,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task EvictedInstance_IsRefusedAtAcquisition_EvenWithTheLockFreeAsync(CancellationToken cancellationToken) {
-    var pod = new _pod();
+    var pod = new Pod();
     await _joinFleetAsync(pod, cancellationToken);
 
     await using (var conn = new NpgsqlConnection(ConnectionString)) {
@@ -171,7 +171,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await Assert.That(await _holdsAsync(pod.InstanceId, "maintainer", cancellationToken)).IsFalse();
 
     // And the released lock is genuinely free — a live instance takes it immediately.
-    var live = new _pod();
+    var live = new Pod();
     await _joinFleetAsync(live, cancellationToken);
     await using var liveGrant = (await _electorFor(live).TryAcquireAsync("maintainer", cancellationToken)).Grant;
     await Assert.That(liveGrant).IsNotNull();
@@ -180,8 +180,8 @@ public class DutyElectionE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task DirtyDeath_TheGrantKnowsItIsLost_AndAnotherInstanceAcquiresAsync(CancellationToken cancellationToken) {
-    var victim = new _pod();
-    var successor = new _pod();
+    var victim = new Pod();
+    var successor = new Pod();
     await _joinFleetAsync(victim, cancellationToken);
     await _joinFleetAsync(successor, cancellationToken);
 
@@ -231,7 +231,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     // A ping canceled by shutdown proves nothing about the lock. Latching there would leave a
     // grant that reports "not held" for the rest of its life while still owning the lock, and the
     // stickiness that makes the real case safe is exactly what makes this one unrecoverable.
-    var pod = new _pod();
+    var pod = new Pod();
     await _joinFleetAsync(pod, cancellationToken);
     await using var grant = (await _electorFor(pod).TryAcquireAsync("migrator", cancellationToken)).Grant;
 

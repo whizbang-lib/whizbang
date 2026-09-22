@@ -57,7 +57,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("AOT", "IL2075:UnrecognizedReflectionPattern", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Adapter is generic over TModel; static factory + execute methods match the pattern of EF Core's own generic-static helpers.")]
-public sealed partial class EFCoreCollectiveAdapter<TModel> where TModel : class {
+public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class {
   /// <summary>
   /// Execute the collective-event mutation as a keyset-batched set-based UPDATE, bounded by the apply
   /// <paramref name="options"/>. One raw <c>jsonb_set</c> path serves every mapping (complex-JSON, scalar/

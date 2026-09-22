@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -18,7 +20,7 @@ public class LifecycleCoordinatorMetricsTests {
 
   [Test]
   public async Task LifecycleCoordinatorMetrics_Constructor_CreatesAllInstrumentsAsync() {
-    var metrics = new LifecycleCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new LifecycleCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.ActiveTrackedEvents).IsNotNull();
     await Assert.That(metrics.PendingPerspectiveStates).IsNotNull();

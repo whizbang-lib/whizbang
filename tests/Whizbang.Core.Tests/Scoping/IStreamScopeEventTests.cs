@@ -10,9 +10,7 @@ namespace Whizbang.Core.Tests.Scoping;
 /// </summary>
 /// <tests>IStreamScopeEvent</tests>
 public class IStreamScopeEventTests {
-  private sealed class StreamScopeChangeEvent : IStreamScopeEvent, IEvent {
-    public Guid MessageId { get; init; }
-    public Guid StreamId { get; init; }
+  private sealed class StreamScopeChangeEvent : IStreamScopeEvent {
     public DateTimeOffset SentAt { get; init; } = DateTimeOffset.UtcNow;
     public PerspectiveScope Scope { get; init; } = new();
   }
@@ -53,9 +51,7 @@ public class IStreamScopeEventTests {
     await Assert.That(isScope).IsTrue();
   }
 
-  private sealed class PlainScopeEvent : IScopeEvent, IEvent {
-    public Guid MessageId { get; init; }
-    public Guid StreamId { get; init; }
+  private sealed class PlainScopeEvent : IScopeEvent {
     public DateTimeOffset SentAt { get; init; } = DateTimeOffset.UtcNow;
     public PerspectiveScope Scope { get; init; } = new();
   }

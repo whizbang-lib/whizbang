@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
@@ -27,17 +28,18 @@ public class InertConcurrencyStartupReporterTests {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => Noop.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> fmt)
-      => Entries.Add((level, fmt(state, ex)));
-    private sealed class Noop : IDisposable { public static readonly Noop Instance = new(); public void Dispose() { } }
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception)));
   }
+
+  private sealed class Noop : IDisposable { public static readonly Noop Instance = new(); public void Dispose() { } }
 
   [Test]
   public async Task WarnsAtStartupWhenAConfiguredWidthCannotTakeEffectAsync() {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      services: null,
+      services: new ServiceCollection().BuildServiceProvider(),
       coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = false }),
       orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = false }),
       outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
@@ -58,7 +60,7 @@ public class InertConcurrencyStartupReporterTests {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      services: null,
+      services: new ServiceCollection().BuildServiceProvider(),
       coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = true }),
       orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = true }),
       outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
@@ -72,7 +74,15 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task StartupNeverFailsOnAccountOfThisDiagnosticAsync() {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
-    var reporter = new InertConcurrencyStartupReporter(logger);   // no options configured at all
+    // "Nothing configured" as DI actually presents it: an empty provider and default option
+    // instances, which is what IOptions<T> yields when no Configure call ran.
+    var reporter = new InertConcurrencyStartupReporter(
+      logger,
+      services: new ServiceCollection().BuildServiceProvider(),
+      coordinator: Options.Create(new WorkCoordinatorOptions()),
+      orderedStream: Options.Create(new OrderedStreamProcessorOptions()),
+      outboxDrain: Options.Create(new OutboxDrainWorkerOptions()),
+      inboxDispatch: Options.Create(new InboxDispatchWorkerOptions()));
 
     Exception? captured = null;
     try { await reporter.StartAsync(CancellationToken.None); } catch (Exception ex) { captured = ex; }
@@ -85,6 +95,7 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task IsRegisteredByAddWhizbangSoNobodyHasToKnowItExistsAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbang();
 
@@ -108,6 +119,7 @@ public class InertConcurrencyStartupReporterTests {
     // pod spec, and the warning fired anyway. A diagnostic that cries wolf on a healthy config is
     // worse than none — it is the exact noise this feature was written to avoid.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = true });
     services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = true });
@@ -128,6 +140,7 @@ public class InertConcurrencyStartupReporterTests {
   [Test]
   public async Task StillWarnsWhenTheSingletonOptionsAreGenuinelyInertAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = false });
     services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = false });

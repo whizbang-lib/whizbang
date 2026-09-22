@@ -27,7 +27,7 @@ public sealed class TransportSubscriptionBuilder {
   private readonly EventSubscriptionDiscovery _discovery;
   private readonly string _serviceName;
   private readonly IInboxRoutingStrategy? _inboxStrategy;
-  private readonly Messaging.IReceptorRegistryQuery? _receptorRegistry;
+  private readonly Messaging.IReceptorRegistryQuery _receptorRegistry;
 
   /// <summary>
   /// Creates a new transport subscription builder.
@@ -46,8 +46,8 @@ public sealed class TransportSubscriptionBuilder {
       IOptions<RoutingOptions> routingOptions,
       EventSubscriptionDiscovery discovery,
       string serviceName,
-      IInboxRoutingStrategy? inboxStrategy = null,
-      Messaging.IReceptorRegistryQuery? receptorRegistry = null) {
+      IInboxRoutingStrategy? inboxStrategy,
+      Messaging.IReceptorRegistryQuery receptorRegistry) {
     ArgumentNullException.ThrowIfNull(routingOptions);
     ArgumentNullException.ThrowIfNull(discovery);
     ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
@@ -213,13 +213,14 @@ public static class TransportSubscriptionBuilderExtensions {
       string serviceName) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
+    services.TryAddWhizbangDefaults();
 
     services.AddSingleton(sp => new TransportSubscriptionBuilder(
         sp.GetRequiredService<IOptions<RoutingOptions>>(),
         sp.GetRequiredService<EventSubscriptionDiscovery>(),
         serviceName,
         sp.GetService<IInboxRoutingStrategy>(),
-        sp.GetService<Messaging.IReceptorRegistryQuery>()));
+        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>()));
 
     TryAddTopologyManifest(services, _ => serviceName);
 
@@ -252,7 +253,7 @@ public static class TransportSubscriptionBuilderExtensions {
           return new TopologyManifest(serviceName, [], []);
         }
 
-        var registry = sp.GetService<Messaging.IReceptorRegistryQuery>();
+        var registry = sp.GetRequiredService<Messaging.IReceptorRegistryQuery>();
         var discovery = sp.GetService<EventSubscriptionDiscovery>();
         var context = new InboxSubscriptionContext(
             serviceName,

@@ -54,9 +54,9 @@ public class PhysicalFieldExpressionVisitorTests {
 
   /// <summary>A field, not a property — the visitor's first guard.</summary>
   public sealed class FieldHolder {
-#pragma warning disable CA1051 // Do not declare visible instance fields — a field is the point
+#pragma warning disable CA1051, S1104 // a public field, not a property, is the point of this fixture
     public int Counter;
-#pragma warning restore CA1051
+#pragma warning restore CA1051, S1104
   }
 
   [Before(Test)]

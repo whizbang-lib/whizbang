@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,7 +27,7 @@ public class LifecycleCoordinatorCoverageTests {
     // If this regressed to "return true" again, a late-arriving duplicate signal (a redelivered
     // completion notification, say) would fire PostAllPerspectives / PostLifecycle a second time
     // for the same event — a duplicate downstream side effect.
-    var coordinator = new LifecycleCoordinator();
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var eventId = Guid.NewGuid();
     coordinator.ExpectPerspectiveCompletions(eventId, ["OnlyPerspective"]);
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core;
@@ -77,22 +78,14 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
   /// </summary>
   private sealed class CascadeTrackingTestDispatcher(
     IServiceProvider serviceProvider,
-    IScopedEventTracker? tracker = null,
-    IStreamIdExtractor? streamIdExtractor = null,
-    Func<object, (object message, DispatchModes mode)>? cascadeResult = null) : Core.Dispatcher(
+    IScopedEventTracker? tracker,
+    IStreamIdExtractor? streamIdExtractor) : Core.Dispatcher(
         serviceProvider,
-        new ServiceInstanceProvider(configuration: null),
+        new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
         streamIdExtractor: streamIdExtractor,
         scopedEventTracker: tracker) {
-    private readonly Func<object, (object message, DispatchModes mode)>? _cascadeResult = cascadeResult;
     private readonly List<object> _localInvocations = [];
     private readonly Lock _lock = new();
-
-    public List<object> GetLocalInvocations() {
-      lock (_lock) {
-        return [.. _localInvocations];
-      }
-    }
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle CascadeTrackingCommand -> Routed<CascadeTrackingEvent>
@@ -141,7 +134,7 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, _, ct) => {
+      return (evt, _, _) => {
         lock (_lock) {
           _localInvocations.Add(evt);
         }
@@ -279,7 +272,7 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
     var provider = services.BuildServiceProvider();
-    var dispatcher = new CascadeTrackingTestDispatcher(provider, tracker: null);
+    var dispatcher = new CascadeTrackingTestDispatcher(provider, tracker: null, streamIdExtractor: null);
     var command = new CascadeTrackingCommand(Guid.NewGuid());
 
     // Act & Assert - Should not throw

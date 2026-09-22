@@ -36,7 +36,7 @@ public sealed class StartupPipelineMetrics {
   /// <summary>Initializes a new instance of <see cref="StartupPipelineMetrics"/>.</summary>
   public StartupPipelineMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     StepDuration = meter.CreateHistogram<double>(
       "whizbang.startup.step_duration",

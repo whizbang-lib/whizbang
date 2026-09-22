@@ -42,7 +42,7 @@ public sealed partial class IntegrityAuditWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.AuditEnabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     LogStarted(_logger, _options.AuditIntervalMinutes);
@@ -235,7 +235,7 @@ public sealed partial class IntegrityAuditWorker(
     // The assembly-qualified WIRE form ("Type, Assembly") — the origin matches these against its
     // event_type/digest columns, which store that form; a CLR-FullName-only list silently
     // matches nothing and every origin answers with silence.
-    var subscribed = typeProvider?.GetEventTypes()
+    var subscribed = (typeProvider is { IsAvailable: true } ? typeProvider.GetEventTypes() : null)?
       .Select(TypeNameFormatter.Format)
       .Distinct(StringComparer.Ordinal)
       .ToList();

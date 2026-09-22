@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -25,7 +26,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Deleted: FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync.
-  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush;
+  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. The "no writes to channel"
   // invariant is still locked in WorkCoordinatorFlushHelperTests via SignalCount.
 
@@ -39,7 +40,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.CreateVersion7();
@@ -70,7 +71,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var coordinator = new TestWorkCoordinator();
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     // Act - First flush with 2 messages
     var msg1 = System.Guid.CreateVersion7();
@@ -148,7 +149,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
 
     var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
@@ -179,7 +180,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new System.NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -218,7 +219,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

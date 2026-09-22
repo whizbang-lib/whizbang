@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// the service has no interest in — matters most for cross-service event types in BFF
 /// patterns where many inbox events flow through with no local handler.
 /// </remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>fundamentals/receptors/receptors</docs>
 public interface IReceptorRegistryQuery {
   /// <summary>True when at least one receptor is registered for the given lifecycle
   /// stage + message type.</summary>

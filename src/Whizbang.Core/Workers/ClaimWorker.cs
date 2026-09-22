@@ -25,14 +25,14 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
-  private readonly INotifySignalingGate? _signalingGate;
+  private readonly INotifySignalingGate _signalingGate;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IWorkChannelWriter? _outboxChannel;
-  private readonly IInboxChannelWriter? _inboxChannel;
-  private readonly IPerspectiveChannelWriter? _perspectiveChannel;
-  private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel;
-  private readonly IOutboxDrainChannel? _outboxDrainChannel;
-  private readonly IInboxDrainChannel? _inboxDrainChannel;
+  private readonly IWorkChannelWriter _outboxChannel;
+  private readonly IInboxChannelWriter _inboxChannel;
+  private readonly IPerspectiveChannelWriter _perspectiveChannel;
+  private readonly IPerspectiveDrainChannel _perspectiveDrainChannel;
+  private readonly IOutboxDrainChannel _outboxDrainChannel;
+  private readonly IInboxDrainChannel _inboxDrainChannel;
   private readonly Whizbang.Core.Priority.PriorityHookChain? _priorityHooks;
   private readonly ClaimWorkerOptions _options;
   private readonly AdaptiveClaimWindow _claimWindow;
@@ -64,7 +64,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private long _lastDrainTicks;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
-  private readonly ISignalBus? _signalBus;
+  private readonly ISignalBus _signalBus;
   private readonly SignalBusLivenessState? _busLiveness;
   private readonly WorkCompletionMeter? _completionMeter;
   private int _doorbellSinceLastClaim;
@@ -125,15 +125,15 @@ public sealed partial class ClaimWorker : BackgroundService {
     ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> options,
     ILogger<ClaimWorker> logger,
-    IWorkChannelWriter? outboxChannel = null,
-    IInboxChannelWriter? inboxChannel = null,
-    IPerspectiveChannelWriter? perspectiveChannel = null,
-    IPerspectiveDrainChannel? perspectiveDrainChannel = null,
-    IOutboxDrainChannel? outboxDrainChannel = null,
-    IInboxDrainChannel? inboxDrainChannel = null,
-    INotifySignalingGate? signalingGate = null,
-    IPinnedConnectionPool? pinnedPool = null,
-    ISignalBus? signalBus = null,
+    IWorkChannelWriter outboxChannel,
+    IInboxChannelWriter inboxChannel,
+    IPerspectiveChannelWriter perspectiveChannel,
+    IPerspectiveDrainChannel perspectiveDrainChannel,
+    IOutboxDrainChannel outboxDrainChannel,
+    IInboxDrainChannel inboxDrainChannel,
+    INotifySignalingGate signalingGate,
+    IPinnedConnectionPool pinnedPool,
+    ISignalBus signalBus,
     SignalBusLivenessState? busLiveness = null,
     WorkCompletionMeter? completionMeter = null,
     ClaimChurnFeedback? churnFeedback = null,
@@ -164,7 +164,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _perspectiveDrainChannel = perspectiveDrainChannel;
     _outboxDrainChannel = outboxDrainChannel;
     _inboxDrainChannel = inboxDrainChannel;
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _signalBus = signalBus;
     _busLiveness = busLiveness;
     _completionMeter = completionMeter;
@@ -176,33 +176,27 @@ public sealed partial class ClaimWorker : BackgroundService {
     // source (5s DB backstop) both raise the typed signal, so ClaimWorker wakes uniformly on
     // either path. The IWorkNotificationListener.OnSignal subscription is preserved for the
     // orphan + deadletter categories that don't have typed signals yet.
-    if (_signalBus is not null) {
+    if (_signalBus.IsConfigured) {
       _outboxSignalSub = _signalBus.Subscribe<WorkOutboxAvailableSignal>(_wakeOnSignal);
       _inboxSignalSub = _signalBus.Subscribe<WorkInboxAvailableSignal>(_wakeOnSignal);
       _perspectiveSignalSub = _signalBus.Subscribe<WorkPerspectiveAvailableSignal>(_wakeOnSignal);
     }
 
-    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path);
+    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path) —
     // outbox/inbox/perspective now come via the bus above.
     _notificationListener.OnSignal += _onSignal;
 
     // Slice 33.6 — pick up the gate's availability transitions so a polling-to-NOTIFY-available
     // recovery immediately polls (any work that accumulated during the unavailable window
     // would otherwise wait for the next backoff tick).
-    if (_signalingGate is not null) {
-      _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
-    }
+    _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
 
     // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
     // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
     // process_work_batch used to provide. Must remain attached for the lifetime of the
     // worker; BackgroundService disposal handles cleanup.
-    if (_outboxChannel is not null) {
-      _outboxChannel.OnNewWorkAvailable += SignalNewWork;
-    }
-    if (_inboxChannel is not null) {
-      _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
-    }
+    _outboxChannel.OnNewWorkAvailable += SignalNewWork;
+    _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
   }
 
   private void _onSignal(WorkSignalCategory category) {
@@ -217,7 +211,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       RequestImmediatePoll();
       return;
     }
-    if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.Perspective) {
+    if (!_signalBus.IsConfigured && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.Perspective) {
       SignalNewWork();
     }
   }
@@ -458,7 +452,7 @@ public sealed partial class ClaimWorker : BackgroundService {
           Volatile.Write(ref _doorbellSinceLastClaim, 1);
         }
         if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
-            && (_signalingGate?.IsAvailable ?? false)) {
+            && _signalingGate.IsAvailable) {
           if (doorbellRang) {
             _busLiveness.RecordDoorbellWake();
           } else if (!_withinDrainLinger()) {
@@ -533,7 +527,7 @@ public sealed partial class ClaimWorker : BackgroundService {
         var doorbellPending = Volatile.Read(ref _doorbellSinceLastClaim) == 1;
         var spaceOut = !doorbellPending
           && (_lastClaimWasRepeat
-            || (Volatile.Read(ref _consecutiveEmptyPolls) > 0 && _signalingGate?.IsAvailable == true));
+            || (Volatile.Read(ref _consecutiveEmptyPolls) > 0 && _signalingGate.IsAvailable));
         if (spaceOut) {
           var floorMs = Math.Min(_computeAdaptivePollWaitMs(), _options.PollingMaxIntervalMilliseconds);
           if (floorMs > 0) {
@@ -552,7 +546,7 @@ public sealed partial class ClaimWorker : BackgroundService {
             }
           }
         }
-        if (_signalBus is not null) {
+        if (_signalBus.IsConfigured) {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingMaxIntervalMilliseconds), stoppingToken);
         } else {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_computeAdaptivePollWaitMs()), stoppingToken);
@@ -569,52 +563,46 @@ public sealed partial class ClaimWorker : BackgroundService {
     // Ordering invariant: write each category in MessageId order so downstream channel readers
     // (which preserve enqueue order) receive same-stream items chronologically. See
     // plans/ordered-stream-invariant.md.
-    if (_outboxChannel is not null) {
-      foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
-        await _outboxChannel.WriteAsync(ow, ct);
+    foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
+      await _outboxChannel.WriteAsync(ow, ct);
+    }
+    // The claim already charged an attempt against every row here. If this loop is cut short —
+    // shutdown, a full channel, a faulting writer — the rows never handed off have spent an
+    // attempt for a dispatch that never happened, and will spend another on every future claim
+    // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
+    // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
+    // so a process that dies here still (correctly) leaves its charge standing.
+    // Skip rows already in flight. claim_work re-emits every row still leased to this instance and
+    // unprocessed on EVERY poll, so without this the same row is queued again each cycle —
+    // duplicate copies of work already being dispatched.
+    //
+    // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
+    // this path proved unrecoverable in production: a flag stranded by a hung or canceled task
+    // made this worker discard that row's emits forever, and only restarting the process cleared
+    // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
+    // eligible again on its own, so the failure is self-healing rather than permanent.
+    var ordered = batch.InboxWork
+      .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
+      .OrderByMessageId()
+      .ToList();
+    var handedOff = 0;
+    try {
+      for (; handedOff < ordered.Count; handedOff++) {
+        await _inboxChannel.WriteAsync(ordered[handedOff], ct);
+      }
+    } finally {
+      // Only rows THIS loop failed to deliver are refunded. A row filtered out above was handed
+      // off on an earlier poll and is being processed — refunding it would credit an attempt for
+      // work that is genuinely in progress.
+      if (handedOff < ordered.Count) {
+        await _releaseUndispatchedAsync([.. ordered.Skip(handedOff).Select(w => w.MessageId)]);
       }
     }
-    if (_inboxChannel is not null) {
-      // The claim already charged an attempt against every row here. If this loop is cut short —
-      // shutdown, a full channel, a faulting writer — the rows never handed off have spent an
-      // attempt for a dispatch that never happened, and will spend another on every future claim
-      // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
-      // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
-      // so a process that dies here still (correctly) leaves its charge standing.
-      // Skip rows already in flight. claim_work re-emits every row still leased to this instance and
-      // unprocessed on EVERY poll, so without this the same row is queued again each cycle —
-      // duplicate copies of work already being dispatched.
-      //
-      // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
-      // this path proved unrecoverable in production: a flag stranded by a hung or canceled task
-      // made this worker discard that row's emits forever, and only restarting the process cleared
-      // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
-      // eligible again on its own, so the failure is self-healing rather than permanent.
-      var ordered = batch.InboxWork
-        .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
-        .OrderByMessageId()
-        .ToList();
-      var handedOff = 0;
-      try {
-        for (; handedOff < ordered.Count; handedOff++) {
-          await _inboxChannel.WriteAsync(ordered[handedOff], ct);
-        }
-      } finally {
-        // Only rows THIS loop failed to deliver are refunded. A row filtered out above was handed
-        // off on an earlier poll and is being processed — refunding it would credit an attempt for
-        // work that is genuinely in progress.
-        if (handedOff < ordered.Count) {
-          await _releaseUndispatchedAsync([.. ordered.Skip(handedOff).Select(w => w.MessageId)]);
-        }
-      }
-    }
-    if (_perspectiveChannel is not null) {
-      foreach (var pw in batch.PerspectiveWork) {
-        await _perspectiveChannel.WriteAsync(pw, ct);
-      }
+    foreach (var pw in batch.PerspectiveWork) {
+      await _perspectiveChannel.WriteAsync(pw, ct);
     }
     // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
-    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us;
+    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us —
     // we just forward every stream_id every poll. We deliberately do NOT consult IsInFlight
     // here — Phase H step 6 slice 5 / Part B introduced an IsInFlight write-time filter that
     // turned out to be unrecoverable in production: a drain task that hung past its try/finally
@@ -626,20 +614,14 @@ public sealed partial class ClaimWorker : BackgroundService {
     // AND processed_at IS NULL`, so they re-emit every leased row on every poll. The drainer's
     // session-local seen-set + idempotent fetch_*_batch (filters processed_at IS NULL) make
     // duplicate writes harmless — a second drain returns zero rows and exits.
-    if (_perspectiveDrainChannel is not null) {
-      foreach (var streamId in batch.PerspectiveStreamIds) {
-        await _perspectiveDrainChannel.WriteAsync(streamId, ct);
-      }
+    foreach (var streamId in batch.PerspectiveStreamIds) {
+      await _perspectiveDrainChannel.WriteAsync(streamId, ct);
     }
-    if (_outboxDrainChannel is not null) {
-      foreach (var sid in batch.OutboxStreamIds) {
-        await _outboxDrainChannel.WriteAsync(sid, ct);
-      }
+    foreach (var sid in batch.OutboxStreamIds) {
+      await _outboxDrainChannel.WriteAsync(sid, ct);
     }
-    if (_inboxDrainChannel is not null) {
-      foreach (var sid in _orderForDispatch(batch)) {
-        await _inboxDrainChannel.WriteAsync(sid, ct);
-      }
+    foreach (var sid in _orderForDispatch(batch)) {
+      await _inboxDrainChannel.WriteAsync(sid, ct);
     }
   }
 
@@ -730,7 +712,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// A channel that cannot count reports false, so a store without the cap behaves as before.
   /// </summary>
   private bool _perspectiveDrainBacklogAboveCap() {
-    if (_perspectiveDrainChannel is null || _options.MaxPerspectiveDrainBacklog <= 0) {
+    if (_options.MaxPerspectiveDrainBacklog <= 0) {
       return false;
     }
     var reader = _perspectiveDrainChannel.Reader;
@@ -756,8 +738,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
     _releasedThisStreak = true;
 
-    var inboxStreams = _notInFlight(batch.InboxStreamIds, _inboxDrainChannel is null ? null : _inboxDrainChannel.IsInFlight);
-    var perspectiveStreams = _notInFlight(batch.PerspectiveStreamIds, _perspectiveDrainChannel is null ? null : _perspectiveDrainChannel.IsInFlight);
+    var inboxStreams = _notInFlight(batch.InboxStreamIds, _inboxDrainChannel.IsInFlight);
+    var perspectiveStreams = _notInFlight(batch.PerspectiveStreamIds, _perspectiveDrainChannel.IsInFlight);
     if (inboxStreams.Count == 0 && perspectiveStreams.Count == 0) {
       return;
     }
@@ -811,7 +793,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     var maxAcquireRows = _acquireRowBound(maxStreams);
 
     // Stealing (#725) is a last resort, never a first move. Only after this instance's own residue
-    // has come back empty twice running does it reach for unowned rows assigned to other residues;
+    // has come back empty twice running does it reach for unowned rows assigned to other residues —
     // a live sibling's owned streams are never touched (the store enforces that). Under normal load
     // the residues stay disjoint and ownership stays stable.
     var allowSteal = Volatile.Read(ref _consecutiveInboxEmptyClaims) >= STEAL_AFTER_EMPTY_CLAIMS;
@@ -1081,7 +1063,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // won't wake us when work arrives, so we MUST keep polling at the tight base cadence
     // (do not let the adaptive backoff stretch out to PollingMaxIntervalMilliseconds —
     // that would silently increase latency to up to 10 s while NOTIFY is broken).
-    if (_signalingGate?.IsAvailable == false) {
+    if (_signalingGate.IsConfigured && !_signalingGate.IsAvailable) {
       return baseMs;
     }
     // #665 drain linger: freshly-found work means producers may be suppressing doorbells
@@ -1093,11 +1075,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     if (!_lastClaimWasRepeat && _withinDrainLinger()) {
       return Math.Min(LINGER_POLL_MS, _options.PollingMaxIntervalMilliseconds);
     }
-    if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
+    if (!_options.EnableSafetyNetPoll && _signalingGate.IsAvailable) {
       return int.MaxValue;
     }
     var notifyHealthyBase = _options.NotifyHealthyPollingIntervalMilliseconds;
-    if (_signalingGate?.IsAvailable == true && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
+    if (_signalingGate.IsAvailable && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
       baseMs = notifyHealthyBase.Value;
     }
     var maxMs = _options.PollingMaxIntervalMilliseconds;

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -30,7 +31,7 @@ public class DispatcherCoverageGenericTests {
   [DefaultRouting(DispatchModes.Local)]
   public record GenericEvent([property: StreamId] Guid OrderId) : IEvent;
 
-  private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(GenericCommand) && typeof(TResult) == typeof(GenericResult)) {
         return msg => {
@@ -137,7 +138,7 @@ public class DispatcherCoverageGenericTests {
     var provider = _buildProvider();
     var dispatcher = new GenericTestDispatcher(provider);
     var command = new GenericCommand(Guid.NewGuid());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
@@ -291,7 +292,7 @@ public class DispatcherCoverageGenericTests {
         .ThrowsExactly<ArgumentException>();
   }
 
-  private sealed class GenericSyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class GenericSyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }

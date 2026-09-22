@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -22,7 +23,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Target: src/Whizbang.Core/Workers/SlidingWindowOutboxBatchStrategy.cs:140 — `return;` in
-  // `catch (OperationCanceledException) when (_stopCts.IsCancellationRequested)` around the flush
+  // the OperationCanceledException handler around the flush
   // call. FlushAndStopAsync always completes the stream's channel writer before it ever cancels
   // _stopCts, so a flush callback that itself awaits _stopCts's own token (as production flush
   // callbacks resolving a DI scope legitimately can, via the token this class hands them) is the
@@ -44,6 +45,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         // canceled -- there is no competing "normal" completion path, so there is no race.
         await Task.Delay(Timeout.Infinite, ct);
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
@@ -79,6 +81,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     var clock = new FakeTimeProvider();
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),

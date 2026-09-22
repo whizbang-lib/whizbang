@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -79,7 +80,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var routedNone = Route.None();
     var options = new DispatchOptions();
 
-    // The generic typed SendAsync<TMessage> path does not unwrap IRouted;
+    // The generic typed SendAsync<TMessage> path does not unwrap IRouted —
     // it goes through _sendAsyncInternalWithOptionsAsync which tries receptor lookup directly.
     // RoutedNone has no receptor, so ReceptorNotFoundException is thrown.
     await Assert.That(async () =>
@@ -139,7 +140,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -152,7 +153,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var command = (object)new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -166,7 +167,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var command = new EdgeCommand("test");
     var context = MessageContext.New();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -233,7 +234,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -246,7 +247,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var command = new VoidEdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -489,7 +490,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -622,7 +623,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var evt = new TestCascadeEvent { Detail = "canceled" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
       await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.Local, cancellationToken: cts.Token))
@@ -657,7 +658,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var dispatcher = _createDispatcher();
     var evt = new TestCascadeEvent { Detail = "canceled-publish" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -894,7 +895,7 @@ public class DispatcherEdgeCaseCoverageTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();

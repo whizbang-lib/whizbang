@@ -27,11 +27,11 @@ namespace App.Signals {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "SignalTypeSource.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GeneratedSignalTypeSource : global::Whizbang.Core.Signals.ISignalTypeSource");
-    await Assert.That(code!).Contains("[ModuleInitializer]");
-    await Assert.That(code!).Contains("global::Whizbang.Core.Signals.SignalTypeRegistry.Register");
-    await Assert.That(code!).Contains("_entry<global::App.Signals.CacheInvalidated>(\"App.Signals.CacheInvalidated\")");
-    await Assert.That(code!).Contains("sink.ReceiveAsync<TSignal>(default!, ct)");
+    await Assert.That(code).Contains("GeneratedSignalTypeSource : global::Whizbang.Core.Signals.ISignalTypeSource");
+    await Assert.That(code).Contains("[ModuleInitializer]");
+    await Assert.That(code).Contains("global::Whizbang.Core.Signals.SignalTypeRegistry.Register");
+    await Assert.That(code).Contains("_entry<global::App.Signals.CacheInvalidated>(\"App.Signals.CacheInvalidated\")");
+    await Assert.That(code).Contains("sink.ReceiveAsync<TSignal>(default!, ct)");
   }
 
   [Test]
@@ -73,9 +73,9 @@ namespace App.Signals {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "SignalTypeSource.g.cs");
     await Assert.That(code).IsNotNull();
     // The generated entry must use the [WireName] value, not the fully-qualified type name.
-    await Assert.That(code!).Contains("_entry<global::App.Signals.WorkOutboxAvailable>(\"outbox\")")
+    await Assert.That(code).Contains("_entry<global::App.Signals.WorkOutboxAvailable>(\"outbox\")")
       .Because("the [WireName] attribute overrides the default FQ-name wire-name so signals can interoperate with fixed wire-formats like today's work-signal payloads");
-    await Assert.That(code!).DoesNotContain("_entry<global::App.Signals.WorkOutboxAvailable>(\"App.Signals.WorkOutboxAvailable\")");
+    await Assert.That(code).DoesNotContain("_entry<global::App.Signals.WorkOutboxAvailable>(\"App.Signals.WorkOutboxAvailable\")");
   }
 
   [Test]

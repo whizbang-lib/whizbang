@@ -38,7 +38,6 @@ public class PostgresSignalTransportUnitTests {
 
   private sealed class StubSharedNotifyConnection : ISharedNotifyConnection {
     public List<INotifySubscription> All { get; } = [];
-    public INotifySubscription? Last => All.Count == 0 ? null : All[^1];
     public int SubscribeCount => All.Count;
 
     public IDisposable Subscribe(INotifySubscription subscription) {

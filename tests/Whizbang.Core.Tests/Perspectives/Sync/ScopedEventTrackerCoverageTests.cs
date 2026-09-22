@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// <code-under-test>src/Whizbang.Core/Perspectives/Sync/ScopedEventTracker.cs</code-under-test>
 public class ScopedEventTrackerCoverageTests {
 
-  private sealed record _unrecognizedFilter : SyncFilterNode;
+  private sealed record UnrecognizedFilter : SyncFilterNode;
 
   [Test]
   public async Task GetEmittedEvents_UnrecognizedFilterNodeKind_MatchesNothingRatherThanThrowingAsync() {
@@ -25,7 +25,7 @@ public class ScopedEventTrackerCoverageTests {
     var tracker = new ScopedEventTracker();
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(string), Guid.NewGuid());
 
-    var events = tracker.GetEmittedEvents(new _unrecognizedFilter());
+    var events = tracker.GetEmittedEvents(new UnrecognizedFilter());
 
     await Assert.That(events).IsEmpty()
       .Because("an unrecognized filter kind must match nothing — the safe default for an unimplemented predicate");
@@ -36,7 +36,7 @@ public class ScopedEventTrackerCoverageTests {
     var tracker = new ScopedEventTracker();
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(string), Guid.NewGuid());
 
-    var result = tracker.AreAllProcessed(new _unrecognizedFilter(), new HashSet<Guid>());
+    var result = tracker.AreAllProcessed(new UnrecognizedFilter(), new HashSet<Guid>());
 
     await Assert.That(result).IsTrue()
       .Because("zero matching events means nothing to wait for, even when the filter kind itself is unrecognized");

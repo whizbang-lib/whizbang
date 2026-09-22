@@ -76,13 +76,12 @@ public sealed class LifecycleStageFiringObserver : IReceptorFiringObserver {
 
     List<_Wait> matches;
     lock (_lock) {
-      matches = _waits
+      matches = [.. _waits
         .Where(w =>
           w.Stage == stage
           && w.MessageType.IsAssignableFrom(payloadType)
           && (w.Filter is null || w.Filter(payload))
-        )
-        .ToList();
+        )];
     }
 
     foreach (var w in matches) {

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Observability;
 /// <remarks>
 /// Initializes WhizbangMetrics with an optional meter factory.
 /// </remarks>
-public sealed class WhizbangMetrics(IMeterFactory? meterFactory = null) {
+public sealed class WhizbangMetrics(IMeterFactory meterFactory) {
   /// <summary>The meter factory for creating meters.</summary>
-  public IMeterFactory? MeterFactory { get; } = meterFactory;
+  public IMeterFactory MeterFactory { get; } = meterFactory;
 }

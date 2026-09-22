@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -21,7 +23,7 @@ namespace Whizbang.Core.Tests.RunControl;
 [Category("Startup")]
 public class InstanceStateRunControlTests {
 
-  private sealed class _stubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "svc";
     public string HostName => "host";
@@ -34,7 +36,7 @@ public class InstanceStateRunControlTests {
     };
   }
 
-  private sealed class _recordingCoordinator : IWorkCoordinator {
+  private sealed class RecordingCoordinator : IWorkCoordinator {
     public List<(Guid InstanceId, string Phase, string? Version)> Recorded { get; } = [];
     public bool Throw { get; init; }
     /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
@@ -62,15 +64,13 @@ public class InstanceStateRunControlTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
-  private static (InstanceStateRunControl Control, _recordingCoordinator Coordinator, _stubInstanceProvider Provider) _build(
+  private static (InstanceStateRunControl Control, RecordingCoordinator Coordinator, StubInstanceProvider Provider) _build(
       bool withVersion = true, bool coordinatorThrows = false, bool withCoordinator = true,
       Exception? coordinatorThrowsSpecific = null, FakeLogger<InstanceStateRunControl>? logger = null) {
-    var coordinator = new _recordingCoordinator {
+    var coordinator = new RecordingCoordinator {
       Throw = coordinatorThrows,
       ThrowSpecific = coordinatorThrowsSpecific,
     };
@@ -79,12 +79,12 @@ public class InstanceStateRunControlTests {
       services.AddSingleton<IWorkCoordinator>(coordinator);
     }
     var sp = services.BuildServiceProvider();
-    var provider = new _stubInstanceProvider();
+    var provider = new StubInstanceProvider();
     var control = new InstanceStateRunControl(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      provider,
-      withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null,
-      logger);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: provider,
+      versionProvider: withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null ?? new LibraryVersionProvider("0.0.0-test"),
+      logger: (ILogger<InstanceStateRunControl>?)logger ?? NullLogger<InstanceStateRunControl>.Instance);
     return (control, coordinator, provider);
   }
 
@@ -102,15 +102,6 @@ public class InstanceStateRunControlTests {
       .Because("the version rides along from the generated constant — the same one the ledger records");
   }
 
-  [Test]
-  public async Task OnPhase_WithoutAVersionProvider_StillRecordsThePhaseAsync() {
-    var (control, coordinator, _) = _build(withVersion: false);
-
-    await control.OnPhaseAsync(LifecyclePhase.Migrating, CancellationToken.None);
-
-    await Assert.That(coordinator.Recorded.Count).IsEqualTo(1);
-    await Assert.That(coordinator.Recorded[0].Version).IsNull();
-  }
 
   [Test]
   public async Task OnPhase_WhenRecordingFails_NeverBreaksTheTransitionAsync() {

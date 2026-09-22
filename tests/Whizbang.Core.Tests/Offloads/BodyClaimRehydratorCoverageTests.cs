@@ -26,9 +26,9 @@ public class BodyClaimRehydratorCoverageTests {
   private static JsonSerializerOptions _jsonOptions() =>
     Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-  private static ServiceProvider _providerWithStore(out _inMemoryStore store) {
+  private static ServiceProvider _providerWithStore(out InMemoryStore store) {
     var services = new ServiceCollection();
-    var instance = new _inMemoryStore("memory");
+    var instance = new InMemoryStore("memory");
     store = instance;
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     return services.BuildServiceProvider();
@@ -65,7 +65,7 @@ public class BodyClaimRehydratorCoverageTests {
   }
 
   /// <summary>Minimal store impl that captures bytes by claim's StorageKey.</summary>
-  private sealed class _inMemoryStore(string providerName) : IMessageBodyStore {
+  private sealed class InMemoryStore(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
     public string ProviderName { get; } = providerName;
 

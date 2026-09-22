@@ -655,8 +655,8 @@ public class SplitModeProductionTests : IAsyncDisposable {
             category => category.Data.Code,           // JSONB field on category
             (product, category) => new {
               ProductName = product.Data.Name,
-              Category = product.Data.Category,
-              Price = product.Data.Price,
+              product.Data.Category,
+              product.Data.Price,
               CategoryDisplay = category.Data.DisplayName
             })
         .OrderBy(r => r.ProductName)
@@ -1051,10 +1051,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
     await Assert.That(rows).Count().IsEqualTo(50);
     // Verify every row has hydrated physical fields
-    foreach (var row in rows) {
-      await Assert.That(row.Data.Category).IsNotNull().And.IsNotEmpty()
+    foreach (var data in rows.Select(row => row.Data)) {
+      await Assert.That(data.Category).IsNotNull().And.IsNotEmpty()
         .Because("Every row must have Category hydrated from physical column");
-      await Assert.That(row.Data.TenantId).IsNotEqualTo(Guid.Empty)
+      await Assert.That(data.TenantId).IsNotEqualTo(Guid.Empty)
         .Because("Every row must have TenantId hydrated from physical column");
     }
     await Assert.That(_context!.ChangeTracker.Entries().Count()).IsEqualTo(0)
@@ -1272,10 +1272,10 @@ public class SplitModeProductionTests : IAsyncDisposable {
     // Model as it would be AFTER Apply() but BEFORE stripping
     var strippedModel = new SplitProductionModel {
       // Physical fields set to default (simulating runner stripping)
-      TenantId = default,
+      TenantId = Guid.Empty,
       Category = default!,
       Price = default,
-      ParentId = default,
+      ParentId = null,
       Embeddings = embeddings != null ? [] : null,
       // JSONB-only fields keep their values
       Name = name,

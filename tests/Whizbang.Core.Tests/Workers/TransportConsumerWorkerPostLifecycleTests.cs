@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -29,6 +30,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
   public async Task EventWithoutPerspectives_ShouldFirePostLifecycle_WhenNoPerspectiveRegistryAsync() {
     // When no IPerspectiveRunnerRegistry is registered, all events are "without perspectives"
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
 
     var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
@@ -153,16 +155,6 @@ public class TransportConsumerWorkerPostLifecycleTests {
     await Assert.That(hasMatch).IsFalse();
   }
 
-  [Test]
-  public async Task NullRegistry_ReturnsTrue_AllEventsWithoutPerspectivesAsync() {
-    var services = new ServiceCollection();
-    var serviceProvider = services.BuildServiceProvider();
-
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    await Assert.That(registry).IsNull();
-    // _isEventWithoutPerspectives returns true when registry is null
-  }
-
   /// <summary>
   /// Mirrors the logic in TransportConsumerWorker._isEventWithoutPerspectives
   /// Uses EventTypeMatchingHelper.NormalizeTypeName for consistent matching.
@@ -207,6 +199,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ILifecycleCoordinator>(spy);
     services.AddSingleton<IReceptorInvoker>(new NoOpReceptorInvoker());
     var scopedProvider = services.BuildServiceProvider();
@@ -233,6 +226,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ILifecycleCoordinator>(spy);
     services.AddSingleton<IReceptorInvoker>(new NoOpReceptorInvoker());
     var scopedProvider = services.BuildServiceProvider();
@@ -299,6 +293,7 @@ public class TransportConsumerWorkerPostLifecycleTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReceptorInvoker>(spyInvoker);
     var scopedProvider = services.BuildServiceProvider();
 

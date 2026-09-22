@@ -23,13 +23,13 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <docs>fundamentals/messaging/collective-events</docs>
 public class CollectiveWhereComposerTests {
 
-  private sealed class _job {
+  private sealed class Job {
     public string Status { get; set; } = "Draft";
   }
 
-  private static PerspectiveRow<_job> _row(string status, string? tenant) => new() {
+  private static PerspectiveRow<Job> _row(string status, string? tenant) => new() {
     Id = TrackedGuid.NewMedo().Value,
-    Data = new _job { Status = status },
+    Data = new Job { Status = status },
     Metadata = new PerspectiveMetadata(),
     Scope = new PerspectiveScope { TenantId = tenant },
     CreatedAt = default,
@@ -39,7 +39,7 @@ public class CollectiveWhereComposerTests {
 
   [Test]
   public async Task Framework_NoHandlerWhere_ReturnsScopeFilterUnchangedAsync() {
-    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
+    Expression<Func<PerspectiveRow<Job>, bool>> scope = r => r.Scope.TenantId == "t-1";
 
     var composed = CollectiveWhereComposer.Compose(CollectiveScopeHandling.Framework, scope, handlerWhere: null);
 
@@ -49,8 +49,8 @@ public class CollectiveWhereComposerTests {
 
   [Test]
   public async Task Framework_WithHandlerWhere_AndsScopeAndHandlerAsync() {
-    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
-    Expression<Func<PerspectiveRow<_job>, bool>> where = r => r.Data.Status == "Draft";
+    Expression<Func<PerspectiveRow<Job>, bool>> scope = r => r.Scope.TenantId == "t-1";
+    Expression<Func<PerspectiveRow<Job>, bool>> where = r => r.Data.Status == "Draft";
 
     var predicate = CollectiveWhereComposer
       .Compose(CollectiveScopeHandling.Framework, scope, where)
@@ -68,8 +68,8 @@ public class CollectiveWhereComposerTests {
   public async Task Custom_WithHandlerWhere_StillAndsScopeAsync() {
     // D0 safety: under Custom the handler owns the COHORT predicate, but the scope envelope STILL binds
     // (shared multi-tenant tables). Compose ANDs the scope filter with the handler Where.
-    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
-    Expression<Func<PerspectiveRow<_job>, bool>> where = r => r.Data.Status == "Draft";
+    Expression<Func<PerspectiveRow<Job>, bool>> scope = r => r.Scope.TenantId == "t-1";
+    Expression<Func<PerspectiveRow<Job>, bool>> where = r => r.Data.Status == "Draft";
 
     var predicate = CollectiveWhereComposer
       .Compose(CollectiveScopeHandling.Custom, scope, where)
@@ -87,7 +87,7 @@ public class CollectiveWhereComposerTests {
   public async Task Custom_NullScopeFilter_IsAllowed_HandlerWhereWinsAsync() {
     // Custom must not require a scope filter at all — a custom-scope resolver may be unable to produce a
     // model-agnostic one (that's the reason to pick Custom). The applier passes null; the handler Where wins.
-    Expression<Func<PerspectiveRow<_job>, bool>> where = r => r.Data.Status == "Draft";
+    Expression<Func<PerspectiveRow<Job>, bool>> where = r => r.Data.Status == "Draft";
 
     var predicate = CollectiveWhereComposer
       .Compose(CollectiveScopeHandling.Custom, scopeFilter: null, where)
@@ -99,7 +99,7 @@ public class CollectiveWhereComposerTests {
 
   [Test]
   public async Task Custom_NoHandlerWhere_ThrowsAsync() {
-    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
+    Expression<Func<PerspectiveRow<Job>, bool>> scope = r => r.Scope.TenantId == "t-1";
 
     await Assert.That(() => CollectiveWhereComposer.Compose(CollectiveScopeHandling.Custom, scope, handlerWhere: null))
       .Throws<InvalidOperationException>()
@@ -108,14 +108,14 @@ public class CollectiveWhereComposerTests {
 
   [Test]
   public async Task NullScopeFilter_OnFramework_ThrowsArgumentNullAsync() {
-    await Assert.That(() => CollectiveWhereComposer.Compose<_job>(
+    await Assert.That(() => CollectiveWhereComposer.Compose<Job>(
         CollectiveScopeHandling.Framework, scopeFilter: null, handlerWhere: null))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task UnknownScopeHandling_ThrowsArgumentOutOfRangeAsync() {
-    Expression<Func<PerspectiveRow<_job>, bool>> scope = r => r.Scope.TenantId == "t-1";
+    Expression<Func<PerspectiveRow<Job>, bool>> scope = r => r.Scope.TenantId == "t-1";
 
     await Assert.That(() => CollectiveWhereComposer.Compose((CollectiveScopeHandling)999, scope, handlerWhere: null))
       .Throws<ArgumentOutOfRangeException>();

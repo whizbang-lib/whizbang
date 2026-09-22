@@ -15,6 +15,7 @@ namespace Whizbang.Core.Signals;
 /// <c>Task.Delay</c>).
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "The type parameter is the key the source generator and the container resolve on; the interface is a marker by design.")]
 public interface IPollSignalSource<TSignal> : ISignalSource where TSignal : ISignal {
   /// <summary>
   /// The polling interval — how often the source runs its detection query. May be adaptive

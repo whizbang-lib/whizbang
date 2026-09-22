@@ -39,11 +39,13 @@ public sealed class SchemaHealthSource : IWhizbangHealthSource {
     // Degraded (a warning: readiness Degraded while the fault is recorded) and the terminal Halted as
     // Faulted (a failure: readiness Unhealthy — out of rotation). A ready gate is Operational; otherwise
     // Connecting/Starting while connecting and Migrating while the migration runs.
-    var state = phase is LifecyclePhase.Halted ? ComponentState.Faulted
-      : phase is LifecyclePhase.Faulted ? ComponentState.Degraded
-      : _gate.IsReady ? ComponentState.Operational
-      : phase is LifecyclePhase.Starting or LifecyclePhase.Connecting ? ComponentState.Connecting
-      : ComponentState.Migrating;
+    var state = phase switch {
+      LifecyclePhase.Halted => ComponentState.Faulted,
+      LifecyclePhase.Faulted => ComponentState.Degraded,
+      _ when _gate.IsReady => ComponentState.Operational,
+      LifecyclePhase.Starting or LifecyclePhase.Connecting => ComponentState.Connecting,
+      _ => ComponentState.Migrating,
+    };
     return new ValueTask<ComponentHealth>(new ComponentHealth(state));
   }
 }

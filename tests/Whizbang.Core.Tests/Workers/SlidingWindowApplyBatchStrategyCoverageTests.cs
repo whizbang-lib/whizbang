@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -19,7 +20,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
 
   /// <summary>Captures error-level messages — used to prove a shutdown-forced cancellation of an
   /// in-flight flush is never mistaken for a flush failure.</summary>
-  private sealed class _recordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+  private sealed class RecordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
     private readonly Lock _lock = new();
     private readonly List<string> _errors = [];
 
@@ -49,7 +50,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
   public async Task FlushAndStopAsync_CallerTokenFiresWhileFlushIsHung_ForceCancelsWithoutLoggingFailureAsync(
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
 
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: async (_, _, ct) => {
@@ -58,12 +59,12 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         // FlushAndStopAsync's hard-shutdown branch — never completes on its own.
         await Task.Delay(Timeout.Infinite, ct);
       },
+      logger: logger,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-      },
-      logger: logger);
+      });
 
     await sut.AppendAsync(Guid.CreateVersion7(), testToken);
     await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -76,7 +77,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
     // own hard-cancel — rather than this call ever throwing out to us.
     await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    // Give the drain task's own catch (now unblocked by the forced cancellation) a moment to run
+    // Give the drain task's own exception handler, now unblocked by the forced cancellation, a moment to run
     // — it either returns quietly or, if regressed, logs a spurious failure.
     await Task.Delay(200, testToken);
 
@@ -98,6 +99,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -139,6 +141,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
     var clock = new FakeTimeProvider();
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),

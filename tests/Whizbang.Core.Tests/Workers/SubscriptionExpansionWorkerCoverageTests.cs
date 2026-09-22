@@ -30,16 +30,16 @@ public class SubscriptionExpansionWorkerCoverageTests {
 
   private static readonly string _probeType = TypeNameFormatter.FormatClrTypeName(typeof(ProbeEvent));
 
-  private sealed class _emptyTypeProvider : IEventTypeProvider {
+  private sealed class EmptyTypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
-  private sealed class _oneTypeProvider : IEventTypeProvider {
+  private sealed class OneTypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(ProbeEvent)];
   }
 
   /// <summary>In-memory consumed-type registry mirroring production status semantics.</summary>
-  private sealed class _registryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
 
     public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(CancellationToken cancellationToken = default) =>
@@ -63,7 +63,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -74,7 +74,6 @@ public class SubscriptionExpansionWorkerCoverageTests {
       }
       return Task.CompletedTask;
     }
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
@@ -99,9 +98,10 @@ public class SubscriptionExpansionWorkerCoverageTests {
   /// on every boot instead of simply having nothing to reconcile with.</summary>
   [Test]
   public async Task RunOnceAsync_NoCoordinatorOrTypeProviderRegistered_ReturnsWithoutThrowingAsync() {
-    var transport = new _captureTransport();
-    var logger = new _capturingLogger();
+    var transport = new CaptureTransport();
+    var logger = new CapturingLogger();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // Deliberately no IWorkCoordinator and no IEventTypeProvider — schema-only / diagnostic
     // composition. A transport IS present, so "nothing was broadcast" is a fact about the
     // reconciler rather than about there being nowhere to broadcast to.
@@ -123,10 +123,11 @@ public class SubscriptionExpansionWorkerCoverageTests {
   /// registry it has nothing to compare against.</summary>
   [Test]
   public async Task RunOnceAsync_NoConsumedEventTypes_ReturnsWithoutTouchingTheRegistryAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _emptyTypeProvider());
+    services.AddSingleton<IEventTypeProvider>(new EmptyTypeProvider());
     var worker = _build(services);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -141,13 +142,14 @@ public class SubscriptionExpansionWorkerCoverageTests {
   /// restart of an otherwise healthy fleet.</summary>
   [Test]
   public async Task RunOnceAsync_EverythingAlreadyAccountedFor_DoesNotRebroadcastAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     // Already registered and already requested in a prior boot — nothing pending.
     coordinator.Registry[_probeType] = ConsumedTypeBackfillStatus.Requested;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _oneTypeProvider());
+    services.AddSingleton<IEventTypeProvider>(new OneTypeProvider());
     services.AddSingleton<ITransport>(transport);
     var worker = _build(services);
 
@@ -178,13 +180,14 @@ public class SubscriptionExpansionWorkerCoverageTests {
   // history stays missing forever.
   [Test]
   public async Task RunOnceAsync_RepairEnabledButNoTransport_SkipsTheRequestAndLeavesTypesPendingAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     // A prior boot's baseline: this is NOT first boot, so the new type reads as an expansion.
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _oneTypeProvider());
+    services.AddSingleton<IEventTypeProvider>(new OneTypeProvider());
     // No ITransport, no IEnvelopeSerializer, no IServiceInstanceProvider — nothing to send with.
     var worker = _build(services,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger);
@@ -203,7 +206,7 @@ public class SubscriptionExpansionWorkerCoverageTests {
              + "the retry and leave the missing history missing for good");
   }
 
-  private sealed class _capturingLogger : ILogger<SubscriptionExpansionWorker> {
+  private sealed class CapturingLogger : ILogger<SubscriptionExpansionWorker> {
     public List<(int EventId, string Message)> Entries { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public class InboxDrainFetchPlanTests {
 
-  private sealed class _Instance : Whizbang.Core.Observability.IServiceInstanceProvider {
+  private sealed class FakeInstance : Whizbang.Core.Observability.IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -42,23 +42,23 @@ public class InboxDrainFetchPlanTests {
     };
   }
 
-  private sealed class _DrainChannel : IInboxDrainChannel {
+  private sealed class DrainChannel : IInboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _c =
       System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _c.Reader;
-    public ValueTask WriteAsync(Guid s, CancellationToken ct = default) => _c.Writer.WriteAsync(s, ct);
-    public bool TryWrite(Guid s) => _c.Writer.TryWrite(s);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _c.Writer.WriteAsync(streamId, cancellationToken);
+    public bool TryWrite(Guid streamId) => _c.Writer.TryWrite(streamId);
   }
 
-  private sealed class _InboxWriter : IInboxChannelWriter {
+  private sealed class InboxWriter : IInboxChannelWriter {
     private readonly System.Threading.Channels.Channel<InboxWork> _c =
       System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _c.Reader;
-    public ValueTask WriteAsync(InboxWork w, CancellationToken ct = default) => _c.Writer.WriteAsync(w, ct);
-    public bool TryWrite(InboxWork w) => _c.Writer.TryWrite(w);
-    public bool IsInFlight(Guid id) => false;
-    public void RemoveInFlight(Guid id) { }
-    public bool ShouldRenewLease(Guid id) => false;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _c.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _c.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _c.Writer.TryComplete();
     public event Action? OnNewInboxWorkAvailable;
     public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
@@ -67,8 +67,8 @@ public class InboxDrainFetchPlanTests {
   private static InboxDrainWorker _worker(InboxDrainWorkerOptions o) {
     var sp = new ServiceCollection().BuildServiceProvider();
     return new InboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new _Instance(), new _DrainChannel(),
-      new _InboxWriter(), new SchemaReadyGate(), Options.Create(o),
+      sp.GetRequiredService<IServiceScopeFactory>(), new FakeInstance(), new DrainChannel(),
+      new InboxWriter(), new SchemaReadyGate(), Options.Create(o),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       Microsoft.Extensions.Logging.Abstractions.NullLogger<InboxDrainWorker>.Instance);
   }

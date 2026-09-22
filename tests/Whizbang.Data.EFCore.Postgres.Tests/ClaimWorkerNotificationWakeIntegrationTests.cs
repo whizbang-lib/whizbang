@@ -8,9 +8,11 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -35,7 +37,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     public List<DateTimeOffset> ClaimCallTimes { get; } = [];
     public TaskCompletionSource<int> SecondCallSeen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (ClaimCallTimes) {
         ClaimCallTimes.Add(DateTimeOffset.UtcNow);
         if (ClaimCallTimes.Count >= 2) {
@@ -49,16 +51,14 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       });
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
@@ -81,6 +81,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     // OnSignal calls RequestImmediatePoll.
     var coord = new TimestampingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -104,11 +105,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof
         // structural instead of chronometric — CI scheduling jitter can slow a working wake
@@ -116,7 +117,16 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
         PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);
@@ -187,6 +197,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     // second store's edge doorbell.
     var coord = new TimestampingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -241,11 +252,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       NullLogger<PgWorkNotificationListener>.Instance);
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         // Parked far beyond the wait window below: polling CANNOT explain a second claim
         // inside 15 s, so the wake path is the only possible cause. That makes the proof
         // structural instead of chronometric — CI scheduling jitter can slow a working wake
@@ -253,7 +264,16 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
         PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await ((IHostedService)sharedConn).StartAsync(cts.Token);

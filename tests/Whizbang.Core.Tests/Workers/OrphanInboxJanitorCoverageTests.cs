@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,8 +27,8 @@ public class OrphanInboxJanitorCoverageTests {
   public async Task ExecuteAsync_SchemaGateWaitCanceled_CompletesWithoutFaultingAsync() {
     var gate = new SchemaReadyGate();   // never marked ready
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var snapshot = new HandledReceptorTypeSnapshot([]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();

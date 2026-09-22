@@ -46,7 +46,7 @@ public sealed record UnserializableBatchMessage(string Content);
 [Timeout(240_000)] // 240s — emulator initialization + DLQ redelivery cycles need headroom
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -204,7 +204,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   [Test]
   public async Task PublishBatchAsync_OversizedItem_ReportsPerItemFailureAndDeliversRemainingItemsAsync() {
-    // Arrange — a ~2MB payload can never fit in any batch, even a fresh one;
+    // Arrange — a ~2MB payload can never fit in any batch, even a fresh one —
     // the transport must record a per-item failure and keep going
     var transport = _createTransport(_publishOnlyJsonOptions());
     await transport.InitializeAsync();
@@ -302,10 +302,8 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     var subscription = await transport.SubscribeBatchAsync(
       async (batch, ct) => {
-        foreach (var transportMessage in batch) {
-          if (expectedIds.Contains(transportMessage.Envelope.MessageId.Value)) {
-            await receivedChannel.Writer.WriteAsync(transportMessage.Envelope.MessageId.Value, ct);
-          }
+        foreach (var messageId in batch.Select(m => m.Envelope.MessageId.Value).Where(expectedIds.Contains)) {
+          await receivedChannel.Writer.WriteAsync(messageId, ct);
         }
       },
       new TransportDestination("topic-00", "sub-00-a"),
@@ -585,7 +583,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
   /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
   private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
-    new Whizbang.Core.Routing.PoisonMessageDetector(
+    new(
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
         AgeThreshold = ageThreshold,
       }),

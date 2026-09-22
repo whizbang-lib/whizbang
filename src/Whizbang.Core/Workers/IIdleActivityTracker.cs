@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// configured cadence).
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/idle-activity-tracking</docs>
+/// <docs>fundamentals/workers/idle-footprint</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/IdleActivityTrackerTests.cs</tests>
 public interface IIdleActivityTracker {
   /// <summary>

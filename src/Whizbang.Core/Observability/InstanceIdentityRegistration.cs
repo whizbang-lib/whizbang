@@ -32,8 +32,9 @@ public static class InstanceIdentityRegistration {
   public static IServiceCollection AddWhizbangInstanceIdentity(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    services.TryAddEmptyConfiguration();
     services.TryAddSingleton<IServiceInstanceProvider>(sp =>
-      new ServiceInstanceProvider(sp.GetService<IConfiguration>()));
+      new ServiceInstanceProvider(sp.GetRequiredService<IConfiguration>()));
 
     return services;
   }

@@ -50,7 +50,7 @@ public class EmitEventStoreChainCollectiveSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("inst", instanceId);
     cmd.Parameters.AddWithValue("sid", streamId);
-    cmd.Parameters.AddWithValue("flags", flags);
+    cmd.Parameters.AddWithValue(nameof(flags), flags);
     await cmd.ExecuteNonQueryAsync();
   }
 

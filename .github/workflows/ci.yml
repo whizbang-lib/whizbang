@@ -457,8 +457,15 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore
 
+      # Whitespace and style only. The analyzers pass would run the third-party analyzers too, and
+      # this job has not built the tree: the source generators that ship as project references
+      # are not on disk yet, so the semantic model is incomplete and those analyzers report
+      # findings that do not exist in a real build. The build job enforces them, with warnings
+      # as errors, in every project.
       - name: Verify Code Formatting
-        run: dotnet format --verify-no-changes --no-restore
+        run: |
+          dotnet format whitespace --verify-no-changes --no-restore
+          dotnet format style --verify-no-changes --no-restore
 
       # Fails on NEW unqualified service-schema table refs inside migration function bodies
       # (the multi-schema search_path bug class). Existing debt is baselined; see

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -56,7 +57,7 @@ public class MessageHopSecurityExtractorCoverageTests {
       Hops = [hop],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
 
     var result = await extractor.ExtractAsync(envelope, new MessageSecurityOptions(), CancellationToken.None);
 

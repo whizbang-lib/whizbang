@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
@@ -18,7 +19,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -60,7 +61,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -123,7 +124,7 @@ public class TransportManagerPublishingTests {
     // subscriber can see it, because in-process delivery keys on the address alone. So the
     // transport itself is the observer here. (This test previously only waited for delivery,
     // which a manager that dropped the routing key entirely would have satisfied.)
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new DestinationRecordingTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -151,7 +152,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -247,7 +248,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var message = new TestMessage { Content = "fail", Value = 1 };
     var targets = new List<PublishTarget> {
       new() {
@@ -264,7 +265,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task Constructor_Default_ShouldCreateWithJsonSerializerAsync() {
     // Arrange & Act
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 

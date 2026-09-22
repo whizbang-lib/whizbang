@@ -21,35 +21,35 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>operations/observability/stuck-row-sentinel</docs>
 public class MaintenanceWorkerStuckRowSentinelTests {
 
-  private sealed record _LogEntry(LogLevel Level, string Message);
+  private sealed record LogEntry(LogLevel Level, string Message);
 
-  private sealed class _CapturingLogger : ILogger<MaintenanceWorker> {
-    public List<_LogEntry> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _NullScope.Instance;
+  private sealed class CapturingLogger : ILogger<MaintenanceWorker> {
+    public List<LogEntry> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
     }
-    private sealed class _NullScope : IDisposable {
-      public static readonly _NullScope Instance = new();
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
       public void Dispose() { }
     }
   }
 
-  private sealed class _FakeCoordinator : IWorkCoordinator {
+  private sealed class FakeCoordinator : IWorkCoordinator {
     public int SentinelCallCount { get; private set; }
     public List<StuckRow> StuckOutbox { get; init; } = [];
     public List<StuckRow> StuckInbox { get; init; } = [];
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
-    public Task<IReadOnlyList<StuckRow>> FindStuckOutboxRowsAsync(int maxAttempts, int limit, CancellationToken ct = default) {
+    public Task<IReadOnlyList<StuckRow>> FindStuckOutboxRowsAsync(int maxAttempts, int limit, CancellationToken cancellationToken = default) {
       SentinelCallCount++;
       return Task.FromResult<IReadOnlyList<StuckRow>>(StuckOutbox);
     }
 
-    public Task<IReadOnlyList<StuckRow>> FindStuckInboxRowsAsync(int maxAttempts, int limit, CancellationToken ct = default)
+    public Task<IReadOnlyList<StuckRow>> FindStuckInboxRowsAsync(int maxAttempts, int limit, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<StuckRow>>(StuckInbox);
 
     // Stubs for the rest of IWorkCoordinator
@@ -61,8 +61,6 @@ public class MaintenanceWorkerStuckRowSentinelTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static StuckRow _stuck(Guid msgId, string msgType, int attempts) => new() {
@@ -82,7 +80,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   [Test]
   public async Task MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync() {
     Guid stuckId = TrackedGuid.NewMedo();
-    var coord = new _FakeCoordinator {
+    var coord = new FakeCoordinator {
       StuckOutbox = [_stuck(stuckId, "Consumer.RemoveUserCommand", attempts: 992)]
     };
     var (worker, logger) = _buildWorker(coord);
@@ -106,7 +104,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   /// </summary>
   [Test]
   public async Task MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync() {
-    var coord = new _FakeCoordinator();
+    var coord = new FakeCoordinator();
     var (worker, logger) = _buildWorker(coord);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
@@ -126,7 +124,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   /// </summary>
   [Test]
   public async Task MaintenanceTick_MultipleStuckRows_OneWarningEachAsync() {
-    var coord = new _FakeCoordinator {
+    var coord = new FakeCoordinator {
       StuckOutbox = [
         _stuck(TrackedGuid.NewMedo(), "TypeA", 15),
         _stuck(TrackedGuid.NewMedo(), "TypeB", 25),
@@ -154,7 +152,7 @@ public class MaintenanceWorkerStuckRowSentinelTests {
   /// </summary>
   [Test]
   public async Task MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync() {
-    var coord = new _FakeCoordinator {
+    var coord = new FakeCoordinator {
       StuckOutbox = [_stuck(TrackedGuid.NewMedo(), "TypeA", 50)]
     };
     var (worker, _) = _buildWorker(coord, sentinelEnabled: false);
@@ -165,14 +163,14 @@ public class MaintenanceWorkerStuckRowSentinelTests {
       .Because("With the sentinel disabled, FindStuckOutboxRowsAsync MUST NOT be called — the SQL query has a cost (small but non-zero) operators may opt out of.");
   }
 
-  private static (MaintenanceWorker Worker, _CapturingLogger Logger) _buildWorker(
-      _FakeCoordinator coord, bool sentinelEnabled = true) {
+  private static (MaintenanceWorker Worker, CapturingLogger Logger) _buildWorker(
+      FakeCoordinator coord, bool sentinelEnabled = true) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,

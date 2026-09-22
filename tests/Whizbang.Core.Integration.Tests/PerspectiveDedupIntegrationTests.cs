@@ -2,19 +2,26 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -211,14 +218,15 @@ public class PerspectiveDedupIntegrationTests {
     var runner = new ApplyTrackingRunner();
     var fakeTime = new FakeTimeProvider();
     var observer = new AssertingDedupObserver();
-    var coordinator = new RedeliveryWorkCoordinator { SimulatedLatencyMs = 5 };
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.ObserverPerspective",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      SimulatedLatencyMs = 5,
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.ObserverPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer, timeProvider: fakeTime);
@@ -296,14 +304,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_BatchedStrategy_ProtectedByDedup_Async() {
     // BatchedCompletionStrategy is the most vulnerable to the bug — lock it in
     var runner = new ApplyTrackingRunner();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.BatchedLockIn",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.BatchedLockIn",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: true);
@@ -324,14 +332,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_InstantStrategy_ProtectedByDedup_Async() {
     // InstantCompletionStrategy should also be protected
     var runner = new ApplyTrackingRunner();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.InstantLockIn",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.InstantLockIn",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: false);
@@ -358,7 +366,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -414,7 +422,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -472,7 +480,7 @@ public class PerspectiveDedupIntegrationTests {
     var eventId = Guid.CreateVersion7();
     const string perspectiveName = "Test.SinglePerspective";
 
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleSpyInvoker();
     var eventStore = new FakeEventStore();
     var eventTypeProvider = new FakeEventTypeProvider();
@@ -550,7 +558,7 @@ public class PerspectiveDedupIntegrationTests {
     // stalls, what matters is how far the pipeline got and whether the work was even offered.
     try {
       await runner.WaitForCallCountAsync(10, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
-    } catch (TimeoutException) { }
+    } catch (TimeoutException) { /* the timeout is the outcome under test */ }
     await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: All 10 streams must be processed independently
@@ -607,7 +615,7 @@ public class PerspectiveDedupIntegrationTests {
     // correctness assertion's clothes: it passed alone and timed out under full-suite load.
     try {
       await runner.WaitForAtLeastOneCallAsync(TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
-    } catch (TimeoutException) { }
+    } catch (TimeoutException) { /* the timeout is the outcome under test */ }
 
     // The apply is not the recording. Completions are recorded when the batch scope DISPOSES, which
     // happens after the apply observed above — so reading the meter straight after that wait races
@@ -638,13 +646,14 @@ public class PerspectiveDedupIntegrationTests {
     IEventStore? eventStore = null,
     IEventTypeProvider? eventTypeProvider = null,
     Whizbang.Core.Workers.WorkCompletionMeter? completionMeter = null) {
-    var instanceProvider = new _fakeInstanceProvider();
+    var instanceProvider = new FakeInstanceProvider();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
-      : new InstantCompletionStrategy();
+      : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -668,15 +677,31 @@ public class PerspectiveDedupIntegrationTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
-      eventTypeProvider: eventTypeProvider,
-      processedEventCacheObserver: observer,
-      timeProvider: timeProvider,
+      eventTypeProvider: eventTypeProvider ?? NullEventTypeProvider.Instance,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: observer ?? NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value),
+      timeProvider: timeProvider,
       // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
       // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
@@ -710,7 +735,7 @@ public class PerspectiveDedupIntegrationTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _callCount);
       _streamIds.Add(streamId);
       _firstCall.TrySetResult();
@@ -831,7 +856,7 @@ public class PerspectiveDedupIntegrationTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -863,7 +888,7 @@ public class PerspectiveDedupIntegrationTests {
         }
       }
 
-      var work = current == 1 ? [.. InitialWork] : (RedeliverAfterInitial ? [.. InitialWork] : new List<PerspectiveWork>());
+      var work = current == 1 || RedeliverAfterInitial ? [.. InitialWork] : new List<PerspectiveWork>();
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -875,7 +900,7 @@ public class PerspectiveDedupIntegrationTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -917,7 +942,7 @@ public class PerspectiveDedupIntegrationTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -927,7 +952,6 @@ public class PerspectiveDedupIntegrationTests {
   }
 
   private sealed class SingleRunnerRegistry(IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
-    public Type PerspectiveType => typeof(object);
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.LockInPerspective", "global::Test.LockInPerspective", "global::Test.Model", ["global::Test.Event"])];
@@ -935,7 +959,7 @@ public class PerspectiveDedupIntegrationTests {
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
-  private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
@@ -952,7 +976,7 @@ public class PerspectiveDedupIntegrationTests {
   private static MessageEnvelope<IEvent> _createFakeEnvelope(Guid eventId) {
     return new MessageEnvelope<IEvent> {
       MessageId = MessageId.From(eventId),
-      Payload = new _fakeEvent(),
+      Payload = new FakeEvent(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -961,7 +985,7 @@ public class PerspectiveDedupIntegrationTests {
   /// <summary>
   /// Minimal IEvent implementation for test envelope creation.
   /// </summary>
-  private sealed record _fakeEvent : IEvent;
+  private sealed record FakeEvent : IEvent;
 
   /// <summary>
   /// Spy IReceptorInvoker that counts PostLifecycleInline invocations.
@@ -1023,13 +1047,13 @@ public class PerspectiveDedupIntegrationTests {
     // Stubs — not used by PerspectiveWorker lifecycle path
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<IEvent>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>();
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>();
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<IEvent>();
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
 
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _emptyAsyncEnumerable<T>([EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    private static async IAsyncEnumerable<MessageEnvelope<T>> _emptyAsyncEnumerable<T>() {
       await Task.CompletedTask;
       yield break;
     }
@@ -1040,7 +1064,7 @@ public class PerspectiveDedupIntegrationTests {
   /// Required for the PerspectiveWorker to attempt event loading.
   /// </summary>
   private sealed class FakeEventTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(FakeEvent)];
   }
 
   /// <summary>
@@ -1055,7 +1079,6 @@ public class PerspectiveDedupIntegrationTests {
     private readonly ConcurrentBag<string> _calledPerspectives = [];
 
     public int CallCount => _callCount;
-    public IReadOnlyCollection<string> CalledPerspectives => [.. _calledPerspectives];
 
     public async Task WaitForCallCountAsync(int count, TimeSpan timeout) {
       var waiter = _callCountWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -1063,7 +1086,7 @@ public class PerspectiveDedupIntegrationTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _callCount);
       _calledPerspectives.Add(perspectiveName);
 
@@ -1093,7 +1116,6 @@ public class PerspectiveDedupIntegrationTests {
   /// Used by lifecycle tests where many perspectives share the same behavior.
   /// </summary>
   private sealed class MultiPerspectiveRunnerRegistry(IEnumerable<string> perspectiveNames, IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
-    public Type PerspectiveType => typeof(object);
     private readonly HashSet<string> _knownNames = [.. perspectiveNames];
     private readonly IPerspectiveRunner _runner = runner;
 
@@ -1122,14 +1144,14 @@ public class PerspectiveDedupIntegrationTests {
   public async Task Contract_ApplyFails_WorkIsStillRetried_Async() {
     var runner = new ThrowOnceApplyRunner();
     var observer = new AssertingDedupObserver();
-    var coordinator = new RedeliveryWorkCoordinator();
-
-    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
-      WorkId = Guid.CreateVersion7(),
-      StreamId = Guid.CreateVersion7(),
-      PerspectiveName = "Test.FailThenSucceedPerspective",
-      LastProcessedEventId = null,
-      PartitionNumber = 1
+    var coordinator = new RedeliveryWorkCoordinator {
+      WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.FailThenSucceedPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
     };
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
@@ -1161,7 +1183,7 @@ public class PerspectiveDedupIntegrationTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _callCount);
       foreach (var kvp in _callCountWaiters) {
         if (current >= kvp.Key) { kvp.Value.TrySetResult(); }
@@ -1229,7 +1251,7 @@ public class PerspectiveDedupIntegrationTests {
     // matters is WHICH streams went missing, not that a wait expired.
     try {
       await runner.WaitForCallCountAsync(sentinelItemCount, TimeSpan.FromSeconds(30));
-    } catch (TimeoutException) { }
+    } catch (TimeoutException) { /* the timeout is the outcome under test */ }
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
     await _stopWorkerAsync(worker, cts);
 

@@ -26,14 +26,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("EFCorePostgresTests")]
 public class PerspectiveDataCoalescerCoverageTests {
 
-  private sealed class _registeredProbeModel;
-  private sealed class _neverRegisteredProbeModel;
-  private sealed class _hookProbeEntity {
+  private sealed class RegisteredProbeModel;
+  private sealed class NeverRegisteredProbeModel;
+  private sealed class HookProbeEntity {
     public Guid Id { get; set; }
   }
 
-  private sealed class _hookProbeDbContext(DbContextOptions<_hookProbeDbContext> options) : DbContext(options) {
-    public DbSet<_hookProbeEntity> Probes => Set<_hookProbeEntity>();
+  private sealed class HookProbeDbContext(DbContextOptions<HookProbeDbContext> options) : DbContext(options) {
+    // The probe entity joins the model here: a DbSet would exist only to be discovered, which the
+    // analyzers read as an unused member.
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      modelBuilder.Entity<HookProbeEntity>();
+      base.OnModelCreating(modelBuilder);
+    }
   }
 
   [After(Test)]
@@ -47,7 +52,7 @@ public class PerspectiveDataCoalescerCoverageTests {
   // unnecessary tracked-context bookkeeping for models with no null-collection risk at all.
   [Test]
   public async Task HasCoalescer_RegisteredType_ReturnsTrueAsync() {
-    var probeType = typeof(_registeredProbeModel);
+    var probeType = typeof(RegisteredProbeModel);
     PerspectiveDataCoalescer.Register(probeType, static _ => { });
 
     await Assert.That(PerspectiveDataCoalescer.HasCoalescer(probeType)).IsTrue()
@@ -56,7 +61,7 @@ public class PerspectiveDataCoalescerCoverageTests {
 
   [Test]
   public async Task HasCoalescer_UnregisteredType_ReturnsFalseAsync() {
-    await Assert.That(PerspectiveDataCoalescer.HasCoalescer(typeof(_neverRegisteredProbeModel))).IsFalse()
+    await Assert.That(PerspectiveDataCoalescer.HasCoalescer(typeof(NeverRegisteredProbeModel))).IsFalse()
       .Because("a type nothing ever registered must not be reported as coalesced — a false positive here "
              + "would make a caller skip a real null-coalescing pass it still needs");
   }
@@ -70,19 +75,19 @@ public class PerspectiveDataCoalescerCoverageTests {
   // future coalescer that is NOT idempotent to re-invocation would corrupt data on the second pass.
   [Test]
   public async Task EnsureHooked_CalledTwiceOnSameContext_SubscribesOnlyOnceAsync() {
-    var probeType = typeof(_hookProbeEntity);
+    var probeType = typeof(HookProbeEntity);
     var invocationCount = 0;
     PerspectiveDataCoalescer.Register(probeType, _ => invocationCount++);
 
-    var options = new DbContextOptionsBuilder<_hookProbeDbContext>()
+    var options = new DbContextOptionsBuilder<HookProbeDbContext>()
       .UseInMemoryDatabase($"coalescer-hook-{Guid.NewGuid()}")
       .Options;
-    await using var context = new _hookProbeDbContext(options);
+    await using var context = new HookProbeDbContext(options);
 
     PerspectiveDataCoalescer.EnsureHooked(context);
     PerspectiveDataCoalescer.EnsureHooked(context);  // second call must be a no-op
 
-    context.Add(new _hookProbeEntity { Id = Guid.NewGuid() });
+    context.Add(new HookProbeEntity { Id = Guid.NewGuid() });
 
     await Assert.That(invocationCount).IsEqualTo(1)
       .Because("a second EnsureHooked call on the same context must not add a second Tracked subscription — "

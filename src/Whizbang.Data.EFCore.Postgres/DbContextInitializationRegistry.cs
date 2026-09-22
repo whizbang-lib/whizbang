@@ -115,6 +115,13 @@ public static class DbContextInitializationRegistry {
     }
   }
 
+  /// <summary>Clears the registered initializers; for tests that share this process-wide registry.</summary>
+  internal static void ResetForTesting() {
+    lock (_lock) {
+      _initializers.Clear();
+    }
+  }
+
   /// <summary>
   /// Gets the count of registered initializers.
   /// </summary>

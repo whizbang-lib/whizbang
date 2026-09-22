@@ -59,27 +59,29 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
   }
 
   private static CollectiveApplyEntry _entry() => new(
-    ModelType: typeof(_jobModel),
-    EventType: typeof(_archiveEvent),
-    HandlerType: typeof(_jobPerspective),
-    MethodName: nameof(_jobPerspective.Archive),
+    ModelType: typeof(JobModel),
+    EventType: typeof(ArchiveEvent),
+    HandlerType: typeof(JobPerspective),
+    MethodName: nameof(JobPerspective.Archive),
     ScopeHandling: CollectiveScopeHandling.Framework,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+    Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e));
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = "";
   }
 
-  private sealed class _jobPerspective {
-    public ICollectiveSpec<_jobModel> Archive(_archiveEvent e) =>
-      new _spec(s => s.SetProperty(j => j.Status, "Archived"));
+  private sealed class JobPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature; the event parameter is part of that contract.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> Archive(ArchiveEvent e) =>
+      new Spec(s => s.SetProperty(j => j.Status, "Archived"));
 
-    private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
-      : ICollectiveSpec<_jobModel>;
+    private sealed record Spec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+      : ICollectiveSpec<JobModel>;
   }
 
-  private sealed record _archiveEvent : ICollectiveEvent {
+  private sealed record ArchiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
 
@@ -95,8 +97,8 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     await _seedAsync(job, "t-cov-batch", "Active");
     var batchCallCount = 0;
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      _entry(), new _jobPerspective(), new _archiveEvent { Scope = new TenantCollectiveScope("t-cov-batch") },
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _entry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-cov-batch") },
       new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default,
       logger: null, hookRegistry: null, onBatchApplied: _ => { batchCallCount++; return ValueTask.CompletedTask; });
 
@@ -110,7 +112,7 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
 
   // ── Connection returned closed by the factory (lines 181-182) ───────────
 
-  private sealed class _unopenedConnectionFactory(string connectionString) : IDbConnectionFactory {
+  private sealed class UnopenedConnectionFactory(string connectionString) : IDbConnectionFactory {
     public Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IDbConnection>(new NpgsqlConnection(connectionString));
   }
@@ -125,10 +127,10 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     await _createTableAsync();
     var job = Guid.NewGuid();
     await _seedAsync(job, "t-cov-open", "Active");
-    var factory = new _unopenedConnectionFactory(ConnectionString);
+    var factory = new UnopenedConnectionFactory(ConnectionString);
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      _entry(), new _jobPerspective(), new _archiveEvent { Scope = new TenantCollectiveScope("t-cov-open") },
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _entry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-cov-open") },
       new TenantCollectiveScopeResolver(), factory, TABLE, _noSiblings, CollectiveApplyOptions.Default, default);
 
     await Assert.That(affected).IsEqualTo(1)
@@ -149,8 +151,8 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     await _seedAsync(job, "t-cov-timeout", "Active");
     var options = CollectiveApplyOptions.Default with { StatementTimeoutSeconds = 5 };
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      _entry(), new _jobPerspective(), new _archiveEvent { Scope = new TenantCollectiveScope("t-cov-timeout") },
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _entry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-cov-timeout") },
       new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, options, default);
 
     await Assert.That(affected).IsEqualTo(1)
@@ -171,8 +173,8 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     var unrelated = Guid.NewGuid();
     await _seedAsync(unrelated, "t-cov-other", "Active");
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      _entry(), new _jobPerspective(), new _archiveEvent { Scope = new TenantCollectiveScope("t-cov-empty") },
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _entry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope("t-cov-empty") },
       new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default, default);
 
     await Assert.That(affected).IsEqualTo(0)

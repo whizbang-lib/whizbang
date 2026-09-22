@@ -18,11 +18,11 @@ namespace Whizbang.Core.Tests.Temporal;
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
 public class ScheduleWorkerTests {
-  private sealed class FakeClaimer : IScheduleClaimer {
-    private readonly Queue<int> _returns;
+  private sealed class FakeClaimer(params int[] returns) : IScheduleClaimer {
+    private readonly Queue<int> _returns = new(returns);
     public int Calls { get; private set; }
     public DateTimeOffset? NextFireTime { get; set; }
-    public FakeClaimer(params int[] returns) => _returns = new Queue<int>(returns);
+
     public Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
       Calls++;
       return Task.FromResult(_returns.Count > 0 ? _returns.Dequeue() : 0);
@@ -40,11 +40,12 @@ public class ScheduleWorkerTests {
     }
     var provider = services.BuildServiceProvider();
     var worker = new ScheduleWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options ?? new TemporalOptions()),
-      logger ?? NullLogger<ScheduleWorker>.Instance,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options ?? new TemporalOptions()),
+      logger: logger ?? NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      signalBus: bus,
+      loggerFactory: NullLoggerFactory.Instance,
+      signalBus: bus ?? NullSignalBus.Instance,
       timeProvider: clock);
     return (worker, claimer);
   }
@@ -113,7 +114,7 @@ public class ScheduleWorkerTests {
   [Timeout(30000)]
   public async Task Execute_Disabled_ParksWithoutEverClaimingAsync(CancellationToken ct) {
     var claimer = new SignallingClaimer();
-    var log = new _recordingLogger();
+    var log = new RecordingLogger();
     var (worker, _) = _create(new TemporalOptions { Enabled = false }, claimer: claimer, logger: log);
 
     await worker.StartAsync(CancellationToken.None);
@@ -177,7 +178,7 @@ public class ScheduleWorkerTests {
     // loop must treat that as a stop, not as a failed pass -- otherwise every deploy logs a drain
     // failure and re-arms, and the log stops distinguishing a real claim fault from a rollout.
     var claimer = new SignallingClaimer { BlockUntilCancelled = true };
-    var log = new _recordingLogger();
+    var log = new RecordingLogger();
     var (worker, _) = _create(claimer: claimer, logger: log);
 
     await worker.StartAsync(CancellationToken.None);
@@ -228,7 +229,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task Execute_DoorbellArrivesViaSignalBus_WakesDrainAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var claimer = new SignallingClaimer();
     var (worker, _) = _create(new TemporalOptions { BackstopIntervalMilliseconds = 600_000 }, bus: bus, claimer: claimer);
 
@@ -246,7 +247,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task Dispose_IsIdempotentAsync() {
-    var (worker, _) = _create(bus: new SignalBus([]), claimer: new FakeClaimer());
+    var (worker, _) = _create(bus: new SignalBus(transports: [], pullSources: []), claimer: new FakeClaimer());
 
     worker.Dispose();
     worker.Dispose();   // double dispose must not throw (unsubscribes + disposes timer/semaphore once)
@@ -306,7 +307,7 @@ public class ScheduleWorkerTests {
 
   [Test]
   public async Task ScheduleDueSignal_Received_WakesWorkerAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var (worker, _) = _create(bus: bus);   // ctor subscribes to ScheduleDueSignal
 
     await ((ISignalSink)bus).ReceiveAsync(new ScheduleDueSignal());
@@ -354,7 +355,7 @@ public class ScheduleWorkerTests {
   private const int TICK_FAILED_EVENT_ID = 3;
 
   /// <summary>Records the worker's log events, and reports when it announced it was disabled.</summary>
-  private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<ScheduleWorker> {
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<ScheduleWorker> {
     private readonly List<int> _events = [];
     private readonly TaskCompletionSource _disabled = new(TaskCreationOptions.RunContinuationsAsynchronously);
 

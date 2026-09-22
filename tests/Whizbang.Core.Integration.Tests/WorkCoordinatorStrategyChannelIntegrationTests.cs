@@ -1,13 +1,17 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -29,6 +33,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       IntervalMilliseconds = 60_000 // long interval, we flush manually
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
@@ -87,6 +92,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       IntervalMilliseconds = 60_000
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
@@ -140,13 +146,16 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new IntervalWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        opts,
+        instanceProvider: instanceProvider,
+        options: opts,
+        logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
         scopeFactory: scopeFactory,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>(),
-        inboxChannelWriter: sp.GetService<IInboxChannelWriter>());
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -154,12 +163,15 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new BatchWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        opts,
+        instanceProvider: instanceProvider,
+        options: opts,
+        logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
         scopeFactory: scopeFactory,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>());
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {
@@ -228,9 +240,9 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       storedOutbox.Record(messages);
       return Task.CompletedTask;
     }

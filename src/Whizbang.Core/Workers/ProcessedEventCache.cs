@@ -20,8 +20,8 @@ namespace Whizbang.Core.Workers;
 /// <param name="observer">Observer for lifecycle callbacks. Defaults to <see cref="NullProcessedEventCacheObserver"/>.</param>
 internal sealed class ProcessedEventCache(
   TimeSpan retentionPeriod,
-  TimeProvider? timeProvider = null,
-  IProcessedEventCacheObserver? observer = null) {
+  IProcessedEventCacheObserver observer,
+  TimeProvider? timeProvider = null) {
   private readonly ConcurrentDictionary<Guid, EventCacheEntry> _entries = new();
   private readonly TimeSpan _retentionPeriod = retentionPeriod;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -29,7 +29,7 @@ internal sealed class ProcessedEventCache(
   /// <summary>
   /// The observer for lifecycle callbacks.
   /// </summary>
-  internal IProcessedEventCacheObserver Observer { get; } = observer ?? NullProcessedEventCacheObserver.Instance;
+  internal IProcessedEventCacheObserver Observer { get; } = observer;
 
   /// <summary>
   /// Number of active entries in the cache (InFlight + non-expired Retained).

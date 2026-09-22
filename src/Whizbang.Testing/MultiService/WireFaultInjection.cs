@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
@@ -27,12 +28,7 @@ public sealed class WireFaultInjector {
       if (!_faults.TryGetValue(serviceName, out var registrations)) {
         return false;
       }
-      foreach (var registration in registrations) {
-        if (registration.Matches(message)) {
-          return true;
-        }
-      }
-      return false;
+      return registrations.Any(registration => registration.Matches(message));
     }
   }
 
@@ -91,7 +87,8 @@ internal sealed class ServiceWireTap(ITransport inner, string serviceName, WireF
       List<TransportMessage>? kept = null;
       foreach (var message in messages) {
         if (!faults.ShouldDrop(serviceName, message)) {
-          (kept ??= []).Add(message);
+          kept ??= [];
+          kept.Add(message);
         }
       }
       if (kept is { Count: > 0 }) {

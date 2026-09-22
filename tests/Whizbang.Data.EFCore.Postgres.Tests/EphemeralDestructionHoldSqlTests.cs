@@ -69,7 +69,7 @@ public class EphemeralDestructionHoldSqlTests : EFCoreTestBase {
     await using var m = connection.CreateCommand();
     m.CommandText = "SELECT * FROM perform_maintenance()";
     await using var r = await m.ExecuteReaderAsync();
-    while (await r.ReadAsync()) { }
+    while (await r.ReadAsync()) { /* drain */ }
   }
 
   private static Task<long> _bodyCountAsync(NpgsqlConnection c, Guid id) =>

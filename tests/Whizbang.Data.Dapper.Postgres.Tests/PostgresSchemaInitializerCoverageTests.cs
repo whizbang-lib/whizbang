@@ -70,7 +70,7 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   }
 
   /// <summary>Minimal provider so a test can force a specific set of migration scripts to run.</summary>
-  private sealed class _customMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
+  private sealed class CustomMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
     public string Version => version;
     public string? ReleaseNotes => null;
     public IReadOnlyList<MigrationScript> GetMigrations() => migrations;
@@ -118,7 +118,7 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   public async Task InitializeSchemaAsync_CoreMigrationSqlFails_RethrowsAfterRecordingFailureAsync() {
     var bootstrap = new PostgresMigrationProvider().GetMigrations()
       .First(m => m.Name.StartsWith("000", StringComparison.Ordinal));
-    var provider = new _customMigrationProvider("9.9.20-coverage", [
+    var provider = new CustomMigrationProvider("9.9.20-coverage", [
       bootstrap,
       new MigrationScript("910_coverage_broken", "SELECT * FROM wh_coverage_table_does_not_exist;")
     ]);
@@ -281,4 +281,31 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   // fails one necessarily fails the other, so ColumnCopy is never selected for a DDL _splitDdl cannot
   // parse. All three are defensive dead code under the current call graph; no test in this file forces
   // them, per the instruction to report rather than fabricate an unreachable path.
+
+  // --- Redefinition closure: the ledger says why an unchanged file ran again ---
+
+  /// <summary>
+  /// When an earlier redefiner of an object re-runs, the closure re-applies the object's last word
+  /// behind it even though that file's hash is unchanged. The ledger must record that reason; the
+  /// generic "First apply" or "Updated" wording would hide why an unchanged migration executed again.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_EarlierRedefinerReRun_RecordsTheClosureReasonForTheLastWordAsync() {
+    await new PostgresSchemaInitializer(_testConnectionString).InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    // A tampered ledger hash stands in for an in-place edit of the earlier redefiner.
+    var tampered = await connection.ExecuteAsync(
+      "UPDATE wh_schema_migrations SET content_hash = 'tampered' WHERE file_name LIKE '021%'");
+    await Assert.That(tampered).IsEqualTo(1)
+      .Because("the test must actually force the earlier redefiner to re-run");
+
+    await new PostgresSchemaInitializer(_testConnectionString).InitializeSchemaAsync();
+
+    var desc = await connection.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name LIKE '062%'");
+    await Assert.That(desc).IsEqualTo("Re-applied (redefinition closure)")
+      .Because("the ledger must record why an unchanged-hash migration executed again");
+  }
 }

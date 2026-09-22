@@ -4,6 +4,7 @@ namespace Whizbang.Core.Routing;
 /// Provides base topic names for event/command types (convention or configuration).
 /// This is what gets source-generated.
 /// </summary>
+/// <docs>fundamentals/dispatcher/routing</docs>
 public interface ITopicRegistry {
   /// <summary>
   /// Gets the base topic name for a message type, or null if not configured.

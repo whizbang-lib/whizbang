@@ -82,7 +82,7 @@ public sealed class EventCategoryMetrics {
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public EventCategoryMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     DispatchDuration = meter.CreateHistogram<double>(
       "whizbang.event_category.dispatch.duration",

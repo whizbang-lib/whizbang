@@ -377,7 +377,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
   private static async Task<int> _readAttemptsAsync(NpgsqlConnection conn, string table, string idCol, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT attempts FROM {table} WHERE {idCol} = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }

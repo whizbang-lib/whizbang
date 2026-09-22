@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -21,13 +23,13 @@ public class TableStatisticsMetricsTests {
 
   [Test]
   public async Task Constructor_CreatesWithoutErrorAsync() {
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await Assert.That(metrics).IsNotNull();
   }
 
   [Test]
   public async Task UpdateTableSizes_StoresValuesAsync() {
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.UpdateTableSizes(new Dictionary<string, long> {
       ["wh_inbox"] = 8192,
@@ -42,7 +44,7 @@ public class TableStatisticsMetricsTests {
 
   [Test]
   public async Task UpdateQueueDepths_StoresValuesAsync() {
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.UpdateQueueDepths(new Dictionary<string, long> {
       ["inbox"] = 42,
@@ -54,7 +56,7 @@ public class TableStatisticsMetricsTests {
 
   [Test]
   public async Task UpdateTableSizes_CalledMultipleTimes_DoesNotThrowAsync() {
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     metrics.UpdateTableSizes(new Dictionary<string, long> { ["wh_inbox"] = 100 });
     metrics.UpdateTableSizes(new Dictionary<string, long> { ["wh_inbox"] = 200 });

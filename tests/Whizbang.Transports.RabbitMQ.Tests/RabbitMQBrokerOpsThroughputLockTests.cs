@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using TUnit.Assertions;
@@ -75,9 +76,10 @@ public class RabbitMQBrokerOpsThroughputLockTests {
     var publisherTransport = await RabbitTestWire.NewInitializedTransportAsync(publisherConnection);
     var routingOptions = new RoutingOptions().RouteCommandNamespaceToInbox(HANDLED_NAMESPACE);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
     for (var i = 0; i < N; i++) {
@@ -99,8 +101,8 @@ public class RabbitMQBrokerOpsThroughputLockTests {
 
     var sends = publisherChannel.PublishedMessages.Count;
     await Assert.That(sends).IsEqualTo(N).Because("one publish per command — no fan-out on the publish side");
-    foreach (var published in publisherChannel.PublishedMessages) {
-      await Assert.That(published.Exchange).IsEqualTo(flippedEntity);
+    foreach (var (Exchange, _, _) in publisherChannel.PublishedMessages) {
+      await Assert.That(Exchange).IsEqualTo(flippedEntity);
     }
 
     // ---------- Consumer: the ONE bound queue receives each broker copy ----------

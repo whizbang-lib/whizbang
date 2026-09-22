@@ -207,8 +207,7 @@ public sealed class TypeNameHandlingAnalyzer : DiagnosticAnalyzer {
       return null;
     }
     var index = list.Arguments.IndexOf(argument);
-    var symbol = model.GetSymbolInfo(list.Parent!).Symbol as IMethodSymbol;
-    if (symbol is null || index < 0 || index >= symbol.Parameters.Length) {
+    if (model.GetSymbolInfo(list.Parent!).Symbol is not IMethodSymbol symbol || index < 0 || index >= symbol.Parameters.Length) {
       return null;
     }
     return symbol.Parameters[index].Name;

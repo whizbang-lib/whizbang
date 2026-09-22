@@ -9,6 +9,7 @@ namespace Whizbang.Core.Data;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperSqliteConnectionFactoryTests.cs:CreateConnectionAsync_ReturnsSqliteConnectionAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/SharedSqliteConnectionFactory.cs:CreateConnectionAsync</tests>
+/// <docs>extending/extensibility/custom-storage</docs>
 public interface IDbConnectionFactory {
   /// <summary>
   /// Creates a new database connection.

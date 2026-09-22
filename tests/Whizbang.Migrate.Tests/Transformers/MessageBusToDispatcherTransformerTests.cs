@@ -326,7 +326,7 @@ public class MessageBusToDispatcherTransformerTests {
   [Test]
   public async Task TransformAsync_WhizbangCoreAlreadyImported_DropsTheWolverineUsingAsync() {
     // Several transformers rewrite a Wolverine or Marten using into Whizbang.Core, and they run
-    // in sequence over the same file. Whichever runs second finds Whizbang.Core already present;
+    // in sequence over the same file. Whichever runs second finds Whizbang.Core already present —
     // emitting it again is CS0105, which fails any migrated project built warnings-as-errors.
     var transformer = new MessageBusToDispatcherTransformer();
     const string sourceCode = """

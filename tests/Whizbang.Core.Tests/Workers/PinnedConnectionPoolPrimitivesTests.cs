@@ -25,7 +25,7 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task NoOp_TryPin_ReturnsBorrowWithNullConnectionAsync() {
     var pool = NoOpPinnedConnectionPool.Instance;
 
-    await using var borrow = await pool.TryPinForAsync(typeof(_fakeWorker), CancellationToken.None);
+    await using var borrow = await pool.TryPinForAsync(typeof(FakeWorker), CancellationToken.None);
 
     await Assert.That(borrow).IsNotNull()
       .Because("The contract says TryPinForAsync ALWAYS returns a non-null borrow so callers don't need null guards around the borrow itself.");
@@ -37,8 +37,8 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task NoOp_TryPin_AnyWorkerType_ReturnsNoOpBorrowAsync() {
     var pool = NoOpPinnedConnectionPool.Instance;
 
-    await using var b1 = await pool.TryPinForAsync(typeof(_fakeWorker), CancellationToken.None);
-    await using var b2 = await pool.TryPinForAsync(typeof(_anotherFakeWorker), CancellationToken.None);
+    await using var b1 = await pool.TryPinForAsync(typeof(FakeWorker), CancellationToken.None);
+    await using var b2 = await pool.TryPinForAsync(typeof(AnotherFakeWorker), CancellationToken.None);
 
     await Assert.That(b1.Connection).IsNull();
     await Assert.That(b2.Connection).IsNull()
@@ -66,9 +66,9 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task NoOp_TryPin_CanceledToken_ThrowsOperationCanceledAsync() {
     var pool = NoOpPinnedConnectionPool.Instance;
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    await Assert.That(async () => await pool.TryPinForAsync(typeof(_fakeWorker), cts.Token))
+    await Assert.That(async () => await pool.TryPinForAsync(typeof(FakeWorker), cts.Token))
       .Throws<OperationCanceledException>()
       .Because("Even on the no-op path, an already-canceled CT MUST be honoured — workers rely on CT propagation for graceful shutdown.");
   }
@@ -85,7 +85,7 @@ public class PinnedConnectionPoolPrimitivesTests {
 
   [Test]
   public async Task Context_Push_SetsCurrentAndResetScopeRestoresAsync() {
-    var fake = new _stubDbConnection("first");
+    var fake = new StubDbConnection("first");
 
     using (var scope = PinnedConnectionContext.Push(fake)) {
       await Assert.That(PinnedConnectionContext.Current).IsSameReferenceAs(fake)
@@ -98,8 +98,8 @@ public class PinnedConnectionPoolPrimitivesTests {
 
   [Test]
   public async Task Context_PushNestedScopes_RestoresPreviousLayerAsync() {
-    var outer = new _stubDbConnection("outer");
-    var inner = new _stubDbConnection("inner");
+    var outer = new StubDbConnection("outer");
+    var inner = new StubDbConnection("inner");
 
     using (PinnedConnectionContext.Push(outer)) {
       await Assert.That(PinnedConnectionContext.Current).IsSameReferenceAs(outer);
@@ -116,7 +116,7 @@ public class PinnedConnectionPoolPrimitivesTests {
 
   [Test]
   public async Task Context_PushNull_ExplicitlyClearsAsync() {
-    var initial = new _stubDbConnection("initial");
+    var initial = new StubDbConnection("initial");
 
     using (PinnedConnectionContext.Push(initial)) {
       await Assert.That(PinnedConnectionContext.Current).IsSameReferenceAs(initial);
@@ -132,7 +132,7 @@ public class PinnedConnectionPoolPrimitivesTests {
 
   [Test]
   public async Task Context_Current_PropagatesAcrossAwaitWithinSameFlowAsync() {
-    var fake = new _stubDbConnection("flowing");
+    var fake = new StubDbConnection("flowing");
     using var scope = PinnedConnectionContext.Push(fake);
 
     await Task.Yield();   // forces an async hop
@@ -192,7 +192,7 @@ public class PinnedConnectionPoolPrimitivesTests {
     var registry = new PinnedWorkerRegistry();
     var opts = _newOptions();
 
-    var eligible = registry.IsEligible(typeof(_anonymousCustomWorker), opts);
+    var eligible = registry.IsEligible(typeof(AnonymousCustomWorker), opts);
 
     await Assert.That(eligible).IsFalse()
       .Because("Whizbang doesn't pin third-party workers by default — they must opt in via AddPinnedWorker<T>.");
@@ -202,9 +202,9 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task Registry_AddOptIn_MakesCustomWorkerEligibleAsync() {
     var registry = new PinnedWorkerRegistry();
     var opts = _newOptions();
-    registry.AddOptIn(typeof(_anonymousCustomWorker));
+    registry.AddOptIn(typeof(AnonymousCustomWorker));
 
-    await Assert.That(registry.IsEligible(typeof(_anonymousCustomWorker), opts)).IsTrue()
+    await Assert.That(registry.IsEligible(typeof(AnonymousCustomWorker), opts)).IsTrue()
       .Because("AddOptIn IS the consumer-side mechanism for opting custom workers in; if it doesn't take, the API is broken.");
   }
 
@@ -212,10 +212,10 @@ public class PinnedConnectionPoolPrimitivesTests {
   public async Task Registry_AddOptInTwice_IsIdempotentAsync() {
     var registry = new PinnedWorkerRegistry();
     var opts = _newOptions();
-    registry.AddOptIn(typeof(_anonymousCustomWorker));
-    registry.AddOptIn(typeof(_anonymousCustomWorker));
+    registry.AddOptIn(typeof(AnonymousCustomWorker));
+    registry.AddOptIn(typeof(AnonymousCustomWorker));
 
-    await Assert.That(registry.IsEligible(typeof(_anonymousCustomWorker), opts)).IsTrue();
+    await Assert.That(registry.IsEligible(typeof(AnonymousCustomWorker), opts)).IsTrue();
   }
 
   [Test]
@@ -246,25 +246,22 @@ public class PinnedConnectionPoolPrimitivesTests {
     Size = 1,
   };
 
-  private sealed class _fakeWorker { }
-  private sealed class _anotherFakeWorker { }
-  private sealed class _anonymousCustomWorker { }
+  private sealed class FakeWorker;
+  private sealed class AnotherFakeWorker;
+  private sealed class AnonymousCustomWorker;
 
   // Stand-ins named exactly the same as the Whizbang internal workers so the
   // tier check (which uses CLR short names) matches by string.
-  private sealed class ClaimWorker { }
-  private sealed class InboxHandlerWorker { }
-  private sealed class FailureFlushWorker { }
+  private sealed class ClaimWorker;
+  private sealed class InboxHandlerWorker;
+  private sealed class FailureFlushWorker;
 
   /// <summary>
   /// Minimal <see cref="DbConnection"/> subclass used by AsyncLocal tests. Only
   /// constructed — never opened — so the abstract members can throw.
   /// </summary>
-  private sealed class _stubDbConnection : DbConnection {
-    public _stubDbConnection(string id) {
-      _id = id;
-    }
-    private readonly string _id;
+  private sealed class StubDbConnection(string id) : DbConnection {
+    private readonly string _id = id;
 #pragma warning disable CS8765
     public override string ConnectionString { get; set; } = "";
 #pragma warning restore CS8765

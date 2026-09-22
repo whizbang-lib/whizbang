@@ -231,7 +231,7 @@ public class PackageManagerTests {
     // only the first would leave half the old packages behind.
     using var sln = new TempSolution();
     var path = Path.Combine(sln.Root, "Split.csproj");
-    File.WriteAllText(path, """
+    await File.WriteAllTextAsync(path, """
       <Project Sdk="Microsoft.NET.Sdk">
         <ItemGroup>
           <PackageReference Include="Marten" Version="7.0.0" />

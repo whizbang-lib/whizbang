@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using RabbitMQ.Client;
@@ -12,8 +11,8 @@ using Whizbang.Transports.RabbitMQ;
 namespace Whizbang.Transports.RabbitMQ.Tests;
 
 /// <summary>
-/// Change-level tests for the hardening of <c>_nackPausedMessageAsync</c>
-/// and <c>_nackDeserializationFailureAsync</c> against <see cref="AlreadyClosedException"/>
+/// Change-level tests for the hardening of <c>NackPausedMessageAsync</c>
+/// and <c>NackDeserializationFailureAsync</c> against <see cref="AlreadyClosedException"/>
 /// (e.g., 406 PRECONDITION_FAILED — unknown delivery tag, after channel auto-recovery).
 ///
 /// <para>
@@ -38,7 +37,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
       poisonDetector: poisonDetector);
   }
 
-  private static BasicDeliverEventArgs _envelope(IChannel channel, ulong tag = 1) {
+  private static BasicDeliverEventArgs _envelope(ulong tag = 1) {
     var props = new BasicProperties { MessageId = "test-msg-1" };
     return new BasicDeliverEventArgs(
       consumerTag: "test-consumer",
@@ -58,7 +57,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
       replyText: "PRECONDITION_FAILED - unknown delivery tag 1"));
 
   /// <summary>
-  /// _nackPausedMessageAsync (paused-subscription requeue) must SWALLOW
+  /// NackPausedMessageAsync (paused-subscription requeue) must SWALLOW
   /// AlreadyClosedException instead of letting it escape. RED before the fix:
   /// exception propagates and unhandled. GREEN after: try/catch logs + returns.
   /// </summary>
@@ -66,26 +65,21 @@ public class RabbitMQTransportNackErrorHandlingTests {
   public async Task NackPausedMessage_WhenChannelAlreadyClosed_SwallowsExceptionAsync() {
     var channel = new FakeChannel { ExceptionToThrowOnNack = _newAlreadyClosed() };
     var transport = _newTransport(channel);
-    var args = _envelope(channel);
-
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackPausedMessageAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
+    var args = _envelope();
 
     Exception? caught = null;
     try {
-      var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-      await task;
+      await transport.NackPausedMessageAsync(channel, args, "test-queue");
     } catch (Exception ex) {
       caught = ex;
     }
 
     await Assert.That(caught).IsNull()
-      .Because("AlreadyClosedException must be swallowed inside _nackPausedMessageAsync. Otherwise it escapes the AsyncEventingBasicConsumer.ReceivedAsync handler and crashes the dispatch thread.");
+      .Because("AlreadyClosedException must be swallowed inside NackPausedMessageAsync. Otherwise it escapes the AsyncEventingBasicConsumer.ReceivedAsync handler and crashes the dispatch thread.");
   }
 
   /// <summary>
-  /// _nackPausedMessageAsync also swallows ObjectDisposedException — same
+  /// NackPausedMessageAsync also swallows ObjectDisposedException — same
   /// rationale (channel disposed during shutdown).
   /// </summary>
   [Test]
@@ -94,16 +88,11 @@ public class RabbitMQTransportNackErrorHandlingTests {
       ExceptionToThrowOnNack = new ObjectDisposedException(nameof(IChannel))
     };
     var transport = _newTransport(channel);
-    var args = _envelope(channel);
-
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackPausedMessageAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
+    var args = _envelope();
 
     Exception? caught = null;
     try {
-      var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-      await task;
+      await transport.NackPausedMessageAsync(channel, args, "test-queue");
     } catch (Exception ex) {
       caught = ex;
     }
@@ -112,7 +101,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
   }
 
   /// <summary>
-  /// _nackDeserializationFailureAsync (DLQ-bound NACK) must also swallow
+  /// NackDeserializationFailureAsync (DLQ-bound NACK) must also swallow
   /// AlreadyClosedException. Same call site shape: invoked from the consumer's
   /// ReceivedAsync without an outer try/catch around it.
   /// </summary>
@@ -120,16 +109,11 @@ public class RabbitMQTransportNackErrorHandlingTests {
   public async Task NackDeserializationFailure_WhenChannelAlreadyClosed_SwallowsExceptionAsync() {
     var channel = new FakeChannel { ExceptionToThrowOnNack = _newAlreadyClosed() };
     var transport = _newTransport(channel);
-    var args = _envelope(channel);
-
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackDeserializationFailureAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
+    var args = _envelope();
 
     Exception? caught = null;
     try {
-      var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-      await task;
+      await transport.NackDeserializationFailureAsync(channel, args, "test-queue");
     } catch (Exception ex) {
       caught = ex;
     }
@@ -147,16 +131,11 @@ public class RabbitMQTransportNackErrorHandlingTests {
   public async Task NackPausedMessage_WhenUnrelatedExceptionThrown_PropagatesAsync() {
     var channel = new FakeChannel { ExceptionToThrowOnNack = new InvalidOperationException("unrelated") };
     var transport = _newTransport(channel);
-    var args = _envelope(channel);
-
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackPausedMessageAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
+    var args = _envelope();
 
     InvalidOperationException? caught = null;
     try {
-      var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-      await task;
+      await transport.NackPausedMessageAsync(channel, args, "test-queue");
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -173,14 +152,9 @@ public class RabbitMQTransportNackErrorHandlingTests {
   public async Task NackPausedMessage_HappyPath_CallsBasicNackWithRequeueAsync() {
     var channel = new FakeChannel();
     var transport = _newTransport(channel);
-    var args = _envelope(channel, tag: 42);
+    var args = _envelope(tag: 42);
 
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackPausedMessageAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
-
-    var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-    await task;
+    await transport.NackPausedMessageAsync(channel, args, "test-queue");
 
     await Assert.That(channel.BasicNackAsyncCalled).IsTrue();
     await Assert.That(channel.LastNackedDeliveryTag).IsEqualTo(42UL);
@@ -195,14 +169,9 @@ public class RabbitMQTransportNackErrorHandlingTests {
   public async Task NackDeserializationFailure_HappyPath_CallsBasicNackWithoutRequeueAsync() {
     var channel = new FakeChannel();
     var transport = _newTransport(channel);
-    var args = _envelope(channel, tag: 99);
+    var args = _envelope(tag: 99);
 
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_nackDeserializationFailureAsync",
-      BindingFlags.Instance | BindingFlags.NonPublic)!;
-
-    var task = (Task)method.Invoke(transport, [(IChannel)channel, args, "test-queue"])!;
-    await task;
+    await transport.NackDeserializationFailureAsync(channel, args, "test-queue");
 
     await Assert.That(channel.BasicNackAsyncCalled).IsTrue();
     await Assert.That(channel.LastNackedDeliveryTag).IsEqualTo(99UL);
@@ -224,8 +193,6 @@ public class RabbitMQTransportNackErrorHandlingTests {
   private sealed class AlwaysQuarantineDetector : Whizbang.Core.Routing.IPoisonMessageDetector {
     public int Quarantines { get; private set; }
 
-    public bool Enabled => true;
-
     public Whizbang.Core.Routing.PoisonVerdict Evaluate(
         Whizbang.Core.Routing.PoisonEvaluationContext context)
       => new(ShouldQuarantine: true, Whizbang.Core.Routing.PoisonQuarantineReason.MessageAgeExceeded, "aged out");
@@ -236,14 +203,12 @@ public class RabbitMQTransportNackErrorHandlingTests {
         Whizbang.Core.Routing.PoisonEvaluationContext context,
         IReadOnlyDictionary<string, object?>? additionalTags = null) => Quarantines++;
 
-    public void ReportAgeCapability(string transport, string queue, bool hasTrustworthyAge) { }
+    public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) { }
   }
 
   private static Task<bool> _invokeQuarantineAsync(
       RabbitMQTransport transport, IChannel channel, BasicDeliverEventArgs args) {
-    var method = typeof(RabbitMQTransport).GetMethod(
-      "_tryQuarantinePoisonAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
-    return (Task<bool>)method.Invoke(transport, [channel, args, "test-queue"])!;
+    return transport.TryQuarantinePoisonAsync(channel, args, "test-queue");
   }
 
   [Test]
@@ -252,7 +217,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
     var channel = new FakeChannel { ExceptionToThrowOnNack = _newAlreadyClosed() };
     var transport = _newTransport(channel, detector);
 
-    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope());
 
     await Assert.That(quarantined).IsTrue()
       .Because("the message was judged poison — the failed nack does not undo that verdict");
@@ -268,7 +233,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
     };
     var transport = _newTransport(channel, detector);
 
-    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope());
 
     await Assert.That(quarantined).IsTrue();
   }
@@ -279,7 +244,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
     var channel = new FakeChannel();
     var transport = _newTransport(channel);
 
-    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope());
 
     await Assert.That(quarantined).IsFalse();
   }
@@ -292,7 +257,7 @@ public class RabbitMQTransportNackErrorHandlingTests {
     var channel = new FakeChannel();
     var transport = _newTransport(channel, detector);
 
-    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope());
 
     await Assert.That(quarantined).IsTrue();
     await Assert.That(channel.BasicNackAsyncCalled).IsTrue();

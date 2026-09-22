@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_ReturnsBorrowWithNullConnectionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_Instance_IsProcessWideSingletonAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PinnedConnectionPoolPrimitivesTests.cs:NoOp_TryPin_CanceledToken_ThrowsOperationCanceledAsync</tests>
-public sealed class NoOpPinnedConnectionPool : IPinnedConnectionPool {
+public sealed class NoOpPinnedConnectionPool : IPinnedConnectionPool, INullDefault {
   /// <summary>Process-wide singleton instance.</summary>
   public static NoOpPinnedConnectionPool Instance { get; } = new();
 
@@ -30,21 +30,22 @@ public sealed class NoOpPinnedConnectionPool : IPinnedConnectionPool {
   public ValueTask<IBorrowedConnection> TryPinForAsync(Type workerType, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(workerType);
     cancellationToken.ThrowIfCancellationRequested();
-    return new ValueTask<IBorrowedConnection>(NoOpBorrow.Instance);
+    return new ValueTask<IBorrowedConnection>(NoOpBorrowedConnection.Instance);
   }
 
-  /// <summary>
-  /// No-allocation borrow handle returned by <see cref="NoOpPinnedConnectionPool"/>.
-  /// <see cref="Connection"/> is always <c>null</c>; <see cref="DisposeAsync"/>
-  /// is a no-op.
-  /// </summary>
-  private sealed class NoOpBorrow : IBorrowedConnection {
-    public static NoOpBorrow Instance { get; } = new();
+}
 
-    private NoOpBorrow() { }
+/// <summary>
+/// No-allocation borrow handle returned by <see cref="NoOpPinnedConnectionPool"/>.
+/// <see cref="Connection"/> is always <c>null</c>; <see cref="DisposeAsync"/>
+/// is a no-op.
+/// </summary>
+internal sealed class NoOpBorrowedConnection : IBorrowedConnection {
+  public static NoOpBorrowedConnection Instance { get; } = new();
 
-    public DbConnection? Connection => null;
+  private NoOpBorrowedConnection() { }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-  }
+  public DbConnection? Connection => null;
+
+  public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

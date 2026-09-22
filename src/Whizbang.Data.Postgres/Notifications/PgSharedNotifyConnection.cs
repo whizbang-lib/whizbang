@@ -139,7 +139,7 @@ public sealed partial class PgSharedNotifyConnection(
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
-      _setAvailable(false, "no connection string resolvable");
+      SetAvailable(false, "no connection string resolvable");
       return false;
     }
     try {
@@ -157,13 +157,14 @@ public sealed partial class PgSharedNotifyConnection(
       // can't authenticate). When the data source path is used the probe doesn't open a
       // second connection itself, so this argument is unused.
       var ok = await _runProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
-      _setAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
+      SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      _setAvailable(false, "ProbeNowAsync timed out");
-      return false;
     } catch (Exception ex) {
-      _setAvailable(false, ex.Message);
+      // A cancellation the caller did not ask for is the self-test timeout; name it as such.
+      var reason = ex is OperationCanceledException && !cancellationToken.IsCancellationRequested
+        ? "ProbeNowAsync timed out"
+        : ex.Message;
+      SetAvailable(false, reason);
       return false;
     }
   }
@@ -458,13 +459,13 @@ public sealed partial class PgSharedNotifyConnection(
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
         var probeOk = await _runProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
-          _setAvailable(false, "self-test probe round-trip failed");
+          SetAvailable(false, "self-test probe round-trip failed");
           throw new InvalidOperationException(
             "Self-test probe failed: connection opened but pg_notify round-trip did not arrive within SelfTestTimeout.");
         }
 
         attempt = 0;
-        _setAvailable(true, failureReason: null);
+        SetAvailable(true, failureReason: null);
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
         _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
@@ -513,7 +514,7 @@ public sealed partial class PgSharedNotifyConnection(
           _connection = null;
         }
         attempt++;
-        _setAvailable(false, failureReason: ex.Message);
+        SetAvailable(false, failureReason: ex.Message);
         var delay = _computeBackoff(attempt);
         LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
@@ -528,7 +529,7 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
 
-    _setAvailable(false, failureReason: "shutdown");
+    SetAvailable(false, failureReason: "shutdown");
     LogStopped(_logger);
   }
 
@@ -545,8 +546,15 @@ public sealed partial class PgSharedNotifyConnection(
   /// to a worker channel for real work). A slow subscriber blocks subsequent notifications
   /// on this pod's shared connection.
   /// </remarks>
-  private void _dispatchNotification(object? sender, NpgsqlNotificationEventArgs e) {
-    var subscribers = _registry.Get(e.Channel);
+  private void _dispatchNotification(object? sender, NpgsqlNotificationEventArgs e) =>
+    DispatchNotification(e.Channel, e.Payload);
+
+  /// <summary>
+  /// The dispatch path behind the Npgsql notification handler, reachable without an Npgsql event
+  /// so the routing, metrics and subscriber-failure handling can be exercised directly.
+  /// </summary>
+  internal void DispatchNotification(string channel, string payload) {
+    var subscribers = _registry.Get(channel);
     if (subscribers.IsEmpty) {
       return;
     }
@@ -555,7 +563,7 @@ public sealed partial class PgSharedNotifyConnection(
     // notify_instance_owners; anything else lands in "unknown" so a payload drift
     // (new SQL signal that the .NET side hasn't taught yet) is observable instead
     // of silent.
-    var category = e.Payload switch {
+    var category = payload switch {
       "outbox" => "outbox",
       "inbox" => "inbox",
       "perspective" => "perspective",
@@ -564,18 +572,18 @@ public sealed partial class PgSharedNotifyConnection(
     _metrics?.SignalsReceived.Add(1, new KeyValuePair<string, object?>("category", category));
     foreach (var subscriber in subscribers) {
       try {
-        subscriber.OnNotification(e.Payload);
+        subscriber.OnNotification(payload);
       } catch (Exception ex) {
-        LogSubscriberCallbackFailed(_logger, e.Channel, ex);
+        LogSubscriberCallbackFailed(_logger, channel, ex);
       }
     }
   }
 
-  private void _setAvailable(bool available, string? failureReason) {
+  internal void SetAvailable(bool available, string? failureReason) {
     bool fire;
     lock (_availabilityGate) {
       // ProbeNowAsync can run concurrently with the BackgroundService loop's probe; both
-      // call _setAvailable. Guard the transition so OnAvailabilityChanged fires exactly
+      // call SetAvailable. Guard the transition so OnAvailabilityChanged fires exactly
       // once per actual change.
       fire = _isAvailable != available;
       _isAvailable = available;

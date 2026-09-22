@@ -55,7 +55,7 @@ public class SerialExecutorDrainAfterStopTests {
     using var listener = new ActivityListener {
       ShouldListenTo = source =>
         source.Name is "Whizbang.Execution" or "SerialExecutorDrainAfterStopProbe",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      Sample = (ref _) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         if (activity.OperationName == "SerialExecutor.DrainAsync"
             && activity.TraceId == expectedTrace) {

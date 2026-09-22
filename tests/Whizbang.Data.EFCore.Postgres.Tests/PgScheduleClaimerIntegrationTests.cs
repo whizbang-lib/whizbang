@@ -163,7 +163,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
   public async Task GetNextFireTime_WithNothingOwned_ReturnsNullAsync() {
     // No owned schedules means no wake to arm, and the worker falls back to its backstop cadence.
     // Returning a value here would arm a timer for a schedule that will never be claimed.
-    var (claimer, instance) = _create();
+    var (claimer, _) = _create();
     var theirs = Guid.NewGuid();
     await _pinStreamAsync(theirs, Guid.NewGuid());
     await _insertScheduleAsync(theirs, "5 minutes", "NextFireNotMine");

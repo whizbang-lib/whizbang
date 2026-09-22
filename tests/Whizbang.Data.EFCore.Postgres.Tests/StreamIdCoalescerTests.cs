@@ -35,17 +35,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class StreamIdCoalescerTests {
 
-  private sealed record _LogEntry(LogLevel Level, string Message);
+  private sealed record LogEntry(LogLevel Level, string Message);
 
-  private sealed class _CapturingLogger : ILogger {
-    public List<_LogEntry> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _NullScope.Instance;
+  private sealed class CapturingLogger : ILogger {
+    public List<LogEntry> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
     }
-    private sealed class _NullScope : IDisposable {
-      public static readonly _NullScope Instance = new();
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
       public void Dispose() { }
     }
   }
@@ -65,7 +65,7 @@ public class StreamIdCoalescerTests {
         StreamId = Guid.Empty,  // The production pattern
       }
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, outbox, _) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -93,7 +93,7 @@ public class StreamIdCoalescerTests {
         StreamId = Guid.Empty,
       }
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, _, inbox) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -119,7 +119,7 @@ public class StreamIdCoalescerTests {
         StreamId = Guid.Empty,
       }
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (perspective, _, _) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -146,7 +146,7 @@ public class StreamIdCoalescerTests {
         StreamId = streamId,
       }
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, outbox, _) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -170,7 +170,7 @@ public class StreamIdCoalescerTests {
         StreamId = null,
       }
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, outbox, _) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -193,7 +193,7 @@ public class StreamIdCoalescerTests {
       new() { Source = "outbox", WorkId = null, StreamId = Guid.Empty },
       new() { Source = "outbox", WorkId = Guid.Empty, StreamId = Guid.Empty },
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, outbox, _) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -216,7 +216,7 @@ public class StreamIdCoalescerTests {
       new() { Source = "receptor", WorkId = workId, StreamId = streamId },
       new() { Source = "unknown_future_source", WorkId = workId, StreamId = streamId },
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (perspective, outbox, inbox) = StreamIdCoalescer.Coalesce(rows, logger);
 
@@ -258,7 +258,7 @@ public class StreamIdCoalescerTests {
       new() { Source = "outbox", WorkId = workId2, StreamId = Guid.Empty },
       new() { Source = "inbox",  WorkId = workId3, StreamId = Guid.Empty },
     };
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
 
     var (_, outbox, inbox) = StreamIdCoalescer.Coalesce(rows, logger);
 

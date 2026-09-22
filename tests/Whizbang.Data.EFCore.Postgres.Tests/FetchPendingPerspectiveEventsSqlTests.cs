@@ -653,7 +653,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", workId);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return reader.GetFieldValue<DateTimeOffset>(0);
+    return await reader.GetFieldValueAsync<DateTimeOffset>(0);
   }
 
   private static async Task<int> _readAttemptsAsync(NpgsqlConnection conn, Guid workId) {

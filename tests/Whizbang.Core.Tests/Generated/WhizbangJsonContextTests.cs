@@ -96,12 +96,12 @@ public class WhizbangJsonContextTests {
     options.TypeInfoResolverChain.Add(new DefaultJsonTypeInfoResolver());
     var json = "{\"CreatedAt\":\"-infinity\",\"DeletedAt\":\"infinity\"}";
 
-    var model = JsonSerializer.Deserialize<_InfinityTestModel>(json, options);
+    var model = JsonSerializer.Deserialize<InfinityTestModel>(json, options);
 
     await Assert.That(model).IsNotNull();
     await Assert.That(model!.CreatedAt).IsEqualTo(DateTimeOffset.MinValue);
     await Assert.That(model.DeletedAt).IsEqualTo(DateTimeOffset.MaxValue);
   }
 
-  private sealed record _InfinityTestModel(DateTimeOffset CreatedAt, DateTimeOffset? DeletedAt);
+  private sealed record InfinityTestModel(DateTimeOffset CreatedAt, DateTimeOffset? DeletedAt);
 }

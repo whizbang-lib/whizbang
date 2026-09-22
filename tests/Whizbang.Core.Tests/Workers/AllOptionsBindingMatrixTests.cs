@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Signals;
 using Whizbang.Core.Workers;
 
@@ -25,6 +26,7 @@ public sealed class AllOptionsBindingMatrixTests {
   private static ServiceProvider _hostWith(Dictionary<string, string?> settings) {
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangWorkers();
     return services.BuildServiceProvider();
@@ -344,6 +346,7 @@ public sealed class AllOptionsBindingMatrixTests {
       ["Whizbang:Workers:PinnedPool:Enabled"] = "true",
     }).Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangPinnedWorkerPool(_ => { });
     await using var provider = services.BuildServiceProvider();
@@ -359,6 +362,7 @@ public sealed class AllOptionsBindingMatrixTests {
       ["Whizbang:SignalBus:ProbeTimeoutMilliseconds"] = "1234",
     }).Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangSignalBus();
     await using var provider = services.BuildServiceProvider();

@@ -21,10 +21,8 @@ public sealed class InMemoryEventStorePriorityTests {
   private sealed record StorePriorityProbe(string Value) : IEvent;
 
   private static async Task<MessageEnvelope<StorePriorityProbe>> _firstAsync(InMemoryEventStore store, Guid streamId) {
-    await foreach (var envelope in store.ReadAsync<StorePriorityProbe>(streamId, 0)) {
-      return envelope;
-    }
-    throw new InvalidOperationException("Test setup: the stream is empty.");
+    // FirstAsync throws InvalidOperationException on an empty stream, which is the setup failure this guards.
+    return await store.ReadAsync<StorePriorityProbe>(streamId, 0).FirstAsync();
   }
 
   [Test]

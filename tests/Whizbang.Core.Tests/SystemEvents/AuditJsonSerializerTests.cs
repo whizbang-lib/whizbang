@@ -15,10 +15,10 @@ namespace Whizbang.Core.Tests.SystemEvents;
 public class AuditJsonSerializerTests {
   [Test]
   public async Task SerializeToJsonElement_UnregisteredType_LogsWarningAndReturnsEmptyObjectAsync() {
-    var captured = new _capturingLogger();
+    var captured = new CapturingLogger();
     var options = JsonContextRegistry.CreateCombinedOptions();
 
-    var result = AuditJsonSerializer.SerializeToJsonElement(new _unregisteredAuditPayload("x"), options, captured);
+    var result = AuditJsonSerializer.SerializeToJsonElement(new UnregisteredAuditPayload("x"), options, captured);
 
     await Assert.That(result.ValueKind).IsEqualTo(JsonValueKind.Object);
     await Assert.That(result.EnumerateObject().Any()).IsFalse()
@@ -27,9 +27,9 @@ public class AuditJsonSerializerTests {
       .Because("writing an empty audit payload is a compliance gap that must be logged, not silent");
   }
 
-  private sealed record _unregisteredAuditPayload(string Value);
+  private sealed record UnregisteredAuditPayload(string Value);
 
-  private sealed class _capturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

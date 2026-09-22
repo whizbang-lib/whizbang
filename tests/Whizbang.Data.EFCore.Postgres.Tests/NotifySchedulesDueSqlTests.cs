@@ -146,7 +146,7 @@ public class NotifySchedulesDueSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("sid", scheduleId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("off", fireOffset);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(status), status);
     await cmd.ExecuteNonQueryAsync();
   }
 

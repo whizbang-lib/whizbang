@@ -31,10 +31,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<BatchWorkCoordinatorStrategy> _logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
-  private readonly IServiceScopeFactory? _scopeFactory;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
-  private readonly IWorkChannelWriter? _workChannelWriter;
+  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions> _tracingOptions;
+  private readonly IWorkChannelWriter _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _debounceTimer;
@@ -71,22 +71,18 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    ILogger<BatchWorkCoordinatorStrategy>? logger = null,
-    IServiceScopeFactory? scopeFactory = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null,
+    ILogger<BatchWorkCoordinatorStrategy> logger,
+    IServiceScopeFactory scopeFactory,
+    ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+    IOptionsMonitor<TracingOptions> tracingOptions,
+    IWorkChannelWriter workChannelWriter,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null,
-    IWorkChannelWriter? workChannelWriter = null
-  ) {
+    LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
-    if (coordinator == null && scopeFactory == null) {
-      throw new ArgumentNullException(nameof(coordinator), "Either coordinator or scopeFactory must be provided.");
-    }
     _coordinator = coordinator;
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    _logger = logger;
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
@@ -102,9 +98,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       period: Timeout.Infinite
     );
 
-    if (_logger != null) {
-      LogStrategyStarted(_logger, _options.BatchSize, _options.IntervalMilliseconds);
-    }
+    LogStrategyStarted(_logger, _options.BatchSize, _options.IntervalMilliseconds);
   }
 
   /// <summary>
@@ -124,9 +118,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       shouldFlush = _totalQueuedCount() >= _options.BatchSize;
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
-    }
+    LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
 
     if (shouldFlush) {
       _triggerBatchFlush();
@@ -150,9 +142,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       shouldFlush = _totalQueuedCount() >= _options.BatchSize;
     }
 
-    if (_logger != null) {
-      LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
-    }
+    LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
 
     if (shouldFlush) {
       _triggerBatchFlush();
@@ -269,9 +259,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Prevent concurrent flushes
     lock (_lock) {
       if (_flushing) {
-        if (_logger != null) {
-          LogFlushAlreadyInProgress(_logger);
-        }
+        LogFlushAlreadyInProgress(_logger);
         return new WorkBatch {
           OutboxWork = [],
           InboxWork = [],
@@ -298,9 +286,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
             _queuedInboxCompletions.Count == 0 &&
             _queuedInboxFailures.Count == 0) {
           _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"));
-          if (_logger != null) {
-            LogNoQueuedOperations(_logger);
-          }
+          LogNoQueuedOperations(_logger);
           return new WorkBatch {
             OutboxWork = [],
             InboxWork = [],
@@ -324,9 +310,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
         _queuedInboxFailures.Clear();
       }
 
-      if (_logger != null) {
-        LogBatchFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
-      }
+      LogBatchFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
@@ -339,9 +323,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
         ct
       );
 
-      if (_logger != null) {
-        LogBatchFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
-      }
+      LogBatchFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
 
       OnBatchFlushed?.Invoke(new WorkBatchFlushedArgs(workBatch, trigger));
 
@@ -386,9 +368,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Disable debounce timer - we're flushing now
     _debounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
 
-    if (_logger != null) {
-      LogBatchSizeReached(_logger, _options.BatchSize);
-    }
+    LogBatchSizeReached(_logger, _options.BatchSize);
 
     // Lifecycle stages run here too (issue #485): delivery must not depend on WHICH trigger
     // flushed. The old "background thread, no ambient context" skip was stale —
@@ -398,9 +378,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       try {
         await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
-        if (_logger != null) {
-          LogErrorDuringBatchFlush(_logger, ex);
-        }
+        LogErrorDuringBatchFlush(_logger, ex);
       }
     });
   }
@@ -413,9 +391,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       return;
     }
 
-    if (_logger != null) {
-      LogDebounceTimerFired(_logger, _options.IntervalMilliseconds);
-    }
+    LogDebounceTimerFired(_logger, _options.IntervalMilliseconds);
 
     // Lifecycle stages run here too (issue #485) — see the BatchSize trigger above; a quiet-period
     // flush is the common case on low-traffic services, and skipping made stage delivery a
@@ -424,9 +400,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       try {
         await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Debounce, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
-        if (_logger != null) {
-          LogErrorDuringDebounceFlush(_logger, ex);
-        }
+        LogErrorDuringDebounceFlush(_logger, ex);
       }
     });
   }
@@ -440,22 +414,19 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       return;
     }
 
-    if (_logger != null) {
-      LogStrategyDisposing(_logger);
-    }
+    LogStrategyDisposing(_logger);
 
     // Stop the debounce timer first
     await _debounceTimer.DisposeAsync();
 
     // Flush any remaining queued operations
     lock (_lock) {
-      if (_logger != null &&
-          (_queuedOutboxMessages.Count > 0 ||
+      if (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
           _queuedOutboxCompletions.Count > 0 ||
           _queuedOutboxFailures.Count > 0 ||
           _queuedInboxCompletions.Count > 0 ||
-          _queuedInboxFailures.Count > 0)) {
+          _queuedInboxFailures.Count > 0) {
         LogDisposingWithUnflushedOperations(
           _logger,
           _queuedOutboxMessages.Count,
@@ -472,17 +443,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       // stages are deliberately not run.
       await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
-      if (_logger != null) {
-        LogErrorFlushingOnDisposal(_logger, ex);
-      }
+      LogErrorFlushingOnDisposal(_logger, ex);
     }
 
     _disposed = true;
     GC.SuppressFinalize(this);
 
-    if (_logger != null) {
-      LogStrategyDisposed(_logger);
-    }
+    LogStrategyDisposed(_logger);
   }
 
   // LoggerMessage definitions

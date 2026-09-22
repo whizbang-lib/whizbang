@@ -513,7 +513,7 @@ public class SyncEventTypeRegistryGeneratorTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ArrayTypeInEventTypes_SkipsNonNamedTypeAsync() {
-    // Arrange - typeof(int[]) resolves to an IArrayTypeSymbol, not INamedTypeSymbol;
+    // Arrange - typeof(int[]) resolves to an IArrayTypeSymbol, not INamedTypeSymbol —
     // it must be skipped while the valid entry is still registered
     const string source = """
         using System;

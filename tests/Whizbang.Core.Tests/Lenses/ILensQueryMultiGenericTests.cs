@@ -15,28 +15,18 @@ namespace Whizbang.Core.Tests.Lenses;
 public class ILensQueryMultiGenericTests {
   // Test models
   private sealed record Model1 {
-    public required Guid Id { get; init; }
-    public required string Name { get; init; }
   }
 
   private sealed record Model2 {
-    public required Guid Id { get; init; }
-    public required int Value { get; init; }
   }
 
   private sealed record Model3 {
-    public required Guid Id { get; init; }
-    public required decimal Amount { get; init; }
   }
 
   private sealed record Model4 {
-    public required Guid Id { get; init; }
-    public required DateTime CreatedAt { get; init; }
   }
 
   private sealed record Model5 {
-    public required Guid Id { get; init; }
-    public required bool IsActive { get; init; }
   }
 
   #region Two Generic Parameters - ILensQuery<T1, T2>
@@ -272,8 +262,7 @@ public class ILensQueryMultiGenericTests {
     var genericArgs = type.GetGenericArguments();
 
     // Assert - All type parameters have class constraint
-    foreach (var arg in genericArgs) {
-      var attributes = arg.GenericParameterAttributes;
+    foreach (var attributes in genericArgs.Select(arg => arg.GenericParameterAttributes)) {
       await Assert.That(attributes.HasFlag(
           System.Reflection.GenericParameterAttributes.ReferenceTypeConstraint)).IsTrue();
     }

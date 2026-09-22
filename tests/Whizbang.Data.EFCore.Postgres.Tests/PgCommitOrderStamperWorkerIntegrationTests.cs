@@ -75,7 +75,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
   /// A gate whose availability a test flips by hand, counting the worker's subscription so the
   /// test can prove the stamper listens while it runs and lets go when it stops.
   /// </summary>
-  private sealed class _fakeSignalingGate : INotifySignalingGate {
+  private sealed class FakeSignalingGate : INotifySignalingGate {
     private Action<bool>? _handlers;
     public bool IsAvailable { get; private set; } = true;
     public int Subscribers { get; private set; }
@@ -194,7 +194,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await workerB.StartAsync(cts.Token);
 
     // Wait until at least one has fired OnBecameLeader.
-    var firstLeader = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
+    _ = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
 
     // Give the other a window to attempt lock acquisition and fail. With retry interval
     // 100ms, 500ms is well more than one attempt.
@@ -368,7 +368,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task Worker_GateAvailabilityFlip_WakesTheLeaderWithoutWaitingForThePollAsync() {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    var gate = new _fakeSignalingGate();
+    var gate = new FakeSignalingGate();
     // A 60 s floor silences the self-poll: after the initial permit, only the gate flip can wake the loop.
     var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromSeconds(60), gate: gate);
     var leaderTcs = await _whenBecomesLeaderAsync(worker);

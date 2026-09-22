@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
@@ -111,8 +110,8 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
 
     // Assert
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
-    await Assert.That(_getNamespaceRouting(strategy)).IsNull()
-      .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
+    await Assert.That(_getNamespaceRouting(strategy)).IsSameReferenceAs(NullCommandInboxAddressResolver.Instance)
+      .Because("a strategy outside the seam gets the resolver that never flips — commands ride the default inbox topic");
   }
 
   // --- _wireUpConnectionStateMonitoring ---
@@ -261,46 +260,28 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
   }
 
   /// <summary>
-  /// Invokes the private static _wireUpConnectionStateMonitoring method.
+  /// Invokes the internal connection-state monitoring wiring.
   /// The production call site only runs inside the IConnection factory after a real broker
-  /// connection succeeds, so unit tests reach it via reflection with a fake connection.
+  /// connection succeeds, so unit tests reach it directly with a fake connection.
   /// </summary>
   private static void _invokeWireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
-    var method = typeof(ServiceCollectionExtensions).GetMethod(
-      "_wireUpConnectionStateMonitoring",
-      BindingFlags.NonPublic | BindingFlags.Static)
-      ?? throw new InvalidOperationException(
-        "_wireUpConnectionStateMonitoring not found on ServiceCollectionExtensions - was it renamed?");
-
-    method.Invoke(null, [connection, logger]);
+    ServiceCollectionExtensions.WireUpConnectionStateMonitoring(connection, logger);
   }
 
   /// <summary>
-  /// Reads the private inbox topic captured by TransportPublishStrategy so tests can assert
+  /// Reads the inbox topic captured by TransportPublishStrategy so tests can assert
   /// which branch of the IMessagePublishStrategy factory selected the topic.
   /// </summary>
   private static string? _getInboxTopic(IMessagePublishStrategy strategy) {
-    var field = typeof(TransportPublishStrategy).GetField(
-      "_inboxTopic",
-      BindingFlags.NonPublic | BindingFlags.Instance)
-      ?? throw new InvalidOperationException(
-        "_inboxTopic field not found on TransportPublishStrategy - was it renamed?");
-
-    return (string?)field.GetValue(strategy);
+    return ((TransportPublishStrategy)strategy).InboxTopic;
   }
 
   /// <summary>
-  /// Reads the private publish-time flip seam captured by TransportPublishStrategy so tests
+  /// Reads the publish-time flip seam captured by TransportPublishStrategy so tests
   /// can assert the NamespaceOutboxStrategy branch handed the strategy through.
   /// </summary>
   private static ICommandInboxAddressResolver? _getNamespaceRouting(IMessagePublishStrategy strategy) {
-    var field = typeof(TransportPublishStrategy).GetField(
-      "_namespaceRouting",
-      BindingFlags.NonPublic | BindingFlags.Instance)
-      ?? throw new InvalidOperationException(
-        "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
-
-    return (ICommandInboxAddressResolver?)field.GetValue(strategy);
+    return ((TransportPublishStrategy)strategy).NamespaceRouting;
   }
 
   /// <summary>
@@ -398,7 +379,6 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
     public uint FrameMax => 0;
     public TimeSpan Heartbeat => TimeSpan.Zero;
     public bool IsOpen => true;
-    public AmqpTcpEndpoint[] KnownHosts => [];
     public IProtocol Protocol => throw new NotImplementedException();
     public IDictionary<string, object?>? ServerProperties => null;
     public IEnumerable<ShutdownReportEntry> ShutdownReport => [];
@@ -410,9 +390,6 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
       Task.FromResult<IChannel>(new FakeChannel());
 
     public Task CloseAsync(ushort reasonCode, string reasonText, TimeSpan timeout, bool abort, CancellationToken cancellationToken = default) =>
-      Task.CompletedTask;
-
-    public Task CloseAsync(ShutdownEventArgs _, bool __, CancellationToken ___ = default) =>
       Task.CompletedTask;
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

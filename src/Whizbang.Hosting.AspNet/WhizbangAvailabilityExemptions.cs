@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.AspNetCore.Http;
 
 namespace Whizbang.Hosting.AspNet;
@@ -23,10 +24,8 @@ public sealed class WhizbangAvailabilityExemptions {
     ArgumentException.ThrowIfNullOrEmpty(pathPrefix);
     lock (_lock) {
       var candidate = new PathString(pathPrefix);
-      foreach (var existing in _paths) {
-        if (existing.Equals(candidate)) {
-          return;
-        }
+      if (_paths.Any(existing => existing.Equals(candidate))) {
+        return;
       }
       _paths = [.. _paths, candidate];
     }
@@ -34,11 +33,6 @@ public sealed class WhizbangAvailabilityExemptions {
 
   /// <summary>Whether <paramref name="path"/> falls under any registered exempt prefix.</summary>
   public bool IsExempt(PathString path) {
-    foreach (var exempt in _paths) {
-      if (path.StartsWithSegments(exempt, StringComparison.OrdinalIgnoreCase)) {
-        return true;
-      }
-    }
-    return false;
+    return _paths.Any(exempt => path.StartsWithSegments(exempt, StringComparison.OrdinalIgnoreCase));
   }
 }

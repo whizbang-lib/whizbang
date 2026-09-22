@@ -81,7 +81,7 @@ public class CompactedRecordUpgradeTests {
   public async Task Compacted_ChainsV1ToV3ThroughSuccessiveUpcastersAsync() {
     // The pipeline re-checks CanUpcast after each step, so vN -> vN+1 -> vN+2 chains without the developer
     // writing a direct v1->v3 transform — the document-style analogue of multi-step upcasting.
-    var v2To3 = new _v2ToV3Upcaster();
+    var v2To3 = new V2ToV3Upcaster();
     var pipeline = new EventUpcasterPipeline([new CompactedV1ToV2Upcaster(), v2To3]);
 
     var upgraded = pipeline.Apply(_v1(200)) as Compacted;
@@ -92,7 +92,7 @@ public class CompactedRecordUpgradeTests {
       .Because("The v2->v3 step ran after v1->v2 — the chain applied both transforms.");
   }
 
-  private sealed class _v2ToV3Upcaster : IEventUpcaster {
+  private sealed class V2ToV3Upcaster : IEventUpcaster {
     public bool CanUpcast(IEvent storedEvent) => storedEvent is Compacted { SchemaVersion: 2 };
     public IEvent Upcast(IEvent storedEvent) {
       var c = (Compacted)storedEvent;

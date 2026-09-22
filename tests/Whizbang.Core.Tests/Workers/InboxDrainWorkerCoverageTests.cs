@@ -31,7 +31,7 @@ public partial class InboxDrainWorkerCoverageTests {
   private sealed class FakeInboxDrainChannel : IInboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 
@@ -116,14 +116,14 @@ public partial class InboxDrainWorkerCoverageTests {
       return Task.FromResult(response);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -212,7 +212,7 @@ public partial class InboxDrainWorkerCoverageTests {
     await Assert.That(coord.CallCount).IsEqualTo(1)
       .Because("cancellation must stop the plan loop before the second group's fetch is even issued");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
@@ -249,8 +249,8 @@ public partial class InboxDrainWorkerCoverageTests {
     await drain.WriteAsync(streamId);
 
     _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(inbox.Written.Count).IsEqualTo(1)
       .Because("only the fresh row may enter the working set on the first pass; the row past its attempt ceiling must be deferred, not dropped or double-admitted");
@@ -304,8 +304,8 @@ public partial class InboxDrainWorkerCoverageTests {
     await drain.WriteAsync(streamId);
 
     _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(inbox.Written.Count).IsEqualTo(4)
       .Because("3 rows from the saturating first pass plus the one admitted row from the second pass; the poisoned row must never appear");
@@ -378,7 +378,7 @@ public partial class InboxDrainWorkerCoverageTests {
       .Because("the first page was already in hand and fully written before cancellation could be "
              + "observed -- a canceled drain must not discard rows it already fetched");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
@@ -454,6 +454,6 @@ public partial class InboxDrainWorkerCoverageTests {
       .Because("the loop must notice the cancellation at the top of the next iteration instead of "
              + "issuing a third fetch against a coordinator the host is already tearing down");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

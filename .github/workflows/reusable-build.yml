@@ -19,7 +19,9 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The analyzers run in every project now, which roughly doubles the solution build on a
+    # hosted runner (16 minutes observed); the artifact upload and instrumentation follow it.
+    timeout-minutes: 35
 
     steps:
       - name: Checkout

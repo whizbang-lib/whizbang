@@ -462,9 +462,9 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     // already established the model. Between them that is what makes the model, the root and a
     // non-empty path certainties here rather than cases: asserted so a future caller that skips
     // either check fails loudly in development, rather than restated as a branch nothing can take.
-    Debug.Assert(_model is not null, "the rewrite stands down without a model");
-    Debug.Assert(rootModel is not null && names.Count > 0, "_isJsonMember accepted a path that does not resolve");
-    Debug.Assert(document is not null, "_isJsonMember accepted a member reached through no document");
+    Debug.Assert(_model is not null);
+    Debug.Assert(rootModel is not null && names.Count > 0);
+    Debug.Assert(document is not null);
 
     // The row type as the chain gave it, falling back to constructing it from the model for a
     // projected model where the row was removed before the filter. Metadata and scope are not
@@ -514,7 +514,8 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </para>
   /// </remarks>
   private bool _isJsonMember(MemberExpression member) {
-    for (var current = member.Expression; current is not null;) {
+    var current = member.Expression;
+    while (current is not null) {
       switch (current) {
         case MemberExpression inner
           when _isDocumentRoot(inner.Member.Name) && _isPerspectiveRow(inner.Expression?.Type):

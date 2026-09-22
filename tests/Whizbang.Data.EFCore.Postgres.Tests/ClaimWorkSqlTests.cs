@@ -63,11 +63,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     var args = (string?)await command.ExecuteScalarAsync();
 
     await Assert.That(args).IsNotNull();
-    await Assert.That(args!).Contains("p_instance_id uuid");
-    await Assert.That(args!).Contains("p_service_name text");
-    await Assert.That(args!).Contains("p_max_streams integer");
-    await Assert.That(args!).Contains("p_partition_count integer");
-    await Assert.That(args!).Contains("p_lease_seconds integer");
+    await Assert.That(args).Contains("p_instance_id uuid");
+    await Assert.That(args).Contains("p_service_name text");
+    await Assert.That(args).Contains("p_max_streams integer");
+    await Assert.That(args).Contains("p_partition_count integer");
+    await Assert.That(args).Contains("p_lease_seconds integer");
   }
 
   /// <summary>
@@ -937,7 +937,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     await using (var flush = connection.CreateCommand()) {
@@ -959,7 +959,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       .Because("emit_chain MUST be idempotent against pre-emitted events — its internal NOT EXISTS check + ON CONFLICT DO NOTHING guarantee no duplicate wh_event_store rows. This is the lock-in invariant that lets v0.684 ship the cheaper guard safely.");
   }
 
-  private async Task<_InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
+  private async Task<InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
       int seedOutbox, int seedInbox, int seedPerspective, int seedReceptor) {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -993,12 +993,13 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await using var ins = connection.CreateCommand();
       // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
       // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
-      ins.CommandText = @"
+      ins.CommandText = """
+
         WITH m AS (
           INSERT INTO wh_inbox
             (message_id, handler_name, message_type, event_data, metadata, scope,
              stream_id, is_event, received_at)
-          VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
+          VALUES (@msg, 'TestHandler', 'Test', '{"p": {}}'::jsonb, '{}'::jsonb, NULL,
                   @stream, true, NOW())
           RETURNING message_id, stream_id, received_at, priority, is_event
         )
@@ -1007,7 +1008,8 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
            instance_id, lease_expiry, processed_at, status, attempts, partition_number)
         SELECT message_id, stream_id, received_at, priority, is_event,
                NULL::uuid, NULL::timestamptz, NULL::timestamptz,
-               0, 0, 1 FROM m";
+               0, 0, 1 FROM m
+""";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();
@@ -1055,7 +1057,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     // pg_stat_user_functions is populated by the async stats collector — without an
@@ -1065,7 +1067,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await flush.ExecuteNonQueryAsync();
     }
 
-    return new _InnerCallCounts(
+    return new InnerCallCounts(
       OutboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_outbox'"),
       InboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_inbox'"),
       PerspectiveCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_perspective_events'"),
@@ -1080,7 +1082,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     return result is null or DBNull ? 0L : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private readonly record struct _InnerCallCounts(
+  private readonly record struct InnerCallCounts(
     long OutboxCalls,
     long InboxCalls,
     long PerspectiveCalls,

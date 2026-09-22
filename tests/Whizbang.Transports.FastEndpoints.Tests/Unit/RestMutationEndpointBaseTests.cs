@@ -146,7 +146,7 @@ public class RestMutationEndpointBaseTests {
     var endpoint = new TestRestMutationEndpoint();
     var command = new TestCommand { Value = "test" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

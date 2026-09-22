@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
@@ -22,7 +23,7 @@ public class TransportManagerTests {
   [Test]
   public async Task AddTransport_ShouldStoreTransportAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
 
     // Act
@@ -35,7 +36,7 @@ public class TransportManagerTests {
   [Test]
   public async Task AddTransport_WithNullTransport_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Act & Assert
     await Assert.That(() => manager.AddTransport(TransportType.InProcess, null!))
@@ -45,7 +46,7 @@ public class TransportManagerTests {
   [Test]
   public async Task AddTransport_ShouldReplaceExistingTransportAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
 
@@ -61,7 +62,7 @@ public class TransportManagerTests {
   [Test]
   public async Task AddTransport_ShouldStoreDifferentTypesAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var inProcessTransport = new InProcessTransport();
     var kafkaTransport = new InProcessTransport(); // Mock for now
 
@@ -81,7 +82,7 @@ public class TransportManagerTests {
   [Test]
   public async Task GetTransport_WhenExists_ShouldReturnTransportAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -95,7 +96,7 @@ public class TransportManagerTests {
   [Test]
   public async Task GetTransport_WhenNotExists_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Act & Assert
     var exception = await Assert.That(() => manager.GetTransport(TransportType.Kafka))
@@ -111,7 +112,7 @@ public class TransportManagerTests {
   [Test]
   public async Task HasTransport_WhenExists_ShouldReturnTrueAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -125,7 +126,7 @@ public class TransportManagerTests {
   [Test]
   public async Task HasTransport_WhenNotExists_ShouldReturnFalseAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Act
     var exists = manager.HasTransport(TransportType.Kafka);
@@ -142,7 +143,7 @@ public class TransportManagerTests {
   public async Task PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync() {
     // Arrange - a manager with NO transports registered at all. Any attempt to reach the
     // publish path would have to resolve a transport, and resolving one here throws.
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var message = new TestMessage { Content = "test", Value = 42 };
     var targets = new List<PublishTarget>();
 
@@ -167,7 +168,7 @@ public class TransportManagerTests {
   [Test]
   public async Task PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var targets = new List<PublishTarget>();
 
     // Act & Assert
@@ -178,7 +179,7 @@ public class TransportManagerTests {
   [Test]
   public async Task PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var message = new TestMessage { Content = "test", Value = 42 };
 
     // Act & Assert
@@ -193,7 +194,7 @@ public class TransportManagerTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var targets = new List<SubscriptionTarget>();
 
     static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
@@ -208,7 +209,7 @@ public class TransportManagerTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
@@ -220,7 +221,7 @@ public class TransportManagerTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var targets = new List<SubscriptionTarget>();
 
     // Act & Assert

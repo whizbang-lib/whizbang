@@ -142,7 +142,7 @@ public class PerspectiveMigrationWorkerTests {
   public async Task ExecuteAsync_WithCancellation_StopsProcessingRemainingRebuildsAsync() {
     // Arrange
     var rebuilder = new FakeRebuilder();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
     var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -335,16 +335,16 @@ public class PerspectiveMigrationWorkerTests {
   // --- Test Doubles ---
 
   private sealed class ThrowingRebuilder : IPerspectiveRebuilder {
-    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct) =>
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) =>
         throw new InvalidOperationException("Boom");
 
-    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct) =>
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
         throw new InvalidOperationException("Boom");
 
-    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct) =>
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) =>
         throw new InvalidOperationException("Boom");
 
-    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct) =>
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
         Task.FromResult<RebuildStatus?>(null);
   }
 
@@ -353,7 +353,7 @@ public class PerspectiveMigrationWorkerTests {
     public string? LastPerspectiveName { get; private set; }
     public bool ShouldFail { get; init; }
 
-    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct) {
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
       RebuildCount++;
       LastPerspectiveName = perspectiveName;
       return Task.FromResult(ShouldFail
@@ -361,13 +361,13 @@ public class PerspectiveMigrationWorkerTests {
         : new RebuildResult(perspectiveName, 5, 10, TimeSpan.FromSeconds(1), true, null));
     }
 
-    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct) =>
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
         RebuildBlueGreenAsync(perspectiveName, ct);
 
-    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct) =>
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) =>
         RebuildBlueGreenAsync(perspectiveName, ct);
 
-    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct) =>
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) =>
         Task.FromResult<RebuildStatus?>(null);
   }
 }

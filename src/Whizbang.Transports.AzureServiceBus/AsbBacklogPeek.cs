@@ -46,8 +46,8 @@ public sealed class AsbBacklogPeek(ITransport transport, TagOptions? tagOptions 
   public async Task<IReadOnlyList<BacklogSample>> PeekAsync(CancellationToken cancellationToken) {
     var samples = new List<BacklogSample>();
 
-    foreach (var (namespaceKey, transport) in _namespacePeers()) {
-      if (transport is not AzureServiceBusTransport asb) {
+    foreach (var (namespaceKey, peer) in _namespacePeers()) {
+      if (peer is not AzureServiceBusTransport asb) {
         continue;
       }
 

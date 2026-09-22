@@ -182,15 +182,6 @@ public class ReceptorInvokerScopePropagationTests {
 
   #region Test Helpers
 
-  private static MessageEnvelope<T> _createEnvelope<T>(T message) where T : notnull {
-    return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
-      Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-  }
-
   private static MessageEnvelope<T> _createEnvelopeWithoutScope<T>(T message) where T : notnull {
     return new MessageEnvelope<T> {
       MessageId = MessageId.From(TrackedGuid.NewMedo()),
@@ -306,9 +297,7 @@ public class ReceptorInvokerScopePropagationTests {
   /// </summary>
   private sealed class InvocationTracker {
     private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
-    public List<(string ReceptorId, LifecycleStage Stage)> Invocations => _invocations;
     public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
-    public void Clear() => _invocations.Clear();
   }
 
   /// <summary>
@@ -359,8 +348,10 @@ public class ReceptorInvokerScopePropagationTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

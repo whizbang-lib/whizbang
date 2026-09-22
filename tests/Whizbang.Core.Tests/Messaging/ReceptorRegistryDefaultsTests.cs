@@ -17,7 +17,7 @@ public class ReceptorRegistryDefaultsTests {
   /// <summary>Implements only the abstract members so the defaults stay inherited.</summary>
   private sealed class MinimalReceptorRegistry : IReceptorRegistry {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage)
-        => Array.Empty<ReceptorInfo>();
+        => [];
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage)
         where TMessage : IMessage { }

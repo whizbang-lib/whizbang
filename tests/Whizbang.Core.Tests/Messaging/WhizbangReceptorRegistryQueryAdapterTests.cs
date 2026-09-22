@@ -10,19 +10,23 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Adapter tests for <see cref="WhizbangReceptorRegistryQueryAdapter"/> — the
 /// instance-API shim that delegates each call to the source-generated
 /// <c>Whizbang.Core.Generated.WhizbangReceptorRegistryQuery</c> static class.
-///
+/// </para>
+/// <para>
 /// The adapter exists ONLY so DI consumers can resolve <see cref="IReceptorRegistryQuery"/>
 /// (test code can substitute a fake; production binds to this implementation).
 /// The tests below pin the delegation: each instance method returns the same value
 /// as the corresponding static, for every shape of input.
-///
+/// </para>
+/// <para>
 /// Cache pollution risk: the static caches contributions across the AppDomain.
 /// We query for type names the test owns (a freshly-declared `_NoSuchType`) which
 /// can never be registered — the result is always false, regardless of what other
 /// tests registered. No mutation of the static state, no flake.
+/// </para>
 /// </summary>
 /// <docs>internals/receptor-registry-query</docs>
 public class WhizbangReceptorRegistryQueryAdapterTests {
@@ -32,7 +36,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasReceptors_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasReceptors(LifecycleStage.PreDistributeDetached, UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -44,7 +48,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasInboxHandler_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasInboxHandler(UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -61,7 +65,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     // tables, the receive/inbox discard gates silently drop every control-plane message —
     // observed live: checkpoints/rebuild commands discarded as "no consumer" on services whose
     // runtime registrars had them.
-    var runtime = new _runtimeRegistryFake(UNKNOWN_TYPE);
+    var runtime = new RuntimeRegistryFake(UNKNOWN_TYPE);
     var sut = new WhizbangReceptorRegistryQueryAdapter(runtime);
 
     await Assert.That(sut.HasAnyConsumer(UNKNOWN_TYPE)).IsTrue()
@@ -93,7 +97,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
       .Because("the adapter surfaces the runtime registration to both discard gates.");
   }
 
-  private sealed class _runtimeRegistryFake(string knownName) : IReceptorRegistry {
+  private sealed class RuntimeRegistryFake(string knownName) : IReceptorRegistry {
     public bool HasRuntimeConsumerFor(string clrTypeName) => clrTypeName == knownName;
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
@@ -104,7 +108,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
 
   [Test]
   public async Task HasAnyConsumer_UnknownType_DelegatesAndReturnsFalseAsync() {
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     var direct = sut.HasAnyConsumer(UNKNOWN_TYPE);
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery
@@ -118,7 +122,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   public async Task Adapter_ImplementsIReceptorRegistryQueryAsync() {
     // Compile-time fact, but explicitly asserted here so a future rename / shape
     // change of IReceptorRegistryQuery breaks this test before it breaks DI.
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
     await Assert.That(sut).IsAssignableTo<IReceptorRegistryQuery>();
   }
 
@@ -126,7 +130,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
   public async Task GetHandledMessages_DelegatesToGeneratedStaticAsync() {
     // The adapter must surface the SAME enumeration as the aggregating static — same
     // count, same order (both read the merged AssemblyRegistry contributions).
-    var sut = new WhizbangReceptorRegistryQueryAdapter();
+    var sut = new WhizbangReceptorRegistryQueryAdapter(runtimeRegistry: NullReceptorRegistry.Instance);
 
     IReadOnlyList<HandledMessageInfo> direct = ((IReceptorRegistryQuery)sut).GetHandledMessages();
     var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
@@ -140,12 +144,12 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     // Default-interface-member contract: implementations that predate the enumeration
     // surface (custom/test fakes with predicates only) keep compiling AND degrade to an
     // empty enumeration — topology consumers fall back to the singular strategy behavior.
-    IReceptorRegistryQuery predicatesOnly = new _predicatesOnlyQueryFake();
+    IReceptorRegistryQuery predicatesOnly = new PredicatesOnlyQueryFake();
 
     await Assert.That(predicatesOnly.GetHandledMessages()).IsEmpty();
   }
 
-  private sealed class _predicatesOnlyQueryFake : IReceptorRegistryQuery {
+  private sealed class PredicatesOnlyQueryFake : IReceptorRegistryQuery {
     public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public bool HasInboxHandler(string messageType) => false;
     public bool HasAnyConsumer(string messageType) => false;

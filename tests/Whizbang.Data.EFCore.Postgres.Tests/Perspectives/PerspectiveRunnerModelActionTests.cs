@@ -26,6 +26,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
       EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore) {
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddTransient<ActionTestPerspective>();
     services.AddLogging();
     var sp = services.BuildServiceProvider();

@@ -23,7 +23,7 @@ public class ScheduleTimerCoverageTests {
   [Test]
   public async Task ArmFor_OnDueThrows_LogsWakeFailedWithTheExceptionAsync() {
     var clock = new FakeTimeProvider(_t0);
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var boom = new InvalidOperationException("onDue exploded");
     var timer = new ScheduleTimer(clock, () => throw boom, logger);
 
@@ -41,7 +41,7 @@ public class ScheduleTimerCoverageTests {
     timer.Dispose();
   }
 
-  private sealed class _capturingLogger : ILogger<ScheduleTimer> {
+  private sealed class CapturingLogger : ILogger<ScheduleTimer> {
     public List<(string Message, Exception? Exception)> Warnings { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

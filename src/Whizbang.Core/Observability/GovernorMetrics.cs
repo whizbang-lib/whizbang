@@ -51,7 +51,7 @@ public sealed class GovernorMetrics {
   /// <param name="whizbangMetrics">Meter factory holder.</param>
   public GovernorMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     _adjustments = meter.CreatePassiveCounter<long>(
       name: "whizbang.governor.adjustments",

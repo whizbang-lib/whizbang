@@ -43,6 +43,16 @@ public interface IReadModelsReadyGate {
 /// <summary>Default <see cref="IReadModelsReadyGate"/>: one sticky completion, any number of waiters.</summary>
 /// <docs>operations/startup/startup-pipeline#seams</docs>
 public sealed class ReadModelsReadyGate : IReadModelsReadyGate {
+  /// <summary>
+  /// A gate that is already open: for hosts and tests that hold no read models and would otherwise
+  /// wait on a signal nothing sends. Mirrors <see cref="SchemaReadyGate.AlreadyReady"/>.
+  /// </summary>
+  public static ReadModelsReadyGate AlreadyReady() {
+    var gate = new ReadModelsReadyGate();
+    gate.MarkReady();
+    return gate;
+  }
+
   private readonly TaskCompletionSource _ready =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 

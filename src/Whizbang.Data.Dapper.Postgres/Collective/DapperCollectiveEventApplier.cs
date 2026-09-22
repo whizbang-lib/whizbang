@@ -34,9 +34,7 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_CohortLargerThanBatchSize_UpdatesEveryRowAcrossBatchesAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Applier_EventTypeMismatch_ThrowsArgumentAsync</tests>
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the Whizbang.Data.EFCore.Postgres CollectiveEventApplier pattern.")]
-public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
-  // Preserve PascalCase property names — they are the jsonb keys (matches CollectiveSettersRewriter).
-  private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = null };
+public static class DapperCollectiveEventApplier<TModel> where TModel : class {
 
   /// <summary>
   /// Apply the collective event against the Dapper-backed perspective table. Returns the affected-row count.
@@ -105,11 +103,11 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(
-      spec, _jsonOptions, parameterPrefix: "set",
+      spec, DapperCollectiveEventApplierJson.Options, parameterPrefix: "set",
       hookSetters: hookPlan.ModelFieldSetters, removedFields: hookPlan.RemovedModelFields);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
-    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where —
     // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
     // (ReplaceWhere) the cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
@@ -252,4 +250,12 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     p.Value = value;
     cmd.Parameters.Add(p);
   }
+}
+
+/// <summary>
+/// One serializer configuration for every <c>TModel</c> instantiation: PascalCase property
+/// names are preserved because they are the jsonb keys (matches CollectiveSettersRewriter).
+/// </summary>
+internal static class DapperCollectiveEventApplierJson {
+  internal static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = null };
 }

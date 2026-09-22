@@ -53,14 +53,14 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowOutboxBatchStrategy(
       OutboxBulkFlushCallback flush,
+      ILogger<SlidingWindowOutboxBatchStrategy> logger,
       SlidingWindowOutboxOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ILogger<SlidingWindowOutboxBatchStrategy>? logger = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     _options = options ?? new SlidingWindowOutboxOptions();
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _logger = (ILogger?)logger ?? NullLogger.Instance;
+    _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
       static state => ((SlidingWindowOutboxBatchStrategy)state!)._fireAndForgetIdleSweep(),

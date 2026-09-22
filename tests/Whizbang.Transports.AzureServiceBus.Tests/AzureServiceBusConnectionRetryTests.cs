@@ -158,8 +158,8 @@ public class AzureServiceBusConnectionRetryTests {
       InitialRetryDelay = TimeSpan.FromSeconds(1)
     };
     var retry = new AzureServiceBusConnectionRetry(options);
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await retry.CreateClientWithRetryAsync("Endpoint=sb://invalid.servicebus.windows.net/;SharedAccessKeyName=Test;SharedAccessKey=abc123", cts.Token))
@@ -308,7 +308,7 @@ public class AzureServiceBusConnectionRetryTests {
     // Startup connection retry has to end somewhere when the operator asked it to. Swallowing the
     // final failure would leave the transport reporting healthy with no connection behind it; the
     // exception is what stops the host coming up pretending it can publish.
-    var log = new _attemptLog();
+    var log = new AttemptLog();
     var retry = new AzureServiceBusConnectionRetry(_fastRetry(attempts: 1, indefinitely: false), log);
 
     await Assert.That(async () =>
@@ -330,7 +330,7 @@ public class AzureServiceBusConnectionRetryTests {
     // attempt budget must stop meaning "give up" and start meaning "log less often". A worker
     // that gave up here would need a restart to ever connect, which is the outage the setting
     // exists to avoid.
-    var log = new _attemptLog();
+    var log = new AttemptLog();
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     log.OnAttempt = attempt => {
       if (attempt >= 4) {
@@ -351,7 +351,7 @@ public class AzureServiceBusConnectionRetryTests {
   }
 
   /// <summary>Counts connection attempts and lets a test act on the count.</summary>
-  private sealed class _attemptLog : ILogger {
+  private sealed class AttemptLog : ILogger {
     private int _attempts;
 
     public int Attempts => Volatile.Read(ref _attempts);

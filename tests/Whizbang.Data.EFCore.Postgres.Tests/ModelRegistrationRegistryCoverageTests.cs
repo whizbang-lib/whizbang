@@ -25,12 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class ModelRegistrationRegistryCoverageTests {
   [Before(Test)]
-  public void ResetStaticState() {
-    var field = typeof(ModelRegistrationRegistry)
-        .GetField("_registrars", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var list = (System.Collections.IList)field.GetValue(null)!;
-    list.Clear();
-  }
+  public void ResetStaticState() => ModelRegistrationRegistry.ResetForTesting();
 
   // If no assembly ever registered a model callback, InvokeRegistration must gracefully do
   // nothing rather than throw — schema-only / diagnostic hosts (a migration CLI, a health-check

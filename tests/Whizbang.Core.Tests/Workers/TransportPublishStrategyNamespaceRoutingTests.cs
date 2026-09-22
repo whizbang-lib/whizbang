@@ -4,11 +4,13 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.Transports;
@@ -215,15 +217,15 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       ITransport transport, TransportNamespaceResolver? transportNamespaces,
       TransportMetrics? metrics = null) {
     return new TransportPublishStrategy(
-      transport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
-      loggerFactory: null,
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       throttleRetryOptions: new ThrottleRetryOptions { MaxAttempts = 2, BaseDelay = TimeSpan.FromMilliseconds(1) },
       metrics: metrics,
       postSerializeHookChain: null,
       jsonOptions: null,
-      namespaceRouting: null,
       transportNamespaces: transportNamespaces);
   }
 

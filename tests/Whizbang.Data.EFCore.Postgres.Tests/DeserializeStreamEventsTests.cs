@@ -155,7 +155,7 @@ public class DeserializeStreamEventsTests {
     // Arrange — a corrupt row (malformed JSON) followed by a good row, sharing a resolvable event
     // type. The corrupt row forces a JsonException inside the deserialize; the good row must survive.
     var jsonOptions = _createJsonOptions();
-    var logger = new _capturingLogger<EFCoreEventStore<MinimalTestDbContext>>();
+    var logger = new CapturingLogger<EFCoreEventStore<MinimalTestDbContext>>();
     var options = new DbContextOptionsBuilder<MinimalTestDbContext>()
       .UseInMemoryDatabase($"deser-log-{Guid.NewGuid():N}")
       .Options;
@@ -198,17 +198,17 @@ public class DeserializeStreamEventsTests {
   }
 
   /// <summary>Minimal capturing logger — records level/message/exception for assertions.</summary>
-  private sealed class _capturingLogger<T> : ILogger<T> {
+  private sealed class CapturingLogger<T> : ILogger<T> {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _nullScope.Instance;
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
       => Entries.Add((logLevel, formatter(state, exception), exception));
+  }
 
-    private sealed class _nullScope : IDisposable {
-      public static readonly _nullScope Instance = new();
-      public void Dispose() { }
-    }
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   private static EFCoreEventStore<MinimalTestDbContext> _createEventStore() {

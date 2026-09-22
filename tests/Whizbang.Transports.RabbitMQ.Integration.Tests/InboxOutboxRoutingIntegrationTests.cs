@@ -490,7 +490,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   ) {
     // Arrange - Publisher uses DomainTopicOutboxStrategy, Subscriber uses DomainTopicInboxStrategy
     var outboxStrategy = new DomainTopicOutboxStrategy();
-    var inboxStrategy = new DomainTopicInboxStrategy(".outbox"); // Subscribe to outbox topic
+    _ = new DomainTopicInboxStrategy(".outbox"); // Subscribe to outbox topic
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
 
     // Get destination from outbox strategy

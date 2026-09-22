@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -24,7 +25,7 @@ public class BackupTickCoordinatorCoverageTests {
   /// <see cref="Entered"/> first, so a test can wait on evidence the coordinator's own body reached
   /// the barrier instead of on <c>StartAsync</c> returning (which, since .NET 10, only means the
   /// thread-pool work item was queued).</summary>
-  private sealed class _canceledSchemaGate : ISchemaReadyGate {
+  private sealed class CanceledSchemaGate : ISchemaReadyGate {
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsReady => false;
     public void MarkReady() { }
@@ -37,7 +38,7 @@ public class BackupTickCoordinatorCoverageTests {
   /// <summary>Always reports a small, constant idle time so the ASLEEP branch never transitions
   /// to POLLING; signals once its getter has been read a second time, proving the sleep-then-loop
   /// cycle actually ran instead of the coordinator exiting or hanging on the first pass.</summary>
-  private sealed class _alwaysIdleTracker : IIdleActivityTracker {
+  private sealed class AlwaysIdleTracker : IIdleActivityTracker {
     private int _reads;
     public TaskCompletionSource SecondReadSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void Touch(string source) { }
@@ -67,19 +68,20 @@ public class BackupTickCoordinatorCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_SchemaGateCanceledDuringStartup_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
-    var gate = new _canceledSchemaGate();
+    var gate = new CanceledSchemaGate();
     var registry = new BackupTickRegistry();
     var ticked = 0;
     registry.Register("backstop", _ => { Interlocked.Increment(ref ticked); return Task.CompletedTask; }, () => true);
 
     var coordinator = new BackupTickCoordinator(
-      new IdleActivityTracker(TimeProvider.System),
-      registry,
+      tracker: new IdleActivityTracker(TimeProvider.System),
+      registry: registry,
       // Zero idle threshold: if the gate cancellation were ignored, the coordinator would go
       // straight to POLLING and fire the registration above.
-      Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.Zero }),
-      NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: gate);
+      options: Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.Zero }),
+      logger: NullLogger<BackupTickCoordinator>.Instance,
+      schemaReadyGate: gate,
+      gate: NullNotifySignalingGate.Instance);
 
     await coordinator.StartAsync(CancellationToken.None);
     await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -106,13 +108,14 @@ public class BackupTickCoordinatorCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_Asleep_SleepsThenReChecksIdleTimeAsync(CancellationToken testToken) {
-    var tracker = new _alwaysIdleTracker();
+    var tracker = new AlwaysIdleTracker();
     var coordinator = new BackupTickCoordinator(
-      tracker,
-      new BackupTickRegistry(),
-      Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.FromMilliseconds(5) }),
-      NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      tracker: tracker,
+      registry: new BackupTickRegistry(),
+      options: Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.FromMilliseconds(5) }),
+      logger: NullLogger<BackupTickCoordinator>.Instance,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      gate: NullNotifySignalingGate.Instance);
 
     using var cts = new CancellationTokenSource();
     await coordinator.StartAsync(cts.Token);
@@ -137,11 +140,12 @@ public class BackupTickCoordinatorCoverageTests {
     }, () => true);
     registry.Register("second", _ => { ranSecond = true; return Task.CompletedTask; }, () => true);
     var coordinator = new BackupTickCoordinator(
-      new IdleActivityTracker(TimeProvider.System),
-      registry,
-      Options.Create(new BackupTickCoordinatorOptions()),
-      NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      tracker: new IdleActivityTracker(TimeProvider.System),
+      registry: registry,
+      options: Options.Create(new BackupTickCoordinatorOptions()),
+      logger: NullLogger<BackupTickCoordinator>.Instance,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      gate: NullNotifySignalingGate.Instance);
 
     var invoked = await coordinator.FireOneCycleAsync(cts.Token);
 

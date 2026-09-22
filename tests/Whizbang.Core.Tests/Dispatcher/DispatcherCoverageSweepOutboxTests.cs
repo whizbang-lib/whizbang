@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -83,7 +85,7 @@ public class DispatcherCoverageSweepOutboxTests {
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     Type? handleMessageType = null,
     bool publisherThrows = false
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
@@ -388,7 +390,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // ILogger<Dispatcher> warning; the publisher failure must still surface
     var logs = new List<string>();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics()), logs: logs),
+      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())), logs: logs),
       publisherThrows: true);
 
     // Act & Assert
@@ -404,7 +406,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // Arrange - full success path with metrics registered
     var strategy = new SweepWorkStrategy();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics())),
+      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()))),
       envelopeSerializer: new SweepEnvelopeSerializer());
 
     // Act
@@ -625,7 +627,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());
     await Assert.That(strategy.Queued).Count().IsEqualTo(1);
 
-    provider.Dispose();
+    await provider.DisposeAsync();
 
     // Act - dropping the event during shutdown must NOT throw
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());
@@ -960,7 +962,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);
@@ -994,7 +996,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);

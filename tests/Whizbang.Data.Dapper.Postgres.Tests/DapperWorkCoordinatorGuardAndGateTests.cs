@@ -177,12 +177,11 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
 
   [Test]
   public async Task GatedCoordinator_AllGatedMethods_ExecuteThroughGateAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 2);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
     var c = new DapperWorkCoordinator(
       ConnectionString,
       _jsonOptions,
       NullLogger<DapperWorkCoordinator>.Instance,
-      commandTimeoutSeconds: 5,
       gate: gate);
     var instanceId = (Guid)TrackedGuid.NewMedo();
 
@@ -396,7 +395,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     var instanceId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
 
-    // StreamId null → wh_outbox.stream_id NULL and partition_number NULL;
+    // StreamId null → wh_outbox.stream_id NULL and partition_number NULL —
     // Destination null → destination NULL. The row is fetched via the
     // message_id-as-sentinel branch of fetch_outbox_batch (v0.658 slice 7).
     await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId: null, destination: null)], partitionCount: 100);

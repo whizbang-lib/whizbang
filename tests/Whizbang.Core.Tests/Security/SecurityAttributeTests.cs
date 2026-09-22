@@ -129,6 +129,7 @@ public class SecurityAttributeTests {
 
   private sealed class SampleResolver {
     [RequirePermission("thing:read", Operation = ScopeOperation.Read)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3400:Methods should not return constants", Justification = "The attribute targets a method; the body is irrelevant.")]
     public string GetThing() => "x";
   }
 

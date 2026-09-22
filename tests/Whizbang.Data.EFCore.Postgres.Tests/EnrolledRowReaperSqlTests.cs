@@ -73,7 +73,7 @@ public class EnrolledRowReaperSqlTests : EFCoreTestBase {
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version, expires_at)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb,
               NOW() - make_interval(days => @c), NOW() - make_interval(days => @u), 1, @e)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("c", createdDaysAgo);
     cmd.Parameters.AddWithValue("u", updatedDaysAgo);
     cmd.Parameters.Add(new NpgsqlParameter("e", NpgsqlTypes.NpgsqlDbType.TimestampTz) {
@@ -89,7 +89,7 @@ public class EnrolledRowReaperSqlTests : EFCoreTestBase {
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }
 

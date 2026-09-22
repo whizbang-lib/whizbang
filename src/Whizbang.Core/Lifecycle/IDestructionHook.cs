@@ -28,7 +28,7 @@ namespace Whizbang.Core.Lifecycle;
 /// <para>The ephemeral→Sourced boundary stays closed: a hook may emit ephemeral events and produce an
 /// authoritative ephemeral summary, but never re-emit the ephemeral payload as a durable Sourced event.</para>
 /// </remarks>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IDestructionHook {
   /// <summary>
   /// Awaited on the reaper's critical path, before the physical delete. Do preserve-work here (it must

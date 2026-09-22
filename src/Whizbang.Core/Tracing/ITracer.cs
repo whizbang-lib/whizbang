@@ -4,6 +4,7 @@ namespace Whizbang.Core.Tracing;
 /// Interface for tracing handler invocations and message processing.
 /// Provides observability into the Whizbang message handling pipeline.
 /// </summary>
+/// <docs>operations/observability/tracing</docs>
 public interface ITracer {
   /// <summary>
   /// Begins a trace span for handler invocation.

@@ -42,7 +42,7 @@ public class DefaultTransportReadinessCheckTests {
     // Arrange
     var check = new DefaultTransportReadinessCheck();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await check.IsReadyAsync(cts.Token))

@@ -78,7 +78,7 @@ public sealed class DeadLetterMetrics {
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
   public DeadLetterMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     Added = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.added",

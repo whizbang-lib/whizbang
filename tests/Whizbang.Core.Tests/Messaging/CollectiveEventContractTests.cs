@@ -28,8 +28,8 @@ public class CollectiveEventContractTests {
     // transport surface as ordinary events. That only works if the root
     // is IMessage; a collective that did NOT extend IMessage would need
     // a parallel dispatch path.
-    ICollectiveEvent evt = new _archiveJobsCollectiveEvent(
-      new _tenantCollectiveScope("11111111-1111-1111-1111-111111111111"));
+    ICollectiveEvent evt = new ArchiveJobsCollectiveEvent(
+      new TenantCollectiveScope("11111111-1111-1111-1111-111111111111"));
 
     await Assert.That(evt is IMessage).IsTrue()
       .Because("ICollectiveEvent : IMessage so the existing dispatcher / outbox / transport — which all constrain on IMessage — carry it as-is. No parallel pipeline.");
@@ -42,8 +42,8 @@ public class CollectiveEventContractTests {
     // into wh_event_store by _emit_event_store_chain. If ICollectiveEvent were merely
     // IMessage (not IEvent), a published collective event would get is_event = false and
     // never reach the event store — so the consume-side routing/dispatch could never fire.
-    ICollectiveEvent evt = new _archiveJobsCollectiveEvent(
-      new _tenantCollectiveScope("11111111-1111-1111-1111-111111111111"));
+    ICollectiveEvent evt = new ArchiveJobsCollectiveEvent(
+      new TenantCollectiveScope("11111111-1111-1111-1111-111111111111"));
 
     await Assert.That(evt is IEvent).IsTrue()
       .Because("ICollectiveEvent : IEvent so the producer classifies it as is_event=true and it persists to wh_event_store via the normal event path — the precondition for the __collective__ sink routing and dispatch.");
@@ -54,8 +54,8 @@ public class CollectiveEventContractTests {
     // Scope drives runtime routing (which perspectives accept this event)
     // and is the SOLE source of the WHERE clause for the SQL UPDATE.
     // The event MUST carry it; an event without a scope can't be routed.
-    var scope = new _tenantCollectiveScope("11111111-1111-1111-1111-111111111111");
-    ICollectiveEvent evt = new _archiveJobsCollectiveEvent(scope);
+    var scope = new TenantCollectiveScope("11111111-1111-1111-1111-111111111111");
+    ICollectiveEvent evt = new ArchiveJobsCollectiveEvent(scope);
 
     await Assert.That(evt.Scope).IsNotNull();
     await Assert.That(ReferenceEquals(evt.Scope, scope)).IsTrue()
@@ -67,8 +67,8 @@ public class CollectiveEventContractTests {
     // Resolvers are DI-registered keyed by ScopeKind. The string is the
     // runtime discriminator that maps Scope payload → resolver impl.
     // Different scope types MUST return different discriminators.
-    ICollectiveScope tenant = new _tenantCollectiveScope("11111111-1111-1111-1111-111111111111");
-    ICollectiveScope global = new _globalCollectiveScope();
+    ICollectiveScope tenant = new TenantCollectiveScope("11111111-1111-1111-1111-111111111111");
+    ICollectiveScope global = new GlobalCollectiveScope();
 
     await Assert.That(tenant.ScopeKind).IsEqualTo("tenant")
       .Because("Built-in tenant scope must use a stable kind so TenantCollectiveScopeResolver (Slice 4) can register against it.");
@@ -92,13 +92,13 @@ public class CollectiveEventContractTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed record _archiveJobsCollectiveEvent(CollectiveScope Scope) : ICollectiveEvent;
+  private sealed record ArchiveJobsCollectiveEvent(CollectiveScope Scope) : ICollectiveEvent;
 
-  private sealed record _tenantCollectiveScope(string TenantId) : CollectiveScope {
+  private sealed record TenantCollectiveScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
   }
 
-  private sealed record _globalCollectiveScope : CollectiveScope {
+  private sealed record GlobalCollectiveScope : CollectiveScope {
     public override string ScopeKind => "global";
   }
 }

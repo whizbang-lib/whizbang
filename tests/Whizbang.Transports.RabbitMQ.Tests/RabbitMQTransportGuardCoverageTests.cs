@@ -2,7 +2,6 @@
 #pragma warning disable CS0067 // Event is never used (test double)
 #pragma warning disable CA1822 // Member does not access instance data (test double)
 
-using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
@@ -97,7 +96,7 @@ public class RabbitMQTransportGuardCoverageTests {
       .IsEqualTo(causationId.Value.ToString());
   }
 
-  // --- _flushBatchAsync: empty-list defensive guard (invoked via reflection — the collector
+  // --- FlushBatchAsync: empty-list defensive guard (reached through the internal seam — the collector
   // that is the only production caller already guards against calling back with zero pending
   // messages, so this branch is otherwise unreachable without bypassing that guarantee). ---
 
@@ -110,19 +109,13 @@ public class RabbitMQTransportGuardCoverageTests {
     var channel = new FakeChannel();
     var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
-    var pendingType = typeof(RabbitMQTransport).GetNestedType("PendingRabbitMessage", BindingFlags.NonPublic)
-      ?? throw new InvalidOperationException("PendingRabbitMessage nested type not found - was it renamed?");
-    var emptyList = Activator.CreateInstance(typeof(List<>).MakeGenericType(pendingType))!;
-    var method = typeof(RabbitMQTransport).GetMethod("_flushBatchAsync", BindingFlags.NonPublic | BindingFlags.Instance)
-      ?? throw new InvalidOperationException("_flushBatchAsync not found on RabbitMQTransport - was it renamed?");
+    var emptyList = new List<RabbitMQTransport.PendingRabbitMessage>();
     var handlerCalled = false;
-    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> handler = (_, _) => {
+
+    await transport.FlushBatchAsync(emptyList, (_, _) => {
       handlerCalled = true;
       return Task.CompletedTask;
-    };
-
-    var task = (Task)method.Invoke(transport, [emptyList, handler, null, "some-queue"])!;
-    await task;
+    }, null, "some-queue");
 
     await Assert.That(handlerCalled).IsFalse();
   }
@@ -221,7 +214,7 @@ public class RabbitMQTransportGuardCoverageTests {
              + "quietly receive every message on the exchange instead of the two it asked for");
   }
 
-  // --- _tryReadStringHeader: null-headers defensive guard (invoked via reflection — the only
+  // --- TryReadStringHeader: null-headers defensive guard (reached through the internal seam — the only
   // two production call sites pass a Headers dictionary already proven non-null by an earlier
   // check, so this branch is otherwise unreachable). ---
 
@@ -230,10 +223,7 @@ public class RabbitMQTransportGuardCoverageTests {
     // Purely defensive: today's callers only reach this after already confirming Headers is
     // non-null. If that guard is ever relaxed, reading any header from a null dictionary must
     // return null rather than throwing a NullReferenceException mid-deserialization.
-    var method = typeof(RabbitMQTransport).GetMethod("_tryReadStringHeader", BindingFlags.NonPublic | BindingFlags.Static)
-      ?? throw new InvalidOperationException("_tryReadStringHeader not found on RabbitMQTransport - was it renamed?");
-
-    var result = method.Invoke(null, [null, "AnyKey"]);
+    var result = RabbitMQTransport.TryReadStringHeader(null, "AnyKey");
 
     await Assert.That(result).IsNull();
   }
@@ -283,7 +273,7 @@ public class RabbitMQTransportGuardCoverageTests {
   /// <summary>
   /// IReadOnlyBasicProperties whose MessageId getter throws ObjectDisposedException — simulates
   /// reading a delivered message's properties after the channel/connection has been torn down,
-  /// exactly the window <c>_nackPausedMessageAsync</c>'s doc comment describes (one last
+  /// exactly the window <c>NackPausedMessageAsync</c>'s doc comment describes (one last
   /// delivery between subscription pause and channel teardown).
   /// </summary>
   private sealed class ThrowingMessageIdBasicProperties : IReadOnlyBasicProperties {

@@ -53,40 +53,40 @@ public class MaintenanceWorkerRowSweepTests {
     public int FoldCalls;
 
     public Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
-        int batchSize = 5000, CancellationToken ct = default)
+        int batchSize = 5000, CancellationToken cancellationToken = default)
       => TtlReapThrows is not null
         ? Task.FromException<PerspectiveRowReapResult>(TtlReapThrows)
         : Task.FromResult(new PerspectiveRowReapResult(TtlRows, "ok"));
 
-    public Task<bool> TryClaimRowCapSweepAsync(TimeSpan claimWindow, CancellationToken ct = default)
+    public Task<bool> TryClaimRowCapSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default)
       => Task.FromResult(GrantRowCapSweep);
 
     public Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
-        int batchSize = 5000, CancellationToken ct = default) {
+        int batchSize = 5000, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref CapReapCalls);
       return Task.FromResult(new PerspectiveRowReapResult(CapRows, "ok"));
     }
 
-    public Task<bool> TryClaimSettledFoldSweepAsync(TimeSpan claimWindow, CancellationToken ct = default)
+    public Task<bool> TryClaimSettledFoldSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default)
       => Task.FromResult(GrantSettledFold);
 
     public Task<int> FoldSettledApplyPathsAsync(
-        TimeSpan idleWindow, int limit = 1000, CancellationToken ct = default) {
+        TimeSpan idleWindow, int limit = 1000, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref FoldCalls);
       return Task.FromResult(FoldedPaths);
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 

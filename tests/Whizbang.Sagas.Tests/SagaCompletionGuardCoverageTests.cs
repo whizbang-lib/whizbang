@@ -33,7 +33,7 @@ public class SagaCompletionGuardCoverageTests {
   // the same completion notification more than once.
   [Test]
   public async Task EmitOnceAsync_DelegatesToDispatcherPublishOnceWithTheConventionKeyAsync() {
-    var dispatcher = new _recordingDispatcher();
+    var dispatcher = new RecordingDispatcher();
     var sagaId = Guid.CreateVersion7();
     var evt = new TestEvent();
 
@@ -61,7 +61,7 @@ public class SagaCompletionGuardCoverageTests {
   /// else — so every other member throws if exercised, catching any future regression that
   /// accidentally routes through the wrong dispatcher surface.
   /// </summary>
-  private sealed class _recordingDispatcher : IDispatcher {
+  private sealed class RecordingDispatcher : IDispatcher {
     public int PublishOnceCallCount { get; private set; }
     public string? LastClaimKey { get; private set; }
     public object? LastEvent { get; private set; }

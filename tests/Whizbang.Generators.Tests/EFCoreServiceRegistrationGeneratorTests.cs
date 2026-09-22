@@ -121,9 +121,9 @@ public class EFCoreServiceRegistrationGeneratorTests {
       .Split('\n')
       .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
     await Assert.That(registryLine).IsNotNull();
-    await Assert.That(registryLine!).Contains("TestApp.Owner+Model")
+    await Assert.That(registryLine).Contains("TestApp.Owner+Model")
       .Because("the registry key is the CLR form, '+' for the nesting, the form the runtime looks up");
-    await Assert.That(registryLine!).DoesNotContain("TestApp.Owner.Model")
+    await Assert.That(registryLine).DoesNotContain("TestApp.Owner.Model")
       .Because("a display-string key matches nothing at runtime (issue #697)");
   }
 
@@ -976,7 +976,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = registration!.SourceText.ToString();
 
-    // Should try {Name}-init connection string first (convention-based PgBouncer bypass)
+    // Should try the name-init connection string first, the convention-based PgBouncer bypass —
     await Assert.That(sourceText).Contains("-init");
     await Assert.That(sourceText).Contains("GetConnectionString");
 

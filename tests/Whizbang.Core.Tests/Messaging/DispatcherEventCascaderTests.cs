@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -22,7 +23,7 @@ public class DispatcherEventCascaderTests {
   [Test]
   public async Task DispatcherEventCascader_Constructor_NullServiceProvider_ThrowsAsync() {
     // Act & Assert
-    await Assert.That(() => new DispatcherEventCascader(null!))
+    await Assert.That(() => new DispatcherEventCascader(null!, logger: NullLogger<DispatcherEventCascader>.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -33,7 +34,7 @@ public class DispatcherEventCascaderTests {
     var provider = services.BuildServiceProvider();
 
     // Act
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     // Assert
     await Assert.That(cascader).IsNotNull();
@@ -100,8 +101,8 @@ public class DispatcherEventCascaderTests {
     // Arrange
     var (cascader, _) = _createCascader();
     var testEvent = new TestCascadeEvent { Id = "test-123" };
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(() => cascader.CascadeFromResultAsync(testEvent, null, cancellationToken: cts.Token))
@@ -117,7 +118,7 @@ public class DispatcherEventCascaderTests {
     // Register dispatcher after cascader is created
     services.AddSingleton<IDispatcher>(dispatcher);
     var provider = services.BuildServiceProvider();
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     var testEvent = new TestCascadeEvent { Id = "test-123" };
 
@@ -136,7 +137,7 @@ public class DispatcherEventCascaderTests {
     services.AddSingleton<IDispatcher>(dispatcher);
 
     var provider = services.BuildServiceProvider();
-    var cascader = new DispatcherEventCascader(provider);
+    var cascader = new DispatcherEventCascader(provider, logger: NullLogger<DispatcherEventCascader>.Instance);
 
     return (cascader, dispatcher);
   }
@@ -224,11 +225,6 @@ public class DispatcherEventCascaderTests {
 
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
       throw new NotImplementedException();
-
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) {
-      CascadedMessages.Add(message);
-      return Task.CompletedTask;
-    }
 
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);

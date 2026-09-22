@@ -6,6 +6,7 @@
 // regression lock for the legacy API until the next major removal.
 #pragma warning disable CS0618
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -50,9 +51,9 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
   /// pattern: dispatcher.LocalInvokeAndSyncAsync(InitializeSystemManagedListCommand) →
   /// receptor emits SystemManagedListInitializedEvent.
   /// </summary>
-  public class _seedingReceptor : IReceptor<_seedTestCommand, _seedTestEvent> {
-    public ValueTask<_seedTestEvent> HandleAsync(_seedTestCommand message, CancellationToken cancellationToken = default) {
-      var evt = new _seedTestEvent {
+  public class SeedingReceptor : IReceptor<SeedTestCommand, SeedTestEvent> {
+    public ValueTask<SeedTestEvent> HandleAsync(SeedTestCommand message, CancellationToken cancellationToken = default) {
+      var evt = new SeedTestEvent {
         StreamId = message.StreamId,
         Tag = message.Tag,
       };
@@ -60,13 +61,13 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     }
   }
 
-  public sealed record _seedTestCommand : ICommand {
+  public sealed record SeedTestCommand : ICommand {
     [StreamId]
     public required Guid StreamId { get; init; }
     public required string Tag { get; init; }
   }
 
-  public sealed record _seedTestEvent : IEvent {
+  public sealed record SeedTestEvent : IEvent {
     [StreamId]
     public required Guid StreamId { get; init; }
     public required string Tag { get; init; }
@@ -81,7 +82,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     // Arrange: minimal Whizbang surface — Dispatcher + Receptors + sync services.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -112,7 +113,7 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     var dispatcher = scope.ServiceProvider.GetRequiredService<IDispatcher>();
 
     SyncDecisionContext? capturedContext = null;
-    var command = new _seedTestCommand {
+    var command = new SeedTestCommand {
       StreamId = (Guid)TrackedGuid.NewMedo(),
       Tag = "phase-0-empirical-probe",
     };
@@ -164,10 +165,10 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
   [Test]
   public async Task LocalInvokeAndSyncAsync_WithManuallyTrackedEvent_DoesWaitAsync() {
     // Arrange — same as above plus a fake awaiter we can observe.
-    var fakeAwaiter = new _capturingEventCompletionAwaiter();
+    var fakeAwaiter = new CapturingEventCompletionAwaiter();
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     services.AddSingleton<IEventCompletionAwaiter>(fakeAwaiter);
@@ -186,10 +187,10 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
     // Manually inject a tracked event so the wait's "no events" early-return is bypassed.
     var streamId = (Guid)TrackedGuid.NewMedo();
     var eventId = (Guid)TrackedGuid.NewMedo();
-    scopedTracker.TrackEmittedEvent(streamId, typeof(_seedTestEvent), eventId);
+    scopedTracker.TrackEmittedEvent(streamId, typeof(SeedTestEvent), eventId);
 
     var dispatcher = scope.ServiceProvider.GetRequiredService<IDispatcher>();
-    var command = new _seedTestCommand { StreamId = streamId, Tag = "baseline" };
+    var command = new SeedTestCommand { StreamId = streamId, Tag = "baseline" };
 
     SyncDecisionContext? capturedContext = null;
 
@@ -219,13 +220,13 @@ public class W4Phase0_DispatcherProjectionSyncEmpiricalTests {
   /// Capturing test double for <see cref="IEventCompletionAwaiter"/>. Records whether the
   /// dispatcher called WaitForEventsAsync and with which event IDs.
   /// </summary>
-  private sealed class _capturingEventCompletionAwaiter : IEventCompletionAwaiter {
+  private sealed class CapturingEventCompletionAwaiter : IEventCompletionAwaiter {
     public bool WasCalled { get; private set; }
     public List<Guid> LastEventIds { get; private set; } = [];
 
     public Guid AwaiterId { get; } = Guid.NewGuid();
 
-    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken) {
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       WasCalled = true;
       LastEventIds = [.. eventIds];
       return Task.FromResult(true);

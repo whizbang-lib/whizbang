@@ -30,7 +30,7 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
   private const string LEGACY_TABLE = "wh_per_bitemporal_legacy";
 
   /// <summary>Creates a table in the PRE-migration shape, with no sys_ columns.</summary>
-  private async Task _createLegacyTableAsync(NpgsqlConnection conn) {
+  private static async Task _createLegacyTableAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {LEGACY_TABLE};
       CREATE TABLE {LEGACY_TABLE} (
@@ -64,7 +64,7 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {LEGACY_TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, @c, @u, 1);", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("c", createdAt);
     cmd.Parameters.AddWithValue("u", updatedAt);
     await cmd.ExecuteNonQueryAsync();
@@ -74,14 +74,14 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand(
       $"SELECT sys_created_at, sys_updated_at FROM {LEGACY_TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return (null, null);
     }
     return (
-      reader.IsDBNull(0) ? null : reader.GetDateTime(0),
-      reader.IsDBNull(1) ? null : reader.GetDateTime(1));
+      await reader.IsDBNullAsync(0) ? null : reader.GetDateTime(0),
+      await reader.IsDBNullAsync(1) ? null : reader.GetDateTime(1));
   }
 
   [Test]

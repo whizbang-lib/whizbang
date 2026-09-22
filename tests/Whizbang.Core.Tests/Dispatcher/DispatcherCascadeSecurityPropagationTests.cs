@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -332,7 +333,7 @@ public class DispatcherCascadeSecurityPropagationTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddSingleton(scopeContextAccessor);
 
@@ -368,5 +369,4 @@ public class DispatcherCascadeSecurityPropagationTests {
 [JsonSerializable(typeof(MessageEnvelope<DispatcherCascadeSecurityPropagationTests.CascadeTestEvent>))]
 [JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
 [JsonSerializable(typeof(object))]
-internal sealed partial class CascadeTestJsonContext : JsonSerializerContext {
-}
+internal sealed partial class CascadeTestJsonContext : JsonSerializerContext;

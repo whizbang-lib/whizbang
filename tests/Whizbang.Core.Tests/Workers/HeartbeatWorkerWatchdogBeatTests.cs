@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -7,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -34,7 +36,7 @@ public class HeartbeatWorkerWatchdogBeatTests {
       Beats++;
       return onBeat();
     }
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
@@ -53,7 +55,7 @@ public class HeartbeatWorkerWatchdogBeatTests {
     var coordinator = new ScriptedHeartbeatCoordinator(onBeat);
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -66,6 +68,9 @@ public class HeartbeatWorkerWatchdogBeatTests {
       logger: logger,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance,
       timeProvider: clock);
     return (worker, logger, coordinator);
   }

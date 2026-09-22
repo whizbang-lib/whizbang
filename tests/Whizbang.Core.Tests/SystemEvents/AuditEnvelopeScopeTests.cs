@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -42,17 +44,17 @@ namespace Whizbang.Core.Tests.SystemEvents;
 [Category("SystemEvents")]
 public class AuditEnvelopeScopeTests {
 
-  private sealed record _auditedEvent : IEvent { public string Name { get; init; } = ""; }
+  private sealed record AuditedEvent : IEvent { public string Name { get; init; } = ""; }
 
-  private static (SystemEventEmitter Emitter, _captureStore Store) _build() {
-    var store = new _captureStore();
+  private static (SystemEventEmitter Emitter, CaptureStore Store) _build() {
+    var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider()), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
   }
 
-  private static MessageEnvelope<_auditedEvent> _scopedSource(string tenantId, string userId) => new() {
+  private static MessageEnvelope<AuditedEvent> _scopedSource(string tenantId, string userId) => new() {
     MessageId = MessageId.New(),
-    Payload = new _auditedEvent { Name = "x" },
+    Payload = new AuditedEvent { Name = "x" },
     Hops = [new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
@@ -116,9 +118,9 @@ public class AuditEnvelopeScopeTests {
   [Test]
   public async Task AnUnscopedSourceProducesNoTenantButStillMarksSystemAsync() {
     var (emitter, store) = _build();
-    var source = new MessageEnvelope<_auditedEvent> {
+    var source = new MessageEnvelope<AuditedEvent> {
       MessageId = MessageId.New(),
-      Payload = new _auditedEvent { Name = "x" },
+      Payload = new AuditedEvent { Name = "x" },
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     };
@@ -139,9 +141,9 @@ public class AuditEnvelopeScopeTests {
     // makes it forensically useful when instances disagree. ServiceInstanceInfo.Unknown is not a
     // safe default here: it is indistinguishable from an instance that genuinely could not be
     // identified, so every record looks equally untraceable.
-    var store = new _captureStore();
+    var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, instanceProvider: new _fixedInstance());
+    var emitter = new SystemEventEmitter(options, store, instanceProvider: new FixedInstance(), logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 
@@ -155,9 +157,9 @@ public class AuditEnvelopeScopeTests {
   public async Task TheAuditEnvelopeStillEmitsWithoutAnInstanceProviderAsync() {
     // The provider is optional: a service with no telemetry identity wired must still produce
     // audit records. Losing the audit entirely would be a far worse failure than an unknown writer.
-    var store = new _captureStore();
+    var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
+    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance, logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 
@@ -166,7 +168,7 @@ public class AuditEnvelopeScopeTests {
     await Assert.That(store.Envelopes[0].Hops[0].ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
   }
 
-  private sealed class _fixedInstance : IServiceInstanceProvider {
+  private sealed class FixedInstance : IServiceInstanceProvider {
     public Guid InstanceId => Guid.Parse("00000000-0000-0000-0000-0000000000a1");
     public string ServiceName => "audit-emitter-service";
     public string HostName => "host-1";
@@ -180,7 +182,7 @@ public class AuditEnvelopeScopeTests {
     };
   }
 
-  private sealed class _captureStore : IEventStore {
+  private sealed class CaptureStore : IEventStore {
     public List<MessageEnvelope<EventAudited>> Envelopes { get; } = [];
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {

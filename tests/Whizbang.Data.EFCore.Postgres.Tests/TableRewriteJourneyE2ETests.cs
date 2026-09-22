@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class TableRewriteJourneyE2ETests : EFCoreTestBase {
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "rewrite-svc";
     public string HostName => "rewrite-host";
@@ -54,13 +54,13 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     return services.BuildServiceProvider();
   }
 
-  private PgDutyElector _electorFor(_pod pod) => new(
+  private PgDutyElector _electorFor(Pod pod) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgDutyElector>.Instance);
 
-  private async Task _joinFleetAsync(_pod pod, CancellationToken ct) {
+  private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, JsonContextRegistry.CreateCombinedOptions());
@@ -95,10 +95,9 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
       await carve.ExecuteNonQueryAsync(ct);
     }
     await _waitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
-    await using (var analyze = conn.CreateCommand()) {
-      analyze.CommandText = "ANALYZE wh_settings";
-      await analyze.ExecuteNonQueryAsync(ct);
-    }
+    await using var analyze = conn.CreateCommand();
+    analyze.CommandText = "ANALYZE wh_settings";
+    await analyze.ExecuteNonQueryAsync(ct);
   }
 
   /// <summary>
@@ -157,8 +156,8 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task RequestedRewrite_TwoPodsRaceTheMaintainerDuty_OneExecutes_TheOtherSkipsAsync(CancellationToken cancellationToken) {
-    var podA = new _pod();
-    var podB = new _pod();
+    var podA = new Pod();
+    var podB = new Pod();
     await _joinFleetAsync(podA, cancellationToken);
     await _joinFleetAsync(podB, cancellationToken);
 
@@ -181,17 +180,25 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await using var providerA = _servicesForPod();
     await using var providerB = _servicesForPod();
     var stepA = new TableRewriteStartupStep(
-      providerA.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerA.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     var stepB = new TableRewriteStartupStep(
-      providerB.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerB.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     // Post-ready means AFTER Migrate: each pod carries the full declared chain, its schema gate
     // already open — exactly the state a running instance is in when the rewrite band begins.
     var openGate = new SchemaReadyGate();
     openGate.MarkReady();
     var runnerA = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepA], dutyElector: _electorFor(podA));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepA],
+      observers: [],
+      dutyElector: _electorFor(podA));
     var runnerB = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepB], dutyElector: _electorFor(podB));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepB],
+      observers: [],
+      dutyElector: _electorFor(podB));
 
     var results = await Task.WhenAll(
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));

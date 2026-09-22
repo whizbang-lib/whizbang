@@ -56,7 +56,7 @@ public class CapturingWorkCoordinatorTests {
     var coordinator = new CapturingWorkCoordinator();
     var messages = new[] { _message(), _message(), _message() };
 
-    await coordinator.StoreInboxMessagesAsync(messages);
+    await coordinator.StoreInboxMessagesAsync(messages, partitionCount: 2);
 
     await Assert.That(coordinator.StoredInboxMessages.Count).IsEqualTo(3);
   }
@@ -67,8 +67,8 @@ public class CapturingWorkCoordinatorTests {
     // would silently drop everything but the last batch.
     var coordinator = new CapturingWorkCoordinator();
 
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
-    await coordinator.StoreInboxMessagesAsync([_message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     await Assert.That(coordinator.StoredInboxMessages.Count).IsEqualTo(3);
   }
@@ -78,10 +78,10 @@ public class CapturingWorkCoordinatorTests {
     // Handing back the live list would let a later capture mutate a collection a test is
     // already asserting over — a race that shows up as an intermittent count mismatch.
     var coordinator = new CapturingWorkCoordinator();
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var snapshot = coordinator.StoredInboxMessages;
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     await Assert.That(snapshot.Count).IsEqualTo(1)
       .Because("a snapshot taken before the second write must not grow behind the test's back");
@@ -92,7 +92,7 @@ public class CapturingWorkCoordinatorTests {
   public async Task StoreInboxMessages_WithAnEmptyBatch_IsHarmlessAsync() {
     var coordinator = new CapturingWorkCoordinator();
 
-    await coordinator.StoreInboxMessagesAsync([], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     await Assert.That(coordinator.StoredInboxMessages).IsEmpty();
   }
@@ -104,7 +104,7 @@ public class CapturingWorkCoordinatorTests {
     // The common shape: the messages landed before the assertion ran. Parking here would turn
     // every already-satisfied wait into a full timeout.
     var coordinator = new CapturingWorkCoordinator();
-    await coordinator.StoreInboxMessagesAsync([_message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var captured = await coordinator.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
 
@@ -118,7 +118,7 @@ public class CapturingWorkCoordinatorTests {
     // The count is a floor, not an exact match — a consumer that wrote an extra message must
     // not leave the wait parked forever.
     var coordinator = new CapturingWorkCoordinator();
-    await coordinator.StoreInboxMessagesAsync([_message(), _message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var captured = await coordinator.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
 
@@ -134,8 +134,8 @@ public class CapturingWorkCoordinatorTests {
     var coordinator = new CapturingWorkCoordinator();
     var waiting = coordinator.WaitForInboxAsync(2, TimeSpan.FromSeconds(20));
 
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var captured = await waiting;
     await Assert.That(captured.Count).IsEqualTo(2);
@@ -151,11 +151,11 @@ public class CapturingWorkCoordinatorTests {
     var coordinator = new CapturingWorkCoordinator();
     var waiting = coordinator.WaitForInboxAsync(3, TimeSpan.FromSeconds(20));
 
-    await coordinator.StoreInboxMessagesAsync([_message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message()], partitionCount: 2, cancellationToken: CancellationToken.None);
     await Assert.That(waiting.IsCompleted).IsFalse()
       .Because("one of three is not enough — returning here would hand back a partial capture");
 
-    await coordinator.StoreInboxMessagesAsync([_message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var captured = await waiting;
     await Assert.That(captured.Count).IsEqualTo(3);
@@ -168,7 +168,7 @@ public class CapturingWorkCoordinatorTests {
     // The whole diagnostic value of the timeout is the shortfall: "expected 5, saw 2" tells the
     // author the consumer ran and under-produced, where a bare timeout does not.
     var coordinator = new CapturingWorkCoordinator();
-    await coordinator.StoreInboxMessagesAsync([_message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var ex = await Assert.ThrowsAsync<TimeoutException>(async () =>
       await coordinator.WaitForInboxAsync(5, TimeSpan.FromMilliseconds(200)));
@@ -202,7 +202,7 @@ public class CapturingWorkCoordinatorTests {
     var first = coordinator.WaitForInboxAsync(2, TimeSpan.FromSeconds(20));
     var second = coordinator.WaitForInboxAsync(2, TimeSpan.FromSeconds(20));
 
-    await coordinator.StoreInboxMessagesAsync([_message(), _message()], cancellationToken: CancellationToken.None);
+    await coordinator.StoreInboxMessagesAsync([_message(), _message()], partitionCount: 2, cancellationToken: CancellationToken.None);
 
     var results = await Task.WhenAll(first, second);
     await Assert.That(results[0].Count).IsEqualTo(2);

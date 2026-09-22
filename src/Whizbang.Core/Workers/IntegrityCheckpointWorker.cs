@@ -36,7 +36,7 @@ public sealed partial class IntegrityCheckpointWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.CheckpointsEnabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     LogStarted(_logger, _options.CheckpointIntervalSeconds);
@@ -107,7 +107,7 @@ public sealed partial class IntegrityCheckpointWorker(
     // resolvable topic) is absent — in-memory hosts keep the original behavior.
     // CONTROL CLASS (topology arc phase 9): the checkpoint is the archetypal supersedable control
     // signal — the next cycle re-derives it from the same watermarks, so a copy that outlives its
-    // successor is pure backlog. mint.Checkpoints owns the lifetime derivation (TTL ≈ 2× cadence);
+    // successor is pure backlog. mint.Checkpoints owns the lifetime derivation (TTL ≈ 2× cadence) —
     // the worker supplies only the cadence it actually runs on, so retuning the interval retunes
     // the lifetime with it. Absent mint (host built without AddWhizbang) ⇒ no TTL, pre-phase-9.
     var minted = scope.ServiceProvider.GetService<Minting.ICheckpointMint>()?.Mint(

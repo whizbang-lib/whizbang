@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.MsSql;
 using Testcontainers.ServiceBus;
@@ -303,8 +304,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -335,12 +337,18 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions: jsonOptions,
-        logger: // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
         options: consumerOptions,
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+      )
     );
 
     return builder.Build();
@@ -430,8 +438,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -468,12 +477,18 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions: jsonOptions,
-        logger: // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
         options: consumerOptions,
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+      )
     );
 
     return builder.Build();

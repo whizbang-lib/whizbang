@@ -48,7 +48,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   // Slice 33.4 — listener no longer owns a connection. Each test gets a fresh
   // PgSharedNotifyConnection too; StartAsync wires the listener as a subscriber. The
   // shared-conn must also be started so its dispatch loop runs.
-  private (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
+  private static (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
     var shared = new PgSharedNotifyConnection(
@@ -227,7 +227,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
     // Race: give the notification a chance to land. If OnSignal fires within 1 s,
     // tcs completes and the test fails. Otherwise tcs stays pending and the test passes.
-    var raced = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+    _ = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
     await Assert.That(tcs.Task.IsCompleted).IsFalse()
       .Because("payloads outside {outbox, inbox, perspective} must not surface as a WorkSignalCategory");
 

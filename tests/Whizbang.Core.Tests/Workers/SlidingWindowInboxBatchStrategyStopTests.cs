@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -27,6 +28,7 @@ public class SlidingWindowInboxBatchStrategyStopTests {
         flushEntered.TrySetResult();
         await releaseFlush.Task;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),

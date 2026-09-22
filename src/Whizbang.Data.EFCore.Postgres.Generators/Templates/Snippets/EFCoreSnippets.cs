@@ -215,8 +215,8 @@ __PHYSICAL_FIELD_CONFIGS__
     // Register singleton timer-based strategies (shared across scopes)
     // Interval and Batch strategies use background timers and must be singletons.
     // They resolve IWorkCoordinator per-flush via IServiceScopeFactory (singleton-safe).
-    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
-    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
     // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_MetricsAreNull_FlushRecordsNothingAsync</tests>
     // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
     // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
@@ -224,36 +224,37 @@ __PHYSICAL_FIELD_CONFIGS__
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
+      var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
       return new global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy(
         coordinator: null,
         instanceProvider,
         options,
         logger,
         scopeFactory,
-        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
+        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
+      var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
       return new global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy(
         coordinator: null,
         instanceProvider,
         options,
         logger,
         scopeFactory,
-        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
       );
     });
 

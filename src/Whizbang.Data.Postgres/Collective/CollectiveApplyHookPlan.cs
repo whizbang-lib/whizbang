@@ -96,12 +96,12 @@ public sealed record CollectiveApplyHookPlan<TModel>(
       Expression<Func<PerspectiveRow<TModel>, bool>> left,
       Expression<Func<PerspectiveRow<TModel>, bool>> right) {
     var parameter = left.Parameters[0];
-    var reboundRight = new _parameterReplacer(right.Parameters[0], parameter).Visit(right.Body);
+    var reboundRight = new ParameterReplacer(right.Parameters[0], parameter).Visit(right.Body);
     return Expression.Lambda<Func<PerspectiveRow<TModel>, bool>>(
       Expression.AndAlso(left.Body, reboundRight), parameter);
   }
 
-  private sealed class _parameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor {
+  private sealed class ParameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor {
     protected override Expression VisitParameter(ParameterExpression node) =>
       ReferenceEquals(node, from) ? to : base.VisitParameter(node);
   }

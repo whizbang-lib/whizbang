@@ -74,6 +74,9 @@ public sealed partial class PgDurableSignalTailWorker(
 
   private Dictionary<string, SignalTypeEntry>? _wireNameToEntry;
 
+  /// <summary>Replaces the wire map; for tests that drive a tick against a chosen set of signal types.</summary>
+  internal void UseWireMap(Dictionary<string, SignalTypeEntry> map) => _wireNameToEntry = map;
+
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // The very first act below is INSERTing this pod's cursor into wh_signal_cursors —
@@ -111,7 +114,7 @@ public sealed partial class PgDurableSignalTailWorker(
     while (!stoppingToken.IsCancellationRequested) {
       var delivered = 0;
       try {
-        delivered = await _tickOnceAsync(plan, stoppingToken);
+        delivered = await TickOnceAsync(plan, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -145,7 +148,7 @@ public sealed partial class PgDurableSignalTailWorker(
   /// subscribers, and advances the cursor. The count it returns drives the idle backoff.
   /// </summary>
   /// <returns>The number of signals delivered to local subscribers by this tick.</returns>
-  private async Task<int> _tickOnceAsync(NotificationConnectionPlan plan, CancellationToken ct) {
+  internal async Task<int> TickOnceAsync(NotificationConnectionPlan plan, CancellationToken ct) {
     var map = _wireNameToEntry;
     if (map is null || map.Count == 0) {
       return 0;   // no signal types discovered, nothing to dispatch

@@ -58,6 +58,7 @@ public class MutationContextTests {
     // Arrange
     var context = new MutationContext(CancellationToken.None);
     context.Items["key"] = "initial";
+    await Assert.That(context.Items["key"]).IsEqualTo("initial");
 
     // Act
     context.Items["key"] = "updated";

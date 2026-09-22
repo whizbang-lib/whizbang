@@ -50,7 +50,7 @@ public class SchemaBootstrapPhaseTests {
   private string _connectionString = null!;
 
   /// <summary>An instance identity, as a starting pod would present one.</summary>
-  private sealed class _Instance : IServiceInstanceProvider {
+  private sealed class Instance : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "bootstrap-svc";
     public string HostName => "bootstrap-host";
@@ -64,14 +64,14 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>A logger that keeps what it was told.</summary>
-  private sealed class _RecordingLogger : ILogger {
+  private sealed class RecordingLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new _Scope();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
         TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
       Entries.Add((logLevel, formatter(state, exception)));
-    private sealed class _Scope : IDisposable { public void Dispose() { } }
+    private sealed class Scope : IDisposable { public void Dispose() { } }
   }
 
   [Before(Test)]
@@ -132,7 +132,7 @@ public class SchemaBootstrapPhaseTests {
     await Assert.That(ready).IsTrue()
       .Because("the bootstrap's whole purpose is that an election becomes possible after it");
 
-    var instance = new _Instance();
+    var instance = new Instance();
     await SchemaBootstrapPhase.RegisterInstanceAsync(
       _connect, SCHEMA, instance, cancellationToken: cancellationToken);
 
@@ -183,7 +183,7 @@ public class SchemaBootstrapPhaseTests {
     await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
 
-    var stranger = new _Instance();
+    var stranger = new Instance();
     await Assert.That(await _scalarAsync<bool>(
       $"SELECT record_capability('{stranger.InstanceId}'::uuid, 'migrator')")).IsFalse()
       .Because("there is no registry row to attach a holding to");
@@ -211,7 +211,7 @@ public class SchemaBootstrapPhaseTests {
     await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
 
-    var evicted = new _Instance();
+    var evicted = new Instance();
     await SchemaBootstrapPhase.RegisterInstanceAsync(
       _connect, SCHEMA, evicted, cancellationToken: cancellationToken);
 
@@ -236,7 +236,7 @@ public class SchemaBootstrapPhaseTests {
   [Test]
   [Timeout(120000)]
   public async Task TheBootstrapIsIdempotentAsync(CancellationToken cancellationToken) {
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var first = await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
@@ -423,7 +423,7 @@ public class SchemaBootstrapPhaseTests {
   [Test]
   [Timeout(120000)]
   public async Task AFailedScriptReportsNotReadyRatherThanThrowingAsync(CancellationToken cancellationToken) {
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var ready = await SchemaBootstrapPhase.ApplyAsync(
       _connect,
@@ -464,7 +464,7 @@ public class SchemaBootstrapPhaseTests {
       ("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);"),
     };
 
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
     var ready = await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
 
@@ -494,7 +494,7 @@ public class SchemaBootstrapPhaseTests {
       [("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);")],
       SCHEMA,
       TIMEOUT_SECONDS,
-      new _RecordingLogger(),
+      new RecordingLogger(),
       cancellationToken);
 
     await Assert.That(await _lockHoldersAsync()).IsEqualTo(0L);
@@ -531,7 +531,7 @@ public class SchemaBootstrapPhaseTests {
     await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
 
-    var instance = new _Instance();
+    var instance = new Instance();
     await SchemaBootstrapPhase.RegisterInstanceAsync(
       _connect, SCHEMA, instance, cancellationToken: cancellationToken);
     await SchemaBootstrapPhase.RegisterInstanceAsync(

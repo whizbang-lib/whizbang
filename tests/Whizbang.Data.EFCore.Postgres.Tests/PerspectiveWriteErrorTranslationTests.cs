@@ -65,7 +65,7 @@ public class PerspectiveWriteErrorTranslationTests : EFCoreTestBase {
     Timestamp = DateTime.UtcNow,
   };
 
-  private EFCorePostgresPerspectiveStore<NoteModel> _refusingWith(DbContext context, Exception failure) =>
+  private static EFCorePostgresPerspectiveStore<NoteModel> _refusingWith(DbContext context, Exception failure) =>
     new(context, TABLE, new RefusingStrategy(failure));
 
   /// <summary>

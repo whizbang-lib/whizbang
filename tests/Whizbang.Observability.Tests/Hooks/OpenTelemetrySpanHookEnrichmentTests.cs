@@ -291,7 +291,7 @@ public class OpenTelemetrySpanHookEnrichmentTests {
     public ActivityCapture() {
       _listener = new ActivityListener {
         ShouldListenTo = source => source.Name == "Whizbang.MessageTags",
-        Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        Sample = (ref _) => ActivitySamplingResult.AllData,
         ActivityStarted = activity => {
           lock (_started) {
             _started.Add(activity);

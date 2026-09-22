@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class EFCoreWorkCoordinatorObservationAndStatsTests : EFCoreTestBase {
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _build(WorkCoordinationDbContext ctx)
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _build(WorkCoordinationDbContext ctx)
     => new(ctx, JsonContextRegistry.CreateCombinedOptions());
 
   private static InboxMessage _makeInbox(Guid messageId, Guid streamId) {

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -18,8 +19,8 @@ public class DispatcherSchemaGateTests {
 
   private sealed record PlaceOrder(Guid OrderId);
 
-  private sealed class _seamDispatcher(IServiceProvider sp) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class SeamDispatcher(IServiceProvider sp) : Core.Dispatcher(
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType)
       => _ => ValueTask.FromResult<TResult>(default!);
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType)
@@ -44,7 +45,7 @@ public class DispatcherSchemaGateTests {
     var services = new ServiceCollection();
     services.AddSingleton<ISchemaReadyGate>(gate);
     await using var sp = services.BuildServiceProvider();
-    var dispatcher = new _seamDispatcher(sp);
+    var dispatcher = new SeamDispatcher(sp);
 
     await Assert.ThrowsAsync<WhizbangNotReadyException>(async () =>
       await dispatcher.SendAsync(new PlaceOrder(Guid.NewGuid())));
@@ -56,7 +57,7 @@ public class DispatcherSchemaGateTests {
     var services = new ServiceCollection();
     services.AddSingleton<ISchemaReadyGate>(gate);
     await using var sp = services.BuildServiceProvider();
-    var dispatcher = new _seamDispatcher(sp);
+    var dispatcher = new SeamDispatcher(sp);
 
     await Assert.ThrowsAsync<WhizbangNotReadyException>(async () =>
       await dispatcher.PublishAsync(new PlaceOrder(Guid.NewGuid())));
@@ -69,7 +70,7 @@ public class DispatcherSchemaGateTests {
     var services = new ServiceCollection();
     services.AddSingleton<ISchemaReadyGate>(gate);
     await using var sp = services.BuildServiceProvider();
-    var dispatcher = new _seamDispatcher(sp);
+    var dispatcher = new SeamDispatcher(sp);
 
     var receipt = await dispatcher.SendAsync(new PlaceOrder(Guid.NewGuid()));
 
@@ -80,7 +81,7 @@ public class DispatcherSchemaGateTests {
   [Test]
   public async Task Send_WithNoGateRegistered_StaysUngatedAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var dispatcher = new _seamDispatcher(sp);
+    var dispatcher = new SeamDispatcher(sp);
 
     var receipt = await dispatcher.SendAsync(new PlaceOrder(Guid.NewGuid()));
 

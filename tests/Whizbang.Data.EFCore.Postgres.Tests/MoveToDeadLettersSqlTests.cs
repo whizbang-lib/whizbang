@@ -182,14 +182,14 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     return new DlqRow(
       reader.GetString(0),
       reader.GetGuid(1),
-      reader.IsDBNull(2) ? null : reader.GetGuid(2),
+      await reader.IsDBNullAsync(2) ? null : reader.GetGuid(2),
       reader.GetInt32(3),
       reader.GetInt32(4),
-      reader.IsDBNull(5) ? null : reader.GetGuid(5),
+      await reader.IsDBNullAsync(5) ? null : reader.GetGuid(5),
       reader.GetString(6),
       reader.GetInt32(7),
       reader.GetInt32(8),
-      reader.IsDBNull(9) ? null : reader.GetString(9));
+      await reader.IsDBNullAsync(9) ? null : reader.GetString(9));
   }
 
   private static async Task<bool> _outboxRowExistsAsync(NpgsqlConnection conn, Guid messageId) {

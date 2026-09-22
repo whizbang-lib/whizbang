@@ -40,8 +40,8 @@ public class AuditJsonSerializerCoverageTests {
   // silent `{}` -- the audit row is written, looks valid, and carries none of the evidence.
   [Test]
   public async Task SerializeToJsonElement_UnregisteredCompileTimeType_StillSerializesViaTheRuntimeTypeAsync() {
-    var options = new JsonSerializerOptions { TypeInfoResolver = new _runtimeOnlyResolver() };
-    IAuditPayload value = new _auditPayload("evidence");
+    var options = new JsonSerializerOptions { TypeInfoResolver = new RuntimeOnlyResolver() };
+    IAuditPayload value = new AuditPayload("evidence");
 
     var result = AuditJsonSerializer.SerializeToJsonElement(value, options);
 
@@ -55,13 +55,13 @@ public class AuditJsonSerializerCoverageTests {
 
   private interface IAuditPayload;
 
-  private sealed record _auditPayload(string Detail) : IAuditPayload;
+  private sealed record AuditPayload(string Detail) : IAuditPayload;
 
   /// <summary>
   /// Resolves the concrete payload but refuses its interface, which is the shape that forces the
   /// compile-time lookup to fail and the runtime-type lookup to succeed.
   /// </summary>
-  private sealed class _runtimeOnlyResolver : IJsonTypeInfoResolver {
+  private sealed class RuntimeOnlyResolver : IJsonTypeInfoResolver {
     private readonly DefaultJsonTypeInfoResolver _inner = new();
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) =>
       type == typeof(IAuditPayload) ? null : _inner.GetTypeInfo(type, options);

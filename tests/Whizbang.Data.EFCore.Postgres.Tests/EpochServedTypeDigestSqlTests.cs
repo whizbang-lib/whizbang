@@ -33,7 +33,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task _setWidthAsync(NpgsqlConnection conn, long width) {
@@ -66,17 +66,16 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", tenant is null ? "null" : $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue("seq", (object?)commitSeq ?? DBNull.Value);
-      store.Parameters.AddWithValue("origin", (object?)origin ?? DBNull.Value);
+      store.Parameters.AddWithValue(nameof(origin), (object?)origin ?? DBNull.Value);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn) {
@@ -92,8 +91,8 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
       UPDATE wh_digest_epochs SET digest_lo = @lo, digest_hi = @hi
       WHERE event_type = @type AND epoch_id = @epoch
       """;
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("epoch", epochId);
     var rows = await cmd.ExecuteNonQueryAsync();
@@ -134,14 +133,14 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await Assert.That(await _closeAsync(conn)).IsGreaterThanOrEqualTo(1);
 
     await _corruptEpochAsync(conn, TYPE, epochId: 0, lo: 12345, hi: 54321);
-    var openFold = await _expectedFoldAsync(conn, open);
+    var (Lo, Hi) = await _expectedFoldAsync(conn, open);
 
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
-    await Assert.That(digests[0].DigestLo).IsEqualTo(12345 ^ openFold.Lo)
+    await Assert.That(digests[0].DigestLo).IsEqualTo(12345 ^ Lo)
       .Because("the answer must be sealed-epoch XOR live-open-window — a live re-aggregation would hide the sabotage");
-    await Assert.That(digests[0].DigestHi).IsEqualTo(54321 ^ openFold.Hi);
+    await Assert.That(digests[0].DigestHi).IsEqualTo(54321 ^ Hi);
     await Assert.That(digests[0].EventCount).IsEqualTo(3)
       .Because("2 from the sealed epoch's stored count + 1 folded live from the open window");
   }
@@ -168,13 +167,13 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await _seedAsync(conn, stream, unstamped, TYPE, null);   // settled but commit_sequence NULL
     _ = await _closeAsync(conn);
 
-    var expected = await _expectedFoldAsync(conn, e1, e2, e3, unstamped);
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2, e3, unstamped);
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
-    await Assert.That(digests[0].DigestLo).IsEqualTo(expected.Lo)
+    await Assert.That(digests[0].DigestLo).IsEqualTo(Lo)
       .Because("composition over a partition must equal the whole — and the unstamped row must not fall through the crack");
-    await Assert.That(digests[0].DigestHi).IsEqualTo(expected.Hi);
+    await Assert.That(digests[0].DigestHi).IsEqualTo(Hi);
     await Assert.That(digests[0].EventCount).IsEqualTo(4);
   }
 
@@ -195,11 +194,11 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await _seedAsync(conn, stream, e2, TYPE, 7);
     // Deliberately no close: settled max 7 → epoch 0 still open → no frontier advance for this data.
 
-    var expected = await _expectedFoldAsync(conn, e1, e2);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
-    await Assert.That(digests[0].DigestLo).IsEqualTo(expected.Lo);
+    await Assert.That(digests[0].DigestLo).IsEqualTo(Lo);
     await Assert.That(digests[0].EventCount).IsEqualTo(2);
   }
 
@@ -222,12 +221,12 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await Assert.That(await _closeAsync(conn)).IsGreaterThanOrEqualTo(1);
 
     await _corruptEpochAsync(conn, TYPE, epochId: 0, lo: 777, hi: 888);
-    var openFold = await _expectedFoldAsync(conn, open);
+    var (Lo, _) = await _expectedFoldAsync(conn, open);
 
     var digests = await coordinator.ComputeTypeDigestsAsync(origin, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
-    await Assert.That(digests[0].DigestLo).IsEqualTo(777 ^ openFold.Lo)
+    await Assert.That(digests[0].DigestLo).IsEqualTo(777 ^ Lo)
       .Because("the received lane's sealed epochs serve its answers, exactly like the local lane's serve local ones");
     await Assert.That(digests[0].EventCount).IsEqualTo(3);
   }
@@ -259,9 +258,9 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
 
     await Assert.That(result.EpochsDrifted).IsEqualTo(1)
       .Because("the corrupted seal must be DETECTED — non-zero drift here means an unaccounted write path");
-    var expected = await _expectedFoldAsync(conn, e1, e2);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     var (healedLo, _) = (await _epochRowForAsync(conn, TYPE, 0))!.Value;
-    await Assert.That(healedLo).IsEqualTo(expected.Lo)
+    await Assert.That(healedLo).IsEqualTo(Lo)
       .Because("and HEALED — the refolded seal serves correct answers again");
 
     var second = await coordinator.VerifyDigestEpochsAsync(TimeSpan.FromHours(1), maxEpochs: 100);

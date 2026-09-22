@@ -1,9 +1,17 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -217,6 +225,7 @@ public sealed class PerspectiveWorkerParallelTests {
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -240,12 +249,41 @@ public sealed class PerspectiveWorkerParallelTests {
         IdleThresholdPolls = 2
       }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: NullEventTypeProvider.Instance,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxConcurrentPerspectives = maxConcurrentPerspectives,
+        // Pin to ONE consumer loop so MaxConcurrentPerspectives is the sole concurrency ceiling.
+        // The worker spawns MaxConcurrentDrainConsumers loops (default 4), EACH running its own
+        // Parallel.ForEachAsync(MaxDegreeOfParallelism = MaxConcurrentPerspectives) batch — so the
+        // real steady-state ceiling is outer×inner (e.g. 4×2=8), NOT MaxConcurrentPerspectives alone.
+        // These tests assert the inner per-perspective throttle in isolation, so the outer must be 1.
+        // (This is exactly the conflation that made the old peak-concurrency assertion misfire.)
+        MaxConcurrentDrainConsumers = 1,
+        IdleThresholdPolls = 2
+      })).Value));
     return (worker, harness);
   }
 
@@ -273,7 +311,7 @@ public sealed class PerspectiveWorkerParallelTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       // Track concurrency
       var current = Interlocked.Increment(ref _activeConcurrency);
       _updatePeak(current);
@@ -361,7 +399,7 @@ public sealed class PerspectiveWorkerParallelTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       _signal(_enterWaiters, Interlocked.Increment(ref _entered));
       try {
         await _gate.WaitAsync(cancellationToken);
@@ -425,7 +463,7 @@ public sealed class PerspectiveWorkerParallelTests {
 
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Intentional test failure");
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
@@ -494,7 +532,7 @@ public sealed class PerspectiveWorkerParallelTests {
         CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -83,14 +84,14 @@ public class ObservedConcurrencyGovernorTests {
     // The name is the metric's series key. A blank one would export every governor's decisions
     // into the same unlabeled series, which is worse than not exporting at all.
     await Assert.That(() => new ObservedConcurrencyGovernor(
-        name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics())))
+        name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()))))
       .Throws<ArgumentException>();
   }
 
   [Test]
   public async Task Constructor_RejectsANullInnerGovernorAsync() {
     await Assert.That(() => new ObservedConcurrencyGovernor(
-        _uniqueName(), null!, new GovernorMetrics(new WhizbangMetrics())))
+        _uniqueName(), null!, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()))))
       .Throws<ArgumentNullException>();
   }
 
@@ -106,7 +107,7 @@ public class ObservedConcurrencyGovernorTests {
     // reported at a stale width, and the whole point of the wrapper is faithful export.
     var inner = new FakeGovernor { CurrentWidth = 12, Floor = 3, Ceiling = 40 };
     var governor = new ObservedConcurrencyGovernor(
-      _uniqueName(), inner, new GovernorMetrics(new WhizbangMetrics()));
+      _uniqueName(), inner, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     await Assert.That(governor.CurrentWidth).IsEqualTo(12);
     await Assert.That(governor.Floor).IsEqualTo(3);
@@ -123,7 +124,7 @@ public class ObservedConcurrencyGovernorTests {
     // describe a different cycle than the one the governor actually judged.
     var inner = new FakeGovernor();
     var governor = new ObservedConcurrencyGovernor(
-      _uniqueName(), inner, new GovernorMetrics(new WhizbangMetrics()));
+      _uniqueName(), inner, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var signal = new GovernorSignal(QueuedItems: 9, Contended: true, Elapsed: TimeSpan.FromSeconds(2), CompletedItems: 6);
 
     governor.Observe(signal);
@@ -141,7 +142,7 @@ public class ObservedConcurrencyGovernorTests {
     var (seen, listener) = _listenFor(name);
     using var _l = listener;
     var inner = new FakeGovernor { CurrentWidth = 8, OnObserve = w => w + 4 };
-    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics()));
+    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     governor.Observe(new GovernorSignal(QueuedItems: 50, Contended: false, Elapsed: TimeSpan.FromSeconds(1)));
 
@@ -158,7 +159,7 @@ public class ObservedConcurrencyGovernorTests {
     var (seen, listener) = _listenFor(name);
     using var _l = listener;
     var inner = new FakeGovernor { CurrentWidth = 20, OnObserve = w => w - 6 };
-    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics()));
+    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     governor.Observe(new GovernorSignal(QueuedItems: 0, Contended: true, Elapsed: TimeSpan.FromSeconds(1)));
 
@@ -177,7 +178,7 @@ public class ObservedConcurrencyGovernorTests {
     var (seen, listener) = _listenFor(name);
     using var _l = listener;
     var inner = new FakeGovernor { CurrentWidth = 16 };   // OnObserve unset: width holds
-    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics()));
+    var governor = new ObservedConcurrencyGovernor(name, inner, new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     governor.Observe(new GovernorSignal(QueuedItems: 4, Contended: false, Elapsed: TimeSpan.FromSeconds(1)));
 
@@ -196,7 +197,7 @@ public class ObservedConcurrencyGovernorTests {
     var (seen, listener) = _listenFor(name);
     using var _l = listener;
     var governor = new ObservedConcurrencyGovernor(
-      name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics()));
+      name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     governor.Observe(new GovernorSignal(QueuedItems: 37, Contended: true, Elapsed: TimeSpan.FromSeconds(2), CompletedItems: 8));
 
@@ -219,7 +220,7 @@ public class ObservedConcurrencyGovernorTests {
     var (seen, listener) = _listenFor(name);
     using var _l = listener;
     var governor = new ObservedConcurrencyGovernor(
-      name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics()));
+      name, new FakeGovernor(), new GovernorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
 
     governor.Observe(new GovernorSignal(QueuedItems: 5, Contended: false, Elapsed: TimeSpan.FromSeconds(3)));
 

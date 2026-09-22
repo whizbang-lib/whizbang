@@ -133,7 +133,7 @@ public class LeaseDispatchExecutorTests {
       dispatchTcs.SetException(new InvalidOperationException(marker));
 
       // Force the abandoned-task to be GC'd so finalizer runs (where UTE would fire).
-      var weak = new WeakReference(dispatchTcs);
+      _ = new WeakReference(dispatchTcs);
       dispatchTcs = null!;
       GC.Collect();
       GC.WaitForPendingFinalizers();

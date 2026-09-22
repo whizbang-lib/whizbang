@@ -37,7 +37,7 @@ public sealed class NotifyDebounceMetrics {
   /// <exception cref="ArgumentNullException">Thrown when the holder is null.</exception>
   public NotifyDebounceMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     meter.CreateObservableGauge(
       "whizbang.notify.doorbell_fired",

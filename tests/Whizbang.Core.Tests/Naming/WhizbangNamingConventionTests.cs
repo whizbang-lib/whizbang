@@ -9,10 +9,12 @@ namespace Whizbang.Core.Tests.Naming;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Pins the central <see cref="WhizbangNamingConvention.DeriveConnectionStringName"/>
 /// helper that BOTH the EF Core source generator AND the runtime PostConfigure
 /// (in Whizbang.Data.EFCore.Postgres) must agree on.
-///
+/// </para>
+/// <para>
 /// Regression context: before this central helper, the generator and runtime
 /// each ran their own copy of the convention. The runtime copy looked at a
 /// different input than the generator copy in one specific call shape
@@ -23,6 +25,7 @@ namespace Whizbang.Core.Tests.Naming;
 /// back to the class-name derivation). A consumer silently fell back to the pgbouncer
 /// connection and LISTEN/NOTIFY died with self-test probe failures every 5
 /// minutes.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public class WhizbangNamingConventionTests {
@@ -60,7 +63,7 @@ public class WhizbangNamingConventionTests {
     // named "GatewayDbContext" but the attribute overrides to "gatewayservice-db",
     // ONLY this central helper's convention applies — it can't second-guess
     // the attribute. The bug fix is that runtime call sites no longer use
-    // this derivation when the [WhizbangDbContext] attribute provides a name;
+    // this derivation when the [WhizbangDbContext] attribute provides a name —
     // the generator-emitted PostConfigure carries that explicit name through.
     await Assert.That(WhizbangNamingConvention.DeriveConnectionStringName("GatewayDbContext"))
       .IsEqualTo("gateway-db");

@@ -60,7 +60,7 @@ public class TopicAttributeTests {
 
     // Assert
     await Assert.That(attributes).IsNotEmpty();
-    var attr = attributes.First() as TopicAttribute;
+    var attr = attributes[0] as TopicAttribute;
     await Assert.That(attr).IsNotNull();
     await Assert.That(attr!.TopicName).IsEqualTo("test-events");
   }
@@ -102,5 +102,5 @@ public class TopicAttributeTests {
   }
 
   [Topic("test-events")]
-  private sealed class TestEventWithTopic { }
+  private sealed class TestEventWithTopic;
 }

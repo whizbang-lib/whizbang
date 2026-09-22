@@ -176,7 +176,7 @@ public class JsonbContainmentJoinTests {
       join c in _customers on o.Data.CustomerId equals c.Data.CustomerId into matched
       from c in matched.DefaultIfEmpty()
       where o.Data.Status == status
-      select o;
+      select new { Order = o, Customer = c };
 
     await Assert.That(_containments(query.ToQueryString())).IsEqualTo(1);
   }

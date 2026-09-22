@@ -60,7 +60,7 @@ public class MaintenanceWorkerLifecycleTests {
     public Exception? MaintenanceThrows { get; init; }
     public Exception? BacklogThrows { get; init; }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref MaintenanceCalls);
       FirstMaintenance.TrySetResult();
       return MaintenanceThrows is not null
@@ -68,7 +68,7 @@ public class MaintenanceWorkerLifecycleTests {
         : Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
     }
 
-    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default)
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
       => BacklogThrows is not null
         ? ValueTask.FromException<ServiceBacklog?>(BacklogThrows)
         : ValueTask.FromResult<ServiceBacklog?>(new ServiceBacklog());
@@ -187,7 +187,7 @@ public class MaintenanceWorkerLifecycleTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is not null).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is not null)];
     }
 
     // Warning, not Error: a failed tick is retryable and the loop says so on the next interval.

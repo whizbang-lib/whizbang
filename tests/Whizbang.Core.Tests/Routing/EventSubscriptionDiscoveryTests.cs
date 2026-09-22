@@ -15,7 +15,7 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task Constructor_WithNullRoutingOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange & Act
-    EventSubscriptionDiscovery action() => new(null!);
+    EventSubscriptionDiscovery action() => new(routingOptions: null!, registry: new StaticEventNamespaceRegistry());
 
     // Assert
     await Assert.That(action).Throws<ArgumentNullException>()
@@ -28,7 +28,7 @@ public class EventSubscriptionDiscoveryTests {
     var options = Options.Create(new RoutingOptions());
 
     // Act
-    var discovery = new EventSubscriptionDiscovery(options);
+    var discovery = new EventSubscriptionDiscovery(options, new StaticEventNamespaceRegistry());
 
     // Assert
     await Assert.That(discovery).IsNotNull();
@@ -40,7 +40,7 @@ public class EventSubscriptionDiscoveryTests {
     var options = Options.Create(new RoutingOptions());
 
     // Act
-    var discovery = new EventSubscriptionDiscovery(options, registry: null);
+    var discovery = new EventSubscriptionDiscovery(options, registry: new StaticEventNamespaceRegistry());
 
     // Assert
     await Assert.That(discovery).IsNotNull();
@@ -383,7 +383,7 @@ public class EventSubscriptionDiscoveryTests {
   public async Task GetManualSubscriptions_WithNoSubscriptions_ReturnsEmptySetAsync() {
     // Arrange
     var options = Options.Create(new RoutingOptions());
-    var discovery = new EventSubscriptionDiscovery(options);
+    var discovery = new EventSubscriptionDiscovery(options, new StaticEventNamespaceRegistry());
 
     // Act
     var namespaces = discovery.GetManualSubscriptions();
@@ -398,7 +398,7 @@ public class EventSubscriptionDiscoveryTests {
     var routingOptions = new RoutingOptions();
     routingOptions.SubscribeTo("myapp.orders.events", "myapp.payments.events");
     var options = Options.Create(routingOptions);
-    var discovery = new EventSubscriptionDiscovery(options);
+    var discovery = new EventSubscriptionDiscovery(options, new StaticEventNamespaceRegistry());
 
     // Act
     var namespaces = discovery.GetManualSubscriptions();

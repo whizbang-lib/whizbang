@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -15,6 +16,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -60,7 +62,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -69,7 +71,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       return ValueTask.CompletedTask;
     }
@@ -139,9 +141,9 @@ public class InboxDispatchWorkerCompositeCommitTests {
     public void RecordDiscard(MessageDiscardGate gate, MessageDiscardDecision decision, string payloadClrType, IReadOnlyDictionary<string, object?>? additionalTags = null) { }
   }
 
-  private sealed record _rowAdded(string Id) : IEvent;
-  private sealed record _rowRemoved(string Id) : IEvent;
-  private sealed class _composite(params IMessage[] inner) : ICompositeEvent {
+  private sealed record RowAdded(string Id) : IEvent;
+  private sealed record RowRemoved(string Id) : IEvent;
+  private sealed class Composite(params IMessage[] inner) : ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
@@ -185,21 +187,31 @@ public class InboxDispatchWorkerCompositeCommitTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, commitChannel, failures, gate,
-      Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: commitChannel,
+      failureChannel: failures,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      discardPolicy: discardPolicy,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: discardPolicy ?? new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       compositeMetrics: metrics);
     return new Harness(worker, inbox, commitChannel, failures, coordinator, metrics, factory);
   }
 
   [Test]
   public async Task Composite_IsExpandedAndCommittedInOneStep_ThroughTheCoordinator_NeverTheCommitChannelAsync() {
-    using var h = _harness(new _composite(new _rowAdded("a"), new _rowAdded("b"), new _rowRemoved("c")));
+    using var h = _harness(new Composite(new RowAdded("a"), new RowAdded("b"), new RowRemoved("c")));
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);
 
@@ -229,7 +241,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
     // possible test or custom host) keeps the batched path rather than losing the composite; the
     // warning names what that costs (#737). The in-flight entry is kept, as the batched path always did,
     // so a re-offer while the commit waits is filtered rather than re-expanded.
-    using var h = _harness(new _composite(new _rowAdded("a")), withCoordinator: false);
+    using var h = _harness(new Composite(new RowAdded("a")), withCoordinator: false);
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);
 
@@ -248,7 +260,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
   [Test]
   public async Task Composite_ChildrenCarryDeterministicIds_AcrossTwoDispatchesOfTheSameRowAsync() {
-    using var h = _harness(new _composite(new _rowAdded("a"), new _rowAdded("b")));
+    using var h = _harness(new Composite(new RowAdded("a"), new RowAdded("b")));
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);
 
@@ -269,7 +281,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
   [Test]
   public async Task Composite_WhoseCommitFails_ReleasesTheRowForRetry_AndCountsTheFailureAsync() {
-    using var h = _harness(new _composite(new _rowAdded("a")), commitFailure: new InvalidOperationException("store unavailable"));
+    using var h = _harness(new Composite(new RowAdded("a")), commitFailure: new InvalidOperationException("store unavailable"));
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);
 
@@ -297,8 +309,8 @@ public class InboxDispatchWorkerCompositeCommitTests {
   [Test]
   public async Task Composite_Meters_CountReceivedExpansionsChildrenAndUnsubscribedDropsAsync() {
     using var h = _harness(
-      new _composite(new _rowAdded("a"), new _rowRemoved("b"), new _rowAdded("c")),
-      discardPolicy: new DiscardOneTypePolicy(nameof(_rowRemoved)));
+      new Composite(new RowAdded("a"), new RowRemoved("b"), new RowAdded("c")),
+      discardPolicy: new DiscardOneTypePolicy(nameof(RowRemoved)));
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);
 

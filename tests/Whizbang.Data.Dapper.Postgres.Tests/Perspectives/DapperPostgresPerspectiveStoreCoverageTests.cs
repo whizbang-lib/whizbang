@@ -270,7 +270,7 @@ public class DapperPostgresPerspectiveStoreCoverageTests : PostgresTestBase {
       return (null, null);
     }
     return (
-      reader.IsDBNull(0) ? null : reader.GetString(0),
-      reader.IsDBNull(1) ? null : reader.GetString(1));
+      await reader.IsDBNullAsync(0) ? null : reader.GetString(0),
+      await reader.IsDBNullAsync(1) ? null : reader.GetString(1));
   }
 }

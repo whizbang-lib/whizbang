@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.AutoPopulate;
 [Category("AutoPopulate")]
 public class AutoPopulateProcessorCoverageTests {
 
-  private sealed class _registry(AutoPopulateRegistration registration) : IAutoPopulateRegistry {
+  private sealed class Registry(AutoPopulateRegistration registration) : IAutoPopulateRegistry {
     public IEnumerable<AutoPopulateRegistration> GetRegistrationsFor(Type messageType) =>
       registration.MessageType == messageType ? [registration] : [];
     public IEnumerable<AutoPopulateRegistration> GetAllRegistrations() => [registration];
@@ -50,11 +50,11 @@ public class AutoPopulateProcessorCoverageTests {
   // Each scenario below uses its own private message type so the process-global AutoPopulateRegistry
   // (registrations accumulate for the process lifetime, keyed by exact message type) can never pick
   // up a registration contributed by a different test or a different file.
-  private sealed record _unknownPopulateKindMessage(Guid Id);
-  private sealed record _unknownTimestampKindMessage(Guid Id);
-  private sealed record _unknownContextKindMessage(Guid Id);
-  private sealed record _unknownServiceKindMessage(Guid Id);
-  private sealed record _unknownIdentifierKindMessage(Guid Id);
+  private sealed record UnknownPopulateKindMessage(Guid Id);
+  private sealed record UnknownTimestampKindMessage(Guid Id);
+  private sealed record UnknownContextKindMessage(Guid Id);
+  private sealed record UnknownServiceKindMessage(Guid Id);
+  private sealed record UnknownIdentifierKindMessage(Guid Id);
 
   /// <summary>
   /// A PopulateKind value the top-level switch does not recognize (a future kind added without a
@@ -67,17 +67,17 @@ public class AutoPopulateProcessorCoverageTests {
   [Test]
   public async Task ProcessAutoPopulate_UnknownPopulateKind_SkipsFieldAndAddsNoHopAsync() {
     var registration = new AutoPopulateRegistration {
-      MessageType = typeof(_unknownPopulateKindMessage),
+      MessageType = typeof(UnknownPopulateKindMessage),
       PropertyName = "Unknown",
       PropertyType = typeof(string),
       PopulateKind = (PopulateKind)(-1)
     };
-    AutoPopulateRegistry.Register(new _registry(registration), priority: 9201);
-    var envelope = _createEnvelope(new _unknownPopulateKindMessage(Guid.NewGuid()));
+    AutoPopulateRegistry.Register(new Registry(registration), priority: 9201);
+    var envelope = _createEnvelope(new UnknownPopulateKindMessage(Guid.NewGuid()));
     var initialHopCount = envelope.Hops.Count;
     var processor = new AutoPopulateProcessor();
 
-    processor.ProcessAutoPopulate(envelope, typeof(_unknownPopulateKindMessage));
+    processor.ProcessAutoPopulate(envelope, typeof(UnknownPopulateKindMessage));
 
     await Assert.That(envelope.GetMetadata("auto:Unknown")).IsNull()
       .Because("an unrecognized PopulateKind must extract nothing, never a fabricated value");
@@ -93,17 +93,17 @@ public class AutoPopulateProcessorCoverageTests {
   [Test]
   public async Task ProcessAutoPopulate_UnknownTimestampKind_SkipsFieldAsync() {
     var registration = new AutoPopulateRegistration {
-      MessageType = typeof(_unknownTimestampKindMessage),
+      MessageType = typeof(UnknownTimestampKindMessage),
       PropertyName = "UnknownTimestamp",
       PropertyType = typeof(DateTimeOffset?),
       PopulateKind = PopulateKind.Timestamp,
       TimestampKind = (TimestampKind)(-1)
     };
-    AutoPopulateRegistry.Register(new _registry(registration), priority: 9202);
-    var envelope = _createEnvelope(new _unknownTimestampKindMessage(Guid.NewGuid()));
+    AutoPopulateRegistry.Register(new Registry(registration), priority: 9202);
+    var envelope = _createEnvelope(new UnknownTimestampKindMessage(Guid.NewGuid()));
     var processor = new AutoPopulateProcessor();
 
-    processor.ProcessAutoPopulate(envelope, typeof(_unknownTimestampKindMessage));
+    processor.ProcessAutoPopulate(envelope, typeof(UnknownTimestampKindMessage));
 
     await Assert.That(envelope.GetMetadata("auto:UnknownTimestamp")).IsNull()
       .Because("an unrecognized TimestampKind must not fabricate a SentAt-shaped value");
@@ -117,18 +117,18 @@ public class AutoPopulateProcessorCoverageTests {
   [Test]
   public async Task ProcessAutoPopulate_UnknownContextKind_SkipsFieldAsync() {
     var registration = new AutoPopulateRegistration {
-      MessageType = typeof(_unknownContextKindMessage),
+      MessageType = typeof(UnknownContextKindMessage),
       PropertyName = "UnknownContext",
       PropertyType = typeof(string),
       PopulateKind = PopulateKind.Context,
       ContextKind = (ContextKind)(-1)
     };
-    AutoPopulateRegistry.Register(new _registry(registration), priority: 9203);
+    AutoPopulateRegistry.Register(new Registry(registration), priority: 9203);
     var scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "user-1", TenantId = "tenant-1" });
-    var envelope = _createEnvelope(new _unknownContextKindMessage(Guid.NewGuid()), scope);
+    var envelope = _createEnvelope(new UnknownContextKindMessage(Guid.NewGuid()), scope);
     var processor = new AutoPopulateProcessor();
 
-    processor.ProcessAutoPopulate(envelope, typeof(_unknownContextKindMessage));
+    processor.ProcessAutoPopulate(envelope, typeof(UnknownContextKindMessage));
 
     await Assert.That(envelope.GetMetadata("auto:UnknownContext")).IsNull()
       .Because("an unrecognized ContextKind must not leak UserId/TenantId (or anything else) under the wrong key");
@@ -141,17 +141,17 @@ public class AutoPopulateProcessorCoverageTests {
   [Test]
   public async Task ProcessAutoPopulate_UnknownServiceKind_SkipsFieldAsync() {
     var registration = new AutoPopulateRegistration {
-      MessageType = typeof(_unknownServiceKindMessage),
+      MessageType = typeof(UnknownServiceKindMessage),
       PropertyName = "UnknownService",
       PropertyType = typeof(string),
       PopulateKind = PopulateKind.Service,
       ServiceKind = (ServiceKind)(-1)
     };
-    AutoPopulateRegistry.Register(new _registry(registration), priority: 9204);
-    var envelope = _createEnvelope(new _unknownServiceKindMessage(Guid.NewGuid()));
+    AutoPopulateRegistry.Register(new Registry(registration), priority: 9204);
+    var envelope = _createEnvelope(new UnknownServiceKindMessage(Guid.NewGuid()));
     var processor = new AutoPopulateProcessor();
 
-    processor.ProcessAutoPopulate(envelope, typeof(_unknownServiceKindMessage));
+    processor.ProcessAutoPopulate(envelope, typeof(UnknownServiceKindMessage));
 
     await Assert.That(envelope.GetMetadata("auto:UnknownService")).IsNull()
       .Because("an unrecognized ServiceKind must not leak ServiceName/InstanceId/HostName/ProcessId under the wrong key");
@@ -164,17 +164,17 @@ public class AutoPopulateProcessorCoverageTests {
   [Test]
   public async Task ProcessAutoPopulate_UnknownIdentifierKind_SkipsFieldAsync() {
     var registration = new AutoPopulateRegistration {
-      MessageType = typeof(_unknownIdentifierKindMessage),
+      MessageType = typeof(UnknownIdentifierKindMessage),
       PropertyName = "UnknownIdentifier",
       PropertyType = typeof(Guid?),
       PopulateKind = PopulateKind.Identifier,
       IdentifierKind = (IdentifierKind)(-1)
     };
-    AutoPopulateRegistry.Register(new _registry(registration), priority: 9205);
-    var envelope = _createEnvelope(new _unknownIdentifierKindMessage(Guid.NewGuid()));
+    AutoPopulateRegistry.Register(new Registry(registration), priority: 9205);
+    var envelope = _createEnvelope(new UnknownIdentifierKindMessage(Guid.NewGuid()));
     var processor = new AutoPopulateProcessor();
 
-    processor.ProcessAutoPopulate(envelope, typeof(_unknownIdentifierKindMessage));
+    processor.ProcessAutoPopulate(envelope, typeof(UnknownIdentifierKindMessage));
 
     await Assert.That(envelope.GetMetadata("auto:UnknownIdentifier")).IsNull()
       .Because("an unrecognized IdentifierKind must not leak MessageId/CorrelationId/CausationId/StreamId under the wrong key");

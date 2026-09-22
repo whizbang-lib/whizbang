@@ -28,7 +28,7 @@ public class CompositeInboxFanoutCoverageTests {
     // (metadata is null) must still land its children on a deterministic, non-empty stream —
     // the composite's own MessageId — rather than Guid.Empty, which would fail the StreamIdGuard
     // check for event-shaped children or silently scatter them onto an unpredictable stream.
-    var composite = new _testComposite(new _innerEvent("only"));
+    var composite = new TestComposite(new InnerEvent("only"));
     var source = _sourceEnvelopeWithoutAggregateId();
     var sp = _provider();
 
@@ -44,7 +44,7 @@ public class CompositeInboxFanoutCoverageTests {
   public async Task TryExpand_SourceHasNoHopsAtAll_ChildStreamIdFallsBackToSourceMessageIdAsync() {
     // A hops-less source (Hops is null) must hit the exact same fallback as a present-but-empty
     // AggregateId — the null-conditional walk over Hops must not throw.
-    var composite = new _testComposite(new _innerEvent("only"));
+    var composite = new TestComposite(new InnerEvent("only"));
     var source = _sourceEnvelopeWithoutHops();
     var sp = _provider();
 
@@ -57,7 +57,7 @@ public class CompositeInboxFanoutCoverageTests {
 
   private static ServiceProvider _provider() =>
     new ServiceCollection()
-      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
+      .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
       .BuildServiceProvider();
 
   private static MessageEnvelope<JsonElement> _sourceEnvelopeWithoutAggregateId() {
@@ -89,7 +89,7 @@ public class CompositeInboxFanoutCoverageTests {
   }
 
   /// <summary>Minimal serializer: records the payload's runtime AQN as MessageType.</summary>
-  private sealed class _fakeSerializer : IEnvelopeSerializer {
+  private sealed class FakeSerializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var payloadType = envelope.Payload!.GetType();
       var aqn = payloadType.AssemblyQualifiedName!;
@@ -109,13 +109,10 @@ public class CompositeInboxFanoutCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed record _innerEvent(string Id) : IEvent;
+  private sealed record InnerEvent(string Id) : IEvent;
 
-  private sealed class _testComposite : ICompositeEvent {
-    public _testComposite(params IEvent[] inner) {
-      _inner = inner;
-    }
-    private readonly IEvent[] _inner;
+  private sealed class TestComposite(params IEvent[] inner) : ICompositeEvent {
+    private readonly IEvent[] _inner = inner;
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
   }

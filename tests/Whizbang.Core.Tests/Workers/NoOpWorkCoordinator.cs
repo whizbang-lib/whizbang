@@ -22,7 +22,7 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
   /// <summary>All inbox messages stored via StoreInboxMessagesAsync, for test inspection.</summary>
   public List<InboxMessage> StoredMessages { get; } = [];
 
-  public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+  public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
     Task.FromResult(new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
@@ -30,7 +30,7 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
       SyncInquiryResults = null
     });
 
-  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
     StoreInboxCallCount++;
     StoreInboxBatchSizes.Add(messages.Length);
     StoredInboxCount += messages.Length;
@@ -56,10 +56,10 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
     return Task.CompletedTask;
   }
 
-  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) =>
+  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
-  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) =>
+  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
@@ -68,6 +68,6 @@ internal class NoOpWorkCoordinator : IWorkCoordinator {
   public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
-  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
     Task.FromResult<PerspectiveCursorInfo?>(null);
 }

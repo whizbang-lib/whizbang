@@ -38,16 +38,15 @@ public class MigratorDutyStagingTests {
   private static readonly string[] REGISTER_THEN_ELECT = ["register", "elect"];
 
   /// <summary>A grant that records whether the caller gave it back.</summary>
-  private sealed class _Grant : IDutyGrant {
-    public bool Released;
+  private sealed class FakeGrant : IDutyGrant {
     public string Duty => StartupDuties.MIGRATOR;
     public DateTimeOffset AcquiredAt => DateTimeOffset.UnixEpoch;
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) => Task.FromResult(true);
-    public ValueTask DisposeAsync() { Released = true; return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
   }
 
   /// <summary>An elector with a scripted answer, or a scripted failure.</summary>
-  private sealed class _Elector(Func<DutyAttempt> answer) : IDutyElector {
+  private sealed class Elector(Func<DutyAttempt> answer) : IDutyElector {
     public int Attempts;
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       Interlocked.Increment(ref Attempts);
@@ -56,14 +55,14 @@ public class MigratorDutyStagingTests {
   }
 
   /// <summary>A logger that keeps what it was told, so "loudly" is assertable.</summary>
-  private sealed class _RecordingLogger : ILogger {
+  private sealed class RecordingLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new _Scope();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) =>
       Entries.Add((logLevel, formatter(state, exception)));
-    private sealed class _Scope : IDisposable { public void Dispose() { } }
+    private sealed class Scope : IDisposable { public void Dispose() { } }
   }
 
   private static Func<CancellationToken, Task> _registers(Action? onCall = null) =>
@@ -72,11 +71,11 @@ public class MigratorDutyStagingTests {
   /// <summary>Winning the duty makes this instance the migrator, and hands the grant over.</summary>
   [Test]
   public async Task WinningTheDutyMakesThisInstanceTheMigratorAsync() {
-    var grant = new _Grant();
+    var grant = new FakeGrant();
     var registered = false;
 
     var staging = await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Granted(grant)),
+      new Elector(() => DutyAttempt.Granted(grant)),
       _registers(() => registered = true),
       SCHEMA);
 
@@ -97,9 +96,9 @@ public class MigratorDutyStagingTests {
   [Test]
   public async Task TheInstanceJoinsTheRegistryBeforeElectingAsync() {
     var order = new List<string>();
-    var elector = new _Elector(() => {
+    var elector = new Elector(() => {
       order.Add("elect");
-      return DutyAttempt.Granted(new _Grant());
+      return DutyAttempt.Granted(new FakeGrant());
     });
 
     await MigratorDutyStaging.ElectAsync(
@@ -112,7 +111,7 @@ public class MigratorDutyStagingTests {
   [Test]
   public async Task AContendedDutyMakesThisInstanceAWaiterAsync() {
     var staging = await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Lost(DutyRefusal.Contended, "another instance holds it")),
+      new Elector(() => DutyAttempt.Lost(DutyRefusal.Contended, "another instance holds it")),
       _registers(),
       SCHEMA);
 
@@ -140,10 +139,10 @@ public class MigratorDutyStagingTests {
   /// </remarks>
   [Test]
   public async Task ARefusedInstanceMigratesUnderTheLockRatherThanThrowingAsync() {
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var staging = await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Lost(DutyRefusal.Refused, "instance is evicted or unregistered")),
+      new Elector(() => DutyAttempt.Lost(DutyRefusal.Refused, "instance is evicted or unregistered")),
       _registers(),
       SCHEMA,
       logger);
@@ -163,10 +162,10 @@ public class MigratorDutyStagingTests {
   [Test]
   public async Task AnUnavailableElectorLeavesTheInstanceUnstagedAsync() {
     var staging = await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Lost(DutyRefusal.Unavailable, "no direct connection")),
+      new Elector(() => DutyAttempt.Lost(DutyRefusal.Unavailable, "no direct connection")),
       _registers(),
       SCHEMA,
-      new _RecordingLogger());
+      new RecordingLogger());
 
     await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
   }
@@ -182,10 +181,10 @@ public class MigratorDutyStagingTests {
   /// </remarks>
   [Test]
   public async Task AnElectorThatThrowsLeavesTheInstanceUnstagedAsync() {
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var staging = await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => throw new InvalidOperationException(
+      new Elector(() => throw new InvalidOperationException(
         "42883: function record_capability(uuid, text) does not exist")),
       _registers(),
       SCHEMA,
@@ -203,7 +202,7 @@ public class MigratorDutyStagingTests {
   /// </remarks>
   [Test]
   public async Task NoElectorAtAllLeavesTheInstanceUnstagedAsync() {
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
     var registered = false;
 
     var staging = await MigratorDutyStaging.ElectAsync(
@@ -227,8 +226,8 @@ public class MigratorDutyStagingTests {
   /// </remarks>
   [Test]
   public async Task AFailedRegistrationStopsTheElectionAsync() {
-    var logger = new _RecordingLogger();
-    var elector = new _Elector(() => DutyAttempt.Granted(new _Grant()));
+    var logger = new RecordingLogger();
+    var elector = new Elector(() => DutyAttempt.Granted(new FakeGrant()));
 
     var staging = await MigratorDutyStaging.ElectAsync(
       elector,
@@ -245,7 +244,7 @@ public class MigratorDutyStagingTests {
   /// <summary>The duty is asked for once, not once per table.</summary>
   [Test]
   public async Task TheDutyIsAskedForOnceAsync() {
-    var elector = new _Elector(() => DutyAttempt.Granted(new _Grant()));
+    var elector = new Elector(() => DutyAttempt.Granted(new FakeGrant()));
 
     await MigratorDutyStaging.ElectAsync(elector, _registers(), SCHEMA);
 
@@ -264,7 +263,7 @@ public class MigratorDutyStagingTests {
     await cts.CancelAsync();
 
     await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Granted(new _Grant())), _registers(), SCHEMA, null, cts.Token))
+      new Elector(() => DutyAttempt.Granted(new FakeGrant())), _registers(), SCHEMA, null, cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -272,6 +271,6 @@ public class MigratorDutyStagingTests {
   [Test]
   public async Task MissingArgumentsAreRefusedAsync() =>
     await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
-      new _Elector(() => DutyAttempt.Granted(new _Grant())), null!, SCHEMA))
+      new Elector(() => DutyAttempt.Granted(new FakeGrant())), null!, SCHEMA))
       .Throws<ArgumentNullException>();
 }

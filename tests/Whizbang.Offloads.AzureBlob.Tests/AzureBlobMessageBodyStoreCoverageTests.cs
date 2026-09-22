@@ -27,7 +27,7 @@ public class AzureBlobMessageBodyStoreCoverageTests {
   // dependency that is actually fine.
   [Test]
   public async Task CheckConnectivityAsync_ContainerReachable_ReturnsTrueAsync() {
-    var containerClient = new _reachableContainerClient();
+    var containerClient = new ReachableContainerClient();
     var options = new AzureBlobOffloadOptions {
       ConnectionString = "UseDevelopmentStorage=true",
       ContainerName = "connectivity-tests",
@@ -51,8 +51,8 @@ public class AzureBlobMessageBodyStoreCoverageTests {
   /// under test fires first), this one must actually succeed so
   /// <see cref="AzureBlobMessageBodyStore.CheckConnectivityAsync"/>'s success path runs.
   /// </summary>
-  private sealed class _reachableContainerClient : BlobContainerClient {
-    private static readonly Response _rawResponse = new _fakeResponse();
+  private sealed class ReachableContainerClient : BlobContainerClient {
+    private static readonly Response _rawResponse = new FakeResponse();
 
     public int ExistsAsyncCallCount { get; private set; }
 
@@ -63,7 +63,7 @@ public class AzureBlobMessageBodyStoreCoverageTests {
   }
 
   /// <summary>Minimal Azure.Response for wrapping canned values -- never inspected by the store.</summary>
-  private sealed class _fakeResponse : Response {
+  private sealed class FakeResponse : Response {
     public override int Status => 200;
     public override string ReasonPhrase => "OK";
     public override Stream? ContentStream { get; set; }

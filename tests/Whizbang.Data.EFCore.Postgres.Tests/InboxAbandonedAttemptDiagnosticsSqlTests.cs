@@ -50,18 +50,18 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
 
     await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
 
-    var row = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, FailureReason, Error) = await _readInboxRowAsync(conn, messageId);
 
-    await Assert.That(row.Attempts).IsEqualTo(4)
+    await Assert.That(Attempts).IsEqualTo(4)
       .Because("claim_orphaned_inbox is the sole attempt counter and bumps on every re-claim");
 
-    await Assert.That(row.FailureReason).IsEqualTo(LEASE_EXPIRED)
+    await Assert.That(FailureReason).IsEqualTo(LEASE_EXPIRED)
       .Because("an attempt consumed by an expired lease must be attributable — otherwise the retry "
              + "budget drains silently and the eventual dead-letter blames only the counter");
 
-    await Assert.That(row.Error).IsNotNull()
+    await Assert.That(Error).IsNotNull()
       .Because("the row must say WHAT consumed the attempt, not merely that one was consumed");
-    await Assert.That(row.Error).Contains(deadInstance.ToString())
+    await Assert.That(Error).Contains(deadInstance.ToString())
       .Because("naming the instance that held the lease is what distinguishes a crash-looping host "
              + "from a failing handler");
   }
@@ -80,12 +80,12 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
 
     await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
 
-    var row = await _readInboxRowAsync(conn, messageId);
+    var (_, FailureReason, Error) = await _readInboxRowAsync(conn, messageId);
 
-    await Assert.That(row.Error).IsEqualTo("ValidationError: Price must be positive")
+    await Assert.That(Error).IsEqualTo("ValidationError: Price must be positive")
       .Because("a genuine dispatch failure is the better diagnostic — re-claim must never paper "
              + "over it with a lease-expiry note");
-    await Assert.That(row.FailureReason).IsEqualTo(4)
+    await Assert.That(FailureReason).IsEqualTo(4)
       .Because("the recorded failure reason must survive re-claim");
   }
 
@@ -102,11 +102,11 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
 
     await _claimOrphanedInboxAsync(conn, (Guid)TrackedGuid.NewMedo());
 
-    var row = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, _, Error) = await _readInboxRowAsync(conn, messageId);
 
-    await Assert.That(row.Attempts).IsEqualTo(1)
+    await Assert.That(Attempts).IsEqualTo(1)
       .Because("attempts is one-based: 1 means the first attempt has started");
-    await Assert.That(row.Error).IsNull()
+    await Assert.That(Error).IsNull()
       .Because("a first claim has consumed nothing yet — stamping it would make every healthy "
              + "message look like a casualty");
   }
@@ -155,7 +155,7 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
         @inst, 0, 1, NOW() + INTERVAL '5 minutes', NOW(), 1, NOW() - INTERVAL '10 minutes')";
     cmd.Parameters.AddWithValue("inst", claimingInstance);
     await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync()) { }
+    while (await reader.ReadAsync()) { /* drain */ }
   }
 
   private static async Task<(int Attempts, int FailureReason, string? Error)> _readInboxRowAsync(
@@ -169,7 +169,7 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
     }
     return (
       reader.GetInt32(0),
-      reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
-      reader.IsDBNull(2) ? null : reader.GetString(2));
+      await reader.IsDBNullAsync(1) ? 0 : reader.GetInt32(1),
+      await reader.IsDBNullAsync(2) ? null : reader.GetString(2));
   }
 }

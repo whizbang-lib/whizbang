@@ -15,20 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class DbContextInitializationRegistryTests {
   [Before(Test)]
-  public void ResetStaticState() {
-    // Reset _initializers list
-    var initializersField = typeof(DbContextInitializationRegistry)
-        .GetField("_initializers", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var list = (System.Collections.IList)initializersField.GetValue(null)!;
-    list.Clear();
-
-    // The pre-#620 process-wide flag. The guard is now keyed per service provider (a weak table
-    // that fresh FakeServiceProvider instances never collide in), so this only matters for a
-    // build that still carries the flag — tolerated rather than required.
-    typeof(DbContextInitializationRegistry)
-        .GetField("_initialized", BindingFlags.Static | BindingFlags.NonPublic)
-        ?.SetValue(null, 0);
-  }
+  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
 
   [Test]
   public async Task Register_AddsInitializer_IncreasesCountAsync() {

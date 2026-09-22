@@ -53,7 +53,7 @@ public sealed class LifecycleMetrics {
   /// <summary>Initializes a new instance of the <see cref="LifecycleMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public LifecycleMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     StageDuration = meter.CreateHistogram<double>("whizbang.lifecycle.stage.duration", "ms", "Time executing all receptors for a stage");
     ReceptorDuration = meter.CreateHistogram<double>("whizbang.lifecycle.receptor.duration", "ms", "Individual receptor invocation time");

@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -31,7 +32,7 @@ public class SagaServiceCollectionExtensionsTests {
       SagaItemStreams.AppDefaultNamespace = SagaItemStreams.DefaultNamespace;
 
       var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics());
+      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
       services.AddWhizbangSagas();
 
       await Assert.That(SagaItemStreams.AppDefaultNamespace)
@@ -49,7 +50,7 @@ public class SagaServiceCollectionExtensionsTests {
       var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
 
       var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics());
+      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
       services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
       await Assert.That(SagaItemStreams.AppDefaultNamespace).IsEqualTo(custom)
@@ -66,7 +67,7 @@ public class SagaServiceCollectionExtensionsTests {
       var custom = Guid.Parse("0b36f8d4-3884-4c3c-b92b-fc6ec74775ea");
 
       var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics());
+      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
       services.AddWhizbangSagas(opts => opts.PerItemStreamNamespace = custom);
 
       var sp = services.BuildServiceProvider();
@@ -84,7 +85,7 @@ public class SagaServiceCollectionExtensionsTests {
     var prior = SagaItemStreams.AppDefaultNamespace;
     try {
       var services = new ServiceCollection();
-      services.AddSingleton(new WhizbangMetrics());
+      services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
       services.AddWhizbangSagas();
 
       var sp = services.BuildServiceProvider();

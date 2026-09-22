@@ -53,8 +53,8 @@ public class TransportLifecycleTests {
   public async Task ITransport_InitializeAsync_WithCancellation_ShouldThrowAsync() {
     // Arrange
     var transport = new TestTransport();
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await transport.InitializeAsync(cts.Token))
@@ -131,10 +131,6 @@ internal sealed class TestTransport : ITransport {
     throw new NotImplementedException();
   }
 
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
   public Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
@@ -165,10 +161,6 @@ internal sealed class FailingInitializationTransport : ITransport {
   }
 
   public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 
@@ -206,10 +198,6 @@ internal sealed class RetryableInitializationTransport : ITransport {
   }
 
   public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

@@ -1,16 +1,24 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -44,7 +52,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var cooledEventId = Guid.NewGuid();
     var cooledWorkId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(signaledStream, cooledEventId, cooledWorkId)],
       drainEnvelopes: [_envelope(cooledEventId, new ProbeEvent("cooled"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -70,7 +78,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var cooledEventId = Guid.NewGuid();
     var cooledWorkId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(stream, cooledEventId, cooledWorkId)],
       drainEnvelopes: [_envelope(cooledEventId, new ProbeEvent("cooled"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -92,7 +100,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var stream = Guid.NewGuid();
     var freshEventId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(stream, freshEventId, Guid.NewGuid())],
       drainEnvelopes: [_envelope(freshEventId, new ProbeEvent("fresh"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -136,12 +144,12 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private sealed class _Fixture {
+  private sealed class FakeFixture {
     public required PerspectiveWorker Worker { get; init; }
     public required PerspectiveWorkerTestHarness Harness { get; init; }
     public required CountingRegistry Registry { get; init; }
 
-    public static _Fixture Create(
+    public static FakeFixture Create(
         List<StreamEventData> drainRows,
         List<MessageEnvelope<IEvent>> drainEnvelopes,
         List<MessageEnvelope<IEvent>> claimedStreamEvents,
@@ -159,6 +167,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       }
 
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<IWorkCoordinator>(coordinator);
       services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
       services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -172,7 +181,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       var worker = new PerspectiveWorker(
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        // One consumer loop so the claimed item and the drain signal are read into the SAME batch;
+        // One consumer loop so the claimed item and the drain signal are read into the SAME batch —
         // the defect lives in how one batch reconciles its two sources.
         options: Options.Create(new PerspectiveWorkerOptions {
           PollingIntervalMilliseconds = 50,
@@ -180,16 +189,37 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           MaxConcurrentDrainConsumers = 1
         }),
         schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        tracingOptions: null,
-        completionStrategy: new InstantCompletionStrategy(),
-        eventTypeProvider: null,
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+        eventTypeProvider: new EventTypeProvider(),
+        syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+        syncEventTracker: new SyncEventTracker(),
+        logger: NullLogger<PerspectiveWorker>.Instance,
+        snapshotStore: NullPerspectiveSnapshotStore.Instance,
+        streamLocker: NullPerspectiveStreamLocker.Instance,
+        streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+        streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+        processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+        workChannelWriter: new WorkChannelWriter(),
+        rewindOptions: Options.Create(new PerspectiveRewindOptions()),
         perspectiveChannelWriter: harness.ChannelWriter,
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
+        leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
         perspectiveDrainChannel: harness.DrainChannel,
+        leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+        leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+        deadLetterStore: NullDeadLetterStore.Instance,
+        generationProvider: new DefaultGenerationProvider(),
+        perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+        governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+          PollingIntervalMilliseconds = 50,
+          DrainLoopMaxIterations = 1,
+          MaxConcurrentDrainConsumers = 1
+        })).Value),
         recentlyProcessedEventCache: cache);
 
-      return new _Fixture { Worker = worker, Harness = harness, Registry = registry };
+      return new FakeFixture { Worker = worker, Harness = harness, Registry = registry };
     }
 
     /// <summary>Starts the worker, waits for the first batch that carried work, and stops it.</summary>
@@ -232,7 +262,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
@@ -246,7 +276,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       var wanted = streamEvents.Select(r => r.EventId).ToHashSet();
-      return DrainEnvelopes.Where(e => wanted.Contains(e.MessageId.Value)).ToList();
+      return [.. DrainEnvelopes.Where(e => wanted.Contains(e.MessageId.Value))];
     }
 
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
@@ -281,26 +311,26 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     private sealed class Runner(CountingRegistry owner) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string name, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
         owner._count(streamId);
-        return Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = name, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed, PerspectiveType = typeof(object) });
+        return Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed, PerspectiveType = typeof(object) });
       }
 
-      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string name, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         owner._count(streamId);
         return Task.FromResult(new PerspectiveCursorCompletion {
           StreamId = streamId,
-          PerspectiveName = name,
+          PerspectiveName = perspectiveName,
           LastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.NewGuid(),
           Status = PerspectiveProcessingStatus.Completed,
           PerspectiveType = typeof(object)
         });
       }
 
-      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string name, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-        RunAsync(streamId, name, null, cancellationToken);
+      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
 
-      public Task BootstrapSnapshotAsync(Guid streamId, string name, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
   }
 

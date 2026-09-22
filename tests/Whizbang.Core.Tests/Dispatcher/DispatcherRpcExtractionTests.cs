@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
@@ -283,7 +284,7 @@ public class DispatcherRpcExtractionTests {
     var command = new CreateOrder(orderId, 100m);
 
     // Act
-    var confirmation = await dispatcher.LocalInvokeAsync<OrderConfirmation>(command);
+    _ = await dispatcher.LocalInvokeAsync<OrderConfirmation>(command);
 
     // Assert - The extracted response (OrderConfirmation) should NOT be in cascaded events
     // Only InventoryReserved should cascade
@@ -309,7 +310,7 @@ public class DispatcherRpcExtractionTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register all receptors including our test receptors
     services.AddReceptors();

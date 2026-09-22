@@ -77,7 +77,7 @@ public class LifecyclePhaseWorkerCoverageTests {
   public async Task SchemaGateWaitCanceled_ReturnsWithoutAdvancingPastMigratingAsync(CancellationToken testToken) {
     var lifecycle = new RecordingLifecycle();
     var gate = new SchemaReadyGate(); // never marked ready — the wait blocks until canceled
-    var worker = new LifecyclePhaseWorker(lifecycle, gate);
+    var worker = new LifecyclePhaseWorker(lifecycle: lifecycle, schemaReadyGate: gate, readModelsReadyGate: ReadModelsReadyGate.AlreadyReady());
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);

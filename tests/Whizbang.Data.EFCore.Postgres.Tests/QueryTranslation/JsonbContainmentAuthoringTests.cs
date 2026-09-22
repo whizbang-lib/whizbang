@@ -96,12 +96,12 @@ public class JsonbContainmentAuthoringTests {
   private static bool _rewrites(Expression<Func<PerspectiveRow<OrderModel>, bool>> predicate) {
     var query = _db.Set<PerspectiveRow<OrderModel>>().Where(predicate).Expression;
     var rewritten = new JsonbContainmentRewriter(_db.Model).Visit(query);
-    var finder = new _markerFinder();
+    var finder = new MarkerFinder();
     finder.Visit(rewritten);
     return finder.Found;
   }
 
-  private sealed class _markerFinder : ExpressionVisitor {
+  private sealed class MarkerFinder : ExpressionVisitor {
     public bool Found { get; private set; }
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
@@ -123,6 +123,9 @@ public class JsonbContainmentAuthoringTests {
       + "would turn the static-field case into the literal case and stop testing a field read.")]
   private static readonly string _staticField = "v";
 
+  [SuppressMessage("Minor Code Smell", "S3400:Methods should not return constants",
+    Justification = "The method call is the spelling under test: a constant would be inlined into the "
+      + "expression tree as a literal and stop testing a method-call operand.")]
   private static string _method() => "v";
 
   // ========================================
@@ -210,7 +213,7 @@ public class JsonbContainmentAuthoringTests {
     };
 
     var rewritten = new JsonbContainmentRewriter(_db.Model).Visit(query);
-    var finder = new _markerFinder();
+    var finder = new MarkerFinder();
     finder.Visit(rewritten);
 
     await Assert.That(finder.Found).IsTrue();
@@ -265,7 +268,7 @@ public class JsonbContainmentAuthoringTests {
     var rewritten = spelling switch {
       "two members of the same row" => _rewrites(x => x.Data.Code == x.Data.Other),
       "member compared with null" => _rewrites(x => x.Data.Note == null),
-      "negated equality" => _rewrites(x => !(x.Data.Code == "v")),
+      "negated equality" => _rewrites(x => x.Data.Code != "v"),
       "value object compared whole" => _rewrites(x => x.Data.Number == number),
       "case-insensitive Equals" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.OrdinalIgnoreCase)),
       "culture-aware Equals" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.CurrentCulture)),
@@ -287,7 +290,7 @@ public class JsonbContainmentAuthoringTests {
     var projection = rows.Select(x => x.Data.Code == "v").Expression;
 
     var rewritten = new JsonbContainmentRewriter(_db.Model).Visit(projection);
-    var finder = new _markerFinder();
+    var finder = new MarkerFinder();
     finder.Visit(rewritten);
 
     await Assert.That(finder.Found).IsFalse();
@@ -350,7 +353,7 @@ public class JsonbContainmentAuthoringTests {
     var sql = shape switch {
       "range" => rows.Select(r => r.Data).Where(m => m.Count > 3).ToQueryString(),
       "null check" => rows.Select(r => r.Data).Where(m => m.Note == null).ToQueryString(),
-      "negated" => rows.Select(r => r.Data).Where(m => !(m.Code == "v")).ToQueryString(),
+      "negated" => rows.Select(r => r.Data).Where(m => m.Code != "v").ToQueryString(),
       "ordering" => rows.Select(r => r.Data).OrderBy(m => m.Code).ToQueryString(),
       _ => throw new InvalidOperationException(shape),
     };

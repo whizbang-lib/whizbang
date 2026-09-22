@@ -37,15 +37,15 @@ public class AuditDependencyInjectionWiringTests {
 
   [Test]
   public async Task ComposedDecoratorReceivesTheRegisteredDecisionHookAsync() {
-    var channel = new _recordingChannel();
+    var channel = new RecordingChannel();
     var services = new ServiceCollection();
-    services.AddSingleton<IEventStore>(new _noopStore());
+    services.AddSingleton<IEventStore>(new NoopStore());
     services.AddSingleton<IDeferredOutboxChannel>(channel);
-    services.AddSingleton<IAuditDecisionHook>(new _refuseEverything());
+    services.AddSingleton<IAuditDecisionHook>(new RefuseEverything());
     services.AddSystemEvents(opts => opts.EnableEventAudit());
 
     var store = services.BuildServiceProvider().GetRequiredService<IEventStore>();
-    await store.AppendAsync(Guid.NewGuid(), _envelope(new _plainEvent { Name = "x" }));
+    await store.AppendAsync(Guid.NewGuid(), _envelope(new PlainEvent { Name = "x" }));
 
     // OptOut mode audits by default, so an unwired hook queues a record here. Emptiness is only
     // reachable if the container actually handed the decorator the registered hook.
@@ -56,15 +56,15 @@ public class AuditDependencyInjectionWiringTests {
 
   [Test]
   public async Task ComposedDecoratorReceivesTheRegisteredInstanceProviderAsync() {
-    var channel = new _recordingChannel();
+    var channel = new RecordingChannel();
     var services = new ServiceCollection();
-    services.AddSingleton<IEventStore>(new _noopStore());
+    services.AddSingleton<IEventStore>(new NoopStore());
     services.AddSingleton<IDeferredOutboxChannel>(channel);
-    services.AddSingleton<IServiceInstanceProvider>(new _namedInstance());
+    services.AddSingleton<IServiceInstanceProvider>(new NamedInstance());
     services.AddSystemEvents(opts => opts.EnableEventAudit());
 
     var store = services.BuildServiceProvider().GetRequiredService<IEventStore>();
-    await store.AppendAsync(Guid.NewGuid(), _envelope(new _plainEvent { Name = "x" }));
+    await store.AppendAsync(Guid.NewGuid(), _envelope(new PlainEvent { Name = "x" }));
 
     await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
     var instance = channel.QueuedMessages[0].Envelope.Hops[0].ServiceInstance;
@@ -86,15 +86,15 @@ public class AuditDependencyInjectionWiringTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private sealed record _plainEvent : IEvent {
+  private sealed record PlainEvent : IEvent {
     public required string Name { get; init; }
   }
 
-  private sealed class _refuseEverything : IAuditDecisionHook {
+  private sealed class RefuseEverything : IAuditDecisionHook {
     public AuditDecision Decide(object payload, Type eventType) => AuditDecision.Skip;
   }
 
-  private sealed class _namedInstance : IServiceInstanceProvider {
+  private sealed class NamedInstance : IServiceInstanceProvider {
     public Guid InstanceId => Guid.Parse("00000000-0000-0000-0000-0000000000b2");
     public string ServiceName => "composed-service";
     public string HostName => "host-2";
@@ -108,7 +108,7 @@ public class AuditDependencyInjectionWiringTests {
     };
   }
 
-  private sealed class _recordingChannel : IDeferredOutboxChannel {
+  private sealed class RecordingChannel : IDeferredOutboxChannel {
     public List<OutboxMessage> QueuedMessages { get; } = [];
 
     public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) {
@@ -125,7 +125,7 @@ public class AuditDependencyInjectionWiringTests {
     public bool HasPending => QueuedMessages.Count > 0;
   }
 
-  private sealed class _noopStore : IEventStore {
+  private sealed class NoopStore : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default)

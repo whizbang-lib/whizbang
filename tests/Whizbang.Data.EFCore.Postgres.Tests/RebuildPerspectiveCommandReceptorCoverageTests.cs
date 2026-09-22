@@ -33,9 +33,9 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     var kept1 = Guid.NewGuid();
     var kept2 = Guid.NewGuid();
     var excluded = Guid.NewGuid();
-    var eventStoreQuery = new _syncOnlyEventStoreQuery([kept1, kept2, excluded]);
-    var rebuilder = new _recordingRebuilder();
-    var runnerRegistry = new _fakeRunnerRegistry("TestPerspective");
+    var eventStoreQuery = new SyncOnlyEventStoreQuery([kept1, kept2, excluded]);
+    var rebuilder = new RecordingRebuilder();
+    var runnerRegistry = new FakeRunnerRegistry("TestPerspective");
 
     var services = new ServiceCollection();
     services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
@@ -74,7 +74,7 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
   /// <see cref="IAsyncEnumerable{T}"/>, unlike the real EF Core-backed implementation this receptor
   /// runs against in production. This is what forces the receptor's sync fallback path.
   /// </summary>
-  private sealed class _syncOnlyEventStoreQuery(IReadOnlyList<Guid> streamIds) : IEventStoreQuery {
+  private sealed class SyncOnlyEventStoreQuery(IReadOnlyList<Guid> streamIds) : IEventStoreQuery {
     private IReadOnlyList<EventStoreRecord> _records() => [.. streamIds.Select(id => new EventStoreRecord {
       StreamId = id,
       AggregateId = id,
@@ -90,7 +90,7 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Query.Where(e => e.EventType == eventType);
   }
 
-  private sealed class _fakeRunnerRegistry(params string[] perspectiveNames) : IPerspectiveRunnerRegistry {
+  private sealed class FakeRunnerRegistry(params string[] perspectiveNames) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
       throw new NotSupportedException("Not exercised by this receptor.");
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
@@ -99,7 +99,7 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
-  private sealed class _recordingRebuilder : IPerspectiveRebuilder {
+  private sealed class RecordingRebuilder : IPerspectiveRebuilder {
     public IReadOnlyList<Guid>? LastStreamIds { get; private set; }
 
     public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {

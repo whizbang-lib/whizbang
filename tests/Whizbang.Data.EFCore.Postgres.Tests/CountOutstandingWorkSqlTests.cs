@@ -88,9 +88,9 @@ public class CountOutstandingWorkSqlTests : EFCoreTestBase {
     await _seedInboxAsync(conn, mine, 3, "-5 minutes", processed: false);   // lapsed-> must not count
     await _seedInboxAsync(conn, theirs, 9, "5 minutes", processed: false);  // not mine
 
-    var counts = await _countAsync(conn, mine);
+    var (Inbox, _, _) = await _countAsync(conn, mine);
 
-    await Assert.That(counts.Inbox).IsEqualTo(7)
+    await Assert.That(Inbox).IsEqualTo(7)
       .Because("only rows this instance holds under a LIVE lease and has not finished are "
              + "outstanding — processed rows are done, lapsed leases already belong to whoever "
              + "claims them next, and another instance's work was never this one's to bound against");
@@ -102,14 +102,14 @@ public class CountOutstandingWorkSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var idle = Guid.CreateVersion7();
 
-    var counts = await _countAsync(conn, idle);
+    var (Inbox, Outbox, Perspective) = await _countAsync(conn, idle);
 
     // Zero is a real measurement here and must be reported as such. The worker distinguishes it from
     // "unmeasurable", which is signalled by returning no OutstandingWork at all — conflating the two
     // would either throttle an idle instance or license a full-size claim off an unread figure.
-    await Assert.That(counts.Inbox).IsEqualTo(0);
-    await Assert.That(counts.Outbox).IsEqualTo(0);
-    await Assert.That(counts.Perspective).IsEqualTo(0);
+    await Assert.That(Inbox).IsEqualTo(0);
+    await Assert.That(Outbox).IsEqualTo(0);
+    await Assert.That(Perspective).IsEqualTo(0);
   }
 
   [Test]

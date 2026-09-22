@@ -16,7 +16,7 @@ public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
-  ILogger<TableStatisticsCollector>? logger = null
+  ILogger<TableStatisticsCollector> logger
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =

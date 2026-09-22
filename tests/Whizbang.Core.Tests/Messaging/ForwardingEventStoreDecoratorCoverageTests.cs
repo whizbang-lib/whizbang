@@ -22,9 +22,9 @@ public class ForwardingEventStoreDecoratorCoverageTests {
     // If this passthrough regressed to returning [] locally instead of delegating, every decorated
     // store would silently lose whatever deserialization behavior (upcasting, polymorphic
     // dispatch) the inner store implements.
-    var sentinel = new List<MessageEnvelope<IEvent>> { new(MessageId.New(), new _probeEvent("x"), []) };
-    var inner = new _probeStore(sentinel);
-    var decorator = new _passthroughDecorator(inner);
+    var sentinel = new List<MessageEnvelope<IEvent>> { new(MessageId.New(), new ProbeEvent("x"), []) };
+    var inner = new ProbeStore(sentinel);
+    var decorator = new PassthroughDecorator(inner);
 
     var result = decorator.DeserializeStreamEvents([], []);
 
@@ -32,12 +32,12 @@ public class ForwardingEventStoreDecoratorCoverageTests {
       .Because("the base class does not implement deserialization itself — it must return the inner store's exact result.");
   }
 
-  private sealed record _probeEvent(string Data) : IEvent;
+  private sealed record ProbeEvent(string Data) : IEvent;
 
   /// <summary>Concrete decorator that overrides nothing — every member rides the base passthrough.</summary>
-  private sealed class _passthroughDecorator(IEventStore inner) : ForwardingEventStoreDecorator(inner);
+  private sealed class PassthroughDecorator(IEventStore inner) : ForwardingEventStoreDecorator(inner);
 
-  private sealed class _probeStore(List<MessageEnvelope<IEvent>> deserializeResult) : IEventStore {
+  private sealed class ProbeStore(List<MessageEnvelope<IEvent>> deserializeResult) : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 

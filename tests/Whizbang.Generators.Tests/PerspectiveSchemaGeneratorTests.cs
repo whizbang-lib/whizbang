@@ -46,9 +46,9 @@ public class PerspectiveSchemaGeneratorTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("vector(1536)")
+    await Assert.That(sql).Contains("vector(1536)")
       .Because("declining the index is not declining the column");
-    await Assert.That(sql!).DoesNotContain("USING ivfflat")
+    await Assert.That(sql).DoesNotContain("USING ivfflat")
       .Because(" is the opt-out for exactly this index");
   }
 
@@ -64,9 +64,9 @@ public class PerspectiveSchemaGeneratorTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("doc_vec")
+    await Assert.That(sql).Contains("doc_vec")
       .Because("an explicit column name is the whole point of the option");
-    await Assert.That(sql!).DoesNotContain("embedding")
+    await Assert.That(sql).DoesNotContain("embedding")
       .Because("the convention name must not be emitted alongside the explicit one — two columns "
              + "for one property is a schema that will not apply");
   }
@@ -85,15 +85,15 @@ public class PerspectiveSchemaGeneratorTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("vector(1536)")
+    await Assert.That(sql).Contains("vector(1536)")
       .Because("an index type it cannot name is no reason to drop the column");
     // Scoped to the VECTOR index: the schema always emits a GIN index on the JSONB column, so
     // asserting on "USING" alone would be answered by an index that has nothing to do with this.
-    await Assert.That(sql!).DoesNotContain("_vec")
+    await Assert.That(sql).DoesNotContain("_vec")
       .Because("an index method the generator cannot name must produce no index statement at "
              + "all — a malformed one fails the whole schema file, not just this field");
-    await Assert.That(sql!).DoesNotContain("ivfflat");
-    await Assert.That(sql!).DoesNotContain("hnsw");
+    await Assert.That(sql).DoesNotContain("ivfflat");
+    await Assert.That(sql).DoesNotContain("hnsw");
   }
 
   [Test]
@@ -107,7 +107,7 @@ public class PerspectiveSchemaGeneratorTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).IsNotNull();
-    await Assert.That(sql!).Contains("ivfflat")
+    await Assert.That(sql).Contains("ivfflat")
       .Because("vector indexing is opt-out, not opt-in");
   }
 

@@ -6,7 +6,7 @@ namespace Whizbang.Core.Temporal;
 /// <c>next_fire_at</c> + logs the run in one atomic unit (the Postgres provider calls
 /// <c>wh_claim_due_schedules</c>). Returns the number of schedules fired this call.
 /// </summary>
-/// <docs>fundamentals/temporal/temporal-engine</docs>
+/// <docs>fundamentals/dispatcher/dispatch-patterns</docs>
 public interface IScheduleClaimer {
   /// <summary>
   /// Claim and fire up to <paramref name="limit"/> due schedules for this instance. Returns the count

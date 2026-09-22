@@ -63,7 +63,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.RealEvent)")
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.RealEvent)")
       .Because("The real perspective's event must still be registered normally.");
     await Assert.That(registrySource).DoesNotContain("typeof(global::TestNamespace.IgnoredEvent)")
       .Because("A method whose only attribute is unrelated to [CollectiveApplyFor] must not surface its " +
@@ -111,7 +111,7 @@ namespace TestNamespace {
       .Because("A zero-parameter [CollectiveApplyFor] method must not abort generation for the whole compilation.");
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.RealEvent)")
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.RealEvent)")
       .Because("Generation of unrelated perspectives must proceed normally despite the malformed handler.");
   }
 
@@ -161,7 +161,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.ConcretePerspective\"")
+    await Assert.That(registrySource).Contains("\"TestNamespace.ConcretePerspective\"")
       .Because("The concrete perspective must still be registered.");
     await Assert.That(registrySource).DoesNotContain("\"TestNamespace.AbstractPerspective\" =>")
       .Because("An abstract perspective class cannot be resolved via GetRequiredService<T>() and must be excluded.");
@@ -205,7 +205,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.RealPerspective\"")
+    await Assert.That(registrySource).Contains("\"TestNamespace.RealPerspective\"")
       .Because("The genuine perspective must still be registered.");
     await Assert.That(registrySource).DoesNotContain("\"TestNamespace.NotAPerspective\" =>")
       .Because("A class implementing an unrelated interface must never be mistaken for a perspective.");
@@ -258,7 +258,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.ValidPerspective\"")
+    await Assert.That(registrySource).Contains("\"TestNamespace.ValidPerspective\"")
       .Because("A perspective whose model carries [StreamId] must still be registered.");
     await Assert.That(registrySource).DoesNotContain("\"TestNamespace.OrphanPerspective\" =>")
       .Because("A perspective whose model lacks [StreamId] cannot be keyed for lookup and must be skipped.");
@@ -311,7 +311,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"TestNamespace.MultiStreamPerspective\"")
+    await Assert.That(registrySource).Contains("\"TestNamespace.MultiStreamPerspective\"")
       .Because("A multi-stream (IGlobalPerspectiveFor) perspective must be discovered and registered just like a single-stream one.");
 
     var allEventTypesSection = registrySource[

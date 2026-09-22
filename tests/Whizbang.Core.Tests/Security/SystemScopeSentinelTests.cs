@@ -107,13 +107,13 @@ public class SystemScopeSentinelTests {
 [Category("Security")]
 public class SystemScopeResolverTests {
 
-  private sealed record _plainEvent : Whizbang.Core.IEvent;
+  private sealed record PlainEvent : Whizbang.Core.IEvent;
 
-  private sealed record _controlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
+  private sealed record ControlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
 
   [Test]
   public async Task AControlPlaneMessageWithNoAmbientScopeIsMarkedSystemAsync() {
-    var resolved = SystemScopeResolver.ForUnscoped(typeof(_controlSignal));
+    var resolved = SystemScopeResolver.ForUnscoped(typeof(ControlSignal));
 
     await Assert.That(resolved).IsNotNull()
       .Because("control-plane traffic has no ambient user BY DESIGN; saying so explicitly is what "
@@ -123,7 +123,7 @@ public class SystemScopeResolverTests {
 
   [Test]
   public async Task AnOrdinaryMessageIsNeverMarkedSystemAsync() {
-    await Assert.That(SystemScopeResolver.ForUnscoped(typeof(_plainEvent))).IsNull()
+    await Assert.That(SystemScopeResolver.ForUnscoped(typeof(PlainEvent))).IsNull()
       .Because("marking a domain event system-originated would exempt it from the invariant and "
              + "hide exactly the class of bug the marker exists to expose");
   }
@@ -166,17 +166,17 @@ public class SystemScopeResolverTests {
 [Category("Security")]
 public class DeclaredUnscopedMarkerTests {
 
-  private sealed record _loginAttempt : Whizbang.Core.IEvent;
+  private sealed record LoginAttempt : Whizbang.Core.IEvent;
 
-  private sealed record _ordinaryEvent : Whizbang.Core.IEvent;
+  private sealed record OrdinaryEvent : Whizbang.Core.IEvent;
 
-  private sealed record _controlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
+  private sealed record ControlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
 
-  private static readonly HashSet<Type> _declared = [typeof(_loginAttempt)];
+  private static readonly HashSet<Type> _declared = [typeof(LoginAttempt)];
 
   [Test]
   public async Task ADeclaredTypeIsMarkedDeclaredRatherThanLeftBlankAsync() {
-    var scope = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared);
+    var scope = SystemScopeResolver.ForUnscoped(typeof(LoginAttempt), _declared);
 
     await Assert.That(scope).IsNotNull()
       .Because("a login attempt has no authenticated user by design; leaving it blank makes it "
@@ -186,7 +186,7 @@ public class DeclaredUnscopedMarkerTests {
 
   [Test]
   public async Task ADeclaredTypeIsNotMarkedSystemAsync() {
-    var scope = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared);
+    var scope = SystemScopeResolver.ForUnscoped(typeof(LoginAttempt), _declared);
 
     await Assert.That(scope!.ApplyTo(null).Scope.IsSystem).IsFalse()
       .Because("the system marker means framework infrastructure. If application code could claim "
@@ -196,7 +196,7 @@ public class DeclaredUnscopedMarkerTests {
 
   [Test]
   public async Task ControlPlaneStillWinsOverADeclarationAsync() {
-    var scope = SystemScopeResolver.ForUnscoped(typeof(_controlSignal), new HashSet<Type> { typeof(_controlSignal) });
+    var scope = SystemScopeResolver.ForUnscoped(typeof(ControlSignal), new HashSet<Type> { typeof(ControlSignal) });
 
     await Assert.That(scope!.ApplyTo(null).Scope.IsSystem).IsTrue()
       .Because("framework traffic is framework traffic whether or not someone also listed it; the "
@@ -205,14 +205,14 @@ public class DeclaredUnscopedMarkerTests {
 
   [Test]
   public async Task AnUndeclaredDomainEventIsStillLeftBlankAsync() {
-    await Assert.That(SystemScopeResolver.ForUnscoped(typeof(_ordinaryEvent), _declared)).IsNull()
+    await Assert.That(SystemScopeResolver.ForUnscoped(typeof(OrdinaryEvent), _declared)).IsNull()
       .Because("this is the case the whole invariant exists to catch — if an undeclared event were "
              + "marked, a dropped scope would look intentional");
   }
 
   [Test]
   public async Task ADeclaredUnscopedScopeGrantsNoAuthorityAsync() {
-    var resolved = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared)!.ApplyTo(null).Scope;
+    var resolved = SystemScopeResolver.ForUnscoped(typeof(LoginAttempt), _declared)!.ApplyTo(null).Scope;
 
     await Assert.That(resolved.TenantId).IsNull()
       .Because("declaring an event unscoped states that no authority exists, so the marker must "
@@ -253,13 +253,13 @@ public class DeclaredUnscopedMarkerTests {
 [Category("Security")]
 public class PublishPathSystemScopeTests {
 
-  private sealed record _controlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
+  private sealed record ControlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
 
-  private sealed record _plainEvent : Whizbang.Core.IEvent;
+  private sealed record PlainEvent : Whizbang.Core.IEvent;
 
   [Test]
   public async Task ControlPlaneIsMarkedWhenNothingElseResolvesAsync() {
-    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_controlSignal), declaredUnscopedTypes: null);
+    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(ControlSignal), declaredUnscopedTypes: null);
 
     await Assert.That(resolved).IsNotNull()
       .Because("control-plane events are PUBLISHED, so a marker wired only into the send path "
@@ -269,15 +269,15 @@ public class PublishPathSystemScopeTests {
 
   [Test]
   public async Task AnOrdinaryEventStaysUnmarkedOnThePublishPathAsync() {
-    await Assert.That(OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_plainEvent), null)).IsNull()
+    await Assert.That(OutboxHopScope.Resolve(sourceEnvelope: null, typeof(PlainEvent), null)).IsNull()
       .Because("the fallback must not fire for domain events, or a scope dropped on the publish "
              + "path would start looking intentional");
   }
 
   [Test]
   public async Task ADeclaredTypeIsMarkedOnThePublishPathAsync() {
-    var declared = new HashSet<Type> { typeof(_plainEvent) };
-    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_plainEvent), declared);
+    var declared = new HashSet<Type> { typeof(PlainEvent) };
+    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(PlainEvent), declared);
 
     await Assert.That(resolved!.ApplyTo(null).Scope.IsDeclaredUnscoped).IsTrue()
       .Because("an author's declaration has to hold on the publish path too, or their exempted "

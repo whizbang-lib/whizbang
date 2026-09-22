@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -10,8 +11,10 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -42,9 +45,9 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public TaskCompletionSource<Guid> FirstId { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<Guid> AllIds { get; } = [];
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
-      FirstId.TrySetResult(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
+      FirstId.TrySetResult(outboxMessageId);
       return ValueTask.CompletedTask;
     }
   }
@@ -52,7 +55,7 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       FirstFailure.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -62,7 +65,7 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
     public TaskCompletionSource<Guid> FirstRenewal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, Guid id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
       All.Add((category, id));
       FirstRenewal.TrySetResult(id);
       return ValueTask.CompletedTask;
@@ -75,8 +78,8 @@ public class OutboxPublishWorkerTests {
     public TaskCompletionSource<OutboxWork> FirstPublished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<OutboxWork> Published { get; } = [];
 
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(ReadyValue);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(ReadyValue);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Add(work);
       FirstPublished.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
@@ -84,7 +87,7 @@ public class OutboxPublishWorkerTests {
         Success = !ShouldFailPublish,
         CompletedStatus = ShouldFailPublish ? work.Status : MessageProcessingStatus.Published,
         Error = ShouldFailPublish ? "simulated failure" : null,
-        Reason = ShouldFailPublish ? MessageFailureReason.Unknown : MessageFailureReason.Unknown
+        Reason = MessageFailureReason.Unknown
       });
     }
   }
@@ -94,13 +97,13 @@ public class OutboxPublishWorkerTests {
     public TaskCompletionSource<IReadOnlyList<OutboxWork>> FirstBatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<OutboxWork> AllPublished { get; } = [];
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(ReadyValue);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(ReadyValue);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("FakeBulkStrategy: only PublishBatchAsync should be called");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      foreach (var w in works) { AllPublished.Add(w); }
-      FirstBatch.TrySetResult(works);
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      foreach (var w in workItems) { AllPublished.Add(w); }
+      FirstBatch.TrySetResult(workItems);
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,
@@ -148,12 +151,24 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -183,12 +198,24 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -227,14 +254,26 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
       // Short retry delay so we don't sit in the busy-loop guard for the full 100ms default
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, TransportNotReadyRetryDelayMilliseconds = 25 }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, TransportNotReadyRetryDelayMilliseconds = 25 }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -266,12 +305,24 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -302,12 +353,24 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -336,12 +399,24 @@ public class OutboxPublishWorkerTests {
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

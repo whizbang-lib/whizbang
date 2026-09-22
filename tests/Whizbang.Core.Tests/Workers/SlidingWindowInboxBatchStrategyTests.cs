@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -33,6 +34,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -59,6 +61,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         firstFlush.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(10),  // generous so MaxSize is what flushes
@@ -85,6 +88,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         captured.Add(msgs);
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMinutes(1),  // very long — won't fire before stop
@@ -104,7 +108,8 @@ public class SlidingWindowInboxBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
     var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (_, _) => Task.CompletedTask);
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync();
 
@@ -144,6 +149,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -193,6 +199,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(300),
@@ -229,6 +236,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         // CI under load: Task.Delay(20ms) often actually waits longer than 20ms because the
         // scheduler is busy. Use a generous sliding window (500ms) so all 3 appends land
@@ -275,6 +283,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -307,6 +316,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -369,12 +379,12 @@ public class SlidingWindowInboxBatchStrategyTests {
         secondFlush.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: logger,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: logger);
+      });
 
     var streamId = Guid.CreateVersion7();
     await sut.AppendAsync(_makeMessage(streamId), testToken);
@@ -408,12 +418,12 @@ public class SlidingWindowInboxBatchStrategyTests {
         failed.TrySetResult();
         return Task.FromException(new InvalidOperationException("database unavailable"));
       },
+      logger: logger,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: logger);
+      });
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await failed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -433,6 +443,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushCount = 0;
     var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, ct) => { Interlocked.Increment(ref flushCount); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -458,6 +469,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushCount = 0;
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, ct) => { Interlocked.Increment(ref flushCount); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),

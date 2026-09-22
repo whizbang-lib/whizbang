@@ -60,37 +60,6 @@ public static class ServiceCollectionExtensions {
       => AddWhizbang(services, configure: null);
 
   /// <summary>
-  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
-  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
-  /// the same rule each has inside a single call.
-  /// </summary>
-  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
-    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
-#pragma warning disable S3267
-    foreach (var hook in incoming.HookRegistrations) {
-      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
-        existing.UseHookRegistration(hook);
-      }
-    }
-#pragma warning restore S3267
-    foreach (var binding in incoming.CoalesceBindings) {
-      existing.UseCoalesceBinding(binding.Key, binding.Value);
-    }
-    foreach (var binding in incoming.RouteNamespaceBindings) {
-      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
-    }
-    foreach (var declaration in incoming.PriorityDeclarations) {
-      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
-    }
-    foreach (var threshold in incoming.PayloadSizeWarningThresholdBytesByTag) {
-      existing.SetPayloadSizeWarningThreshold(threshold.Key, threshold.Value);
-    }
-    foreach (var threshold in incoming.PayloadSizeErrorThresholdBytesByTag) {
-      existing.SetPayloadSizeErrorThreshold(threshold.Key, threshold.Value);
-    }
-  }
-
-  /// <summary>
   /// Registers Whizbang core infrastructure services with configuration options.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -286,6 +255,37 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
+  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
+  /// the same rule each has inside a single call.
+  /// </summary>
+  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
+    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var hook in incoming.HookRegistrations) {
+      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
+        existing.UseHookRegistration(hook);
+      }
+    }
+#pragma warning restore S3267
+    foreach (var binding in incoming.CoalesceBindings) {
+      existing.UseCoalesceBinding(binding.Key, binding.Value);
+    }
+    foreach (var binding in incoming.RouteNamespaceBindings) {
+      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+    }
+    foreach (var declaration in incoming.PriorityDeclarations) {
+      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
+    }
+    foreach (var threshold in incoming.PayloadSizeWarningThresholdBytesByTag) {
+      existing.SetPayloadSizeWarningThreshold(threshold.Key, threshold.Value);
+    }
+    foreach (var threshold in incoming.PayloadSizeErrorThresholdBytesByTag) {
+      existing.SetPayloadSizeErrorThreshold(threshold.Key, threshold.Value);
+    }
+  }
+
+  /// <summary>
   /// Configures TracingOptions with programmatic defaults.
   /// </summary>
   private static void _configureTracingOptions(IServiceCollection services, WhizbangCoreOptions coreOptions) {
@@ -320,17 +320,17 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private static void _registerCoreServices(IServiceCollection services) {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
-    services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
+    services.TryAddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
 
     // Deferred outbox channel for events published outside transaction context
     // Events queued here are drained by the work coordinator in the next lifecycle loop
-    services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
 
     // Inbox channel for routing claimed inbox work to the publisher worker
-    services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
+
+    services.TryAddWhizbangDefaults();
 
     // Shared completion counter. The claim loop sizes its outstanding budget from this; the
     // dispatch and publish workers feed it. Registered unconditionally because a MISSING meter
@@ -375,7 +375,7 @@ public static class ServiceCollectionExtensions {
     });
 
     services.TryAddSingleton<IServiceInstanceProvider>(sp => {
-      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      var configuration = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new ServiceInstanceProvider(configuration);
     });
 
@@ -387,7 +387,7 @@ public static class ServiceCollectionExtensions {
     // repeat AddWhizbang() calls idempotent and lets a host substitute its own families first.
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Minting.ICollectiveMint, Minting.CollectiveMint>();
-    // The checkpoint family reads the control-class options for its TTL derivation (phase 9);
+    // The checkpoint family reads the control-class options for its TTL derivation (phase 9) —
     // register them here too so `AddWhizbang()` alone still yields a mint that derives correctly.
     services.AddOptions<Routing.ControlClassOptions>();
     services.TryAddSingleton<Minting.ICheckpointMint, Minting.CheckpointMint>();
@@ -567,6 +567,11 @@ public static class ServiceCollectionExtensions {
       return services;
     }
 
+    // The decorators resolve the sync-tracking services and the envelope registry; a data provider
+    // may decorate before AddWhizbang() has run, so the registrations are made here as well.
+    services.TryAddWhizbangDefaults();
+    _registerPerspectiveSyncServices(services);
+
     // Remove existing registration
     services.Remove(descriptor);
 
@@ -604,10 +609,10 @@ public static class ServiceCollectionExtensions {
         var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
-        var scopedTracker = sp.GetService<IScopedEventTracker>();
-        var envelopeRegistry = sp.GetService<Observability.IEnvelopeRegistry>();
-        var syncEventTracker = sp.GetService<ISyncEventTracker>();
-        var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
+        var scopedTracker = sp.GetRequiredService<IScopedEventTracker>();
+        var envelopeRegistry = sp.GetRequiredService<Observability.IEnvelopeRegistry>();
+        var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
+        var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
             withSecurityContext,
             scopedTracker,
@@ -617,7 +622,7 @@ public static class ServiceCollectionExtensions {
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
-        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
+        var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
             syncAwaiter,
@@ -655,23 +660,23 @@ public static class ServiceCollectionExtensions {
         var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
 
         // Layer 2: SyncTracking (tracks events for perspective sync)
-        var syncEventTracker = sp.GetService<ISyncEventTracker>();
-        var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
+        var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
+        var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
             withSecurityContext,
-            tracker: null, // Scoped tracker not available in singleton
-            envelopeRegistry: null,
+            tracker: NullScopedEventTracker.Instance, // a singleton store cannot hold a request-scoped tracker
+            sp.GetRequiredService<Observability.IEnvelopeRegistry>(),
             syncEventTracker,
             typeRegistry);
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
-        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
+        var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
             syncAwaiter,
             eventCompletionAwaiter,
-            scopedEventTracker: null); // Scoped tracker not available in singleton
+            scopedEventTracker: AmbientScopedEventTracker.Instance); // waits on the caller's ambient scope, when one exists
       });
     }
 

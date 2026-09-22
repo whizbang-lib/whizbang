@@ -104,7 +104,7 @@ public class ReconcilePerspectiveRegistryKeyAdoptionSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("clr", DOTTED_KEY);
     cmd.Parameters.AddWithValue("table", TABLE);
     cmd.Parameters.AddWithValue("svc", service);
-    cmd.Parameters.AddWithValue("enrolled", enrolled);
+    cmd.Parameters.AddWithValue(nameof(enrolled), enrolled);
     cmd.Parameters.Add(new NpgsqlParameter("ttl", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)ttlSeconds ?? DBNull.Value });
     await cmd.ExecuteNonQueryAsync();
   }
@@ -131,7 +131,7 @@ public class ReconcilePerspectiveRegistryKeyAdoptionSqlTests : EFCoreTestBase {
     var rows = new List<RegistryRow>();
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
-      rows.Add(new RegistryRow(reader.GetString(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetInt32(2)));
+      rows.Add(new RegistryRow(reader.GetString(0), reader.GetBoolean(1), await reader.IsDBNullAsync(2) ? null : reader.GetInt32(2)));
     }
     return rows;
   }

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// Channel reader semantics give per-stream serialization for free — exactly one drainer task
 /// pulls a given stream_id at a time. Mirror of <see cref="IPerspectiveDrainChannel"/> for outbox.
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+/// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public interface IOutboxDrainChannel {
   /// <summary>Reader for the OutboxDrainWorker.</summary>
   ChannelReader<Guid> Reader { get; }

@@ -38,20 +38,21 @@ public class UnobservedExceptionDiagnosticsTests {
 
   // --- fakes ---
 
-  private sealed record _LogEntry(LogLevel Level, string Message, Exception? Exception);
+  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
 
-  private sealed class _CapturingLogger<T> : ILogger<T> {
-    public List<_LogEntry> Entries { get; } = [];
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    public List<LogEntry> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      Entries.Add(new _LogEntry(logLevel, formatter(state, exception), exception));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
     }
 
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   // --- tests ---
@@ -64,7 +65,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task Dispose_ReleasesStaticSlot_NextInstanceRegistersFreshAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions());
     var first = new UnobservedExceptionDiagnostics(logger, options);
     first.Dispose();
@@ -100,7 +101,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task Constructor_NullOptions_ThrowsArgumentNullExceptionAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var caught = await Assert.That(() => {
       _ = new UnobservedExceptionDiagnostics(logger, null!);
       return Task.CompletedTask;
@@ -118,7 +119,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task SecondInstance_WhileFirstAlive_DoesNotDoubleSubscribeAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions());
 
     using var first = new UnobservedExceptionDiagnostics(logger, options);
@@ -187,7 +188,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task UnobservedTaskException_HandlerLogsAtErrorLevelAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions());
     using var diagnostics = new UnobservedExceptionDiagnostics(logger, options);
 
@@ -219,7 +220,7 @@ public class UnobservedExceptionDiagnosticsTests {
     }
 
     // Reaching this point means the handler never fired despite the GC dance.
-    // The runtime occasionally drags its feet finalizing under low pressure;
+    // The runtime occasionally drags its feet finalizing under low pressure —
     // if it becomes flaky we can switch to a stronger force-finalize pattern.
     throw new InvalidOperationException(
       $"UnobservedTaskException did not fire for marker '{marker}' within deadline. Captured {logger.Entries.Count} log entries; none contained the marker.");
@@ -232,7 +233,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task WarmUp_StartAndStop_CompleteWithoutThrowingAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions());
     using var diagnostics = new UnobservedExceptionDiagnostics(logger, options);
 
@@ -266,10 +267,10 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task FirstChanceException_EnabledWithMatchingAllowList_LogsAtDebugAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
       EnableFirstChanceExceptionLogging = true,
-      FirstChanceExceptionTypeAllowList = [typeof(_FirstChanceMarkerException).FullName!],
+      FirstChanceExceptionTypeAllowList = [typeof(FirstChanceMarkerException).FullName!],
     });
 
     var marker = $"WhizbangFirstChanceTest-{Guid.NewGuid():N}";
@@ -277,8 +278,8 @@ public class UnobservedExceptionDiagnosticsTests {
       // Throwing then catching the marker type triggers FirstChanceException synchronously
       // on this thread, driving the handler while the diagnostics owns the subscription.
       try {
-        throw new _FirstChanceMarkerException(marker);
-      } catch (_FirstChanceMarkerException) {
+        throw new FirstChanceMarkerException(marker);
+      } catch (FirstChanceMarkerException) {
         // Expected — the first-chance handler already fired before we caught it.
       }
     }
@@ -296,7 +297,7 @@ public class UnobservedExceptionDiagnosticsTests {
   /// </summary>
   [Test]
   public async Task FirstChanceException_OperationCanceled_IsNotLoggedAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>();
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>();
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
       EnableFirstChanceExceptionLogging = true,
       FirstChanceExceptionTypeAllowList = null, // wide open — only the OCE filter can exclude
@@ -316,10 +317,10 @@ public class UnobservedExceptionDiagnosticsTests {
       .Because("OperationCanceledException is filtered out of first-chance logging as low-signal noise");
   }
 
-  private sealed class _FirstChanceMarkerException : Exception {
-    public _FirstChanceMarkerException() { }
-    public _FirstChanceMarkerException(string message) : base(message) { }
-    public _FirstChanceMarkerException(string message, Exception innerException) : base(message, innerException) { }
+  public sealed class FirstChanceMarkerException : Exception {
+    public FirstChanceMarkerException() { }
+    public FirstChanceMarkerException(string message) : base(message) { }
+    public FirstChanceMarkerException(string message, Exception innerException) : base(message, innerException) { }
   }
 
   private static void _spawnAndAbandonFaultedTask(string marker) {

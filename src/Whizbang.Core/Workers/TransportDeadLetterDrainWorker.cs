@@ -59,7 +59,7 @@ public partial class TransportDeadLetterDrainWorker(
 
   private static PassiveCounter<long> _buildCounter(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     var drained = meter.CreatePassiveCounter<long>(
       name: "whizbang.transport_dlq.drained",
       description: "Messages re-submitted from a transport broker's dead-letter queue back onto the normal receive path.");
@@ -84,7 +84,7 @@ public partial class TransportDeadLetterDrainWorker(
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 

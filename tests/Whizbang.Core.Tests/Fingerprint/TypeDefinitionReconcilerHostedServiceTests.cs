@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Fingerprint;
 using Whizbang.Core.Workers;
@@ -107,9 +108,7 @@ public class TypeDefinitionReconcilerHostedServiceTests {
 
   /// <summary>A reconciler with no catalog: its pass is a well-defined no-op returning Empty.</summary>
   private static TypeDefinitionReconciler _reconciler() =>
-    new(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new EphemeralOptions()),
-      NullLogger<TypeDefinitionReconciler>.Instance);
+    new(scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), options: Options.Create(new EphemeralOptions()), logger: NullLogger<TypeDefinitionReconciler>.Instance, catalog: NullMessageTypeCatalog.Instance);
 
   private static SchemaReadyGate _readyGate() {
     var gate = new SchemaReadyGate();

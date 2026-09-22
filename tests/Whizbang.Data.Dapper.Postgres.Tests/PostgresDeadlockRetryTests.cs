@@ -135,7 +135,7 @@ public class PostgresDeadlockRetryTests {
       await PostgresDeadlockRetry.ExecuteAsync(async () => {
         callCount++;
         if (callCount == 1) {
-          cts.Cancel(); // Cancel before retry delay
+          await cts.CancelAsync(); // Cancel before retry delay
           throw _createDeadlockException();
         }
         await Task.CompletedTask;

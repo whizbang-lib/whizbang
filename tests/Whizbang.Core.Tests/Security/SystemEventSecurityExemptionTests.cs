@@ -37,7 +37,7 @@ public class SystemEventSecurityExemptionTests {
 
   private static JsonElement _emptyBody() => JsonDocument.Parse("{}").RootElement.Clone();
 
-  private sealed class _emptyServiceProvider : IServiceProvider {
+  private sealed class EmptyServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
   }
 
@@ -56,7 +56,7 @@ public class SystemEventSecurityExemptionTests {
       Timestamp = DateTimeOffset.UtcNow,
     });
 
-    var result = await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("a system event with no establishable principal must proceed unattributed — " +
@@ -75,7 +75,7 @@ public class SystemEventSecurityExemptionTests {
       Timestamp = DateTimeOffset.UtcNow,
     });
 
-    var result = await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("the exemption covers ISystemEvent as a category, not EventAudited alone.");
@@ -86,11 +86,11 @@ public class SystemEventSecurityExemptionTests {
     // Lock the other direction: the exemption is EXPLICIT — an ordinary domain event with no
     // establishable principal keeps the strict SecurityContextRequiredException contract.
     var provider = _strictProvider();
-    var envelope = _unscopedEnvelope(new _plainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
 
     Exception? caught = null;
     try {
-      await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+      await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
     } catch (Exception ex) {
       caught = ex;
     }
@@ -99,7 +99,7 @@ public class SystemEventSecurityExemptionTests {
       .Because("a domain message must not inherit the system-event exemption — strict stays strict.");
   }
 
-  private sealed record _plainDomainEvent : IEvent {
+  private sealed record PlainDomainEvent : IEvent {
     [Whizbang.Core.StreamId]
     public Guid Sid { get; init; }
   }

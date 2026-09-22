@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -28,11 +29,11 @@ namespace Whizbang.Core.Tests.Workers;
 public class IntegrityAuditWorkerPriorityTests {
   [Test]
   public async Task LocalGaps_TheReportAndTheRebuild_AreDispatchedInsideABackgroundHandlingAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
-    var dispatcher = new _captureDispatcher();
-    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -52,8 +53,8 @@ public class IntegrityAuditWorkerPriorityTests {
     var tracker = new IntegrityGapTracker();
     var origin = TrackedGuid.NewMedo().Value;
     tracker.RecordCheckpoint(origin, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(new _auditCoordinator(), new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(new AuditCoordinator(), new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -64,7 +65,7 @@ public class IntegrityAuditWorkerPriorityTests {
 
   [Test]
   public async Task RunAuditOnce_LeavesNoBackgroundHandlingBehindAsync() {
-    var worker = _buildWorker(new _auditCoordinator(), new _captureDispatcher(), new _captureTransport(), new StreamIntegrityOptions());
+    var worker = _buildWorker(new AuditCoordinator(), new CaptureDispatcher(), new CaptureTransport(), new StreamIntegrityOptions());
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -73,7 +74,7 @@ public class IntegrityAuditWorkerPriorityTests {
   }
 
   private static IntegrityAuditWorker _buildWorker(
-      _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
+      AuditCoordinator coordinator, CaptureDispatcher dispatcher, CaptureTransport transport,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -81,9 +82,9 @@ public class IntegrityAuditWorkerPriorityTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker ?? new IntegrityGapTracker());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
-    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -95,11 +96,11 @@ public class IntegrityAuditWorkerPriorityTests {
       NullLogger<IntegrityAuditWorker>.Instance);
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(IntegrityAuditWorkerTests.AuditProbeEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -112,7 +113,7 @@ public class IntegrityAuditWorkerPriorityTests {
     };
   }
 
-  private sealed class _auditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class AuditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
@@ -127,7 +128,7 @@ public class IntegrityAuditWorkerPriorityTests {
   }
 
   /// <summary>Records each dispatch with the ambient parent the producer hooks would inherit from.</summary>
-  private sealed class _captureDispatcher : FakeDispatcher, IDispatcher {
+  private sealed class CaptureDispatcher : FakeDispatcher, IDispatcher {
     public List<(object Message, int AmbientParent)> Published { get; } = [];
     public List<(object Message, int AmbientParent)> Sent { get; } = [];
     public new Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
@@ -140,7 +141,7 @@ public class IntegrityAuditWorkerPriorityTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

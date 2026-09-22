@@ -46,7 +46,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
       "UPDATE wh_perspective_registry SET row_cap_per_scope = @cap, row_cap_scope_key = @key " +
       "WHERE clr_type_name = @t", conn);
     set.Parameters.AddWithValue("t", CLR_TYPE);
-    set.Parameters.Add(new NpgsqlParameter("cap", NpgsqlTypes.NpgsqlDbType.Integer) {
+    set.Parameters.Add(new NpgsqlParameter(nameof(cap), NpgsqlTypes.NpgsqlDbType.Integer) {
       Value = (object?)cap ?? DBNull.Value
     });
     set.Parameters.Add(new NpgsqlParameter("key", NpgsqlTypes.NpgsqlDbType.Text) {
@@ -55,12 +55,12 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
     await set.ExecuteNonQueryAsync();
   }
 
-  private async Task _seedAsync(NpgsqlConnection conn, Guid id, string user, int updatedDaysAgo) {
+  private static async Task _seedAsync(NpgsqlConnection conn, Guid id, string user, int updatedDaysAgo) {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, jsonb_build_object('u', @u),
               NOW() - make_interval(days => @d), NOW() - make_interval(days => @d), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("u", user);
     cmd.Parameters.AddWithValue("d", updatedDaysAgo);
     await cmd.ExecuteNonQueryAsync();
@@ -82,7 +82,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }
 
@@ -190,11 +190,11 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
       await _seedAsync(conn, id, "alice", updatedDaysAgo: 10 + i);
     }
 
-    var first = await _sweepBatchedAsync(conn, batchSize: 2);
-    await Assert.That(first.Rows).IsEqualTo(2)
+    var (Rows, Status) = await _sweepBatchedAsync(conn, batchSize: 2);
+    await Assert.That(Rows).IsEqualTo(2)
       .Because("the sweep takes at most the batch bound per cycle — a first sweep over a large "
         + "backlog must not evict everything in one statement");
-    await Assert.That(first.Status).Contains("draining")
+    await Assert.That(Status).Contains("draining")
       .Because("hitting the bound is reported, so an operator watching the first enforcement "
         + "cycle can see the backlog draining rather than wondering why rows remain");
 

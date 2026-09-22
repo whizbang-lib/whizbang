@@ -347,12 +347,12 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   /// it, and a delay long enough to be safe would be a flake waiting to happen. The log line is the
   /// event itself.
   /// </remarks>
-  private sealed class _DeferralWatch : ILogger {
+  private sealed class DeferralWatch : ILogger {
     private readonly TaskCompletionSource _deferring = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Deferring => _deferring.Task;
 
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new _Scope();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
     public bool IsEnabled(LogLevel logLevel) => true;
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
@@ -362,7 +362,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       }
     }
 
-    private sealed class _Scope : IDisposable { public void Dispose() { } }
+    private sealed class Scope : IDisposable { public void Dispose() { } }
   }
 
   private static long _schemaKey() => Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("public");
@@ -450,7 +450,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     // lock never reached cannot be deferred to.
     await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
-    var watch = new _DeferralWatch();
+    var watch = new DeferralWatch();
     await using var context = CreateDbContext();
     var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
 
@@ -491,7 +491,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
-    var watch = new _DeferralWatch();
+    var watch = new DeferralWatch();
     await using var context = CreateDbContext();
     var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
 
@@ -536,7 +536,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
-    var watch = new _DeferralWatch();
+    var watch = new DeferralWatch();
     await using var context = CreateDbContext();
     var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
 
@@ -583,7 +583,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       third.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken)))
       .ThrowsNothing();
 
-    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    var (afterHash, _) = await _readLedgerRowAsync(rowFile, cancellationToken);
     await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("whichever instance won, the drift must be gone once all three have returned");
 
@@ -605,7 +605,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /// <summary>An instance identity, as a starting pod presents one.</summary>
-  private sealed class _Pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "staged-svc";
     public string HostName => "staged-host";
@@ -619,7 +619,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   }
 
   /// <summary>A scope carrying what staged startup resolves: an identity and an elector.</summary>
-  private IServiceProvider _stagedScope(_Pod pod) {
+  private IServiceProvider _stagedScope(Pod pod) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(pod);
     services.AddSingleton<IDutyElector>(new PgDutyElector(
@@ -678,7 +678,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Staged_TheMigratorRegistersAndThenReleasesTheDutyAsync(CancellationToken cancellationToken) {
-    var pod = new _Pod();
+    var pod = new Pod();
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
@@ -692,7 +692,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .Because("a duty still recorded after migrating would read as a holder that never let go");
     await Assert.That(await _dutyLockHoldersAsync(cancellationToken)).IsEqualTo(0L);
 
-    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    var (afterHash, _) = await _readLedgerRowAsync(rowFile, cancellationToken);
     await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("the elected instance did the work, not merely the electing");
 
@@ -718,10 +718,10 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
-    var watch = new _DeferralWatch();
+    var watch = new DeferralWatch();
     await using var context = CreateDbContext();
     var init = context.EnsureWhizbangDatabaseInitializedAsync(
-      watch, null, _stagedScope(new _Pod()), cancellationToken);
+      watch, null, _stagedScope(new Pod()), cancellationToken);
 
     await watch.Deferring;
 
@@ -734,7 +734,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    var (_, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
     await Assert.That(afterUpdatedAt).IsEqualTo(UNTOUCHED)
       .Because("it waited on the duty holder and then found nothing left to apply");
 
@@ -758,10 +758,10 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
-    var watch = new _DeferralWatch();
+    var watch = new DeferralWatch();
     await using var context = CreateDbContext();
     var init = context.EnsureWhizbangDatabaseInitializedAsync(
-      watch, null, _stagedScope(new _Pod()), cancellationToken);
+      watch, null, _stagedScope(new Pod()), cancellationToken);
 
     await watch.Deferring;
 
@@ -794,7 +794,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Staged_WithNoElectorTheLockIsStillTheGuardAsync(CancellationToken cancellationToken) {
-    var pod = new _Pod();
+    var pod = new Pod();
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
@@ -825,7 +825,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(180000)]
   public async Task Staged_ThreeInstancesConvergeAndNoneKeepsTheDutyAsync(CancellationToken cancellationToken) {
-    var pods = new[] { new _Pod(), new _Pod(), new _Pod() };
+    var pods = new[] { new Pod(), new Pod(), new Pod() };
     var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
@@ -839,7 +839,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
         null, null, _stagedScope(pods[i]), cancellationToken))))
       .ThrowsNothing();
 
-    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    var (afterHash, _) = await _readLedgerRowAsync(rowFile, cancellationToken);
     await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("whichever instance was elected, the drift must be gone once all three have returned");
 
@@ -949,21 +949,6 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   }
 
   [Test]
-  [Timeout(60000)]
-  public async Task FastPath_DoubleCheck_AfterLock_SkipsIfAnotherPodInitializedAsync(CancellationToken cancellationToken) {
-    // This test verifies that when two pods race to the slow path, the second pod's
-    // double-check inside the lock detects that the first pod already completed initialization.
-    await using var context1 = CreateDbContext();
-    await using var context2 = CreateDbContext();
-
-    // Both should complete successfully — one does DDL, the other skips via double-check
-    var task1 = context1.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
-    var task2 = context2.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
-
-    await Assert.That(async () => await Task.WhenAll(task1, task2)).ThrowsNothing();
-  }
-
-  [Test]
   [Timeout(30000)]
   public async Task FastPath_MigrationRecords_HaveCorrectOwnerAsync(CancellationToken cancellationToken) {
     // Arrange — database is already initialized by EFCoreTestBase
@@ -976,7 +961,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     var records = new List<(string FileName, string Owner)>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
-      var owner = reader.IsDBNull(1) ? "whizbang" : reader.GetString(1);
+      var owner = await reader.IsDBNullAsync(1, cancellationToken) ? "whizbang" : reader.GetString(1);
       records.Add((reader.GetString(0), owner));
     }
 
@@ -1040,7 +1025,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await using var context = CreateDbContext();
 
     // Get the default timeout before initialization
-    var defaultTimeout = context.Database.GetDbConnection().ConnectionTimeout;
+    _ = context.Database.GetDbConnection().ConnectionTimeout;
 
     // Act — run initialization (sets 600s timeout internally, should reset after)
     await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);

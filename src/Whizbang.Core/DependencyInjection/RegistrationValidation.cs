@@ -55,7 +55,8 @@ public static class RegistrationValidation {
       for (var d = 0; d < dependencies.Count; d++) {
         var dependency = dependencies[d];
         if (!_isSatisfied(services, dependency)) {
-          (missing ??= []).Add(new MissingRegistration(requirement.ImplementationType, dependency));
+          missing ??= [];
+          missing.Add(new MissingRegistration(requirement.ImplementationType, dependency));
         }
       }
     }

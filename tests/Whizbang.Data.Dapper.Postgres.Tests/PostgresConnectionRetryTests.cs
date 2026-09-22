@@ -59,7 +59,7 @@ public class PostgresConnectionRetryTests {
     var options = new PostgresOptions();
     var retry = new PostgresConnectionRetry(options, NullLogger<PostgresConnectionRetry>.Instance);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await retry.WaitForConnectionAsync(SharedPostgresContainer.ConnectionString, cts.Token))

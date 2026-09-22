@@ -53,24 +53,13 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
   }
 
   private static bool _hasMartenProjections(SyntaxNode root) {
-    var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
-
-    foreach (var classDecl in classes) {
-      if (classDecl.BaseList == null) {
-        continue;
-      }
-
-      foreach (var baseType in classDecl.BaseList.Types) {
-        var typeName = baseType.Type.ToString();
-        // Detect Marten projection base classes
-        if (typeName.StartsWith("SingleStreamProjection<", StringComparison.Ordinal) ||
-            typeName.StartsWith("MultiStreamProjection<", StringComparison.Ordinal)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+    // Detect Marten projection base classes
+    return root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+      .Where(classDecl => classDecl.BaseList is not null)
+      .SelectMany(classDecl => classDecl.BaseList!.Types)
+      .Select(baseType => baseType.Type.ToString())
+      .Any(typeName => typeName.StartsWith("SingleStreamProjection<", StringComparison.Ordinal)
+        || typeName.StartsWith("MultiStreamProjection<", StringComparison.Ordinal));
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {

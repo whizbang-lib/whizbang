@@ -91,7 +91,7 @@ public partial class LandingSaga { }
     ];
 
     foreach (var eventName in emittedEvents) {
-      await Assert.That(code!).Contains($"global::ConsumerApp.Sagas.LandingSaga.{eventName}")
+      await Assert.That(code).Contains($"global::ConsumerApp.Sagas.LandingSaga.{eventName}")
         .Because($"Every saga event the generator emits needs JsonTypeInfo, or publishing {eventName} throws NotSupportedException at serialization.");
     }
   }
@@ -115,7 +115,7 @@ public partial class LandingSaga { }
 
     // The transport consumer side receives MessageEnvelope<T> JSON and resolves the concrete generic
     // via JsonTypeInfo — without the envelope wrapper the publish succeeds and the receive fails.
-    await Assert.That(code!).Contains("MessageEnvelope<global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent>");
+    await Assert.That(code).Contains("MessageEnvelope<global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent>");
   }
 
   [Test]
@@ -135,7 +135,7 @@ public partial class LandingSaga { }
     var initializer = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
     await Assert.That(initializer).IsNotNull();
 
-    await Assert.That(initializer!).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent")
+    await Assert.That(initializer).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent")
       .Because("Saga events must register as IEvent derived types, or MessageEnvelope<IEvent> reads of a saga stream cannot resolve them.");
   }
 
@@ -158,11 +158,11 @@ public partial class LandingSaga { }
 
     // Inherited SagaEventBase members carry the correlation/causation chain — dropping them would
     // serialize a saga event that loses its place in the causal graph.
-    await Assert.That(code!).Contains("\"OccurredAt\"");
-    await Assert.That(code!).Contains("\"CorrelationId\"");
+    await Assert.That(code).Contains("\"OccurredAt\"");
+    await Assert.That(code).Contains("\"CorrelationId\"");
     // Declared members of the emitted event class.
-    await Assert.That(code!).Contains("\"ItemIdentifiers\"");
-    await Assert.That(code!).Contains("\"TotalItems\"");
+    await Assert.That(code).Contains("\"ItemIdentifiers\"");
+    await Assert.That(code).Contains("\"TotalItems\"");
   }
 
   [Test]
@@ -192,9 +192,9 @@ public partial class LandingSaga { }
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("\"TenantSlug\"")
+    await Assert.That(code).Contains("\"TenantSlug\"")
       .Because("[Saga<TBase>] events inherit the consumer's own base — its properties must reach the wire.");
-    await Assert.That(code!).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent");
+    await Assert.That(code).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent");
   }
 
   [Test]
@@ -214,8 +214,8 @@ public partial class LandingSaga { }
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent");
-    await Assert.That(code!).DoesNotContain("global::ConsumerApp.Sagas.LandingSaga.HookStartedEvent")
+    await Assert.That(code).Contains("global::ConsumerApp.Sagas.LandingSaga.InitiatedEvent");
+    await Assert.That(code).DoesNotContain("global::ConsumerApp.Sagas.LandingSaga.HookStartedEvent")
       .Because("IncludeHooks = false stops the saga generator emitting the hook events, so metadata for them would not compile.");
   }
 
@@ -237,7 +237,7 @@ internal partial class LandingSaga { }
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("LandingSaga.InitiatedEvent")
+    await Assert.That(code).DoesNotContain("LandingSaga.InitiatedEvent")
       .Because("The generated context is public — referencing an internal saga's nested types would not compile.");
   }
 
@@ -272,7 +272,7 @@ public partial class LandingSaga { }
 
     // The interface gets its own polymorphic factory — that factory IS the resolution mechanism.
     const string factory = "CreatePolymorphic_Whizbang_Sagas_ISagaItemCompletedEvent";
-    await Assert.That(context!).Contains(factory)
+    await Assert.That(context).Contains(factory)
       .Because("a receptor written against the marker interface resolves the concrete event "
              + "through this factory; without it the metadata exists and the polymorphic read "
              + "still fails, which is a more confusing version of no metadata at all");
@@ -311,7 +311,7 @@ public partial class LandingSaga<TPayload> where TPayload : class { }
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("LandingSaga")
+    await Assert.That(code).DoesNotContain("LandingSaga")
       .Because("there is no concrete type argument to name, so any reference the context emitted "
              + "would fail to compile");
   }
@@ -337,7 +337,7 @@ public record CreateOrder(string OrderId) : ICommand;
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrder")
+    await Assert.That(code).Contains("CreateOrder")
       .Because("one saga the generator cannot synthesize must not cost every other message in the "
              + "assembly its JSON metadata");
   }
@@ -359,6 +359,6 @@ public record CreateOrder(string OrderId) : ICommand;
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("global::ConsumerApp.Commands.CreateOrder");
+    await Assert.That(code).Contains("global::ConsumerApp.Commands.CreateOrder");
   }
 }

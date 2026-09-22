@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Lenses")]
 [Category("Unit")]
 [Category("Shard2")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
 public class EFCorePostgresLensQueryHighArityTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

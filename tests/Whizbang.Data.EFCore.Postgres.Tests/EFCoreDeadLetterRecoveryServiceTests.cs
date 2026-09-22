@@ -25,17 +25,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   [Test]
   public async Task Constructor_NullDbContext_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      dbContext: null!,
-      logger: NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance))
-      .Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    await using var ctx = CreateDbContext();
-    await Assert.That(() => new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      dbContext: ctx,
-      logger: null!))
+      dbContext: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -186,7 +176,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   // ===== Helpers =====
 
   private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _newService(WorkCoordinationDbContext ctx) =>
-    new(ctx, NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance);
+    new(ctx);
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext ctx) {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

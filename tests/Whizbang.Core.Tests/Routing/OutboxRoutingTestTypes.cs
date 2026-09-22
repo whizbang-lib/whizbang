@@ -24,5 +24,6 @@ namespace OutboxTestTypes.Users.Events {
 
 // Type without namespace for edge case testing
 #pragma warning disable CA1050, RCS1110 // Intentional: edge case test for a type declared without any namespace.
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3903:Types should be defined in named namespaces", Justification = "A type outside any namespace is the case under test.")]
 public sealed record TypeWithoutNamespace;
 #pragma warning restore CA1050, RCS1110

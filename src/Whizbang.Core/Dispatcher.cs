@@ -4682,37 +4682,6 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
-      TMessage message,
-      TimeSpan? timeout = null,
-      Action<SyncWaitingContext>? onWaiting = null,
-      Action<SyncDecisionContext>? onDecisionMade = null,
-      CancellationToken cancellationToken = default)
-      where TMessage : notnull
-      where TPerspective : class {
-    var sw = Stopwatch.StartNew();
-    try {
-      // Execute the handler
-      await LocalInvokeAsync(message);
-
-      // Wait for the specific perspective to process emitted events
-      return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
-          message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
-    } finally {
-      sw.Stop();
-      _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
-    }
-  }
-
-  // ========================================
-  // W4 — NEW SHAPE: SyncMode + CT-only, no TimeSpan
-  // ========================================
-
-  /// <inheritdoc />
-#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
-  [DebuggerStepThrough]
-  [StackTraceHidden]
-#endif
   public async ValueTask LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       SyncMode mode,
@@ -4740,6 +4709,37 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class {
+    var sw = Stopwatch.StartNew();
+    try {
+      // Execute the handler
+      await LocalInvokeAsync(message);
+
+      // Wait for the specific perspective to process emitted events
+      return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+          message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+    } finally {
+      sw.Stop();
+      _dispatcherMetrics?.LocalInvokeAndSyncDuration.Record(sw.Elapsed.TotalMilliseconds);
+    }
+  }
+
+  // ========================================
+  // W4 — NEW SHAPE: SyncMode + CT-only, no TimeSpan
+  // ========================================
 
   /// <summary>
   /// Waits for all perspectives to process events emitted in the current scope.

@@ -187,7 +187,7 @@ public class SagaBackfillTests {
   // ── Test fakes ───────────────────────────────────────────────────────
 
   private sealed class RecordingEmitter : ISagaEventEmitter {
-    public List<IEvent> Published { get; } = new();
+    public List<IEvent> Published { get; } = [];
     public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {
       Published.Add(eventData!);
       return Task.CompletedTask;

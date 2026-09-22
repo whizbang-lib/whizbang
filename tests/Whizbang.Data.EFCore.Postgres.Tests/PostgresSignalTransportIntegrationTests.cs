@@ -64,7 +64,7 @@ public class PostgresSignalTransportIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<TransportProbe>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<TransportProbe>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
@@ -119,7 +119,7 @@ public class PostgresSignalTransportIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<TargetedTransportProbe>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<TargetedTransportProbe>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
@@ -174,7 +174,7 @@ public class PostgresSignalTransportIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<TargetedTransportProbe>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<TargetedTransportProbe>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });

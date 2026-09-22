@@ -17,14 +17,18 @@ public sealed class ServiceBusEmulatorFixtureSource {
     // Synchronously wait for initialization to complete
     // This ensures the emulator is ready before test classes are constructed
     _initializeAsync().GetAwaiter().GetResult();
+    Emulator = Fixture;
   }
+
+  /// <summary>The emulator this instance initialized: the same shared fixture <see cref="Fixture"/> exposes.</summary>
+  public ServiceBusEmulatorFixture Emulator { get; }
 
   /// <summary>
   /// Gets the initialized ServiceBus emulator fixture.
   /// </summary>
   // Instance property because TUnit ClassDataSource requires instance access
 #pragma warning disable CA1822 // Member does not access instance data
-  public ServiceBusEmulatorFixture Fixture =>
+  public static ServiceBusEmulatorFixture Fixture =>
     _fixture ?? throw new InvalidOperationException("Emulator fixture not initialized");
 #pragma warning restore CA1822
 

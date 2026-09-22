@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -18,7 +19,7 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class StartupBuiltInObserversTests {
 
-  private sealed class _captureLogger : ILogger {
+  private sealed class CaptureLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -37,7 +38,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task Instruments_HaveStableNamesAsync() {
-    var metrics = new StartupPipelineMetrics(new WhizbangMetrics());
+    var metrics = new StartupPipelineMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.StepDuration.Name).IsEqualTo("whizbang.startup.step_duration");
     await Assert.That(metrics.StepDuration.Unit).IsEqualTo("ms");
@@ -46,7 +47,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task MetricsObserver_OnStepCompleted_RecordsDurationAndOutcomeTaggedByStepAsync() {
-    var metrics = new StartupPipelineMetrics(new WhizbangMetrics());
+    var metrics = new StartupPipelineMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var durations = new List<(double Value, string? Step, string? Outcome)>();
     var outcomes = new List<(long Value, string? Step, string? Outcome)>();
     using var listener = new MeterListener();
@@ -99,7 +100,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task LoggingObserver_CompletedStep_LogsNameOutcomeAndDurationAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
 
     await observer.OnStepCompletedAsync(_result("Migrate"), CancellationToken.None);
@@ -113,7 +114,7 @@ public class StartupBuiltInObserversTests {
   // A failed step is the record an operator greps for; it carries the reason and logs louder.
   [Test]
   public async Task LoggingObserver_FailedStep_LogsWarningWithTheReasonAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
 
     await observer.OnStepCompletedAsync(
@@ -128,7 +129,7 @@ public class StartupBuiltInObserversTests {
   // silent-skip class this pipeline exists to expose stays invisible in the one place people look.
   [Test]
   public async Task LoggingObserver_SkippedStep_LogsTheReasonAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
 
     await observer.OnStepCompletedAsync(
@@ -139,7 +140,7 @@ public class StartupBuiltInObserversTests {
 
   [Test]
   public async Task LoggingObserver_PipelineCompleted_SummarizesCountsAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
 
     await observer.OnPipelineCompletedAsync(new StartupSummary([

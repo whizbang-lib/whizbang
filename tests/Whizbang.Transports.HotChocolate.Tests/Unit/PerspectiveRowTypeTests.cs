@@ -179,21 +179,29 @@ public class PerspectiveRowTypeTests {
   }
 
   // Test query types
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1118:Utility classes should not have public constructors", Justification = "HotChocolate instantiates query types.")]
   public class TestQuery {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Resolver shape: HotChocolate binds instance methods.")]
     public IQueryable<PerspectiveRow<TestReadModel>> GetItems()
         => new List<PerspectiveRow<TestReadModel>>().AsQueryable();
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1118:Utility classes should not have public constructors", Justification = "HotChocolate instantiates query types.")]
   public class DataOnlyQuery {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Resolver shape: HotChocolate binds instance methods.")]
     public IQueryable<PerspectiveRow<TestReadModel>> GetItems()
         => new List<PerspectiveRow<TestReadModel>>().AsQueryable();
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1118:Utility classes should not have public constructors", Justification = "HotChocolate instantiates query types.")]
   public class MetadataQuery {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Resolver shape: HotChocolate binds instance methods.")]
     public PerspectiveMetadata? GetMetadata() => null;
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1118:Utility classes should not have public constructors", Justification = "HotChocolate instantiates query types.")]
   public class ScopeQuery {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Resolver shape: HotChocolate binds instance methods.")]
     public PerspectiveScope? GetScope() => null;
   }
 }

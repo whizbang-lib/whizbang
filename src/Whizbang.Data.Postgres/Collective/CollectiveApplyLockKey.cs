@@ -23,6 +23,6 @@ public static class CollectiveApplyLockKey {
   public static long Compute(string table, string scopeKey) {
     ArgumentNullException.ThrowIfNull(table);
     ArgumentNullException.ThrowIfNull(scopeKey);
-    return Fnv1a64.Compute(table + "|" + scopeKey);
+    return FnvHash64.Compute(table + "|" + scopeKey);
   }
 }

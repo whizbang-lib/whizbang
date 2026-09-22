@@ -35,14 +35,14 @@ public class SchemaMigrationDeferralTests {
   private const string SCHEMA = "public";
 
   /// <summary>A logger that keeps what it was told, so a reported decision is assertable.</summary>
-  private sealed class _RecordingLogger : ILogger {
+  private sealed class RecordingLogger : ILogger {
     public List<string> Messages { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new _Scope();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Scope();
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) =>
       Messages.Add(formatter(state, exception));
-    private sealed class _Scope : IDisposable { public void Dispose() { } }
+    private sealed class Scope : IDisposable { public void Dispose() { } }
   }
 
   /// <summary>
@@ -152,7 +152,7 @@ public class SchemaMigrationDeferralTests {
   [Test]
   public async Task AMigratorThatDiesMidWaitIsNoticedAsync() {
     var time = new FakeTimeProvider();
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
     var lockChecks = 0;
 
     var outcome = await _deferAsync(
@@ -240,7 +240,7 @@ public class SchemaMigrationDeferralTests {
   [Test]
   public async Task AFailedLockProbeContendsForTheLockAsync() {
     var time = new FakeTimeProvider();
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var outcome = await _deferAsync(
       _ => Task.FromResult(false),
@@ -264,7 +264,7 @@ public class SchemaMigrationDeferralTests {
   [Test]
   public async Task AFailedCleanlinessProbeIsNotTreatedAsCurrentAsync() {
     var time = new FakeTimeProvider();
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
     var polls = 0;
 
     var outcome = await _deferAsync(

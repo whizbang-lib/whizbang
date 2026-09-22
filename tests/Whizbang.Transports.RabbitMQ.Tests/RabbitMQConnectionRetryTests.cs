@@ -209,8 +209,8 @@ public class RabbitMQConnectionRetryTests {
     };
     var retry = new RabbitMQConnectionRetry(options);
     var factory = new ConnectionFactory { Uri = new Uri("amqp://localhost:5672") };
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await retry.CreateConnectionWithRetryAsync(factory, cts.Token))

@@ -21,7 +21,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(30_000)]  // 30s timeout
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   /// <summary>
   /// Tests that ServiceBusProcessor receives messages from generic topic-00.
@@ -31,7 +31,6 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
   public async Task ServiceBusProcessor_ReceivesMessages_FromGenericTopicAsync() {
     const string topicName = "topic-00";
     const string subscriptionName = "sub-00-a";
-    var connectionString = _fixture.ConnectionString;
 
     Console.WriteLine("[PROCESSOR TEST] ==========================================================");
     Console.WriteLine("[PROCESSOR TEST] CRITICAL: Testing ServiceBusProcessor with generic topic");

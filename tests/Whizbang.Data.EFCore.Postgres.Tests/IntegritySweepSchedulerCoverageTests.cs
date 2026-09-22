@@ -27,17 +27,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class IntegritySweepSchedulerCoverageTests {
 
-  private sealed class _throwingScheduleManager : IScheduleManager {
-    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken ct = default) =>
+  private sealed class ThrowingScheduleManager : IScheduleManager {
+    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("temporal engine rejected the schedule");
-    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }
 
-  private sealed class _instanceProvider : IServiceInstanceProvider {
+  private sealed class InstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => "coverage-svc";
     public string HostName => "test-host";
@@ -52,8 +52,8 @@ public class IntegritySweepSchedulerCoverageTests {
 
   private static IntegritySweepScheduler _newSchedulerWithThrowingManager() {
     var services = new ServiceCollection();
-    services.AddSingleton<IScheduleManager>(new _throwingScheduleManager());
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider());
+    services.AddSingleton<IScheduleManager>(new ThrowingScheduleManager());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider());
     var state = new IntegritySweepScheduleState();
     services.AddSingleton(state);
     var sp = services.BuildServiceProvider();

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public sealed class InboxHandlerWorkerQueueDepthTests {
 
-  private sealed class _neverCommits : IWorkCoordinator {
+  private sealed class NeverCommits : IWorkCoordinator {
     public Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("the schema gate is never opened in this test, so no flush reaches the coordinator");
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -34,7 +34,7 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class _noFailures : IFailureChannel {
+  private sealed class NoFailures : IFailureChannel {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
@@ -51,13 +51,17 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
   public async Task QueuedHandlerCommits_AreObservableAsAGauge_UntilTheyCommitAsync() {
     using var factory = new TestMeterFactory();
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
-    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(new _neverCommits());
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(new NeverCommits());
     await using var sp = services.BuildServiceProvider();
     // The gate is never marked ready, so a flush blocks holding its batch: the requests are either still
     // in the channel or taken up by the flusher, and the gauge must count them either way.
     var worker = new InboxHandlerWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), new _noFailures(), new SchemaReadyGate(),
-      Options.Create(new InboxHandlerWorkerOptions()), NullLogger<InboxHandlerWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      failureChannel: new NoFailures(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
       metrics: metrics);
 
     await worker.EnqueueAsync(_request());

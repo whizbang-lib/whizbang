@@ -1,4 +1,5 @@
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -248,7 +249,7 @@ public class DispatcherTagProcessingTests {
 
   // Receptor that always throws
   public class ThrowingReceptor : IReceptor<ThrowingCommand, ThrowingResult> {
-    public static void Reset() { }
+    public static void Reset() { /* the fake has nothing to do here */ }
 
     public ValueTask<ThrowingResult> HandleAsync(ThrowingCommand message, CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("Receptor failed");
@@ -275,7 +276,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -305,7 +306,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -338,7 +339,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();

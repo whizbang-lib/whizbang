@@ -109,5 +109,5 @@ public class SyncEventTypeRegistrationsTests {
 }
 
 // Test types
-internal sealed class RegistrationTestEvent { }
-internal sealed class RegistrationTestEvent2 { }
+internal sealed class RegistrationTestEvent;
+internal sealed class RegistrationTestEvent2;
