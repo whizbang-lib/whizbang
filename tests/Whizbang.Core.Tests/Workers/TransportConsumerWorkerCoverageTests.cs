@@ -2112,7 +2112,7 @@ public class TransportConsumerWorkerCoverageTests {
   /// redelivery observations — one dequeue per StoreInboxMessagesWithObservationsAsync call, so
   /// separate batches can report independent observations.</summary>
   private sealed class CoverageObservingWorkCoordinator(IReadOnlyList<IReadOnlyList<InboxRedeliveryObservation>> perCallObservations) : NoOpWorkCoordinator, IWorkCoordinator {
-    private readonly Queue<IReadOnlyList<InboxRedeliveryObservation>> _perCallObservations = new Queue<IReadOnlyList<InboxRedeliveryObservation>>(perCallObservations);
+    private readonly Queue<IReadOnlyList<InboxRedeliveryObservation>> _perCallObservations = new(perCallObservations);
     public new int StoredInboxCount { get; private set; }
 
     // Explicit re-implementation remaps the interface slot on this derived type, so the worker's

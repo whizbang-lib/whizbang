@@ -165,10 +165,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    var attribute = context.Attributes.FirstOrDefault();
-    if (attribute is null) {
-      return [];
-    }
+    // ForAttributeWithMetadataName only yields a context that carries at least one matching attribute.
+    var attribute = context.Attributes[0];
 
     foreach (var namedArgument in attribute.NamedArguments) {
       if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&

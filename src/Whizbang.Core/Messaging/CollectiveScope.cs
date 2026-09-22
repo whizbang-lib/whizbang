@@ -44,5 +44,5 @@ public abstract record CollectiveScope : ICollectiveScope {
   public abstract string ScopeKind { get; }
 
   /// <summary>The discriminator, which is also what a scope reads as in logs and diagnostics.</summary>
-  public override string ToString() => ScopeKind;
+  public sealed override string ToString() => ScopeKind;
 }

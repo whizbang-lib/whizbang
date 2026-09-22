@@ -45,4 +45,12 @@ public class CollectiveScopeBaseRoutingTests {
     await Assert.That(roundTripped!.ScopeKind).IsEqualTo("tenant");
     await Assert.That(((TenantCollectiveScope)roundTripped).TenantId).IsEqualTo("tenant-42");
   }
+
+  [Test]
+  public async Task CollectiveScope_ToString_IsTheScopeKindAsync() {
+    var scope = new TenantCollectiveScope("tenant-42");
+
+    await Assert.That(scope.ToString()).IsEqualTo(scope.ScopeKind)
+      .Because("a scope reads as its discriminator in logs and diagnostics, not as the record's member dump");
+  }
 }

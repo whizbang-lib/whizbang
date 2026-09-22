@@ -187,7 +187,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       LogDrainTimeout(_logger, _options.DrainTimeoutMs);
       await _stop.CancelAsync().ConfigureAwait(false);
       try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-    } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
+    }
 
     if (!_stop.IsCancellationRequested) {
       await _stop.CancelAsync().ConfigureAwait(false);

@@ -124,7 +124,7 @@ public static class GeneratorTestHelper {
             additionalTexts: additionalFiles
                 .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
                 .ToImmutableArray())
-        : CSharpGeneratorDriver.Create(ImmutableArray.Create(generator.AsSourceGenerator()), additionalTexts: null, parseOptions: null, optionsProvider: null);
+        : CSharpGeneratorDriver.Create([generator.AsSourceGenerator()], additionalTexts: null, parseOptions: null, optionsProvider: null);
 
     // Run the generator
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);

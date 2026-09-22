@@ -86,6 +86,31 @@ public class TypeDefinitionReconcilerCoverageTests {
         + "would corrupt wh_perspective_registry lookups for every legitimately-named perspective sharing it");
   }
 
+  // Settings changed while the payload shape did not: that is metadata drift, and the lineage edge
+  // must say so. Recording it as a schema upgrade sends an operator looking for an upcaster nobody
+  // needs; recording it as a reclassification claims an ephemeral change that never happened.
+  [Test]
+  public async Task ReconcileAsync_OnlySettingsHashChanged_RecordsMetadataDriftLineageAsync() {
+    var catalog = new FakeCatalog(
+      new MessageTypeCatalogEntry(typeof(object), "DriftEvent", "event", null) {
+        SettingsHash = "settings-new",
+        SchemaHash = "schema-same"
+      });
+    var coordinator = new LineageCapturingDriftCoordinator(storedSettingsHash: "settings-old", storedSchemaHash: "schema-same");
+    var reconciler = _reconciler(coordinator, catalog);
+
+    var summary = await reconciler.ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(summary.DriftDetected).IsEqualTo(1)
+      .Because("a changed settings hash against the stored definition is drift");
+    await Assert.That(coordinator.Recorded).IsNotNull()
+      .Because("drift between two definitions is always recorded as a lineage edge");
+    await Assert.That(coordinator.Recorded!.Value.Relationship).IsEqualTo(DefinitionRelationship.MetadataChangedTo)
+      .Because("the schema hash is unchanged and the entry is not ephemeral, so the only remaining reading is a metadata change");
+    await Assert.That(coordinator.Recorded.Value.From).IsEqualTo(1);
+    await Assert.That(coordinator.Recorded.Value.To).IsEqualTo(2);
+  }
+
   private static TypeDefinitionReconciler _reconciler(
       IWorkCoordinator coordinator, IMessageTypeCatalog catalog, ILogger<TypeDefinitionReconciler>? logger = null) {
     var services = new ServiceCollection();
@@ -119,6 +144,30 @@ public class TypeDefinitionReconcilerCoverageTests {
         string eventTypeName, string settingsHashHex, string schemaHashHex, int schemaVersion,
         CancellationToken cancellationToken = default) =>
       Task.FromResult(new TypeDefinitionRegistration(DefinitionId: 2, IsNew: true, PreviousDefinitionId: 1));
+  }
+
+  /// <summary>Stores one prior definition (id 1) with the given hashes, registers every entry as a NEW
+  /// definition (id 2) superseding it, and captures the lineage edge the reconciler records.</summary>
+  private sealed class LineageCapturingDriftCoordinator(string storedSettingsHash, string storedSchemaHash)
+      : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public (int From, int To, DefinitionRelationship Relationship)? Recorded { get; private set; }
+
+    public Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyList<TypeDefinitionInfo>>([
+        new TypeDefinitionInfo(1, "DriftEvent", storedSettingsHash, storedSchemaHash, 0)
+      ]);
+
+    public Task<TypeDefinitionRegistration> RegisterTypeDefinitionAsync(
+        string eventTypeName, string settingsHashHex, string schemaHashHex, int schemaVersion,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult(new TypeDefinitionRegistration(DefinitionId: 2, IsNew: true, PreviousDefinitionId: 1));
+
+    public Task RecordDefinitionLineageAsync(
+        int fromDefinitionId, int toDefinitionId, DefinitionRelationship relationship, string? migrationRef,
+        CancellationToken cancellationToken = default) {
+      Recorded = (fromDefinitionId, toDefinitionId, relationship);
+      return Task.CompletedTask;
+    }
   }
 
   private sealed class RetentionCapturingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {

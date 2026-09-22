@@ -150,4 +150,39 @@ public class TypeNameHandlingAnalyzerCoverageTests {
     await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ163")
       .Because("a target whose name ends in 'formatter' is helper machinery, not a consumer-built key");
   }
+
+  /// <summary>
+  /// A hand-built string handed to a parameter by position is still a key assignment when the
+  /// parameter's name says so; the recognizer has to resolve the parameter from the call's symbol
+  /// because no argument name is written.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_HandBuiltStringToAKeyParameterByPosition_ReportsWhiz163Async() {
+    const string body = """
+      public class Sample {
+        public void Store(string clrTypeName) { _ = clrTypeName; }
+        public void Build(string ns, string name) => Store(ns + "." + name);
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).Contains("WHIZ163")
+      .Because("the parameter is a type-name key even though the call never names it");
+  }
+
+  /// <summary>
+  /// The same positional hand-built string into a parameter whose name carries no key marker is
+  /// ordinary string work; only the resolved parameter name decides.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_HandBuiltStringToAnOrdinaryParameterByPosition_IsSilentAsync() {
+    const string body = """
+      public class Sample {
+        public void Describe(string label) { _ = label; }
+        public void Build(string ns, string name) => Describe(ns + "." + name);
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ163")
+      .Because("a label is not a key, so the positional argument must stay silent");
+  }
 }

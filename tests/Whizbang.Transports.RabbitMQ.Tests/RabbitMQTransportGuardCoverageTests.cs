@@ -111,12 +111,11 @@ public class RabbitMQTransportGuardCoverageTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
     var emptyList = new List<RabbitMQTransport.PendingRabbitMessage>();
     var handlerCalled = false;
-    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> handler = (_, _) => {
+
+    await transport.FlushBatchAsync(emptyList, (_, _) => {
       handlerCalled = true;
       return Task.CompletedTask;
-    };
-
-    await transport.FlushBatchAsync(emptyList, handler, null, "some-queue");
+    }, null, "some-queue");
 
     await Assert.That(handlerCalled).IsFalse();
   }

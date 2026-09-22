@@ -159,11 +159,12 @@ public sealed partial class PgSharedNotifyConnection(
       var ok = await _runProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
       SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      SetAvailable(false, "ProbeNowAsync timed out");
-      return false;
     } catch (Exception ex) {
-      SetAvailable(false, ex.Message);
+      // A cancellation the caller did not ask for is the self-test timeout; name it as such.
+      var reason = ex is OperationCanceledException && !cancellationToken.IsCancellationRequested
+        ? "ProbeNowAsync timed out"
+        : ex.Message;
+      SetAvailable(false, reason);
       return false;
     }
   }

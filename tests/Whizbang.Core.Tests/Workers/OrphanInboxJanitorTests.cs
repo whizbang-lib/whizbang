@@ -195,7 +195,7 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_UnionsPerspectiveAndRawRegistries_IntoHandledNamesAsync() {
     var coordinator = new RecordingCoordinator();
-    var perspectives = new StaticPerspectiveRegistry(new List<Type> { typeof(int) });
+    var perspectives = new StaticPerspectiveRegistry([typeof(int)]);
     var raw = new StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
     await using var sp = _buildProviderWith(coordinator, perspectives, raw);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);

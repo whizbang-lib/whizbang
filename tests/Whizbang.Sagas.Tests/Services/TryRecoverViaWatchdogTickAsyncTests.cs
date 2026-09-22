@@ -65,6 +65,36 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   }
 
   [Test]
+  public async Task FirstReArm_InitialBudgetBelowTheFloor_ReArmsAtTheFloorAsync() {
+    // A host that raises MinWatchdogDelay above the initial budget (30s + items*100ms) must still get
+    // the floor it asked for: the clamp lifts a too-short delay up to the minimum, it does not only
+    // cap a too-long one at the maximum.
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 3, Completed: 1, Failed: 0, InProgress: 2),
+        items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 },
+      options: new SagaOptions { MinWatchdogDelay = TimeSpan.FromMinutes(2) });
+
+    var firstTick = new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 0,
+      LastObservedAt = null,
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(firstTick, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    var elapsed = emitter.LastScheduledFor!.Value - DateTimeOffset.UtcNow;
+    await Assert.That(elapsed).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(115))
+      .Because("the initial budget of about 30s is below the 2-minute floor, so the floor wins");
+    await Assert.That(elapsed).IsLessThanOrEqualTo(TimeSpan.FromMinutes(2));
+  }
+
+  [Test]
   public async Task ProgressBetweenTicks_NextDelayIsEtaBasedAsync() {
     // Previous tick saw 100 done; current sees 200 done over 10s elapsed → rate = 10/s.
     // 50 items remain → ETA = 5s, plus 30s safety margin = 35s. The floor (30s) is below
@@ -362,9 +392,10 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   private static (TestSagaService, RecordingEmitter) _buildService(
       FakeItemRepository itemRepository,
       FakeTerminalReader terminalReader,
-      BaseSagaModel projection) {
+      BaseSagaModel projection,
+      SagaOptions? options = null) {
     var emitter = new RecordingEmitter();
-    var svc = new TestSagaService(emitter, itemRepository, terminalReader, projection);
+    var svc = new TestSagaService(emitter, itemRepository, terminalReader, projection, options);
     return (svc, emitter);
   }
 
@@ -473,10 +504,11 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       ISagaEventEmitter emitter,
       ISagaItemRepository itemRepository,
       ISagaItemTerminalReader terminalReader,
-      BaseSagaModel projection)
+      BaseSagaModel projection,
+      SagaOptions? options = null)
     : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
                       TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
-        SAGA_NAME, emitter, itemRepository, terminalReader, NullLogger<TestSagaService>.Instance) {
+        SAGA_NAME, emitter, itemRepository, terminalReader, options, NullLogger<TestSagaService>.Instance) {
 
     private readonly BaseSagaModel _projection = projection;
 

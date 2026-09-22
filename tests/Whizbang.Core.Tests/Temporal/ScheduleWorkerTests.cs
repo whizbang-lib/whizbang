@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Temporal;
 /// <docs>fundamentals/temporal/temporal-engine</docs>
 public class ScheduleWorkerTests {
   private sealed class FakeClaimer(params int[] returns) : IScheduleClaimer {
-    private readonly Queue<int> _returns = new Queue<int>(returns);
+    private readonly Queue<int> _returns = new(returns);
     public int Calls { get; private set; }
     public DateTimeOffset? NextFireTime { get; set; }
 
