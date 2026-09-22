@@ -534,6 +534,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
@@ -562,6 +563,43 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         : JsonIndexDiscovery.From(modelType);
 
   /// <summary>
+  /// The composite and partial indexes the model declares, or none when its document is stored
+  /// opaquely.
+  /// </summary>
+  /// <remarks>
+  /// Same reasoning as the single-property indexes above: a model stored as one serialized value has
+  /// no reachable path into its fields, so an index built over one would answer nothing.
+  /// </remarks>
+  /// <summary>
+  /// Appends the model's composite and partial index statements to the schema script.
+  /// </summary>
+  /// <remarks>
+  /// After the single-property indexes rather than before, so a script reads in the order an author
+  /// declared things: the per-property declarations, then the ones spanning several. Ordering has no
+  /// effect on the result, since every statement is independent and idempotent.
+  /// </remarks>
+  private static void _appendCompositeIndexes(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
+    if (perspective.CompositeIndexes.IsDefaultOrEmpty) {
+      return;
+    }
+
+    var table = $"{quotedSchema}.{perspective.TableName}";
+
+    foreach (var index in perspective.CompositeIndexes) {
+      var statement = CompositeIndexSql.CreateStatement(index, table, shortName);
+      if (!string.IsNullOrEmpty(statement)) {
+        sb.AppendLine(statement);
+      }
+    }
+  }
+
+  private static ImmutableArray<CompositeIndexInfo> _reachableComposites(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType)
+        ? []
+        : JsonIndexDiscovery.CompositesFrom(modelType);
+
+  /// <summary>
   /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
   /// This is Phase 2 of the pipeline - applies config-dependent table name generation.
   /// </summary>
@@ -585,6 +623,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
+        CompositeIndexes: candidate.CompositeIndexes,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -2587,6 +2626,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // ordinary statement and fails the pass with nothing to skip.
     JsonIndexSql.AppendScript(
       sb, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
+    _appendCompositeIndexes(sb, perspective, quotedSchema, shortName);
     sb.AppendLine();
   }
 
@@ -2789,6 +2829,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // optional-extension block, which creates the extension once, and the schema pass skips that
     // whole block with one warning on a server that refuses the extension.
     JsonIndexSql.AppendScript(perspSql, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
+    _appendCompositeIndexes(perspSql, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {
@@ -2966,6 +3007,7 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     string CoalesceBody);
 
 /// <summary>
@@ -2993,6 +3035,7 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     string CoalesceBody);
 
 /// <summary>

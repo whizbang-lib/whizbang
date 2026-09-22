@@ -1730,6 +1730,73 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// A declared composite index, and a partial one, reach the DDL.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A composite covers properties filtered together, and its element order is the order declared,
+  /// because that is what a composite index means: PostgreSQL answers a filter on a leading subset
+  /// and cannot use the index for one that skips the leading property.
+  /// </para>
+  /// <para>
+  /// The two elements here are deliberately of different storage. One is promoted to a column and
+  /// one stays in the document, so the index mixes a column reference with an extraction -- which
+  /// is what lets an author name a property without knowing which it is.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_DeclaredCompositeAndPartialIndexes_ReachTheTableAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System;
+
+      namespace TestApp;
+
+      public record DocEvent : IEvent;
+
+      [PerspectiveIndex(nameof(TenantId), nameof(EntityType))]
+      [PerspectiveIndex(nameof(TenantId), Where = "(data ->> 'Status') = 'active'")]
+      public class DocModel {
+        [PhysicalField]
+        public Guid TenantId { get; init; }
+
+        public string EntityType { get; init; } = "";
+        public string Status { get; init; } = "";
+      }
+
+      public class DocPerspective : IPerspectiveFor<DocModel, DocEvent> {
+        public DocModel Apply(DocModel currentData, DocEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // The promoted property by its column, the document one by its extraction, in declared order.
+    await Assert.That(sourceText).Contains("(tenant_id, (data ->> 'EntityType'))", StringComparison.Ordinal)
+      .Because("a composite mixes a column and an extraction, and keeps the declared order, since "
+             + "the order is what decides which filters the index can answer.");
+
+    await Assert.That(sourceText).Contains("WHERE (data ->> 'Status') = 'active'", StringComparison.Ordinal)
+      .Because("the partial predicate is written through verbatim; it has to match the text of the "
+             + "query's own filter or PostgreSQL will not use the index.");
+
+    await Assert.That(sourceText).Contains("CREATE INDEX IF NOT EXISTS", StringComparison.Ordinal)
+      .Because("the schema pass runs on every start, so every statement it emits is idempotent.");
+  }
+
+  /// <summary>
   /// Test that perspectives with nested Model classes generate correct table names.
   /// Nested Model classes should have table names that include the parent type.
   /// E.g., "wh_per_active_job_template" (Model suffix stripped) not just "wh_per_model"
