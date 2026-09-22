@@ -104,6 +104,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <summary>
   /// Resolves the implementation type of a registration and the service types it requires.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Recognizes every registration shape the container API offers; the shapes are the specification.")]
   private static RequirementInfo? _extractRequirement(GeneratorSyntaxContext ctx, CancellationToken ct) {
     ct.ThrowIfCancellationRequested();
 
@@ -210,6 +211,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <summary>
   /// Records the services a registration factory resolves as requirements of that registration.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Recognizes every factory shape a registration can take; the shapes are the specification.")]
   private static RequirementInfo? _extractFactoryRequirement(GeneratorSyntaxContext ctx, CancellationToken ct) {
     ct.ThrowIfCancellationRequested();
 
@@ -219,7 +221,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // Name the requirement after the service being registered, so a failure says which
     // registration is unsatisfiable rather than naming a lambda.
     string owner;
-    if (member.Name is GenericNameSyntax generic && generic.TypeArgumentList.Arguments.Count > 0) {
+    if (member.Name is GenericNameSyntax generic && generic.TypeArgumentList.Arguments.Any()) {
       if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
           is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
         return null;

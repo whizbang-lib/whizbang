@@ -52,7 +52,6 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
       }
 
       var registry = sp.GetRequiredService<PinnedWorkerRegistry>();
-      var logger = sp.GetService<ILogger<PinnedConnectionPool>>();
       var metrics = sp.GetService<Whizbang.Core.Observability.PinnedPoolMetrics>();
       // Wrap so the pool sees the resolved string regardless of source.
       var effectiveOpts = new WhizbangPinnedPoolOptions {
@@ -65,7 +64,7 @@ public static class PostgresPinnedPoolServiceCollectionExtensions {
         ConnectionLifetimeSeconds = opts.ConnectionLifetimeSeconds,
         BorrowTimeoutMilliseconds = opts.BorrowTimeoutMilliseconds,
       };
-      return new PinnedConnectionPool(effectiveOpts, registry, logger, metrics);
+      return new PinnedConnectionPool(effectiveOpts, registry, metrics);
     }));
 
     return services;

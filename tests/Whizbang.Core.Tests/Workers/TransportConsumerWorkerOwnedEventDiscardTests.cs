@@ -265,7 +265,6 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: instanceProvider,

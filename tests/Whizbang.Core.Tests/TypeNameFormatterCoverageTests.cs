@@ -41,4 +41,17 @@ public class TypeNameFormatterCoverageTests {
       .Because("without a matching ']]' there is no inner payload type to extract, so this must "
              + "fall back to the whole string via GetFullName");
   }
+
+  [Test]
+  public async Task AssemblyDisplayName_IsTheAssemblyFullNameAsync() {
+    var assembly = typeof(TypeNameFormatter).Assembly;
+
+    await Assert.That(TypeNameFormatter.AssemblyDisplayName(assembly)).IsEqualTo(assembly.FullName)
+      .Because("diagnostics name an assembly by its full display name, version and all");
+  }
+
+  [Test]
+  public async Task AssemblyDisplayName_RejectsANullAssemblyAsync() {
+    await Assert.That(() => TypeNameFormatter.AssemblyDisplayName(null!)).Throws<ArgumentNullException>();
+  }
 }

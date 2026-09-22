@@ -425,7 +425,7 @@ public partial class DeadLetterRecoveryWorker(
   }
 
   private async Task _scanOnceAsync(CancellationToken ct) {
-    var scanStartedAt = DateTimeOffset.UtcNow;
+    var scanStartedAt = _timeProvider.GetUtcNow();
     using var scope = _scopeFactory.CreateScope();
     // Housekeeping arbitration. Recovery holds the HIGHEST rank, because the dead-letter table
     // frequently contains the very messages integrity would otherwise detect as gaps and ask an

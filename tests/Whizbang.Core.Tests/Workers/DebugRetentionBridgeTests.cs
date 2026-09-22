@@ -52,8 +52,7 @@ public class DebugRetentionBridgeTests {
     // Both directions must be pushed. Only writing "true" would leave a service that had debug
     // retention switched OFF still holding a stale true, so its sweep would never purge again and
     // the inbox would grow without bound.
-    await Assert.That(DebugRetentionBridge.RequiresSync(debugMode: true)).IsTrue();
-    await Assert.That(DebugRetentionBridge.RequiresSync(debugMode: false)).IsTrue()
+    await Assert.That(DebugRetentionBridge.RequiresSync).IsTrue()
       .Because("turning debug retention OFF must also propagate, or a stale true silently disables "
              + "the purge forever and the leak is worse than the problem it was set to diagnose");
   }

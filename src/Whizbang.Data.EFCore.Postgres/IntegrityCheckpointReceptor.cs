@@ -366,8 +366,10 @@ public sealed partial class IntegrityCheckpointReceptor(
   [LoggerMessage(EventId = 63, Level = LogLevel.Debug,
     Message = "Integrity gap re-confirmed (already warned): {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' "
             + "window ({FromCommitSequence}, {ToCommitSequence}] — expected {ExpectedCount}, have {ActualCount}")]
+#pragma warning disable S107 // the log line names every fact of the gap; a parameter object would hide them from the message template
   static partial void LogGapReconfirmed(ILogger logger, string eventType, string? tenantScope,
     string originServiceName, long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount);
+#pragma warning restore S107
 
   [LoggerMessage(EventId = 51, Level = LogLevel.Warning,
     Message = "Auto-repair request to '{OriginServiceName}' skipped — missing infrastructure " +

@@ -21,11 +21,11 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// Creates a new OrderedStreamProcessor.
 /// </remarks>
+/// <param name="logger">Optional logger</param>
 /// <param name="parallelizeStreams">
 /// When true, different streams can be processed concurrently.
 /// When false, all streams processed sequentially (safer, simpler debugging).
 /// </param>
-/// <param name="logger">Optional logger</param>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>

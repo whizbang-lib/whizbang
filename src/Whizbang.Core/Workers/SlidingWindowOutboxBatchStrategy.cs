@@ -48,9 +48,9 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   /// Creates the strategy with the given flush callback.
   /// </summary>
   /// <param name="flush">Called with each per-stream batch. Typically resolves <see cref="IWorkCoordinator"/> from a DI scope and calls <see cref="IWorkCoordinator.StoreOutboxMessagesAsync"/>.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses 50 ms / 1 s / 100 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowOutboxBatchStrategy(
       OutboxBulkFlushCallback flush,
       ILogger<SlidingWindowOutboxBatchStrategy> logger,

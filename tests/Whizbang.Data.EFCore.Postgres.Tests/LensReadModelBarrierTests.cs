@@ -22,8 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class LensReadModelBarrierTests : EFCoreTestBase {
 
-  private sealed class ProbeModel {
-  }
+  private sealed class ProbeModel;
 
   private ServiceProvider _buildHost(IReadModelsReadyGate? gate) {
     var services = new ServiceCollection();

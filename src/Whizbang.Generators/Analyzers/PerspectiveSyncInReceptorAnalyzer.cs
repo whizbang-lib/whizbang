@@ -141,6 +141,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
   /// If no [FireAt] attributes, returns the default Inline stages.
   /// Returns empty if all stages are Detached (safe).
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads one attribute's arguments in every form the compiler allows.")]
   private static (string[] InlineStages, bool IsDefault) _getInlineStages(INamedTypeSymbol classSymbol) {
     var fireAtStages = new System.Collections.Generic.List<string>();
 

@@ -22,6 +22,7 @@ public static class EventTypeMatchingHelper {
   /// wrapper-blindness behind #664's disabled-subsystem livelock.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One parser over the type-name grammar; splitting it would spread the name's forms across methods a reader must recompose.")]
   public static string ExtractInnerPayloadTypeName(string messageTypeName) {
     if (string.IsNullOrEmpty(messageTypeName)) {
       return messageTypeName;

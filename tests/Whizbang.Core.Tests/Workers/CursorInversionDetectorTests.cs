@@ -21,8 +21,7 @@ public class CursorInversionDetectorTests {
 
   // --- helpers ---
 
-  private sealed class TestEvent : IEvent {
-  }
+  private sealed class TestEvent : IEvent;
 
   private static MessageEnvelope<IEvent> _envelope(Guid messageId) => new() {
     MessageId = MessageId.From(messageId),

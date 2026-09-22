@@ -69,10 +69,10 @@ public class ClaimChurnFeedbackTests {
     var f = new ClaimChurnFeedback();
     f.Report(_allChurn);
 
-    var first = f.Take();
+    var (_, Reclaimed) = f.Take();
     var second = f.Take();
 
-    await Assert.That(first.Reclaimed).IsEqualTo(3);
+    await Assert.That(Reclaimed).IsEqualTo(3);
     await Assert.That(second.Observed).IsEqualTo(0)
       .Because("leaving it cumulative would let one early burst of churn hold the window narrow "
              + "long after the condition cleared");

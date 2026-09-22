@@ -39,6 +39,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
   private const string OUTBOX_TABLE = "wh_outbox";
+  private const string P_MAX_ATTEMPTS = "p_max_attempts";
   private const string PARAM_INSTANCE_ID = "p_instance_id";
 
   // Slice 5 of zero-idle-polling — opportunistic heartbeat update inside
@@ -305,13 +306,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
 #pragma warning restore S2077
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    if (!await reader.ReadAsync(cancellationToken)) {
-      // No row means the query answered nothing, which is NOT the same as "the service is settled".
-      // Null keeps the caller's gate closed rather than licensing action off a measurement that was
-      // never taken.
-      return null;
-    }
-    return new ServiceBacklog {
+    // No row means the query answered nothing, which is NOT the same as "the service is settled".
+    // Null keeps the caller's gate closed rather than licensing action off a measurement that was
+    // never taken.
+    return !await reader.ReadAsync(cancellationToken) ? null : new ServiceBacklog {
       UnprocessedInboxRows = reader.GetInt64(0),
       ActiveLeasedRows = reader.GetInt64(1),
       // Clamped at zero: clock skew between writer and reader must not report negative lag.
@@ -743,7 +741,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _bindDivergenceKey(cmd, key);
       cmd.Parameters.AddWithValue("p_now", now);
       cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
-      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+      cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
     }, failOpen: false, cancellationToken).ConfigureAwait(false);
 
   /// <inheritdoc />
@@ -841,7 +839,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _bindDivergenceKeyArrays(cmd, originServiceId, keys);
       cmd.Parameters.AddWithValue("p_now", now);
       cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
-      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+      cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue("p_max_grants", maxGrants);
     }, cancellationToken);
 
@@ -898,7 +896,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.AddWithValue("p_now", now);
       cmd.Parameters.AddWithValue("p_base_backoff_secs", (int)baseBackoff.TotalSeconds);
-      cmd.Parameters.AddWithValue("p_max_attempts", maxAttempts);
+      cmd.Parameters.AddWithValue(P_MAX_ATTEMPTS, maxAttempts);
       cmd.Parameters.AddWithValue("p_limit", limit);
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
       cmd.CommandText = $"SELECT origin_service_id, tenant_scope, event_type, stream_id, window_from, window_until FROM {qualified}(@p_origin_ids,@p_now,@p_base_backoff_secs,@p_max_attempts,@p_limit)";
@@ -4759,7 +4757,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = streamIds is Guid[] arr ? arr : [.. streamIds]
     });
 #pragma warning restore RCS1130
-    cmd.Parameters.Add(new NpgsqlParameter("p_max_attempts", maxAttempts));
+    cmd.Parameters.Add(new NpgsqlParameter(P_MAX_ATTEMPTS, maxAttempts));
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result is int i ? i : 0;
   }

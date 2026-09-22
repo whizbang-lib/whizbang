@@ -270,7 +270,7 @@ public class DapperSqliteEventStore(
       // the entire read instead of having that candidate skipped. Skipping is the whole contract
       // of a polymorphic union: the caller offers several shapes and the store picks the one that
       // fits, so one unknown shape must cost that shape, not the stream.
-      if (!JsonOptions.TryGetTypeInfo(eventType, out var typeInfo) || typeInfo == null) {
+      if (!JsonOptions.TryGetTypeInfo(eventType, out var typeInfo)) {
         continue;
       }
 
@@ -330,7 +330,7 @@ public class DapperSqliteEventStore(
   private MessageId? _tryDeserializeMessageId(JsonElement messageIdProp) {
     // See _tryMatchEventType: GetTypeInfo throws rather than returning null, so this guard was
     // unreachable and a resolver gap for MessageId surfaced as an exception out of the read.
-    if (!JsonOptions.TryGetTypeInfo(typeof(MessageId), out var messageIdTypeInfo) || messageIdTypeInfo == null) {
+    if (!JsonOptions.TryGetTypeInfo(typeof(MessageId), out var messageIdTypeInfo)) {
       return null;
     }
 
@@ -348,7 +348,7 @@ public class DapperSqliteEventStore(
     // Hops are diagnostic trace metadata, not authoritative event data, so a resolver gap here
     // must cost the trace and not the event. GetTypeInfo threw instead of returning null, which
     // meant one unregistered hop shape took down delivery of the event carrying it.
-    if (!JsonOptions.TryGetTypeInfo(typeof(List<MessageHop>), out var hopsTypeInfo) || hopsTypeInfo == null) {
+    if (!JsonOptions.TryGetTypeInfo(typeof(List<MessageHop>), out var hopsTypeInfo)) {
       return [];
     }
 

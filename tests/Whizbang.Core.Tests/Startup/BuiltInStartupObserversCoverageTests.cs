@@ -34,11 +34,11 @@ public class BuiltInStartupObserversCoverageTests {
 
     await observer.OnStepWaitingAsync(context, CancellationToken.None);
 
-    var entry = logger.Entries.Single();
-    await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
-    await Assert.That(entry.Message).Contains("Migrate");
-    await Assert.That(entry.Message).Contains("schema-owner");
-    await Assert.That(entry.Message).Contains("held by another candidate");
+    var (Level, Message) = logger.Entries.Single();
+    await Assert.That(Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(Message).Contains("Migrate");
+    await Assert.That(Message).Contains("schema-owner");
+    await Assert.That(Message).Contains("held by another candidate");
   }
 
   // A missing refusal detail is still a fact worth one line: if the null-coalescing default

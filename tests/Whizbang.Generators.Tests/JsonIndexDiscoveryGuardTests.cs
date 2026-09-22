@@ -1,5 +1,7 @@
 extern alias shared;
 
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -47,6 +49,22 @@ public class JsonIndexDiscoveryGuardTests {
   public async Task AnUnresolvedTypeIsNotTemporalAsync() =>
     await Assert.That(CanonicalTemporalDiscovery.KindOf(null)).IsEqualTo(CanonicalTemporalKind.None)
       .Because("a conversion and a backfill would be emitted for a type that was never read");
+
+  /// <summary>A nullable temporal property has the temporal shape of its underlying type.</summary>
+  /// <remarks>
+  /// A model's optional dates are declared as <c>DateTime?</c>; reading them as non-temporal would
+  /// leave their stored form unconverted while the required dates around them are canonical.
+  /// </remarks>
+  [Test]
+  public async Task ANullableTemporalTypeIsTheUnderlyingTemporalTypeAsync() {
+    var compilation = CSharpCompilation.Create("probe", references: [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)]);
+    var dateTime = compilation.GetSpecialType(SpecialType.System_DateTime);
+    var nullableDateTime = compilation.GetSpecialType(SpecialType.System_Nullable_T).Construct(dateTime);
+
+    await Assert.That(CanonicalTemporalDiscovery.KindOf(nullableDateTime)).IsEqualTo(CanonicalTemporalDiscovery.KindOf(dateTime))
+      .Because("nullability is storage, not shape; the optional date converts exactly as the required one does");
+    await Assert.That(CanonicalTemporalDiscovery.KindOf(nullableDateTime)).IsNotEqualTo(CanonicalTemporalKind.None);
+  }
 
   /// <summary>An unresolved type does not force a model into opaque storage.</summary>
   /// <remarks>

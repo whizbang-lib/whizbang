@@ -185,4 +185,152 @@ public class TypeNameHandlingAnalyzerCoverageTests {
     await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ163")
       .Because("a label is not a key, so the positional argument must stay silent");
   }
+
+  // ---- the helper exemption, in each shape the analyzer inspects -----------------------------
+
+  /// <summary>Inside a helper type, an interpolation that composes a name is the helper's job.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Interpolation_InsideAHelper_IsSilentAsync() {
+    const string body = """
+      public static class TypeNameFormatter {
+        public static string Qualified(Type t, string assembly) => $"{t.FullName}, {assembly}";
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).IsEmpty()
+      .Because("the helpers are where names are composed; the rules exist to keep composition there");
+  }
+
+  /// <summary>Inside a helper type, assigning a key from a built string is the helper's job.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Assignment_InsideAHelper_IsSilentAsync() {
+    const string body = """
+      public class Row { public string ClrTypeName { get; set; } = ""; }
+      public static class TypeNameFormatter {
+        public static void Fill(Row row, string ns, string name) { row.ClrTypeName = ns + "." + name; }
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).IsEmpty();
+  }
+
+  /// <summary>A key declared without an initializer, or assigned from a plain literal, is not built by hand.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Declarator_WithoutAnInitializer_IsSilentAsync() {
+    const string body = """
+      public class Sample {
+        public string Build() {
+          string clrTypeName;
+          clrTypeName = "Fixed.Name";
+          return clrTypeName;
+        }
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).IsEmpty()
+      .Because("only a string built from parts is a hand-composed key");
+  }
+
+  // ---- dissection and argument shapes ----------------------------------------------------------
+
+  /// <summary>Split with no arguments is whitespace splitting, not a dissection on a separator the helpers own.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Dissection_SplitWithNoArguments_IsSilentAsync() {
+    const string body = """
+      public class Sample {
+        public string[] Words(Type t) => t.FullName!.Split();
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ161");
+  }
+
+  /// <summary>A hand-built string inside a tuple is an argument of no method, so no parameter name can make it a key.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_InsideATuple_IsSilentAsync() {
+    const string body = """
+      public class Sample {
+        public (string, int) Pair(string ns, string name) => (ns + "." + name, 1);
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ163");
+  }
+
+  /// <summary>Invoking a delegate has no parameter names to consult, so a hand-built argument stays silent.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_ToADelegate_IsSilentAsync() {
+    const string body = """
+      public class Sample {
+        public void Build(Action<string> store, string ns, string name) => store(ns + "." + name);
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).DoesNotContain("WHIZ163");
+  }
+
+  /// <summary>Parentheses around the built string, or around one of its parts, do not hide the composition.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_ParenthesizedHandBuiltString_IsStillReportedAsync() {
+    const string body = """
+      public class Sample {
+        public void Store(string clrTypeName) { _ = clrTypeName; }
+        public void Build(string ns, string name) {
+          Store((ns + "." + name));
+          Store("prefix" + (ns + name));
+        }
+      }
+      """;
+    await Assert.That((await _idsAsync(body)).Count(id => id == "WHIZ163")).IsEqualTo(2)
+      .Because("a reader cannot tell a parenthesized composition from a bare one, and neither can the key it lands in");
+  }
+
+  // ---- what counts as a type-name value ---------------------------------------------------------
+
+  /// <summary>typeof(X).FullName is a type-name value, so composing an assembly onto it is a hand-built name.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Composition_OnTypeofFullName_ReportsWhiz160Async() {
+    const string body = """
+      public class Sample {
+        public string Name(string assembly) => typeof(Sample).FullName + ", " + assembly;
+      }
+      """;
+    await Assert.That(await _idsAsync(body)).Contains("WHIZ160")
+      .Because("the compiler knows the type; a name built beside it bypasses the formatter that owns the form");
+  }
+
+  /// <summary>What a helper returns is a type-name value, whether the helper is named plainly or qualified.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Composition_OnAHelperResult_ReportsWhiz160Async() {
+    const string body = """
+      public class Sample {
+        public string Plain(Type t, string assembly) => Whizbang.Core.TypeNameFormatter.FormatClrTypeName(t) + ", " + assembly;
+      }
+      namespace Inner {
+        using Whizbang.Core;
+        public class Qualified {
+          public string Name(Type t, string assembly) => TypeNameFormatter.FormatClrTypeName(t) + ", " + assembly;
+        }
+      }
+      """;
+    await Assert.That((await _idsAsync(body)).Count(id => id == "WHIZ160")).IsEqualTo(2)
+      .Because("the helper produced a name; appending to it composes a new one by hand in either spelling");
+  }
+
+  /// <summary>An argument past the end of the parameter list (a params expansion) has no parameter of its own to name it.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Argument_BeyondTheParameterList_IsJudgedByTheParamsParameterOnlyOnceAsync() {
+    const string body = """
+      public class Sample {
+        public void Store(params string[] clrTypeNames) { _ = clrTypeNames; }
+        public void Build(string ns, string name) => Store(ns + "." + name, ns + "." + name);
+      }
+      """;
+    await Assert.That((await _idsAsync(body)).Count(id => id == "WHIZ163")).IsEqualTo(1)
+      .Because("the first argument binds to the params parameter and carries its name; the second is an expansion with no parameter to consult");
+  }
 }

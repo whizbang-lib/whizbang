@@ -40,8 +40,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   /// </summary>
   public AzureBlobMessageBodyStore(
       [ServiceKey] string providerName,
-      IOptionsMonitor<AzureBlobOffloadOptions> options,
-      ILogger<AzureBlobMessageBodyStore>? logger = null) {
+      IOptionsMonitor<AzureBlobOffloadOptions> options) {
     ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
     ArgumentNullException.ThrowIfNull(options);
     ProviderName = providerName;
@@ -69,8 +68,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   internal AzureBlobMessageBodyStore(
       string providerName,
       AzureBlobOffloadOptions options,
-      BlobContainerClient containerClient,
-      ILogger<AzureBlobMessageBodyStore>? logger = null) {
+      BlobContainerClient containerClient) {
     ProviderName = providerName;
     _options = options;
     _containerClient = containerClient;

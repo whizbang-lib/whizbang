@@ -220,6 +220,82 @@ public class PerspectiveWorkerDrainModeTests {
       .Because("disposal is keyed on the same attempt cap the joined-row path uses");
   }
 
+  [Test]
+  public async Task DrainMode_ReapThatThrows_IsLoggedAndTheDrainSurvivesAsync() {
+    // The reactive disposal can fail (the store is unreachable, the row set changed under it). That
+    // failure must not take the drain loop down: it is logged, and the periodic maintenance sweep
+    // remains the backstop for the orphaned rows.
+    var coordinator = new DrainModeWorkCoordinator {
+      StreamEventsToReturn = [],   // empty join — the orphan signature
+      ReapReturns = 3,
+      ReapThrows = true,
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var harness = new PerspectiveWorkerTestHarness();
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new DrainModePerspectiveRunnerRegistry());
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(new DrainModeEventStore());
+    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider([typeof(DrainModeTestEvent)]));
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = 10,
+      }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = 10,
+      })).Value));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a failed orphan disposal is a warning with the maintenance sweep as backstop, not a dead worker");
+    (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
+    lock (coordinator.ReapCalls) { calls = [.. coordinator.ReapCalls]; }
+    await Assert.That(calls.Length).IsGreaterThanOrEqualTo(1)
+      .Because("the disposal was attempted before it failed");
+  }
+
   #region Test Event
 
   private sealed record DrainModeTestEvent(string Data) : IEvent;
@@ -264,11 +340,14 @@ public class PerspectiveWorkerDrainModeTests {
     private readonly TaskCompletionSource _reapCalled = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)> ReapCalls { get; } = [];
     public int ReapReturns { get; set; }
+    public bool ReapThrows { get; set; }
     public Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
         Guid instanceId, IReadOnlyList<Guid> streamIds, int maxAttempts, CancellationToken cancellationToken = default) {
       lock (ReapCalls) { ReapCalls.Add((instanceId, [.. streamIds], maxAttempts)); }
       _reapCalled.TrySetResult();
-      return Task.FromResult(ReapReturns);
+      return ReapThrows
+        ? Task.FromException<int>(new InvalidOperationException("simulated disposal failure"))
+        : Task.FromResult(ReapReturns);
     }
     public async Task WaitForReapAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);

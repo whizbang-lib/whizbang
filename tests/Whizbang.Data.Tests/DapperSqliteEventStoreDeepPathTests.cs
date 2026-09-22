@@ -239,8 +239,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
 
     // Act - abandon the iterator after the first element (exercises the
     // state machine's dispose path instead of running to completion)
-    var payloads = new List<string>();
-    payloads.Add((await eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0).FirstAsync()).Payload.Payload);
+    var payloads = new List<string> {
+      (await eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0).FirstAsync()).Payload.Payload
+    };
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);
@@ -256,8 +257,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     await eventStore.AppendAsync(streamId, _createEnvelope(streamId, "event-2"));
 
     // Act - abandon the UUIDv7-overload iterator after the first element
-    var payloads = new List<string>();
-    payloads.Add((await eventStore.ReadAsync<TestEvent>(streamId, (Guid?)null).FirstAsync()).Payload.Payload);
+    var payloads = new List<string> {
+      (await eventStore.ReadAsync<TestEvent>(streamId, (Guid?)null).FirstAsync()).Payload.Payload
+    };
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);
@@ -273,8 +275,9 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
     await _seedLegacyRowAsync(streamId, 1, (Guid)TrackedGuid.NewMedo(), "poly-2");
 
     // Act - abandon the polymorphic iterator after the first yielded envelope
-    var payloads = new List<string>();
-    payloads.Add(((TestEvent)(await eventStore.ReadPolymorphicAsync(streamId, null, [typeof(TestEvent)]).FirstAsync()).Payload).Payload);
+    var payloads = new List<string> {
+      ((TestEvent)(await eventStore.ReadPolymorphicAsync(streamId, null, [typeof(TestEvent)]).FirstAsync()).Payload).Payload
+    };
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);

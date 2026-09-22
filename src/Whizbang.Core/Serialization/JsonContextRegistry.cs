@@ -163,6 +163,34 @@ public static class JsonContextRegistry {
 
     _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
   }
+  /// <summary>
+  /// Removes a modifier a test registered, keeping every other registration in its original order.
+  /// </summary>
+  /// <param name="modifier">The exact delegate instance that was registered.</param>
+  /// <remarks>
+  /// There is deliberately no public unregister: a host registers its modifiers once at startup and
+  /// they apply for the life of the process. A test is the one caller that needs to take one back,
+  /// because a modifier left registered changes how every later type info in the process is built --
+  /// including the trial configure the polymorphic builder runs on its own thread, which depends on
+  /// the scratch resolver being reference-unequal to the real one. A test that registers a modifier
+  /// therefore runs alone and removes it in a finally.
+  /// </remarks>
+  internal static void RemoveTypeInfoModifierForTests(Action<JsonTypeInfo> modifier) {
+    ArgumentNullException.ThrowIfNull(modifier);
+
+    var kept = new List<ModifierEntry>();
+    while (_modifiers.TryDequeue(out var entry)) {
+      // Delegate equality, not reference equality: two conversions of the same method over the same
+      // captured state are equal but not the same instance, and a caller should not have to hold one.
+      if (entry.Modifier != modifier) {
+        kept.Add(entry);
+      }
+    }
+    foreach (var entry in kept.OrderBy(e => e.Seq)) {
+      _modifiers.Enqueue(entry);
+    }
+  }
+
 
   /// <summary>
   /// Wraps a resolver so the registered per-type customizations run over whatever it resolves.

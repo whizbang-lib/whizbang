@@ -355,7 +355,6 @@ public class TransportConsumerWorkerBodyOffloadTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),

@@ -51,9 +51,10 @@ public sealed class ReEmissionDiagnosticTests {
   private static (ReEmissionDiagnostic Diag, CaptureLogger Log, Func<long> Count) _arm() {
     var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     long count = 0;
-    var listener = new MeterListener();
-    listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.ReEmissions.Instrument)) { l.EnableMeasurementEvents(instrument); }
+    var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.ReEmissions.Instrument)) { l.EnableMeasurementEvents(instrument); }
+      }
     };
     listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref count, value));
     listener.Start();
@@ -101,7 +102,7 @@ public sealed class ReEmissionDiagnosticTests {
   public async Task NullRegistry_IsInertAsync() {
     var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var diag = new ReEmissionDiagnostic(null, null, metrics);
-    var act = () => diag.RecordEmission("Any.Type, Asm");
+    void act() => diag.RecordEmission("Any.Type, Asm");
     await Assert.That(act).ThrowsNothing()
       .Because("hosts without the registry stay safe — the diagnostic degrades to inert");
   }

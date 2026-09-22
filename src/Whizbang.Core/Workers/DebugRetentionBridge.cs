@@ -40,7 +40,6 @@ public static class DebugRetentionBridge {
   public static string SettingValueFor(bool debugMode) => debugMode ? "true" : "false";
 
   /// <summary>Whether the setting must be written for this option value.</summary>
-  /// <param name="debugMode">Whether completed rows should be retained.</param>
-  /// <returns>Always true — both directions must propagate.</returns>
-  public static bool RequiresSync(bool debugMode) => true;
+  /// <value>Always true — both directions must propagate, whichever retention mode is on.</value>
+  public static bool RequiresSync => true;
 }

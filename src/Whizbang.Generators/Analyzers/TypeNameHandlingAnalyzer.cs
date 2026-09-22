@@ -136,7 +136,7 @@ public sealed class TypeNameHandlingAnalyzer : DiagnosticAnalyzer {
     if (method == "Substring") {
       return true;
     }
-    if (arguments.Arguments.Count == 0) {
+    if (!arguments.Arguments.Any()) {
       return false;
     }
     var first = arguments.Arguments[0].Expression;
@@ -150,8 +150,8 @@ public sealed class TypeNameHandlingAnalyzer : DiagnosticAnalyzer {
     return method switch {
       "Replace" => text == "global::",
       "Split" => text is "," or ", " or "+",
-      "IndexOf" or "LastIndexOf" => text is "+" or "," or "`",
-      _ => false,
+      // IndexOf and LastIndexOf, the only other dissectors.
+      _ => text is "+" or "," or "`",
     };
   }
 
@@ -264,8 +264,8 @@ public sealed class TypeNameHandlingAnalyzer : DiagnosticAnalyzer {
         }
         return _isSystemType(access.Expression, model);
       case InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Expression: var receiver } }:
-        return receiver is IdentifierNameSyntax { Identifier.ValueText: var helper } && Array.IndexOf(_helperTypes, helper) >= 0
-            || receiver is MemberAccessExpressionSyntax { Name.Identifier.ValueText: var qualified } && Array.IndexOf(_helperTypes, qualified) >= 0;
+        return (receiver is IdentifierNameSyntax { Identifier.ValueText: var helper } && Array.IndexOf(_helperTypes, helper) >= 0)
+            || (receiver is MemberAccessExpressionSyntax { Name.Identifier.ValueText: var qualified } && Array.IndexOf(_helperTypes, qualified) >= 0);
       default:
         return _isKeyNamed(expression);
     }

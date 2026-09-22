@@ -76,7 +76,7 @@ public class PgSharedNotifyConnectionMetricsTests {
       get {
         _measurements.Clear();
         _listener.RecordObservableInstruments();
-        return _measurements.ToArray();
+        return [.. _measurements];
       }
     }
 

@@ -77,7 +77,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -140,7 +139,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -202,7 +200,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -276,7 +273,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -342,7 +338,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -410,7 +405,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -470,7 +464,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -517,7 +510,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var invoker = new UncoveredReceptorInvoker();
-    var deserializer = new UncoveredLifecycleDeserializer();
 
     // Strategy returns InboxWork with event type that HAS perspectives
     var workStrategy = new UncoveredWorkStrategy(messageId.Value, returnEmptyInboxWork: false,
@@ -550,7 +542,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: deserializer,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -681,7 +672,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -751,7 +741,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -830,7 +819,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -904,7 +892,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -985,7 +972,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -1037,7 +1023,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -1100,7 +1085,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -1408,29 +1392,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     }
   }
 
-  private sealed class UncoveredLifecycleDeserializer : ILifecycleMessageDeserializer {
-    public int DeserializeCallCount { get; private set; }
-
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) {
-      DeserializeCallCount++;
-      return new object();
-    }
-
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) {
-      DeserializeCallCount++;
-      return new object();
-    }
-
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) {
-      DeserializeCallCount++;
-      return new object();
-    }
-
-    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
-      DeserializeCallCount++;
-      return new object();
-    }
-  }
 
   private sealed class UncoveredPerspectiveRegistry(
       IReadOnlyList<PerspectiveRegistrationInfo> perspectives

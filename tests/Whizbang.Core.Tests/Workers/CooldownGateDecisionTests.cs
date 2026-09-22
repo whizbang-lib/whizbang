@@ -23,8 +23,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 public class CooldownGateDecisionTests {
 
-  private sealed class TestEvent : IEvent {
-  }
+  private sealed class TestEvent : IEvent;
 
   private static MessageEnvelope<IEvent> _envelope(Guid messageId) => new() {
     MessageId = MessageId.From(messageId),

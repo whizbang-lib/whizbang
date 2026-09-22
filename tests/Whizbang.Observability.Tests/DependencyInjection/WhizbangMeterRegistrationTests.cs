@@ -67,9 +67,9 @@ public class WhizbangMeterRegistrationTests {
   }
 
   [Test]
-  public void AddWhizbangInstrumentation_NullBuilder_ThrowsAsync() {
+  public async Task AddWhizbangInstrumentation_NullBuilder_ThrowsAsync() {
     MeterProviderBuilder? builder = null;
 
-    Assert.Throws<ArgumentNullException>(() => builder!.AddWhizbangInstrumentation());
+    await Assert.That(() => builder!.AddWhizbangInstrumentation()).Throws<ArgumentNullException>();
   }
 }

@@ -137,6 +137,5 @@ public class PureServiceAttributeTests {
     public decimal GetRate(string currency, DateTimeOffset date) => 1.0m;
   }
 
-  private sealed class TestNonPureService {
-  }
+  private sealed class TestNonPureService;
 }

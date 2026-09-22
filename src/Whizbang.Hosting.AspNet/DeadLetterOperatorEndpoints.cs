@@ -50,12 +50,15 @@ internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext;
 /// </remarks>
 /// <docs>operations/dead-letter-queue/operator-api</docs>
 public static class DeadLetterOperatorEndpoints {
+  private const string JSON_CONTENT_TYPE = "application/json";
+
 
   /// <summary>
   /// Maps the operator endpoints under the configured prefix (default <c>/whizbang/dlq</c>).
   /// Returns the <see cref="RouteGroupBuilder"/> so callers can chain
   /// <c>.RequireAuthorization()</c> / <c>.RequireHost()</c> etc.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "ASP0018:Unused route parameter", Justification = "The handlers are RequestDelegates so the map stays ahead-of-time compatible; the cohort-release handler reads the fingerprint from the route values.")]
   public static RouteGroupBuilder MapWhizbangDeadLetterEndpoints(
       this IEndpointRouteBuilder endpoints,
       string prefix = "/whizbang/dlq") {
@@ -77,7 +80,7 @@ public static class DeadLetterOperatorEndpoints {
   private static async Task _handleCohortsAsync(HttpContext http) {
     var svc = http.RequestServices.GetRequiredService<IDeadLetterRecoveryService>();
     var cohorts = await svc.ListHeldCohortsAsync(http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     await JsonSerializer.SerializeAsync(
       http.Response.Body, cohorts,
       DeadLetterOperatorJsonContext.Default.IReadOnlyListHeldCohort,
@@ -99,7 +102,7 @@ public static class DeadLetterOperatorEndpoints {
     // there is no firehose endpoint, by design.
     var released = await svc.ReleaseHeldCohortAsync(
       fingerprint, TimeSpan.FromMinutes(staggerMinutes), http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     await JsonSerializer.SerializeAsync(
       http.Response.Body, new CohortReleaseResult(fingerprint, released),
       DeadLetterOperatorJsonContext.Default.CohortReleaseResult,
@@ -113,7 +116,7 @@ public static class DeadLetterOperatorEndpoints {
       max = parsed;
     }
     var entries = await svc.FetchDueAsync(maxCount: max, ct: http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     await JsonSerializer.SerializeAsync(
       http.Response.Body, entries,
       DeadLetterOperatorJsonContext.Default.IReadOnlyListDeadLetterEntry,
@@ -163,7 +166,7 @@ public static class DeadLetterOperatorEndpoints {
     // Operator-initiated replay is deliberate and interactive: no stagger (0), the operator
     // wants the re-offer now — the deploy-time replay is the one that paces itself (#669).
     var scheduled = await svc.ResetForGenerationAsync(gen, 0, http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     var response = new ScanNowResponse { Generation = gen, Scheduled = scheduled };
     await JsonSerializer.SerializeAsync(
       http.Response.Body, response,

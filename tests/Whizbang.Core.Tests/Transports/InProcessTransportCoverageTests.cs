@@ -44,7 +44,8 @@ public class InProcessTransportCoverageTests {
   [Test]
   public async Task Subscription_OnDisconnectedRemove_DetachesHandlerWithoutThrowingAsync() {
     var transport = new InProcessTransport();
-    EventHandler<SubscriptionDisconnectedEventArgs> handler = (_, _) => { };
+    var disconnects = new List<(object? Sender, SubscriptionDisconnectedEventArgs Args)>();
+    void handler(object? sender, SubscriptionDisconnectedEventArgs args) => disconnects.Add((sender, args));
 
     var subscription = await transport.SubscribeBatchAsync(
       batchHandler: (_, _) => Task.CompletedTask,
@@ -62,6 +63,8 @@ public class InProcessTransportCoverageTests {
     await Assert.That(caught).IsNull()
       .Because("detaching a disconnect handler must never throw — a throwing remove accessor would " +
                "break every caller's dispose/unsubscribe path");
+    await Assert.That(disconnects).IsEmpty()
+      .Because("a detached handler never hears a disconnect");
     await Assert.That(subscription.IsActive).IsTrue()
       .Because("attaching/detaching a disconnect handler must not perturb the subscription's own active state");
 
