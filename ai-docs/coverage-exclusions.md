@@ -3,9 +3,14 @@
 Read this before adding `[ExcludeFromCodeCoverage]`, and when the quality gate lists a new line you
 cannot see how to reach.
 
-The target on new lines is near-100%, not literal 100%. That difference is the whole subject of this
-file: an uncovered line is a **question** before it is a verdict, and the answer is usually a missing
-test rather than a line that deserves an exemption.
+The target on new code is a **literal 100%**, of branches as well as lines: a fully executed line can
+still carry a condition nobody took, and the uncovered-new-lines gate counts only the lines, so its
+zero is necessary and not sufficient.
+
+There is no band of "close enough" to settle into. Every line is either covered by a test or
+deliberately outside the measurement for a reason someone wrote down, and telling those two apart is
+the whole subject of this file: an uncovered line is a **question** before it is a verdict, and the
+answer is usually a missing test rather than a line that deserves an exemption.
 
 ---
 
@@ -86,6 +91,11 @@ Two things about the framework's own quality gate are worth knowing before actin
 It is **stricter than SonarCloud's**, counting its own uncovered-new-lines list plus every open
 finding, informational ones included. SonarCloud's dashboard can therefore read clean while the gate
 fails, and that is not a contradiction.
+
+SonarCloud's coverage condition is also **not the standard**. The project is on the built-in "Sonar
+way" gate, which fails new code below 80% and cannot be edited, so its verdict passes work this
+repository does not accept. Read it as a second opinion; the number to satisfy is 100%, and the
+uncovered-new-lines list plus the branch data behind it are what say whether you have.
 
 Its list is only meaningful once **every** test job has passed. A failed or canceled test job means
 that job's coverage artifact never arrived, and every line the tests in it would have covered reads as
