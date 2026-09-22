@@ -16,7 +16,8 @@
   stamps the real version at build time; it never reads the version *from* that file (except as a
   last-ditch fallback if GitVersion itself fails).
 - **Publishing to nuget.org is gated behind your approval** (the `nuget-publish` GitHub Environment).
-  Nothing reaches nuget.org until a required reviewer approves.
+  Nothing reaches nuget.org until a required reviewer approves — unless the repository variable
+  `PUBLISH_WITHOUT_APPROVAL` is set to `true`, which stands the gate down until it is unset.
 
 ---
 
@@ -214,6 +215,33 @@ The `push` job in `nuget-push.yml` declares `environment: nuget-publish`, which 
 reviewer**. Every publish path funnels through it, so **nothing reaches nuget.org without an approval**
 in the GitHub Actions UI. (`release-approval`, used by release.yml's "Approve Release" job, has no
 rules today and auto-passes — the real gate is `nuget-publish`.)
+
+### Standing the gate down
+
+Set the repository variable **`PUBLISH_WITHOUT_APPROVAL`** to `true` and every publish goes straight
+out, for as long as it stays set. Unset it to put the gate back. Nothing else changes: same job, same
+packages, same attestation.
+
+It works by choosing the environment rather than by skipping the wait, because the wait belongs to
+the environment and a job cannot ask to be reviewed conditionally:
+
+| `PUBLISH_WITHOUT_APPROVAL` | environment | behaviour |
+|---|---|---|
+| unset, or anything but `true` | `nuget-publish` | waits for a required reviewer |
+| `true` | `nuget-publish-auto` | publishes unattended |
+
+Two things to do before the first time you set it:
+
+1. **Create the `nuget-publish-auto` environment** with no protection rules. A publish that names an
+   environment which does not exist does not fall back to the protected one.
+2. **Give nuget.org a trusted-publishing policy that accepts it.** The OIDC token carries the
+   environment name, so a policy naming `nuget-publish` rejects a token minted under
+   `nuget-publish-auto` with a policy mismatch. Either add a second policy or drop the environment
+   from the existing one. This fails at the push, after the packages are built, attested and
+   uploaded — not at the gate.
+
+A run that published without review says so in its job summary, so the two cases do not read alike
+afterwards.
 
 ```mermaid
 sequenceDiagram

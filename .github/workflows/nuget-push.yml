@@ -44,7 +44,30 @@ jobs:
     name: Push to NuGet
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: nuget-publish
+    # Which environment this runs under decides whether a human has to approve it, because the
+    # approval is a property of the environment and not of the job: there is no way to write "wait
+    # for a reviewer, unless...". So the switch picks the environment instead.
+    #
+    # nuget-publish        - required reviewers. The default, and what an unset variable gives.
+    # nuget-publish-auto   - no reviewers, so the push goes straight out.
+    #
+    # Set the repository variable PUBLISH_WITHOUT_APPROVAL to 'true' to take the second one for as
+    # long as it stays set, and unset it to go back. A variable rather than a secret: the secrets
+    # context is not available to job-level keys, and there is nothing sensitive about a boolean.
+    #
+    # Every push to nuget.org goes through this job -- ci.yml for develop prereleases,
+    # nuget-publish.yml for explicit versions, release.yml for releases -- because nuget.org's
+    # trusted-publishing policy names this workflow file and rejects a push from any other. So this
+    # one switch is every nuget push, which is the point. release.yml's "Approve Release" job needs
+    # nothing here: its release-approval environment carries no rules and already auto-passes.
+    #
+    # IMPORTANT, and the reason this cannot just be switched on: the publish authenticates with OIDC
+    # trusted publishing, and the environment name is part of the token's claims. A nuget.org
+    # trusted-publishing policy that names an environment will therefore reject the other one. Before
+    # setting the variable, give nuget.org a policy for nuget-publish-auto as well (or one with no
+    # environment named). Getting this wrong fails at the push, after the packages are built and
+    # attested, not at the gate.
+    environment: ${{ vars.PUBLISH_WITHOUT_APPROVAL == 'true' && 'nuget-publish-auto' || 'nuget-publish' }}
     permissions:
       id-token: write       # NuGet OIDC trusted publishing + Sigstore keyless signing
       attestations: write   # SLSA build provenance for the published packages
@@ -65,9 +88,10 @@ jobs:
       # .nupkg hash to this repo, workflow, commit, and run (SLSA, Sigstore-signed) —
       # verifiable by anyone with:
       #   gh attestation verify <pkg>.nupkg --owner whizbang-lib
-      # A Sigstore outage therefore blocks the publish (rare, and the approval gate
-      # means a human is already watching); never reorder this after the push, or a
-      # package could reach nuget.org without provenance.
+      # A Sigstore outage therefore blocks the publish; never reorder this after the push, or a
+      # package could reach nuget.org without provenance. This used to add "and the approval gate
+      # means a human is already watching" -- that holds only while PUBLISH_WITHOUT_APPROVAL is unset, so
+      # with it set an outage blocks an unattended publish and nobody is looking at it.
       - name: Attest build provenance
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -114,10 +138,19 @@ jobs:
       - name: Summary
         env:
           VERSION: ${{ inputs.version }}
+          # Said out loud in the summary, because a publish that skipped review should not look
+          # identical to one that passed it when someone reads this later.
+          REVIEWED: ${{ vars.PUBLISH_WITHOUT_APPROVAL == 'true' && 'no' || 'yes' }}
         run: |
           PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
           echo "## Published v$VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$REVIEWED" = "no" ]; then
+            echo "> Published WITHOUT review: PUBLISH_WITHOUT_APPROVAL is set, so this ran in the" \
+                 "unprotected environment. Unset that variable to restore the approval gate." \
+                 >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- **Version**: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Packages**: $PACKAGE_COUNT" >> "$GITHUB_STEP_SUMMARY"
           echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> "$GITHUB_STEP_SUMMARY"
