@@ -307,6 +307,13 @@ public sealed class SystemEventOptions {
       return CommandAuditEnabled;
     }
 
+    // An index advisory is a perspective-related finding, so it rides the flag that already covers
+    // them rather than adding another switch for one event. A host that wants perspective events
+    // wants to hear this one too; a host that does not is not asking to be advised.
+    if (systemEventType == typeof(PerspectiveIndexAdvised)) {
+      return PerspectiveEventsEnabled;
+    }
+
     // Add more system event type checks as they are added
     // PerspectiveRebuilding, PerspectiveRebuilt -> PerspectiveEventsEnabled
     // ReceptorFailed, MessageDeadLettered -> ErrorEventsEnabled

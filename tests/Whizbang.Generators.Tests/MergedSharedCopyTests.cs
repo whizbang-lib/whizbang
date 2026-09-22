@@ -296,8 +296,11 @@ public class MergedSharedCopyTests {
     const string physicalField = "Whizbang.Generators.Shared.Models.PhysicalFieldInfo";
     var fieldType = _type(host.Assembly, physicalField);
 
+    // Every constructor parameter, positionally: Activator.CreateInstance matches arity exactly and
+    // does not apply a defaulted parameter, so a member added to the record has to be added here.
+    // The trailing null is ColumnType.
     object?[] arguments = [
-      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null,
+      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null, null,
     ];
     var one = Activator.CreateInstance(fieldType, arguments)!;
     var same = Activator.CreateInstance(fieldType, arguments)!;
@@ -313,6 +316,15 @@ public class MergedSharedCopyTests {
              + "incremental cache depends on that being true across the merge boundary");
     await Assert.That(one.GetHashCode()).IsEqualTo(same.GetHashCode())
       .Because("equal values must hash alike or the cache lookup misses even when equality holds");
+    // The newest member has to take part in equality too, or two fields differing only in the
+    // column type the author declared would share a cache entry and one of them would be generated
+    // with the other's type.
+    object?[] differingType = [.. arguments];
+    differingType[^1] = "uuid[]";
+    var declaredType = Activator.CreateInstance(fieldType, differingType)!;
+    await Assert.That(one.Equals(declaredType)).IsFalse()
+      .Because("a declared column type is part of what makes the field the value it is");
+
     await Assert.That(one.Equals(other)).IsFalse()
       .Because("a copy that found every field equal would cache a stale result and emit code for "
              + "a column that had been renamed");

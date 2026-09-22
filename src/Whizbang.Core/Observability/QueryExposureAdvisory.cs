@@ -63,18 +63,22 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
   /// <param name="thresholdBytes">
   /// The size to report above. Defaults to <see cref="DEFAULT_SIZE_THRESHOLD_BYTES"/>.
   /// </param>
-  /// <returns>How many models were reported on this call, not counting ones already reported.</returns>
-  public int Report(
+  /// <returns>
+  /// The findings made on this call, not including models already reported. Returned rather than
+  /// counted so the caller can emit them: this method is synchronous and emitting is not, and
+  /// bridging that here would mean blocking the statistics cycle on a dispatch.
+  /// </returns>
+  public IReadOnlyList<SystemEvents.PerspectiveIndexAdvised> Report(
       IReadOnlyDictionary<string, long> tableSizes,
       ICollectiveSiblingTableSource? tables,
       long thresholdBytes = DEFAULT_SIZE_THRESHOLD_BYTES) {
     ArgumentNullException.ThrowIfNull(tableSizes);
 
     if (tables is null) {
-      return 0;
+      return [];
     }
 
-    var reported = 0;
+    var reported = new List<SystemEvents.PerspectiveIndexAdvised>();
 
     foreach (var (model, exposure) in QueryExposureRegistry.All()) {
       if (!QueryExposureRegistry.CanBeOrdered(model) || _alreadyReported(model)) {
@@ -99,7 +103,18 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
         LogExposedPerspectiveIsLarge(
           _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(),
           unindexed.Count, string.Join(", ", unindexed));
-        reported++;
+
+        // The same finding as the log line, in a shape a host can route. A log line is the end of
+        // the road: one deployment raises a work item from this, another only records it, and the
+        // framework should not be deciding which.
+        reported.Add(new SystemEvents.PerspectiveIndexAdvised {
+          ModelName = model.Name,
+          TableName = table,
+          TableSizeBytes = bytes,
+          ThresholdBytes = thresholdBytes,
+          Exposure = exposure.ToString(),
+          UnindexedFields = [.. unindexed],
+        });
       }
     }
 
