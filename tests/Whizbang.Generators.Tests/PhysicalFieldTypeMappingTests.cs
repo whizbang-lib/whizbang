@@ -81,6 +81,55 @@ public class PhysicalFieldTypeMappingTests {
     await Assert.That(schema).Contains(expected);
   }
 
+  /// <summary>
+  /// An author's own column type overrides the derived one.
+  /// </summary>
+  /// <remarks>
+  /// The conventional mapping covers the types a model usually holds. It cannot reach a native
+  /// array, and without one a set-valued property is stored as a delimited string: no containment
+  /// operator, no array index, and the encoding becomes the application's problem permanently.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("Guid[]", "uuid[]")]
+  [Arguments("string[]", "text[]")]
+  [Arguments("int", "smallint")]
+  public async Task PhysicalField_DeclaredColumnType_OverridesTheDerivedOneAsync(string clrType, string declared) {
+    var schema = _schemaFor(clrType, $"ColumnType = \"{declared}\"");
+
+    await Assert.That(schema).Contains(declared, StringComparison.Ordinal)
+      .Because("the declared type is what reaches the schema, verbatim.");
+  }
+
+  /// <summary>
+  /// An unrecognized declared type is written through rather than falling back to text.
+  /// </summary>
+  /// <remarks>
+  /// This is why the override is consulted BEFORE the mapping table and not as its default arm. The
+  /// table's fallback is text, so a domain, an enum or a type from an extension would otherwise be
+  /// silently downgraded -- and silently storing an array as text is the exact defect the option
+  /// exists to remove. A type the server does not have fails the schema pass with the server's own
+  /// message, which says more than a guess made at build time.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PhysicalField_ADeclaredTypeTheMapperDoesNotKnow_IsNotDowngradedToTextAsync() {
+    var schema = _schemaFor("string", "ColumnType = \"citext\"");
+
+    await Assert.That(schema).Contains("citext", StringComparison.Ordinal)
+      .Because("a type the mapper has never heard of is the case this option exists for.");
+  }
+
+  /// <summary>Without a declared type the conventional mapping still decides.</summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PhysicalField_WithoutADeclaredType_KeepsTheConventionalMappingAsync() {
+    var schema = _schemaFor("Guid");
+
+    await Assert.That(schema).Contains("UUID", StringComparison.Ordinal)
+      .Because("the override is opt-in, so the default behaviour has to be unchanged.");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PhysicalField_DateTimeOffset_KeepsTheOffsetAsync() {

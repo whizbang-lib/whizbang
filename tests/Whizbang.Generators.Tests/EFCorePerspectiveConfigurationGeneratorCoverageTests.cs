@@ -333,6 +333,81 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   }
 
   /// <summary>
+  /// A declared column type reaches the Entity Framework model configuration verbatim.
+  /// </summary>
+  /// <remarks>
+  /// The model side and the DDL side derive the column type separately, so both have to honour the
+  /// declaration or the model and the table describe different columns. This is the model side; the
+  /// DDL side is covered in the service-registration generator's own tests.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeclaredColumnType_ReachesTheModelConfigurationAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class Lineage {
+          [PhysicalField(ColumnType = "uuid[]")]
+          public Guid[] AncestorIds { get; init; } = [];
+        }
+
+        public class LineagePerspective(IPerspectiveStore<Lineage> store)
+          : IPerspectiveFor<Lineage, LineageChanged> {
+          public Lineage Apply(Lineage currentData, LineageChanged @event) => currentData;
+        }
+
+        public record LineageChanged : IEvent;
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(".HasColumnType(\"uuid[]\")", StringComparison.Ordinal)
+      .Because("a native array is the case the conventional mapping cannot reach, and the "
+             + "derivation's fallback is text, so a declaration that did not win here would store "
+             + "the array as a delimited string.");
+  }
+
+  /// <summary>
+  /// Without a declaration the conventional mapping still decides.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutADeclaredColumnType_KeepsTheDerivedOneAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class Holder {
+          [PhysicalField]
+          public Guid OwnerId { get; init; }
+        }
+
+        public class HolderPerspective(IPerspectiveStore<Holder> store)
+          : IPerspectiveFor<Holder, HolderChanged> {
+          public Holder Apply(Holder currentData, HolderChanged @event) => currentData;
+        }
+
+        public record HolderChanged : IEvent;
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(".HasColumnType(\"uuid\")", StringComparison.Ordinal)
+      .Because("the declaration is opt-in, so the default behaviour has to be unchanged.");
+  }
+
+  /// <summary>
   /// Test that [PerspectiveStorage] with a non-Split mode (Extracted) takes the
   /// mode-mismatch branch and generates the standard configuration.
   /// </summary>

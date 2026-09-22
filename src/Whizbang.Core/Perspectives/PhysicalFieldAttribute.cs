@@ -73,4 +73,35 @@ public sealed class PhysicalFieldAttribute : Attribute {
   /// Leave at default (-1) or set to 0 for unlimited TEXT type.
   /// </remarks>
   public int MaxLength { get; init; } = -1;
+
+  /// <summary>
+  /// The PostgreSQL type for this column, overriding the one derived from the property's CLR type.
+  /// Null keeps the derived type, which is the default.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The conventional mapping covers the types a model usually holds. This is for the ones it
+  /// cannot reach: a native array, so <c>Guid[]</c> lands in <c>uuid[]</c> where containment and
+  /// overlap operators are available on it rather than in a delimited string the application has to
+  /// encode and decode forever; a narrower or wider type than the convention picks; and a domain or
+  /// extension type the mapper does not know about.
+  /// </para>
+  /// <para>
+  /// Written through verbatim, so it is the author's responsibility that the type exists and that
+  /// the property's stored form fits it. Nothing here validates it, because the set of types a
+  /// server might have is open -- a domain, an enum or a type from an extension are all legitimate,
+  /// and a check against a fixed list would refuse exactly the cases this exists for. A type the
+  /// server does not have fails the schema pass with the server's own message, which says more than
+  /// a guess made at build time would.
+  /// </para>
+  /// <para>
+  /// An array column is not much use without an index method that suits it, which is a separate
+  /// declaration.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// [PhysicalField(ColumnType = "uuid[]")]
+  /// public Guid[] AncestorIds { get; init; } = [];
+  /// </example>
+  public string? ColumnType { get; init; }
 }
