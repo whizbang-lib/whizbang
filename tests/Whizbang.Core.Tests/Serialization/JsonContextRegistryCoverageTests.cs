@@ -244,7 +244,7 @@ public class JsonContextRegistryCoverageTests {
   [NotInParallel]
   public async Task RegisterTypeInfoModifier_RunsOverTheResolvedTypesOfItsProfileAsync() {
     var seenByPersistence = new System.Collections.Concurrent.ConcurrentBag<Type>();
-    Action<JsonTypeInfo> modifier = info => seenByPersistence.Add(info.Type);
+    void modifier(JsonTypeInfo info) => seenByPersistence.Add(info.Type);
     JsonContextRegistry.RegisterTypeInfoModifier(modifier, SerializationProfile.Persistence);
     try {
       var options = new JsonSerializerOptions();
@@ -267,7 +267,7 @@ public class JsonContextRegistryCoverageTests {
   [NotInParallel]
   public async Task RegisterTypeInfoModifier_WithoutAProfile_RunsForEveryProfileAsync() {
     var seen = new System.Collections.Concurrent.ConcurrentBag<Type>();
-    Action<JsonTypeInfo> modifier = info => seen.Add(info.Type);
+    void modifier(JsonTypeInfo info) => seen.Add(info.Type);
     JsonContextRegistry.RegisterTypeInfoModifier(modifier);
     try {
       var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
@@ -280,13 +280,15 @@ public class JsonContextRegistryCoverageTests {
     }
   }
 
+  // Local functions on purpose: each conversion to a delegate is a new instance over the same
+  // captured state, so this is the spelling that proves removal matches by delegate equality.
   [Test]
   [NotInParallel]
   public async Task RemoveTypeInfoModifierForTests_TakesBackOnlyThatModifierAsync() {
     var kept = new System.Collections.Concurrent.ConcurrentBag<Type>();
     var removed = new System.Collections.Concurrent.ConcurrentBag<Type>();
-    Action<JsonTypeInfo> keptModifier = info => kept.Add(info.Type);
-    Action<JsonTypeInfo> removedModifier = info => removed.Add(info.Type);
+    void keptModifier(JsonTypeInfo info) => kept.Add(info.Type);
+    void removedModifier(JsonTypeInfo info) => removed.Add(info.Type);
     JsonContextRegistry.RegisterTypeInfoModifier(keptModifier);
     JsonContextRegistry.RegisterTypeInfoModifier(removedModifier);
     try {
