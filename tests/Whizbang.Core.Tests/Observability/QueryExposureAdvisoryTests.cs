@@ -51,7 +51,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long> { ["ordered_table"] = BIG },
       new FakeTables(new() { [typeof(AdvisoryOrderedModel)] = "ordered_table" }));
 
-    await Assert.That(reported).IsEqualTo(1);
+    await Assert.That(reported.Count).IsEqualTo(1);
   }
 
   /// <summary>A small table is not worth reporting, whatever it is exposed to.</summary>
@@ -67,7 +67,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long> { ["small_table"] = BIG - 1 },
       new FakeTables(new() { [typeof(AdvisorySmallModel)] = "small_table" }));
 
-    await Assert.That(reported).IsEqualTo(0);
+    await Assert.That(reported.Count).IsEqualTo(0);
   }
 
   /// <summary>Filtering alone is not the expensive case, however big the table is.</summary>
@@ -79,7 +79,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long> { ["filtered_table"] = BIG * 10 },
       new FakeTables(new() { [typeof(AdvisoryFilteredModel)] = "filtered_table" }));
 
-    await Assert.That(reported).IsEqualTo(0)
+    await Assert.That(reported.Count).IsEqualTo(0)
       .Because("the document's containment index answers a filter, so the size does not make it a "
         + "missing-index problem");
   }
@@ -101,7 +101,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long> { ["some_table"] = BIG },
       new FakeTables([]));
 
-    await Assert.That(reported).IsEqualTo(0);
+    await Assert.That(reported.Count).IsEqualTo(0);
   }
 
   /// <summary>A table the statistics did not mention is skipped.</summary>
@@ -113,7 +113,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long>(),
       new FakeTables(new() { [typeof(AdvisoryMissingSizeModel)] = "absent_table" }));
 
-    await Assert.That(reported).IsEqualTo(0);
+    await Assert.That(reported.Count).IsEqualTo(0);
   }
 
   /// <summary>The same finding is reported once, not once per cycle.</summary>
@@ -129,11 +129,11 @@ public class QueryExposureAdvisoryTests {
     var second = advisory.Report(sizes, tables);
     var third = advisory.Report(sizes, tables);
 
-    await Assert.That(first).IsGreaterThanOrEqualTo(1);
-    await Assert.That(second).IsEqualTo(0)
+    await Assert.That(first.Count).IsGreaterThanOrEqualTo(1);
+    await Assert.That(second.Count).IsEqualTo(0)
       .Because("the statistics cycle runs every 30 seconds, so a repeating finding would become a "
         + "wall of identical warnings");
-    await Assert.That(third).IsEqualTo(0);
+    await Assert.That(third.Count).IsEqualTo(0);
   }
 
   /// <summary>Without a table source nothing can be said, and nothing is.</summary>
@@ -144,7 +144,7 @@ public class QueryExposureAdvisoryTests {
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["ordered_table"] = BIG }, tables: null);
 
-    await Assert.That(reported).IsEqualTo(0)
+    await Assert.That(reported.Count).IsEqualTo(0)
       .Because("the exposure is known but the table it lands on is not, so there is no size to judge");
   }
 
@@ -172,7 +172,7 @@ public class QueryExposureAdvisoryTests {
       new Dictionary<string, long> { ["answered_table"] = BIG * 100 },
       new FakeTables(new() { [typeof(AdvisoryAnsweredModel)] = "answered_table" }));
 
-    await Assert.That(reported).IsEqualTo(0)
+    await Assert.That(reported.Count).IsEqualTo(0)
       .Because("the author already answered, at build time, and the answer travels with the "
         + "registration");
   }
@@ -199,6 +199,6 @@ public class QueryExposureAdvisoryTests {
       new FakeTables(new() { [typeof(AdvisorySmallModel)] = "small_table" }),
       thresholdBytes: 1024);
 
-    await Assert.That(reported).IsEqualTo(1);
+    await Assert.That(reported.Count).IsEqualTo(1);
   }
 }
