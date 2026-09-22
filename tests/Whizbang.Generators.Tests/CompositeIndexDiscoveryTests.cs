@@ -138,7 +138,7 @@ public class CompositeIndexDiscoveryTests {
   [Test]
   public async Task ADeclarationNamingNoProperties_MeansNoIndexAsync() {
     var found = _discover(
-      """[PerspectiveIndex]""",
+      "[PerspectiveIndex]",
       """
         public string Tenant { get; init; } = "";
       """);
