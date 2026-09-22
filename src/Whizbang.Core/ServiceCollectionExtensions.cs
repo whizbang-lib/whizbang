@@ -567,6 +567,11 @@ public static class ServiceCollectionExtensions {
       return services;
     }
 
+    // The decorators resolve the sync-tracking services and the envelope registry; a data provider
+    // may decorate before AddWhizbang() has run, so the registrations are made here as well.
+    services.TryAddWhizbangDefaults();
+    _registerPerspectiveSyncServices(services);
+
     // Remove existing registration
     services.Remove(descriptor);
 

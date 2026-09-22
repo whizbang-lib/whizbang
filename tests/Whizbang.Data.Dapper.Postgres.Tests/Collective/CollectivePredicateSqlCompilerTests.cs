@@ -47,9 +47,10 @@ public class CollectivePredicateSqlCompilerTests {
   // ── Predicate-shape arms ────────────────────────────────────────────────
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1940:Boolean checks should not be inverted", Justification = "The negated-equality shape is the case under test.")]
   public async Task Compile_NotOverPlainEquality_WrapsPredicateInNotAsync() {
     // NOT over a non-Any predicate — the `!(pred)` arm, distinct from the `!q.Of<T>().Any(...)` arm.
-    Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => row.Data.Status != "Archived";
+    Expression<Func<PerspectiveRow<JobModel>, bool>> filter = row => !(row.Data.Status == "Archived");
     var result = CollectivePredicateSqlCompiler<JobModel>.Compile(filter);
     await Assert.That(result.SqlFragment).IsEqualTo("NOT (data->>'Status' = @where_status)");
     await Assert.That(result.Parameters["where_status"]).IsEqualTo("Archived");

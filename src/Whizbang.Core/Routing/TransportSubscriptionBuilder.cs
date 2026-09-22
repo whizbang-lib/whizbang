@@ -26,7 +26,7 @@ public sealed class TransportSubscriptionBuilder {
   private readonly RoutingOptions _routingOptions;
   private readonly EventSubscriptionDiscovery _discovery;
   private readonly string _serviceName;
-  private readonly IInboxRoutingStrategy _inboxStrategy;
+  private readonly IInboxRoutingStrategy? _inboxStrategy;
   private readonly Messaging.IReceptorRegistryQuery _receptorRegistry;
 
   /// <summary>
@@ -46,7 +46,7 @@ public sealed class TransportSubscriptionBuilder {
       IOptions<RoutingOptions> routingOptions,
       EventSubscriptionDiscovery discovery,
       string serviceName,
-      IInboxRoutingStrategy inboxStrategy,
+      IInboxRoutingStrategy? inboxStrategy,
       Messaging.IReceptorRegistryQuery receptorRegistry) {
     ArgumentNullException.ThrowIfNull(routingOptions);
     ArgumentNullException.ThrowIfNull(discovery);
@@ -103,7 +103,10 @@ public sealed class TransportSubscriptionBuilder {
   public IReadOnlyList<TransportDestination> BuildInboxDestinations() {
     // DI-resolved strategy wins; options is the fallback (plan-flagged fix: the strategy
     // was read off options only, silently ignoring a DI-registered override).
-    var inboxStrategy = _inboxStrategy;
+    var inboxStrategy = _inboxStrategy ?? _routingOptions.InboxStrategy;
+    if (inboxStrategy is null) {
+      return [];
+    }
 
     var context = new InboxSubscriptionContext(
         _serviceName,
@@ -216,7 +219,7 @@ public static class TransportSubscriptionBuilderExtensions {
         sp.GetRequiredService<IOptions<RoutingOptions>>(),
         sp.GetRequiredService<EventSubscriptionDiscovery>(),
         serviceName,
-        sp.GetRequiredService<IInboxRoutingStrategy>(),
+        sp.GetService<IInboxRoutingStrategy>(),
         sp.GetRequiredService<Messaging.IReceptorRegistryQuery>()));
 
     TryAddTopologyManifest(services, _ => serviceName);
@@ -243,7 +246,7 @@ public static class TransportSubscriptionBuilderExtensions {
       .TryAddSingleton(services, sp => {
         var serviceName = serviceNameResolver(sp);
         var routingOptions = sp.GetService<IOptions<RoutingOptions>>()?.Value;
-        var inboxStrategy = sp.GetRequiredService<IInboxRoutingStrategy>() ?? routingOptions?.InboxStrategy;
+        var inboxStrategy = sp.GetService<IInboxRoutingStrategy>() ?? routingOptions?.InboxStrategy;
         var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>() ?? routingOptions?.OutboxStrategy;
         if (routingOptions is null || inboxStrategy is null || outboxStrategy is null) {
           // No routing configured — an empty manifest keeps manifest provisioning a no-op.

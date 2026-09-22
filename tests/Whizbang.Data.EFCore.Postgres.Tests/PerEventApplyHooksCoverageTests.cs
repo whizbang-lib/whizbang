@@ -23,7 +23,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PerEventApplyHooksCoverageTests {
 
   private sealed class Model {
-    public int Count { get; }
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1144:Unused private types or members should be removed", Justification = "The setter is the target of the compiled setter expression under test.")]
+    public int Count { get; set; }
   }
 
   private sealed class PerEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)

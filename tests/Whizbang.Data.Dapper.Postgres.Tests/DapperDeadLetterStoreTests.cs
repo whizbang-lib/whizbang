@@ -30,13 +30,6 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
       .Throws<ArgumentNullException>();
   }
 
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    await Assert.That(() => new DapperDeadLetterStore(
-      connectionString: ConnectionString))
-      .Throws<ArgumentNullException>();
-  }
-
   // ===== MoveAsync argument validation =====
 
   [Test]

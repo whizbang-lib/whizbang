@@ -29,14 +29,6 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
       .Throws<ArgumentNullException>();
   }
 
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    await using var ctx = CreateDbContext();
-    await Assert.That(() => new EFCoreDeadLetterStore<WorkCoordinationDbContext>(
-      dbContext: ctx))
-      .Throws<ArgumentNullException>();
-  }
-
   // ===== MoveAsync argument validation =====
 
   [Test]

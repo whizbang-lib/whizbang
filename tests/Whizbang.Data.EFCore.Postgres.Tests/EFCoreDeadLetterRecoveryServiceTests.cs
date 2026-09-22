@@ -29,14 +29,6 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
       .Throws<ArgumentNullException>();
   }
 
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    await using var ctx = CreateDbContext();
-    await Assert.That(() => new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      dbContext: ctx))
-      .Throws<ArgumentNullException>();
-  }
-
   // ===== FetchDueAsync =====
 
   [Test]

@@ -196,7 +196,9 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       perspectiveNotificationListener: listener,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
-      eventTypeProvider: NullEventTypeProvider.Instance,
+      // The registry registration above also registers the real event-type provider; the worker used to
+      // pick it up lazily from a scope, which the required parameter no longer does.
+      eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       snapshotStore: NullPerspectiveSnapshotStore.Instance,

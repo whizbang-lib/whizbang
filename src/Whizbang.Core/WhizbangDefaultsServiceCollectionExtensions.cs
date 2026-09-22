@@ -60,13 +60,17 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // pulled in by AddLogging above) yields a default instance and still honors a host's
     // Configure<RoutingOptions>, which a closed TryAddSingleton<IOptions<RoutingOptions>> would shadow.
     // The routing builder's own closed registration replaces the pipeline's when it runs.
-    services.TryAddSingleton<Routing.IOutboxRoutingStrategy>(sp =>
-      sp.GetRequiredService<IOptions<Routing.RoutingOptions>>().Value.OutboxStrategy);
-    // Derived from the REGISTERED outbox strategy (a host may have replaced it), exactly as the
-    // transports used to derive it by casting; a strategy that does not resolve addresses yields
-    // the null resolver, whose default address is the shared inbox.
+    // IOutboxRoutingStrategy and IInboxRoutingStrategy are deliberately NOT defaulted either. A host
+    // registers them by configuring routing (WithRouting), and every consumer treats their presence as
+    // that configuration having happened: the dispatcher routes events through the outbox strategy when
+    // one is registered and falls back to the topic strategy and registry conventions when none is,
+    // and the transports derive their inbox topic the same way. A default here would silently move
+    // every host that never configured routing onto namespace topics nobody subscribed to.
+    // The address resolver is derived from the outbox strategy a host registered, exactly as the
+    // transports used to derive it by casting; with no strategy, or one that does not resolve
+    // addresses, the null resolver's default address is the shared inbox.
     services.TryAddSingleton<Routing.ICommandInboxAddressResolver>(sp =>
-      sp.GetRequiredService<Routing.IOutboxRoutingStrategy>() as Routing.ICommandInboxAddressResolver
+      sp.GetService<Routing.IOutboxRoutingStrategy>() as Routing.ICommandInboxAddressResolver
         ?? Routing.NullCommandInboxAddressResolver.Instance);
     services.TryAddSingleton<Workers.IMessagePublishStrategy>(Workers.NullMessagePublishStrategy.Instance);
     services.TryAddSingleton<Messaging.IEventTypeProvider>(Messaging.NullEventTypeProvider.Instance);
@@ -86,10 +90,11 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Startup.IDutyElector>(Startup.NullDutyElector.Instance);
     services.TryAddSingleton<Signals.ISignalBus>(Signals.NullSignalBus.Instance);
     services.TryAddSingleton<Workers.IPinnedConnectionPool>(Workers.NoOpPinnedConnectionPool.Instance);
+    // The event mint: the composite splitter every publish path groups through. Turnkey, and a host
+    // may substitute its own families first.
+    services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
-    services.TryAddSingleton<Routing.IInboxRoutingStrategy>(sp =>
-      sp.GetRequiredService<IOptions<Routing.RoutingOptions>>().Value.InboxStrategy);
     // Both resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();

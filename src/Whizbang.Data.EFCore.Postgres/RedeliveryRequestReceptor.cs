@@ -77,7 +77,10 @@ public sealed partial class RedeliveryRequestReceptor(
         // here turned an absent identity into a failed redelivery.
         services.GetService<IServiceInstanceProvider>()
           ?? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance,
-        compositeFactory: services.GetRequiredService<Whizbang.Core.Minting.ICompositeFactory>(),
+        // A host that never registered the event mint still redelivers with the default grouping,
+        // which is what the pump's own fallback used to supply.
+        compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>()
+          ?? new Whizbang.Core.Minting.CompositeFactory(),
         options: options);
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter

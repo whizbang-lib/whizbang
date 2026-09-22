@@ -172,7 +172,7 @@ public static class TransportConsumerBuilderExtensions {
           routingOptions,
           discovery,
           serviceName,
-          sp.GetRequiredService<IInboxRoutingStrategy>(),
+          sp.GetService<IInboxRoutingStrategy>(),
           sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
@@ -328,7 +328,7 @@ public static class TransportConsumerBuilderExtensions {
           routingOptions,
           discovery,
           serviceName,
-          sp.GetRequiredService<IInboxRoutingStrategy>(),
+          sp.GetService<IInboxRoutingStrategy>(),
           sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);

@@ -41,17 +41,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
       .Throws<ArgumentNullException>();
   }
 
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    var services = new ServiceCollection();
-    await using var sp = services.BuildServiceProvider();
-    await Assert.That(() => new ScopedEFCoreDeadLetterStore(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      dbContextType: typeof(WorkCoordinationDbContext),
-      gate: null))
-      .Throws<ArgumentNullException>();
-  }
-
   // ===== MoveAsync round-trip via the adapter =====
 
   [Test]

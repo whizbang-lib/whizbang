@@ -33,6 +33,12 @@ public class PerspectiveDataCoalescerCoverageTests {
   }
 
   private sealed class HookProbeDbContext(DbContextOptions<HookProbeDbContext> options) : DbContext(options) {
+    // The probe entity joins the model here: a DbSet would exist only to be discovered, which the
+    // analyzers read as an unused member.
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      modelBuilder.Entity<HookProbeEntity>();
+      base.OnModelCreating(modelBuilder);
+    }
   }
 
   [After(Test)]
