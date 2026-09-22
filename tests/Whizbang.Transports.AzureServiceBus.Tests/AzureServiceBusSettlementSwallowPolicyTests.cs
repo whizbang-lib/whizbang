@@ -24,12 +24,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// </summary>
 public class AzureServiceBusSettlementSwallowPolicyTests {
 
-  private static bool _invokePolicy(Exception ex) {
-    var method = typeof(AzureServiceBusTransport).GetMethod(
-      "_isSettlementShouldSwallow",
-      BindingFlags.Static | BindingFlags.NonPublic)!;
-    return (bool)method.Invoke(null, [ex])!;
-  }
+  private static bool _invokePolicy(Exception ex) => AzureServiceBusTransport.IsSettlementShouldSwallow(ex);
 
   // Constructs a ServiceBusException with a chosen Reason. ServiceBusException's
   // public ctor only takes (message), then sets Reason via internal API. We use

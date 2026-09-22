@@ -306,7 +306,7 @@ public class WhizbangCoreOptionsTests {
   private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
     }
   }
@@ -314,7 +314,7 @@ public class WhizbangCoreOptionsTests {
   private sealed class TestTelemetryHook : IMessageTagHook<TelemetryTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
     }
   }
@@ -322,7 +322,7 @@ public class WhizbangCoreOptionsTests {
   private sealed class TestMetricHook : IMessageTagHook<MetricTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
     }
   }
@@ -330,7 +330,7 @@ public class WhizbangCoreOptionsTests {
   private sealed class TestUniversalHook : IMessageTagHook<MessageTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
     }
   }

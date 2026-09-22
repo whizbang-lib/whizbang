@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard2")]
 public class ReportFailuresSqlTests : EFCoreTestBase {
 
   [Test]
@@ -67,7 +68,7 @@ public class ReportFailuresSqlTests : EFCoreTestBase {
     await using var reader = await verify.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
     var attempts = reader.GetInt32(0);
-    var error = reader.IsDBNull(1) ? null : reader.GetString(1);
+    var error = await reader.IsDBNullAsync(1) ? null : reader.GetString(1);
     await Assert.That(attempts).IsEqualTo(0);
     await Assert.That(error).IsEqualTo("transport publish exploded");
   }

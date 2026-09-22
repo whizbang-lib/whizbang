@@ -24,7 +24,6 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>core-concepts/scope-propagation</docs>
 public class ReceptorInvokerTagProcessorScopeTests {
   private sealed record TestCommand(string Value) : IMessage;
-  private sealed record TestEvent(string Data) : IEvent;
 
   /// <summary>
   /// Verifies that when security context is established, the scope is passed
@@ -43,9 +42,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
     // Capture the scope passed to ProcessTagsAsync
     IScopeContext? capturedScope = null;
-    var tagProcessor = new TestTagProcessor(onProcessTags: scope => {
-      capturedScope = scope;
-    });
+    var tagProcessor = new TestTagProcessor(onProcessTags: scope => capturedScope = scope);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -87,9 +84,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
     // Capture the scope passed to ProcessTagsAsync
     IScopeContext? capturedScope = null;
-    var tagProcessor = new TestTagProcessor(onProcessTags: scope => {
-      capturedScope = scope;
-    });
+    var tagProcessor = new TestTagProcessor(onProcessTags: scope => capturedScope = scope);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -213,7 +208,6 @@ public class ReceptorInvokerTagProcessorScopeTests {
 
   private sealed class InvocationTracker {
     private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
-    public List<(string ReceptorId, LifecycleStage Stage)> Invocations => _invocations;
     public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
   }
 
@@ -230,7 +224,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }));
@@ -242,8 +236,10 @@ public class ReceptorInvokerTagProcessorScopeTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

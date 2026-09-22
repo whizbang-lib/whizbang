@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -61,7 +62,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
 
     // Check if property has [VectorField] attribute
     foreach (var attribute in propertySymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, VECTOR_FIELD_ATTRIBUTE)) {
         // Found [VectorField] but package is not referenced - report diagnostic
         var location = attribute.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ??
                        propertySymbol.Locations.FirstOrDefault() ??

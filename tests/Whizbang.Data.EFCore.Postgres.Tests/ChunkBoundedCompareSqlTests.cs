@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard2")]
 public class ChunkBoundedCompareSqlTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openAsync() {
@@ -26,7 +27,7 @@ public class ChunkBoundedCompareSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task _seedReceivedAsync(NpgsqlConnection conn, Guid origin, Guid streamId,
@@ -42,18 +43,17 @@ public class ChunkBoundedCompareSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("origin", origin);
+      store.Parameters.AddWithValue(nameof(origin), origin);
       store.Parameters.AddWithValue("oseq", originSeq);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 
   [Test]
@@ -77,8 +77,8 @@ public class ChunkBoundedCompareSqlTests : EFCoreTestBase {
       origin, [inChunkA, inChunkB], sinceSequence: null, untilSequence: null, TimeSpan.FromHours(1));
 
     await Assert.That(digests).IsNotNull();
-    await Assert.That(digests!.Select(d => d.StreamId).OrderBy(s => s).ToList())
-      .IsEquivalentTo(new[] { inChunkA, inChunkB }.OrderBy(s => s).ToList())
+    await Assert.That(digests!.Select(d => d.StreamId).Order().ToList())
+      .IsEquivalentTo(new[] { inChunkA, inChunkB }.Order().ToList())
       .Because("the local side of a chunk comparison needs the chunk's streams and nothing else");
   }
 

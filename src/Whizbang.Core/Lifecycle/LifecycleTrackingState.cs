@@ -32,12 +32,12 @@ internal sealed partial class LifecycleTrackingState(
   MessageSource source,
   Guid? streamId,
   Type? perspectiveType,
-  ILogger? logger = null) : ILifecycleTracking {
+  ILogger logger) : ILifecycleTracking {
   private readonly IMessageEnvelope _envelope = envelope;
   private readonly MessageSource _source = source;
   private readonly Guid? _streamId = streamId;
   private readonly Type? _perspectiveType = perspectiveType;
-  private readonly ILogger _logger = logger ?? NullLogger.Instance;
+  private readonly ILogger _logger = logger;
   private readonly DebugAwareStopwatch _totalStopwatch = DebugAwareStopwatch.StartNew();
   private readonly List<StageRecord> _stageHistory = [];
   private readonly HashSet<LifecycleStage> _firedStages = [];

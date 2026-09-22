@@ -20,7 +20,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   private readonly ConcurrentDictionary<CorrelationId, RequestRecord> _requests = new();
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
 
     var tcs = new TaskCompletionSource<IMessageEnvelope>();
@@ -45,7 +45,8 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsync_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
 
     if (!_requests.TryGetValue(correlationId, out var record)) {
@@ -54,39 +55,24 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
     }
 
     try {
-      // Wait for response or cancellation
-      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled())) {
-        var response = await record.CompletionSource.Task;
-        return response; // May be null if timed out
-      }
+      // The token governs this wait only. Canceling the shared completion source instead would cancel
+      // every other waiter on the correlation and leave a response that arrives afterwards with nowhere
+      // to go.
+      return await record.CompletionSource.Task.WaitAsync(cancellationToken); // null if it timed out
     } catch (OperationCanceledException) {
       return null;
     }
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
-  public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
-
-    if (!_requests.TryGetValue(correlationId, out var record)) {
-      // Request not found, might have already completed or timed out
-      return null;
-    }
-
-    try {
-      // Wait for response or cancellation
-      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled())) {
-        var response = await record.CompletionSource.Task;
-        return response as MessageEnvelope<TMessage>; // Cast to strongly-typed envelope
-      }
-    } catch (OperationCanceledException) {
-      return null;
-    }
-  }
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreCancellationTests.cs:WaitForResponseAsyncGeneric_OneWaiterCanceled_TheOtherStillReceivesTheResponseAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
+  public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default)
+    => await WaitForResponseAsync(correlationId, cancellationToken) as MessageEnvelope<TMessage>;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 
@@ -111,7 +97,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
     var now = DateTimeOffset.UtcNow;
     var expiredKeys = new System.Collections.Generic.List<CorrelationId>();

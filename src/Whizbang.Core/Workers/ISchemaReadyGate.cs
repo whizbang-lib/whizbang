@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// keeping the system in a safe halted state instead of running on a broken schema.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/startup-ordering</docs>
+/// <docs>operations/workers/database-readiness</docs>
 public interface ISchemaReadyGate {
   /// <summary>
   /// Awaits the schema-ready signal. Returns immediately when ready; otherwise blocks until
@@ -57,4 +57,17 @@ public sealed class SchemaReadyGate : ISchemaReadyGate {
 
   /// <inheritdoc />
   public void MarkReady() => _ready.TrySetResult();
+
+  /// <summary>A gate that is already open.</summary>
+  /// <remarks>
+  /// For a host with no schema step to wait on: an in-memory composition, or storage
+  /// provisioned out of band. Such a host used to say "nothing to wait for" by supplying
+  /// no gate, which is indistinguishable from forgetting to supply one, and the difference
+  /// matters because the second case skipped a wait that should have run.
+  /// </remarks>
+  public static SchemaReadyGate AlreadyReady() {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    return gate;
+  }
 }

@@ -29,12 +29,12 @@ namespace Whizbang.Core.Perspectives;
 /// class OrderPerspective :
 ///     IPerspectiveFor&lt;OrderView, OrderCreated&gt;,              // Updates only
 ///     IPerspectiveFor&lt;OrderView, OrderUpdated&gt;,              // Updates only
-///     IPerspectiveWithActionsFor&lt;OrderView, OrderCancelled&gt;, // May delete
+///     IPerspectiveWithActionsFor&lt;OrderView, OrderCanceled&gt;, // May delete
 ///     IPerspectiveWithActionsFor&lt;OrderView, OrderArchived&gt;   // May delete
 /// {
 ///     public OrderView Apply(OrderView c, OrderCreated e) =&gt; new(...);
 ///     public OrderView Apply(OrderView c, OrderUpdated e) =&gt; c with { ... };
-///     public ApplyResult&lt;OrderView&gt; Apply(OrderView c, OrderCancelled e)
+///     public ApplyResult&lt;OrderView&gt; Apply(OrderView c, OrderCanceled e)
 ///         =&gt; ApplyResult&lt;OrderView&gt;.Delete();
 ///     public ApplyResult&lt;OrderView&gt; Apply(OrderView c, OrderArchived e)
 ///         =&gt; ApplyResult&lt;OrderView&gt;.Purge();
@@ -42,6 +42,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
+[global::System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "The type parameter is the key the source generator and the container resolve on; the interface is a marker by design.")]
 public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
   // Marker interface - no methods required
   // Specific event handling enforced by IPerspectiveWithActionsFor<TModel, TEvent> variants

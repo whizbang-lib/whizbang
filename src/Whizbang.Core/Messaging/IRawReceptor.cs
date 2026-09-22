@@ -26,7 +26,7 @@ namespace Whizbang.Core.Messaging;
 /// handle it."
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/receptors/raw-receptors</docs>
+/// <docs>fundamentals/receptors/receptors</docs>
 public interface IRawReceptor {
   /// <summary>
   /// Full assembly-qualified CLR name of the message type this receptor handles, exactly as

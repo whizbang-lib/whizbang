@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -14,7 +15,6 @@ namespace Whizbang.Generators;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Security";
-  private const string INHERIT_SCOPE_ATTR = "Whizbang.Core.Lenses.InheritScopeAttribute";
   private const string PERSPECTIVE_INTERFACE_PREFIX = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   /// <summary>
@@ -105,7 +105,7 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
 
   private static bool _implementsPerspectiveFor(INamedTypeSymbol symbol) {
     foreach (var iface in symbol.AllInterfaces) {
-      if (iface.ToDisplayString().StartsWith(PERSPECTIVE_INTERFACE_PREFIX, System.StringComparison.Ordinal)) {
+      if (TypeNameUtilities.Display(iface).StartsWith(PERSPECTIVE_INTERFACE_PREFIX, System.StringComparison.Ordinal)) {
         return true;
       }
     }

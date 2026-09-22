@@ -27,6 +27,11 @@ branches:
     regex: ^master$|^main$
     is-main-branch: true
   pull-request:
-    label: pr
+    # GitVersion 6.2 removed `label-number-pattern`. The PR number now comes from a named
+    # `Number` capture in `regex`, substituted into `label` by the {Number} placeholder.
+    # Verified identical to GitVersion 6.1 with the old key, on develop, main, the release
+    # branch and a pull/N/merge ref (compare with /nocache -- GitVersion caches per commit sha,
+    # so without it every branch returns the first result and the comparison looks like a match).
+    label: pr{Number}
     increment: Inherit
-    label-number-pattern: '[/-](?<number>\d+)'
+    regex: ^(pull-requests|pull|pr)[/-](?<Number>\d*)

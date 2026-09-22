@@ -15,25 +15,23 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// <code-under-test>src/Whizbang.Transports.RabbitMQ/RabbitMqFleetDeadLetterDrainer.cs</code-under-test>
 public class RabbitMqFleetDeadLetterDrainerTests {
 
-  private sealed class _recordingDrainer(string name) : ITransportDeadLetterDrainer {
+  private sealed class RecordingDrainer(string name) : ITransportDeadLetterDrainer {
     public int Invocations;
-    public int LastBudget;
     public int ReturnPerDrain { get; init; } = 1;
     public string TransportName => $"rmq:{name}";
     public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
       Invocations++;
-      LastBudget = maxCount;
       return Task.FromResult(Math.Min(ReturnPerDrain, maxCount));
     }
   }
 
   [Test]
   public async Task Fleet_DrainsEveryDeclaredQueue_AndSumsCountsAsync() {
-    var made = new ConcurrentDictionary<string, _recordingDrainer>();
+    var made = new ConcurrentDictionary<string, RecordingDrainer>();
     var queues = new List<string> { "orders.dlq", "billing.dlq" };
     var fleet = new RabbitMqFleetDeadLetterDrainer(
       () => queues,
-      name => made.GetOrAdd(name, n => new _recordingDrainer(n) { ReturnPerDrain = 3 }));
+      name => made.GetOrAdd(name, n => new RecordingDrainer(n) { ReturnPerDrain = 3 }));
 
     var drained = await fleet.DrainDeadLetterQueueAsync(500);
 
@@ -44,10 +42,10 @@ public class RabbitMqFleetDeadLetterDrainerTests {
   [Test]
   public async Task Fleet_BudgetIsATotalCapAsync() {
     var queues = new List<string> { "a.dlq", "b.dlq", "c.dlq" };
-    var made = new List<_recordingDrainer>();
+    var made = new List<RecordingDrainer>();
     var fleet = new RabbitMqFleetDeadLetterDrainer(
       () => queues,
-      name => { var d = new _recordingDrainer(name) { ReturnPerDrain = 4 }; made.Add(d); return d; });
+      name => { var d = new RecordingDrainer(name) { ReturnPerDrain = 4 }; made.Add(d); return d; });
 
     var drained = await fleet.DrainDeadLetterQueueAsync(10);
 
@@ -59,10 +57,10 @@ public class RabbitMqFleetDeadLetterDrainerTests {
   [Test]
   public async Task Fleet_QueueDeclaredLater_GetsDrained_AndDrainersAreCachedAsync() {
     var queues = new List<string> { "a.dlq" };
-    var made = new ConcurrentDictionary<string, _recordingDrainer>();
+    var made = new ConcurrentDictionary<string, RecordingDrainer>();
     var fleet = new RabbitMqFleetDeadLetterDrainer(
       () => queues,
-      name => made.GetOrAdd(name, n => new _recordingDrainer(n)));
+      name => made.GetOrAdd(name, n => new RecordingDrainer(n)));
 
     _ = await fleet.DrainDeadLetterQueueAsync(100);
     queues.Add("b.dlq");

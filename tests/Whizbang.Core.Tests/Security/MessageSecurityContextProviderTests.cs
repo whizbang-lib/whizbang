@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -365,7 +366,7 @@ public class MessageSecurityContextProviderTests {
     var envelope = _createTestEnvelope(new TestMessage("test"));
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () =>
@@ -383,9 +384,7 @@ public class MessageSecurityContextProviderTests {
       priority: 100,
       extraction: null,
       onExtract: () => { },
-      onExtractWithContext: (envelope, options) => {
-        receivedValidateFlag = options.ValidateCredentials;
-      }
+      onExtractWithContext: (_, options) => receivedValidateFlag = options.ValidateCredentials
     );
 
     var options = new MessageSecurityOptions {
@@ -581,6 +580,7 @@ public class MessageSecurityContextProviderTests {
 
   private static ServiceProvider _createServiceProvider() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     return services.BuildServiceProvider();
   }
 

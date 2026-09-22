@@ -73,6 +73,40 @@ new file for a fix.
     hash-bumping the last-word file still works but is no longer load-bearing; "Re-run note"
     comments are documentation now, not the mechanism.
 
+12. **Shared literals are constants** — a literal more than one migration or function needs (the empty
+    stream id, the envelope's JSON field names, the work-category names, the instance application-name
+    prefix) is defined once in `Migrations/constants.txt` and written in SQL as its token
+    (`__EMPTY_UUID__`, `elem->>__ENVELOPE_FIELD_MESSAGE_ID__`). The value is substituted at apply time on
+    the same path as `__SCHEMA__` (the runtime provider, the embedded-migration path a generated DbContext
+    executes, and the drift comparison against deployed bodies), so a function copied forward under rule 5
+    cannot carry a mistyped copy. Values are SQL fragments, quotes included; add a cast in the SQL where one
+    is needed. The lint fails a migration numbered 148 or later that writes one of the values raw or writes a
+    token the file does not define; `MigrationConstantsTests` fails the build for any migration.
+
+13. **A function links to its docs and its tests** — SQL is code and follows the same standard as the
+    rest of the repository. Every function a migration defines or replaces carries `<docs>` and
+    `<tests>` in a comment immediately above it, the same tag names and the same `path:method` form
+    the C# types use:
+
+    ```sql
+    -- <docs>fundamentals/work-coordinator/store-outbox-messages</docs>
+    -- <tests>tests/.../StoreProbeCostScenarioTests.cs:StoreProbe_DrainedStream_AnswersAsync</tests>
+    ```
+
+    Multiple `<tests>` lines are fine, as in C#. **Ownership is per FUNCTION, not per migration**: a
+    function persists across many migrations under rule 5, so its links belong at whichever definition
+    site is newest, and requiring them at every site is what keeps that true without anyone tracking
+    it. **Only name a test you have confirmed reaches the function** — a link to a test that does not
+    exercise it reads as coverage and is worse than an admitted gap, which is why the lint validates
+    the target exists and never forgives a broken link even for a baselined function. When a function
+    genuinely has no docs page, say so and list it rather than inventing a path; a missing page is a
+    real gap. The lint baselines the 263 definitions that predate the rule in
+    `scripts/migration-sql-docs-baseline.txt`, and that list can only shrink.
+
+**Rules 3, 4, 12 and 13 are enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format`
+job). Rule 13's absent-annotation findings are baselined and ratchet down; its broken-link findings
+never are.
+
 **Rule 3 is enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format` job) — it fails on
 any bare `wh_` ref inside a function body. The historical debt has been **burned down to zero**
 (baseline empty); the lint now holds it at zero. `-Fix` auto-qualifies flagged refs; `-UpdateBaseline`

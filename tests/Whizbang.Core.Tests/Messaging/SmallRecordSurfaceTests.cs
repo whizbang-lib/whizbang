@@ -10,11 +10,13 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Surface-locking tests for three tiny records that show 0% coverage today —
 /// each is used as a data-carrier on a hot path, so we want the API shape
 /// (positional ctor, value equality, with-expression copying) frozen even if
 /// no production caller exercises it in unit tests.
-///
+/// </para>
+/// <para>
 /// Targets:
 ///   - <see cref="HandlerBatchResult"/> — per-handler commit result returned
 ///     from CommitHandlerBatchAsync; (HandlerId, Success, ErrorMessage).
@@ -22,6 +24,7 @@ namespace Whizbang.Core.Tests.Messaging;
 ///     toggle used by the in-process per-stream serializer.
 ///   - <see cref="MessageTypeCatalogEntry"/> — source-generated registry
 ///     entry: (Type, ClrTypeName, Kind, PinnedId?).
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-handler-batch</docs>
 public class SmallRecordSurfaceTests {

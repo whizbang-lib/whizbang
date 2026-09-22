@@ -27,7 +27,7 @@ public class WhizbangRunControlDiTests {
   public async Task AddWhizbangRunControl_RegistersCoordinatorAndStateAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangRunControl();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetService<WhizbangLifecycleCoordinator>()).IsNotNull();
     await Assert.That(provider.GetService<IWhizbangLifecycleState>()).IsNotNull();
@@ -39,7 +39,7 @@ public class WhizbangRunControlDiTests {
     var services = new ServiceCollection();
     services.AddWhizbangRunControl();
     services.AddWhizbangRunControlAdapter<FakeAdapter>();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var lifecycle = provider.GetRequiredService<IWhizbangLifecycleState>();
     var adapter = provider.GetServices<IWhizbangRunControl>().OfType<FakeAdapter>().Single();

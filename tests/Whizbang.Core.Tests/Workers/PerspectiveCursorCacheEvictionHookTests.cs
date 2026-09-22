@@ -98,7 +98,7 @@ public class PerspectiveCursorCacheEvictionHookTests {
     // Advance 10 min — neither stream is yet idle past the 15-min window.
     clock.Advance(TimeSpan.FromMinutes(10));
     cache.Set(streamHot, "TestPerspective", Guid.NewGuid()); // keep hot — re-touched at t=10m
-    // Advance another 10 min — streamCold's last activity is at t=0 (now 20m old, past window);
+    // Advance another 10 min — streamCold's last activity is at t=0 (now 20m old, past window) —
     // streamHot's last activity is at t=10m (10m old, fresh).
     clock.Advance(TimeSpan.FromMinutes(10));
 

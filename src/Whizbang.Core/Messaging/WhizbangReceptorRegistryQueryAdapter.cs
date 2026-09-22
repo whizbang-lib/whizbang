@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>internals/receptor-registry-query</docs>
 /// <param name="runtimeRegistry">The runtime receptor registry; when supplied, runtime-registered
 /// receptors (the control-plane surface) count as consumers at the discard gates.</param>
-public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry? runtimeRegistry = null) : IReceptorRegistryQuery {
+public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runtimeRegistry) : IReceptorRegistryQuery {
   /// <inheritdoc />
   public bool HasReceptors(LifecycleStage stage, string messageType)
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(stage, messageType);
@@ -24,7 +24,7 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry? runt
   /// <inheritdoc />
   public bool HasAnyConsumer(string messageType)
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(messageType)
-       || runtimeRegistry?.HasRuntimeConsumerFor(messageType) == true;
+       || runtimeRegistry.HasRuntimeConsumerFor(messageType);
 
   /// <inheritdoc />
   /// <remarks>Runtime-registered receptors (the control-plane surface) are NOT enumerated

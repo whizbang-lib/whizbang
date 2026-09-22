@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+[Category("Shard3")]
 public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   private const string EventType = "Whizbang.Tests.ReconcilerDriftEvent";
 
@@ -114,7 +115,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     // for one instance's worth of result. One claim per service per window, exactly like the
     // integrity audit cycle.
     await using var dbContext = CreateDbContext();
-    var connection = await _openAsync(dbContext);
+    _ = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
 
     var catalog = new FakeCatalog(_ephemeralEntry(settingsHash: _hex('b'), schemaHash: _hex('c')));
@@ -197,7 +198,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   [Test]
   public async Task Reconcile_NoChange_SameDefinition_NoDriftAsync() {
     await using var dbContext = CreateDbContext();
-    var connection = await _openAsync(dbContext);
+    _ = await _openAsync(dbContext);
     var coordinator = _coordinator(dbContext);
 
     // The stored definition matches what the code produces now.

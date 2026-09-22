@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/observability/stuck-row-sentinel</docs>
+[Category("Shard3")]
 public class StuckRowSentinelSqlTests : EFCoreTestBase {
 
   /// <summary>
@@ -137,7 +138,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
 
     var outboxIdx = await _indexExistsAsync(conn, "idx_outbox_stuck_sentinel");
-    var inboxIdx = await _indexExistsAsync(conn, "idx_inbox_stuck_sentinel");
+    var inboxIdx = await _indexExistsAsync(conn, "idx_inbox_state_stuck_sentinel");
 
     await Assert.That(outboxIdx).IsTrue()
       .Because("Without idx_outbox_stuck_sentinel, find_stuck_outbox_rows would full-scan wh_outbox on every 10-min maintenance tick — at production scale (millions of historical rows), the sentinel itself becomes a problem.");
@@ -171,7 +172,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
           VALUES (@msg, 'topic', 'Stuck.TestEvent', 'Stuck.TestEnvelope', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -179,13 +180,19 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid messageId, Guid streamId, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'Stuck.TestEvent', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'Stuck.TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @attempts, 0 FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 

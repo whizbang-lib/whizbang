@@ -66,7 +66,7 @@ export class Orders implements OnInit, OnDestroy {
       'PaymentFailed': 'badge-danger',
       'ShipmentCreated': 'badge-success',
       'Completed': 'badge-success',
-      'Cancelled': 'badge-danger'
+      'Canceled': 'badge-danger'
     };
     return statusMap[status] || 'badge-secondary';
   }
@@ -79,7 +79,7 @@ export class Orders implements OnInit, OnDestroy {
       'PaymentFailed': 'Payment Failed',
       'ShipmentCreated': 'Shipped',
       'Completed': 'Completed',
-      'Cancelled': 'Cancelled'
+      'Canceled': 'Canceled'
     };
     return labelMap[status] || status;
   }

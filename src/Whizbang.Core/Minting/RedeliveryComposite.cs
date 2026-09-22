@@ -29,6 +29,16 @@ public interface IRawInnerComposite : ICompositeEvent {
 
   /// <summary>Each child's stored wire type name ("Type, Assembly"), parallel to <see cref="InnerPayloads"/>.</summary>
   IReadOnlyList<string> InnerTypeNames { get; }
+
+  /// <summary>
+  /// Each child's ORIGINAL stream id, parallel to <see cref="InnerPayloads"/> — or null/empty
+  /// when the producer predates the field (#596), in which case children inherit the
+  /// composite's stream as before. When present, expansion restores each child to its own
+  /// stream: the composite is transport packaging, never a stream-identity rewrite —
+  /// collapsing many source streams onto one serialized the producer's parallelism behind a
+  /// single drain lane at every receiver.
+  /// </summary>
+  IReadOnlyList<Guid>? InnerStreamIds => null;
 }
 
 /// <summary>

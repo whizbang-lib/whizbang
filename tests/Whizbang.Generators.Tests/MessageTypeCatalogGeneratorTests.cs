@@ -46,22 +46,22 @@ public class MessageTypeCatalogGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains(": IMessageTypeCatalog");
+    await Assert.That(code).Contains(": IMessageTypeCatalog");
 
     // Entries for each discovered type
-    await Assert.That(code!).Contains("typeof(global::MyApp.OrderPlacedEvent)");
-    await Assert.That(code!).Contains("typeof(global::MyApp.UnpinnedEvent)");
-    await Assert.That(code!).Contains("typeof(global::MyApp.PlaceOrderCommand)");
-    await Assert.That(code!).Contains("typeof(global::MyApp.OrderPerspective)");
+    await Assert.That(code).Contains("typeof(global::MyApp.OrderPlacedEvent)");
+    await Assert.That(code).Contains("typeof(global::MyApp.UnpinnedEvent)");
+    await Assert.That(code).Contains("typeof(global::MyApp.PlaceOrderCommand)");
+    await Assert.That(code).Contains("typeof(global::MyApp.OrderPerspective)");
 
     // Pinned entries surface their pinned_id; unpinned surface null
-    await Assert.That(code!).Contains("\"11111111-1111-1111-1111-111111111111\"");
-    await Assert.That(code!).Contains("\"33333333-3333-3333-3333-333333333333\"");
+    await Assert.That(code).Contains("\"11111111-1111-1111-1111-111111111111\"");
+    await Assert.That(code).Contains("\"33333333-3333-3333-3333-333333333333\"");
 
     // Kinds
-    await Assert.That(code!).Contains("\"event\"");
-    await Assert.That(code!).Contains("\"command\"");
-    await Assert.That(code!).Contains("\"perspective\"");
+    await Assert.That(code).Contains("\"event\"");
+    await Assert.That(code).Contains("\"command\"");
+    await Assert.That(code).Contains("\"perspective\"");
   }
 
   [Test]
@@ -89,7 +89,7 @@ public class MessageTypeCatalogGeneratorTests {
 
     await Assert.That(code).IsNotNull();
     // The pinned entry carries its former name via the FormerNames initializer.
-    await Assert.That(code!).Contains("FormerNames = new string[] { \"MyApp.OrderCreatedEvent\" }");
+    await Assert.That(code).Contains("FormerNames = new string[] { \"MyApp.OrderCreatedEvent\" }");
   }
 
   [Test]
@@ -106,7 +106,7 @@ public class MessageTypeCatalogGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("FormerNames");
+    await Assert.That(code).DoesNotContain("FormerNames");
   }
 
   [Test]
@@ -126,8 +126,8 @@ public class MessageTypeCatalogGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("typeof(global::MyApp.BaseEvent)");
-    await Assert.That(code!).Contains("typeof(global::MyApp.ConcreteEvent)");
+    await Assert.That(code).DoesNotContain("typeof(global::MyApp.BaseEvent)");
+    await Assert.That(code).Contains("typeof(global::MyApp.ConcreteEvent)");
   }
 
   [Test]
@@ -159,9 +159,9 @@ public class MessageTypeCatalogGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
-    await Assert.That(code!).Contains("ServiceRegistrationCallbacks.MessageTypeCatalog");
-    await Assert.That(code!).Contains("AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>");
+    await Assert.That(code).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(code).Contains("ServiceRegistrationCallbacks.MessageTypeCatalog");
+    await Assert.That(code).Contains("AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>");
   }
 
   [Test]
@@ -191,9 +191,9 @@ public class MessageTypeCatalogGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("typeof(global::MyApp.ActionsOrderPerspective)");
-    await Assert.That(code!).Contains("\"perspective\"");
-    await Assert.That(code!).Contains("\"44444444-4444-4444-4444-444444444444\"");
+    await Assert.That(code).Contains("typeof(global::MyApp.ActionsOrderPerspective)");
+    await Assert.That(code).Contains("\"perspective\"");
+    await Assert.That(code).Contains("\"44444444-4444-4444-4444-444444444444\"");
   }
 
   [Test]
@@ -227,8 +227,8 @@ public class MessageTypeCatalogGeneratorTests {
 
     // ClrTypeName is emitted as the quoted 2nd ctor arg: new(typeof(...), "<ClrTypeName>", ...).
     // The quoted form must use '+' for the nested type — NOT the C# '.' display form.
-    await Assert.That(code!).Contains("\"MyApp.OrderContracts+OrderPlacedEvent\"");
-    await Assert.That(code!).DoesNotContain("\"MyApp.OrderContracts.OrderPlacedEvent\"");
+    await Assert.That(code).Contains("\"MyApp.OrderContracts+OrderPlacedEvent\"");
+    await Assert.That(code).DoesNotContain("\"MyApp.OrderContracts.OrderPlacedEvent\"");
   }
 
   [Test]
@@ -248,8 +248,8 @@ public class MessageTypeCatalogGeneratorTests {
 
     await Assert.That(code).IsNotNull();
     // Unpinned entry must surface a null in the pinned_id position
-    await Assert.That(code!).Contains("typeof(global::MyApp.UnpinnedEvent)");
-    await Assert.That(code!).Contains("null");
+    await Assert.That(code).Contains("typeof(global::MyApp.UnpinnedEvent)");
+    await Assert.That(code).Contains("null");
   }
 
   [Test]

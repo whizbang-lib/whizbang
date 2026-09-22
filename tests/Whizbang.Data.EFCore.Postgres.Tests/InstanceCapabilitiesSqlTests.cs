@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/108_InstanceCapabilities.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openAsync(CancellationToken ct) {
@@ -58,7 +59,7 @@ public class InstanceCapabilitiesSqlTests : EFCoreTestBase {
     var acquiredAt = await _scalarAsync<DateTime>(conn,
       "SELECT acquired_at::timestamp FROM wh_instance_capabilities WHERE instance_id = @id AND capability = 'migrator'",
       ("id", instanceId));
-    await Assert.That(acquiredAt).IsNotEqualTo(default(DateTime))
+    await Assert.That(acquiredAt).IsNotEqualTo(default)
       .Because("acquired_at is the field that answers 'how long has this instance been the migrator'");
 
     // Re-recording is idempotent and does NOT touch acquired_at — tenure is measured from the

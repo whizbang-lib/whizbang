@@ -1,16 +1,23 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -28,24 +35,30 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
-    var runner = new _trackingRunner();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var runner = new TrackingRunner();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [_sinkWork(streamId)],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(runner, [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Deterministic wait on the dispatch itself — the channel consumer processes the claimed work
     // asynchronously, so a claim-cycle count can tick over (and cancel the worker) before it runs.
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no shutdown barrier at
+    // all and every assertion below could read state the worker's finally blocks had not settled yet.
+    // SuppressThrowing because a body leaving through a cancellation catch settles RanToCompletion or
+    // Canceled depending on thread-pool timing — either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("The collective event is dispatched exactly once.");
@@ -62,28 +75,29 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // (idempotent) work is redelivered, re-running the full batched UPDATE for nothing.
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease") };
-    var dispatcher = new _batchReportingDispatcher(batches: 3);
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease") };
+    var dispatcher = new BatchReportingDispatcher(batches: 3);
     var leaseChannel = new Whizbang.Testing.Workers.CapturingLeaseRenewalChannel();
     var sinkWork = _sinkWork(streamId);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       leaseRenewalChannel: leaseChannel);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    // Deterministic wait: _batchReportingDispatcher signals FirstDispatch only AFTER all 3
+    // Deterministic wait: BatchReportingDispatcher signals FirstDispatch only AFTER all 3
     // onBatchApplied reports, and each report enqueues its renewal synchronously before returning —
     // so every renewal is captured by the time this completes. A claim-cycle count instead races
     // the channel consumer: cycle 2 can tick over (cancelling the worker) before the dispatch runs.
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     var renewals = leaseChannel.Items.Where(i => i.id == sinkWork.WorkId).ToList();
     await Assert.That(renewals.Count).IsEqualTo(3)
@@ -102,37 +116,39 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // apply enqueues renewals that never reach RenewLeasesAsync and the DB lease still expires.
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-real") };
-    var dispatcher = new _gatedBatchReportingDispatcher();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-real") };
+    var dispatcher = new GatedBatchReportingDispatcher();
     var sinkWork = _sinkWork(streamId);
 
     var leaseRegistry = new LeaseRegistry();
-    var renewCoordinator = new _renewCapturingCoordinator();
+    var renewCoordinator = new RenewCapturingCoordinator();
     var renewalServices = new ServiceCollection();
+    renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
-      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry);
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       leaseRenewalChannel: renewalWorker,
       leaseRegistry: leaseRegistry);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     try {
       var renewed = await renewCoordinator.FirstRenewal.WaitAsync(TimeSpan.FromSeconds(10));
@@ -143,9 +159,10 @@ public class PerspectiveWorkerCollectiveSinkTests {
                  "silently drops it and the DB lease still expires mid-apply.");
     } finally {
       dispatcher.ReleaseDispatch.TrySetResult();
-      cts.Cancel();
-      try { await workerTask; } catch (OperationCanceledException) { }
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      await cts.CancelAsync();
+      await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       await renewalWorker.StopAsync(CancellationToken.None);
     }
   }
@@ -154,45 +171,47 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_ManyBatchApply_RenewalsAreNotCappedAsync() {
     // Renewal enqueues from the sink are PROGRESS-GATED: one fires only when an apply batch has
     // committed, so a hung apply stops enqueuing and its lease expires naturally. The
-    // MaxRenewalsPerWork cap exists to surface renewals that fire regardless of progress (timers);
+    // MaxRenewalsPerWork cap exists to surface renewals that fire regardless of progress (timers) —
     // applied to the sink it makes every apply longer than the cap lose renewal protection at
     // batch N+1 and spam a warning per remaining batch. Eight acked batches must therefore produce
     // eight renewals through the REAL worker + registry — the default cap of six fails batch 7.
     const int BATCHES = 8;
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-uncapped") };
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-lease-uncapped") };
     var sinkWork = _sinkWork(streamId);
 
     var leaseRegistry = new LeaseRegistry();
-    var renewCoordinator = new _renewCapturingCoordinator();
-    var dispatcher = new _ackedBatchReportingDispatcher(
+    var renewCoordinator = new RenewCapturingCoordinator();
+    var dispatcher = new AckedBatchReportingDispatcher(
       BATCHES, batchNumber => renewCoordinator.WaitForRenewalCountAsync(sinkWork.WorkId, batchNumber));
     var renewalServices = new ServiceCollection();
+    renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
-      renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new LeaseRenewalWorkerOptions {
+      scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry);
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       leaseRenewalChannel: renewalWorker,
       leaseRegistry: leaseRegistry);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     try {
       // Each batch is acked only after ITS renewal reached RenewLeasesAsync, so reaching the full
@@ -204,9 +223,10 @@ public class PerspectiveWorkerCollectiveSinkTests {
                  "dropped by MaxRenewalsPerWork — capping it ends renewal protection mid-apply " +
                  "for any apply longer than the cap.");
     } finally {
-      cts.Cancel();
-      try { await workerTask; } catch (OperationCanceledException) { }
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      await cts.CancelAsync();
+      await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       await renewalWorker.StopAsync(CancellationToken.None);
     }
   }
@@ -223,22 +243,22 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     var workId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-echo") };
-    var dispatcher = new _recordingDispatcher();
-    var observer = new _sinkDedupObserver();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-echo") };
+    var dispatcher = new RecordingDispatcher();
+    var observer = new SinkDedupObserver();
     var envelope = _envelope(eventId, collectiveEvent);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
       streamEvents: [_raw(streamId, eventId, eventWorkId: workId)],
       processedEventCacheObserver: observer);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     try {
       await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
@@ -253,9 +273,10 @@ public class PerspectiveWorkerCollectiveSinkTests {
       // observer. RED: no dedup ever fires (the sink re-dispatches instead) and this times out.
       await observer.FirstSinkDedup.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
-      try { await workerTask; } catch (OperationCanceledException) { }
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      await cts.CancelAsync();
+      await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
@@ -278,30 +299,31 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_ViaDrainPath_DispatchesEventOnceAndSkipsRunner_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
-    var runner = new _trackingRunner();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var runner = new TrackingRunner();
     var envelope = _envelope(eventId, collectiveEvent);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [], // nothing on the channel/standard path
-      eventStore: new _eventStore {
+      eventStore: new EventStore {
         Envelopes = { [streamId] = [envelope] },
         Deserialized = [envelope] // drain fetch → deserialize yields the collective envelope
       },
-      registry: new _registry(runner, [typeof(_testCollectiveEvent)]),
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
       streamEvents: [_raw(streamId, eventId)]);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Deterministic wait on the actual dispatch — the drain channel processes the claimed stream
     // asynchronously, so cycle counting would race it.
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("A collective event claimed via the drain path must be dispatched exactly once.");
@@ -327,25 +349,26 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     var sinkWork = _sinkWork(streamId);
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     // The fix enqueues the sink's event_work_id for deletion; the worker's idle-tick flush drains it to
     // the completion channel. Wait on that deterministically instead of racing the idle loop.
     await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("The collective event is dispatched exactly once.");
@@ -365,26 +388,27 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     var workId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
     var envelope = _envelope(eventId, collectiveEvent);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
       streamEvents: [_raw(streamId, eventId, eventWorkId: workId)]);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("A collective event claimed via the drain path is dispatched exactly once.");
@@ -405,25 +429,26 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_SuccessfulDispatch_FiresPostAllPerspectivesLifecycle_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
-    var invoker = new _capturingReceptorInvoker();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var invoker = new CapturingReceptorInvoker();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [_sinkWork(streamId)],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       receptorInvoker: invoker);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     await invoker.FirstPostAllPerspectives.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1);
     await Assert.That(invoker.Invocations.Any(i => i.EventId == eventId && i.Stage == LifecycleStage.PostAllPerspectivesInline)).IsTrue()
@@ -439,28 +464,29 @@ public class PerspectiveWorkerCollectiveSinkTests {
   public async Task CollectiveSink_DispatchThrows_DoesNotFirePostAllPerspectives_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _throwingDispatcher();
-    var invoker = new _capturingReceptorInvoker();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new ThrowingDispatcher();
+    var invoker = new CapturingReceptorInvoker();
     var envelope = _envelope(eventId, collectiveEvent);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
       streamEvents: [_raw(streamId, eventId)],
       receptorInvoker: invoker);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(invoker.Invocations.Any(i => i.Stage is LifecycleStage.PostAllPerspectivesInline or LifecycleStage.PostAllPerspectivesDetached)).IsFalse()
       .Because("A failed apply must not signal completion — no PostAllPerspectives lifecycle for it.");
@@ -476,27 +502,31 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     var sinkWork = _sinkWork(streamId);
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _recordingDispatcher();
-    var invoker = new _throwingReceptorInvoker();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    var invoker = new ThrowingReceptorInvoker();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       receptorInvoker: invoker);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     await invoker.FirstInvoke.WaitAsync(TimeSpan.FromSeconds(10));
     // The apply succeeded and its work row must still be completed despite the throwing post-apply receptor.
     await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { } catch { /* host must not have faulted */ }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("A throwing post-apply receptor must not escape the sink and fault ExecuteAsync — a faulted " +
+        "body trips BackgroundServiceExceptionBehavior.StopHost and crash-loops the service.");
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1);
     await Assert.That(harness.CompletionCapture.EventWorkIds).Contains(sinkWork.WorkId)
@@ -504,43 +534,50 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   [Test]
-  public async Task CollectiveSink_NoDispatcherRegistered_DoesNotThrow_Async() {
+  public async Task CollectiveSink_NoDispatcherRegistered_SkipsTheRunnerAndReturns_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
+    var runner = new TrackingRunner();
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [_sinkWork(streamId)],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(TrackedGuid.NewMedo().Value, new _testCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(TrackedGuid.NewMedo().Value, new TestCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: null); // not configured
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    // No assertion needed beyond "did not throw" — the not-configured branch logs and returns.
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    // "Not configured" has to mean the sink branch logs and returns, not that the work falls
+    // through to the ordinary per-stream path — a collective event applied through the per-stream
+    // runner is applied against the wrong rows entirely.
+    await Assert.That(runner.RunWithEventsCount).IsEqualTo(0);
   }
 
   [Test]
   public async Task CollectiveSink_NoCollectiveEventOnStream_NoDispatch_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var sinkWork = _sinkWork(streamId);
-    var dispatcher = new _recordingDispatcher();
+    var dispatcher = new RecordingDispatcher();
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [sinkWork],
-      eventStore: new _eventStore(), // empty — no events on the stream
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore(), // empty — no events on the stream
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // A leased sink row with no collective event on the stream (cursor already advanced past it, or a
     // stale re-lease) must still be completed — otherwise it re-leases forever. Wait on that deletion.
     await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(0)
       .Because("No collective event on the stream → nothing to dispatch.");
@@ -556,8 +593,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     // BackgroundServiceExceptionBehavior=StopHost, crash-looping the whole service on one poison event.
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _throwingDispatcher();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new ThrowingDispatcher();
     var envelope = _envelope(eventId, collectiveEvent);
 
     // DRAIN path (the production route: a collective event arriving via transport is claimed as a stream).
@@ -566,23 +603,27 @@ public class PerspectiveWorkerCollectiveSinkTests {
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
       streamEvents: [_raw(streamId, eventId)]);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
     // The fix catches the apply failure and REPORTS it as a perspective failure (instead of letting it
     // propagate and fault the host). The un-guarded code throws raw and never reports — so this wait times
     // out, which is the RED signal.
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { } catch { /* host must not have faulted */ }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("An un-guarded apply failure would fault ExecuteAsync and trip " +
+        "BackgroundServiceExceptionBehavior.StopHost — the crash-loop this test guards against.");
     // Fully stop the background worker so it doesn't linger and starve sibling [NotInParallel] tests.
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dispatcher.Calls).IsGreaterThan(0)
       .Because("The worker attempted to dispatch the collective event.");
@@ -602,28 +643,30 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     var workId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
-    var dispatcher = new _throwingDispatcher();
-    var deadLetters = new _recordingDeadLetterStore();
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new ThrowingDispatcher();
+    var deadLetters = new RecordingDeadLetterStore();
     var envelope = _envelope(eventId, collectiveEvent);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       work: [],
-      eventStore: new _eventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      eventStore: new EventStore { Envelopes = { [streamId] = [envelope] }, Deserialized = [envelope] },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
-      streamEvents: [_raw(streamId, eventId, attempts: 5, eventWorkId: workId)],
+      // Poison means every apply failed: the failure counter, not the lease count, crosses the max (#700).
+      streamEvents: [_raw(streamId, eventId, attempts: 5, eventWorkId: workId, failures: 5)],
       maxPerspectiveEventAttempts: 2,
       deadLetterStore: deadLetters);
 
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await deadLetters.FirstMove.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(deadLetters.Moves.Count).IsGreaterThanOrEqualTo(1)
       .Because("An over-max sink row must be moved to the DLQ so it stops retrying.");
@@ -636,6 +679,69 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task CollectiveSink_Meters_CountAReceivedAndAppliedCollective_Async() {
+    // A collective disappears into the sink once applied; without a meter nothing shows how many a consumer
+    // received or applied (#738).
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new RecordingDispatcher();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new EventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      compositeMetrics: metrics);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.received")).IsEqualTo(1)
+      .Because("one collective event reached the sink");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(1)
+      .Because("the dispatcher applied it once");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.skipped")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CollectiveSink_Meters_CountALeasedSinkRowWithNoEventAsSkipped_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var sinkWork = _sinkWork(streamId);
+    var dispatcher = new RecordingDispatcher();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new EventStore(),
+      registry: new Registry([typeof(TestCollectiveEvent)]),
+      dispatcher: dispatcher,
+      compositeMetrics: metrics);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.skipped")).IsEqualTo(1)
+      .Because("a leased sink row with no collective event behind it is completed without an apply; that is a skip, and a rising skip count is the re-lease loop showing itself");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(0);
+  }
 
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
     WorkId = Guid.CreateVersion7(),
@@ -652,7 +758,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private static StreamEventData _raw(Guid streamId, Guid eventId, int attempts = 0, Guid? eventWorkId = null) => new() {
+  private static StreamEventData _raw(Guid streamId, Guid eventId, int attempts = 0, Guid? eventWorkId = null, int failures = 0) => new() {
     StreamId = streamId,
     EventId = eventId,
     EventType = "collective",
@@ -661,21 +767,24 @@ public class PerspectiveWorkerCollectiveSinkTests {
     Scope = null,
     EventWorkId = eventWorkId ?? Guid.CreateVersion7(),
     PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
-    Attempts = attempts
+    Attempts = attempts,
+    Failures = failures
   };
 
-  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, _coordinator Coordinator) _createWorker(
-      List<PerspectiveWork> work, _eventStore eventStore, _registry registry, ICollectiveDispatcher? dispatcher,
+  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, FakeCoordinator Coordinator) _createWorker(
+      List<PerspectiveWork> work, EventStore eventStore, Registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
-      LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null) {
-    var instanceProvider = new _instanceProvider();
-    var strategy = new InstantCompletionStrategy();
+      LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
+      CompositeMetrics? compositeMetrics = null) {
+    var instanceProvider = new InstanceProvider();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
-    var coordinator = new _coordinator(work) { DrainStreamIds = drainStreamIds ?? [], StreamEvents = streamEvents ?? [] };
+    var coordinator = new FakeCoordinator(work) { DrainStreamIds = drainStreamIds ?? [], StreamEvents = streamEvents ?? [] };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -683,7 +792,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     services.AddSingleton<IEventStore>(eventStore);
     if (dispatcher is not null) {
       services.AddSingleton<ICollectiveDispatcher>(dispatcher);
-      services.AddSingleton<ICollectiveSessionAccessor>(new _stubSessionAccessor());
+      services.AddSingleton<ICollectiveSessionAccessor>(new StubSessionAccessor());
     }
     if (receptorInvoker is not null) {
       services.AddSingleton<IReceptorInvoker>(receptorInvoker);
@@ -692,32 +801,50 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       }),
-      tracingOptions: null,
-      strategy,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: strategy,
       eventTypeProvider: registry,
-      processedEventCacheObserver: processedEventCacheObserver,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: processedEventCacheObserver ?? NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      leaseRenewalChannel: leaseRenewalChannel,
+      leaseRenewalChannel: leaseRenewalChannel ?? new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
-      deadLetterStore: deadLetterStore,
-      generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
-      leaseRegistry: leaseRegistry);
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: (deadLetterStore is null ? null : new DefaultGenerationProvider()) ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
+      })).Value),
+      leaseRegistry: leaseRegistry,
+      compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
   }
 
-  private sealed record _testCollectiveEvent : ICollectiveEvent {
+  private sealed record TestCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
 
-  private sealed class _recordingDispatcher : ICollectiveDispatcher {
+  private sealed class RecordingDispatcher : ICollectiveDispatcher {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(ICollectiveEvent Event, Guid EventId)> Calls { get; } = [];
 
@@ -725,7 +852,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       lock (Calls) {
         Calls.Add((evt, collectiveEventId));
       }
@@ -735,12 +862,12 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>Dispatcher that reports N apply batches through onBatchApplied — the long-apply shape.</summary>
-  private sealed class _batchReportingDispatcher(int batches) : ICollectiveDispatcher {
+  private sealed class BatchReportingDispatcher(int batches) : ICollectiveDispatcher {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task FirstDispatch => _first.Task;
 
     public async Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       for (var i = 0; i < batches; i++) {
         if (onBatchApplied is not null) {
           await onBatchApplied(cancellationToken);
@@ -753,11 +880,11 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   /// <summary>Reports one apply batch, then parks until released — keeps the dispatch (and any
   /// lease handles the worker holds for it) alive while the renewal flush runs, deterministically.</summary>
-  private sealed class _gatedBatchReportingDispatcher : ICollectiveDispatcher {
+  private sealed class GatedBatchReportingDispatcher : ICollectiveDispatcher {
     public TaskCompletionSource ReleaseDispatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public async Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       if (onBatchApplied is not null) {
         await onBatchApplied(cancellationToken);
       }
@@ -768,9 +895,9 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   /// <summary>Reports one batch at a time, awaiting an ack between batches — used to prove each
   /// batch's renewal individually traversed the real flush before the next batch reports.</summary>
-  private sealed class _ackedBatchReportingDispatcher(int batches, Func<int, Task> ackForBatch) : ICollectiveDispatcher {
+  private sealed class AckedBatchReportingDispatcher(int batches, Func<int, Task> ackForBatch) : ICollectiveDispatcher {
     public async Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       for (var batch = 1; batch <= batches; batch++) {
         if (onBatchApplied is not null) {
           await onBatchApplied(cancellationToken);
@@ -783,7 +910,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   /// <summary>Coordinator for the REAL LeaseRenewalWorker's flush scope — records what actually
   /// reaches RenewLeasesAsync (i.e. what survived the LeaseRegistry handle filter).</summary>
-  private sealed class _renewCapturingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RenewCapturingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private readonly TaskCompletionSource<(WorkCategory Category, IReadOnlyList<Guid> Ids)> _first =
       new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _lock = new();
@@ -828,14 +955,14 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
-  private sealed class _throwingDispatcher : ICollectiveDispatcher {
+  private sealed class ThrowingDispatcher : ICollectiveDispatcher {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _calls;
     public int Calls => Volatile.Read(ref _calls);
     public Task FirstDispatch => _first.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _calls);
       _first.TrySetResult();
       throw new InvalidOperationException(
@@ -844,7 +971,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>Signals when the sink dedups a re-offered, already-completed work row.</summary>
-  private sealed class _sinkDedupObserver : IProcessedEventCacheObserver {
+  private sealed class SinkDedupObserver : IProcessedEventCacheObserver {
     private readonly TaskCompletionSource _firstSink = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(IReadOnlyList<Guid> Ids, string PerspectiveName, Guid StreamId)> Deduped { get; } = [];
     public Task FirstSinkDedup => _firstSink.Task;
@@ -864,13 +991,13 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
   }
 
-  private sealed class _stubSessionAccessor : ICollectiveSessionAccessor {
+  private sealed class StubSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new object();
   }
 
   /// <summary>A post-apply receptor that throws — the apply already committed, so the sink must isolate this
   /// and neither crash nor undo the completion. Records that it was invoked so the test can assert it ran.</summary>
-  private sealed class _throwingReceptorInvoker : IReceptorInvoker {
+  private sealed class ThrowingReceptorInvoker : IReceptorInvoker {
     private readonly TaskCompletionSource _firstInvoke = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task FirstInvoke => _firstInvoke.Task;
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
@@ -880,7 +1007,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   /// <summary>Captures every (eventId, stage) the sink drives through the lifecycle after a collective apply.</summary>
-  private sealed class _capturingReceptorInvoker : IReceptorInvoker {
+  private sealed class CapturingReceptorInvoker : IReceptorInvoker {
     private readonly TaskCompletionSource _firstPostAll = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(Guid EventId, LifecycleStage Stage)> Invocations { get; } = [];
     /// <summary>Completes on the first PostAllPerspectives* invocation — deterministic signal for the async path.</summary>
@@ -897,7 +1024,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
-  private sealed class _recordingDeadLetterStore : IDeadLetterStore {
+  private sealed class RecordingDeadLetterStore : IDeadLetterStore {
     private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(string SourceTable, Guid SourceId, MessageFailureReason Reason)> Moves { get; } = [];
     /// <summary>Completes on the first dead-letter move — deterministic signal for the async drain path.</summary>
@@ -914,7 +1041,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
-  private sealed class _coordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class FakeCoordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {
     private int _cycle;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _waiters = new();
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -923,7 +1050,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public List<PerspectiveCursorFailure> ReportedFailures { get; } = [];
     /// <summary>Completes on the first reported perspective failure — the collective-apply-failed signal.</summary>
     public Task FirstFailure => _firstFailure.Task;
-    Task IWorkCoordinator.ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct) {
+    Task IWorkCoordinator.ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken) {
       lock (ReportedFailures) { ReportedFailures.Add(failure); }
       _firstFailure.TrySetResult();
       return Task.CompletedTask;
@@ -934,7 +1061,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     /// <summary>Re-offers the drain stream ids on the next claim cycle — models the production
     /// drain refetch re-serving a stream whose completion flush hasn't landed yet.</summary>
     public void OfferDrainAgain() => Interlocked.Increment(ref _extraDrainOffers);
-    public new Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+    public new Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var c = Interlocked.Increment(ref _cycle);
       foreach (var kv in _waiters) { if (c >= kv.Key) { kv.Value.TrySetResult(); } }
       var pw = c == 1 ? new List<PerspectiveWork>(work) : [];
@@ -944,11 +1071,11 @@ public class PerspectiveWorkerCollectiveSinkTests {
     }
     // Explicit interface implementation so the worker's interface call routes here, overriding the
     // IWorkCoordinator default (which returns empty and would short-circuit the drain fetch).
-    Task<List<StreamEventData>> IWorkCoordinator.GetStreamEventsAsync(Guid instanceId, Guid[] streamIds, CancellationToken ct) =>
+    Task<List<StreamEventData>> IWorkCoordinator.GetStreamEventsAsync(Guid instanceId, Guid[] streamIds, CancellationToken cancellationToken) =>
       Task.FromResult(new List<StreamEventData>(StreamEvents));
   }
 
-  private sealed class _eventStore : IEventStore {
+  private sealed class EventStore : IEventStore {
     public ConcurrentDictionary<Guid, List<MessageEnvelope<IEvent>>> Envelopes { get; } = new();
     /// <summary>Envelopes the drain fetch's <see cref="DeserializeStreamEvents"/> yields (the fake
     /// stand-in for AOT JSON deserialization of the raw rows).</summary>
@@ -960,16 +1087,16 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [EnumeratorCancellation] CancellationToken cancellationToken = default) { await Task.CompletedTask; yield break; }
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>();
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>();
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([EnumeratorCancellation] CancellationToken ct = default) { await Task.CompletedTask; yield break; }
+    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>() { await Task.CompletedTask; yield break; }
   }
 
-  private sealed class _registry(_trackingRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry, IEventTypeProvider {
+  private sealed class Registry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
     // Sink perspective has no runner — return null so the worker would fall through (but the sink guard fires first).
-    public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) => null;
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     // Must be non-empty: the worker skips building _perspectivesPerEventType when no perspectives are
     // registered (PerspectiveWorker._initializePerspectiveRegistryAsync), which then short-circuits the
     // drain fetch. A dummy non-collective registration keeps the map non-null without affecting the sink
@@ -983,13 +1110,12 @@ public class PerspectiveWorkerCollectiveSinkTests {
     ];
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
-    public _trackingRunner Runner => runner;
   }
 
-  private sealed class _trackingRunner : IPerspectiveRunner {
+  private sealed class TrackingRunner : IPerspectiveRunner {
     public int RunWithEventsCount { get; private set; }
     public Type PerspectiveType => typeof(object);
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.Empty, Status = PerspectiveProcessingStatus.Completed });
     public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
       RunWithEventsCount++;
@@ -1000,7 +1126,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
-  private sealed class _instanceProvider : IServiceInstanceProvider {
+  private sealed class InstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "CollectiveSinkTest";
     public string HostName => "test-host";

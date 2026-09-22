@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// grace, snapshot-covered. Verified against a real Postgres.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard1")]
 public class EphemeralDestructionTargetSqlTests : EFCoreTestBase {
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());

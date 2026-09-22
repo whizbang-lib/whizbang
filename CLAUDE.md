@@ -64,6 +64,20 @@ public async Task MessageEnvelope_AddHop_AddsHopToList() { }
 
 **ALL async methods and test methods must end with "Async" suffix.**
 
+### Language — en-US
+
+Write **American English** everywhere: code, comments, XML docs, commit messages, PR titles
+and descriptions, markdown docs, and test names.
+
+```
+✅ behavior, serialize, initialize, analyze, canceled, color, catalog, center, license
+❌ behaviour, serialise, initialise, analyse, cancelled, colour, catalogue, centre, licence
+```
+
+The public API is already en-US (`SerializationError`, `Whizbang.Core.Serialization`,
+`MessageDiscardPolicy`), so British spellings in prose read as inconsistent against the very
+identifiers they describe — and a mixed-dialect codebase makes grep and API naming unpredictable.
+
 ---
 
 ## Common Commands
@@ -127,7 +141,7 @@ tests/
 └── Whizbang.Observability.Tests/
 
 plans/                          # Feature planning documents
-ai-docs/                        # Focused topic documentation (11 files)
+ai-docs/                        # Focused topic documentation (12 files)
 .claude/commands/               # Slash commands (11 commands)
 ```
 
@@ -170,6 +184,90 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 - Need assertion patterns
 
 **Why critical**: Prevents common TUnit and Rocks mistakes that waste hours.
+
+### 📖 **[coverage-exclusions.md](ai-docs/coverage-exclusions.md)**
+**Read when**:
+- A line is uncovered and no test seems able to reach it
+- About to add `[ExcludeFromCodeCoverage]`
+- Deciding whether a red line is a gap or a deliberate decision
+
+**Why it matters**: the attribute is member-level, so applying it to a method that
+has any tested behavior suppresses real coverage. The target is a **literal 100%** of
+new code — lines *and* branches, since a fully executed line can still carry a condition
+nobody took, and the uncovered-new-lines gate counts only the lines. The slack is not in
+the number; it is in the rare, justified, member-level exclusion, and the file gives the
+decision procedure and worked examples.
+
+### 📖 **[flaky-tests.md](ai-docs/flaky-tests.md)** - CRITICAL for worker tests
+**Read when**:
+- A test passes locally but fails on CI, or fails in milliseconds rather than at a timeout
+- Writing or changing any test that starts a `BackgroundService`
+- Tempted to fix a flake by widening a timeout
+
+**Why critical**: Pattern 7 documents the .NET 10 `BackgroundService` change — `StartAsync`
+returning proves only that the worker was *scheduled*, and awaiting the task it returns is a
+no-op. 314 tests in this repo were found passing without running the code they named, and one
+production hang was hiding behind them. Fix the cause; never widen a timeout.
+
+### 📖 **AI-agent guide** (docs site: `contributors/ai-agent-guide`)
+**Read when**: starting agent-driven test or coverage work in this repository.
+
+Reachable through the `whizbang-docs` MCP server (`mcp__whizbang-docs__search-docs`) or at
+`whizbang-lib.github.io/src/assets/docs/contributors/ai-agent-guide.md`. Covers the four shapes of
+test that pass without testing anything, how to measure coverage truthfully (CI artifacts, not
+local runs; the collector failure modes that look like success), the detector discipline that
+avoids both over- and under-reporting, and changes that were investigated and correctly *not* made.
+
+### 📖 **[schema-initialization-connections.md](ai-docs/schema-initialization-connections.md)** - CRITICAL
+**Read when**:
+- Touching schema initialization, the perspective schema pass, or the SQL it emits
+- Anything needs a connection of its own (out-of-band DDL, VACUUM, a rewrite)
+- A statement depends on an earlier statement's **committed** effect
+- Deciding what an instance does when it does **not** win the schema lock
+
+**Why critical**: three traps, two of which shipped once and each passed every local test first.
+Ordering statements inside one transaction does not make an index see a rewrite that has not
+committed, and a rollback then undoes the rewrite so no retry can ever get further. There is almost
+never a connection string to open a second connection from, because Npgsql redacts the password and
+the turnkey registration configures the context with a data source. And a failed try-lock says only
+"not yours": it cannot tell a working migrator from a dead one, the two call for opposite behavior,
+and `pg_locks` answers it only if the 64-bit key is reassembled from both halves. One answer exists
+for each; the file says which, and why a green test suite proves none of them.
+
+### 📖 **[perspective-stored-forms.md](ai-docs/perspective-stored-forms.md)** - CRITICAL
+**Read when**:
+- Touching how a perspective document stores or reads a date, time, duration or identifier
+- Touching the persistence serialization profile, `CanonicalTemporalConvention`, the JSON
+  reader/writers, `CanonicalTemporalRewrite`, or the perspective worker's failure path
+- Reading a "cannot read its stored document" error or a `temporal_form_fallbacks` count
+
+**Why critical**: a perspective document has two writers and two readers, and a row one path wrote
+that the other could not read stopped a feature in a deployed service. The file records the one
+rule (one unit, microseconds), why nothing per property may be generated, what the ledger and the
+rewrite do, and the two failure-path defects found underneath, one of them fixed and one deferred.
+
+### 📖 **[load-under-bulk-import.md](ai-docs/load-under-bulk-import.md)** - CRITICAL
+**Read when**:
+- Touching `claim_work`, the housekeeping gate, `ServiceBacklog`, the commit-order stamper,
+  `SchemaBootstrapPhase`, or a store-backed poll source
+- Investigating database CPU or a backlog that grows under load
+- Measuring anything with `pg_stat_statements` or `pg_stat_user_tables`
+
+**Why critical**: a bulk load pegged a shared database server with every document index in place,
+and each cause was a rule the code did not state: the poll priced itself by the backlog, the sweep
+measured settledness on one table of four, the stamper sorted before it checked, the bootstrap ran
+DDL it did not need. The file records the measurements, the rules, and the way to measure that does
+not mislead (snapshot and diff; sample sessions; a thrashing statement cache hides the heaviest work).
+
+### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
+**Read when**:
+- Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)
+- Touching a generator that renders a type name, or runtime code that reads `Type.FullName`
+- Matching a persisted type name against a registered one
+
+**Why critical**: one helper per form on each side (`TypeNameUtilities` in generators,
+`TypeNameFormatter` and `EventTypeMatchingHelper` at runtime); a local rendering has silently
+broken row retention, routing, and registry lookups more than once.
 
 ### 📖 **[efcore-10-usage.md](ai-docs/efcore-10-usage.md)**
 **Read when**:
@@ -276,6 +374,7 @@ Quick workflows via `/command-name`:
 **Code Quality**:
 - `/format` - Run dotnet format (MANDATORY before commit)
 - `/release-check` - Full release checklist
+- `/pr-health <n>` - Watch a PR's checks, read the Sonar gate and findings, list uncovered new lines (100% on new code is the standard), fix, repeat
 
 **Context Loading**:
 - `/context-tdd` - Load TDD documentation

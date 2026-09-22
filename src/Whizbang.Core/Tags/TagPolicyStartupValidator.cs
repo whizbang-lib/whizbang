@@ -18,24 +18,25 @@ namespace Whizbang.Core.Tags;
 /// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorRouteNamespaceTests.cs:StartAsync_RouteBindingOnUnknownSysTag_FailsHostStartAsync</tests>
 internal sealed class TagPolicyStartupValidator : IHostedService {
   private readonly TagOptions _options;
-  private readonly SystemEvents.SystemEventOptions? _systemEventOptions;
+  private readonly SystemEvents.SystemEventOptions _systemEventOptions;
   private readonly Func<IEnumerable<MessageTagRegistration>> _registrationSource;
-  private readonly IConfiguration? _configuration;
+  private readonly IConfiguration _configuration;
 
   /// <summary>DI constructor — validates against the process-global tag registry.</summary>
   public TagPolicyStartupValidator(
       TagOptions options,
-      IOptions<SystemEvents.SystemEventOptions>? systemEventOptions = null,
-      IConfiguration? configuration = null)
-    : this(options, MessageTagRegistry.GetAllTags, configuration) {
-    _systemEventOptions = systemEventOptions?.Value;
+      IOptions<SystemEvents.SystemEventOptions> systemEventOptions,
+      IConfiguration configuration)
+    : this(options, MessageTagRegistry.GetAllTags, systemEventOptions, configuration) {
   }
 
   /// <summary>Test seam: an injectable registration source avoids polluting the global registry.</summary>
   internal TagPolicyStartupValidator(
       TagOptions options,
       Func<IEnumerable<MessageTagRegistration>> registrationSource,
-      IConfiguration? configuration = null) {
+      IOptions<SystemEvents.SystemEventOptions> systemEventOptions,
+      IConfiguration configuration) {
+    _systemEventOptions = systemEventOptions.Value;
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _registrationSource = registrationSource ?? throw new ArgumentNullException(nameof(registrationSource));
     _configuration = configuration;
@@ -52,6 +53,9 @@ internal sealed class TagPolicyStartupValidator : IHostedService {
     // like a code binding. Idempotent; the TransportNamespaceResolver factory applies the
     // same binder, whichever runs first.
     TagRouteNamespaceConfigurationBinder.Apply(_options, _configuration);
+    // Payload-size thresholds (Whizbang:Tags:PayloadSize...) bind here too, so a value that is
+    // not a number fails startup with its key rather than surfacing on the first tagged message.
+    TagPayloadSizeConfigurationBinder.Apply(_options, _configuration);
     TagPolicyValidator.Validate(_registrationSource(), _options.CoalesceBindings, _options.RouteNamespaceBindings);
     return Task.CompletedTask;
   }

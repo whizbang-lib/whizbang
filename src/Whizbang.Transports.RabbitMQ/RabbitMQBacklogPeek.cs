@@ -29,18 +29,13 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </remarks>
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBacklogPeekTests.cs</tests>
-public sealed class RabbitMQBacklogPeek : IBacklogPeek {
-  private readonly RabbitMQChannelPool _channelPool;
-  private readonly Func<IReadOnlyList<string>> _queueNames;
-
-  /// <summary>Creates the peek.</summary>
-  /// <param name="channelPool">The channel pool passive declares are rented from.</param>
-  /// <param name="queueNames">The queues this instance consumes from.</param>
-  /// <exception cref="ArgumentNullException">Thrown when a required dependency is null.</exception>
-  public RabbitMQBacklogPeek(RabbitMQChannelPool channelPool, Func<IReadOnlyList<string>> queueNames) {
-    _channelPool = channelPool ?? throw new ArgumentNullException(nameof(channelPool));
-    _queueNames = queueNames ?? throw new ArgumentNullException(nameof(queueNames));
-  }
+/// <remarks>Creates the peek.</remarks>
+/// <param name="channelPool">The channel pool passive declares are rented from.</param>
+/// <param name="queueNames">The queues this instance consumes from.</param>
+/// <exception cref="ArgumentNullException">Thrown when a required dependency is null.</exception>
+public sealed class RabbitMQBacklogPeek(RabbitMQChannelPool channelPool, Func<IReadOnlyList<string>> queueNames) : IBacklogPeek {
+  private readonly RabbitMQChannelPool _channelPool = channelPool ?? throw new ArgumentNullException(nameof(channelPool));
+  private readonly Func<IReadOnlyList<string>> _queueNames = queueNames ?? throw new ArgumentNullException(nameof(queueNames));
 
   /// <inheritdoc />
   public string TransportName => "rabbitmq";

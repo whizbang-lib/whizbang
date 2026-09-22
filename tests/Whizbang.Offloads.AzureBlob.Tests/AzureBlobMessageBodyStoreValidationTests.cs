@@ -41,7 +41,7 @@ public class AzureBlobMessageBodyStoreValidationTests {
   public async Task Constructor_NullProviderName_ThrowsArgumentNullExceptionAsync() {
     var monitor = _buildMonitor(opts => opts.ConnectionString = "UseDevelopmentStorage=true");
 
-    Action act = () => _ = new AzureBlobMessageBodyStore(null!, monitor);
+    void act() => _ = new AzureBlobMessageBodyStore(null!, monitor);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("providerName")
@@ -52,7 +52,7 @@ public class AzureBlobMessageBodyStoreValidationTests {
   public async Task Constructor_WhitespaceProviderName_ThrowsArgumentExceptionAsync() {
     var monitor = _buildMonitor(opts => opts.ConnectionString = "UseDevelopmentStorage=true");
 
-    Action act = () => _ = new AzureBlobMessageBodyStore("   ", monitor);
+    void act() => _ = new AzureBlobMessageBodyStore("   ", monitor);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentException>();
     await Assert.That(ex!.ParamName).IsEqualTo("providerName")
@@ -61,7 +61,7 @@ public class AzureBlobMessageBodyStoreValidationTests {
 
   [Test]
   public async Task Constructor_NullOptionsMonitor_ThrowsArgumentNullExceptionAsync() {
-    Action act = () => _ = new AzureBlobMessageBodyStore("provider", null!);
+    void act() => _ = new AzureBlobMessageBodyStore("provider", null!);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("options");
@@ -96,7 +96,7 @@ public class AzureBlobMessageBodyStoreValidationTests {
         opts.ContainerName = "";
       });
 
-    Action act = () => _ = new AzureBlobMessageBodyStore("blank-container", monitor);
+    void act() => _ = new AzureBlobMessageBodyStore("blank-container", monitor);
 
     var ex = await Assert.That(act).ThrowsExactly<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("ContainerName")
@@ -141,6 +141,5 @@ public class AzureBlobMessageBodyStoreValidationTests {
   /// Uses the Azure SDK's protected mocking ctor. Any actual member call
   /// would throw — the guard tests must fail before touching the client.
   /// </summary>
-  private sealed class FakeBlobContainerClient : BlobContainerClient {
-  }
+  private sealed class FakeBlobContainerClient : BlobContainerClient;
 }

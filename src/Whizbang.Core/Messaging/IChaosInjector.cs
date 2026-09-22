@@ -29,8 +29,19 @@ namespace Whizbang.Core.Messaging;
 /// validates.
 /// </para>
 /// </remarks>
-/// <docs>operations/testing/chaos-injection</docs>
+/// <docs>operations/dependency-injection/injectable-services</docs>
 public interface IChaosInjector {
+  /// <summary>
+  /// Whether this injector actually injects anything. False only for the shipped no-op.
+  /// </summary>
+  /// <remarks>
+  /// Absence used to be expressed as a null reference, which callers read as "no injector is
+  /// registered". A no-op default could not replace that without this: a registered no-op would
+  /// otherwise look like an active injector and send every worker down the chaos path in
+  /// production. Declaring the capability lets absence be a value that says what it is.
+  /// </remarks>
+  bool IsInjecting => true;
+
   /// <summary>
   /// Invoked at a named checkpoint. Implementations may throw, delay, or record state
   /// depending on the test scenario.
@@ -38,6 +49,7 @@ public interface IChaosInjector {
   /// <param name="checkpoint">Stable checkpoint name (e.g., <c>"PerspectiveWorker.BeforeBatch"</c>).</param>
   /// <param name="payload">Checkpoint-specific context; contents vary per checkpoint.</param>
   /// <param name="cancellationToken">Cancellation from the caller.</param>
+
   ValueTask BeforeCheckpointAsync(string checkpoint, object? payload, CancellationToken cancellationToken);
 }
 

@@ -23,20 +23,23 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public class MaintenanceWorkerDestructionHookTests {
-  private sealed class RecordingHook : IDestructionHook {
-    private readonly List<string> _log;
-    private readonly bool _throwOnBefore;
-    private readonly DestructionResult _result;
+  private sealed class RecordingHook(List<string> log, DestructionResult? result = null, bool throwOnBefore = false,
+      Exception? beforeThrows = null, Exception? afterThrows = null) : IDestructionHook {
+    private readonly List<string> _log = log;
+    private readonly bool _throwOnBefore = throwOnBefore;
+    private readonly Exception? _beforeThrows = beforeThrows;
+    private readonly Exception? _afterThrows = afterThrows;
+    private readonly DestructionResult _result = result ?? DestructionResult.Proceed();
     public int BeforeCalls { get; private set; }
     public int LastBatchSize { get; private set; }
-    public RecordingHook(List<string> log, DestructionResult? result = null, bool throwOnBefore = false) {
-      _log = log; _throwOnBefore = throwOnBefore; _result = result ?? DestructionResult.Proceed();
-    }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       BeforeCalls++;
       LastBatchSize = context.Targets.Count;
       _log.Add($"before:{context.Targets.Count}");
+      if (_beforeThrows is not null) {
+        throw _beforeThrows;
+      }
       if (_throwOnBefore) {
         throw new InvalidOperationException("hook blew up");
       }
@@ -45,15 +48,14 @@ public class MaintenanceWorkerDestructionHookTests {
 
     public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       _log.Add($"after:{context.Targets.Count}");
-      return ValueTask.CompletedTask;
+      return _afterThrows is not null ? ValueTask.FromException(_afterThrows) : ValueTask.CompletedTask;
     }
   }
 
-  private sealed class FakeCoordinator : IWorkCoordinator {
-    private readonly List<string> _log;
+  private sealed class FakeCoordinator(List<string> log) : IWorkCoordinator {
+    private readonly List<string> _log = log;
     public List<EphemeralDestructionTarget> Targets { get; init; } = [];
     public int GetTargetsCallCount { get; private set; }
-    public FakeCoordinator(List<string> log) { _log = log; }
 
     public List<(IReadOnlyList<Guid> Ids, DateTimeOffset Until)> Holds { get; } = [];
 
@@ -75,7 +77,7 @@ public class MaintenanceWorkerDestructionHookTests {
       return Task.FromResult(FailureAttemptToReturn);
     }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       _log.Add("reap");
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
     }
@@ -89,8 +91,6 @@ public class MaintenanceWorkerDestructionHookTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static MaintenanceWorker _buildWorker(FakeCoordinator coord, IDestructionHook? hook) {
@@ -145,7 +145,7 @@ public class MaintenanceWorkerDestructionHookTests {
       Targets = [new EphemeralDestructionTarget(e1, Guid.NewGuid(), "A"), new EphemeralDestructionTarget(e2, Guid.NewGuid(), "B")],
     };
 
-    await _buildWorker(coord, new RecordingHook(log, DestructionResult.Cancelled)).RunMaintenanceOnceAsync(CancellationToken.None);
+    await _buildWorker(coord, new RecordingHook(log, DestructionResult.Canceled)).RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coord.Holds.Count).IsEqualTo(1).Because("Cancel holds the whole batch in one call.");
     await Assert.That(coord.Holds[0].Ids).IsEquivalentTo(new[] { e1, e2 });
@@ -214,5 +214,52 @@ public class MaintenanceWorkerDestructionHookTests {
       .Because("The batch is held for a backoff (now + DestructionRetryBackoffSeconds) so it retries next cycle.");
     await Assert.That(log).DoesNotContain("after:1")
       .Because("PostDestruction does not fire when the pre-hook failed.");
+  }
+
+  [Test]
+  public async Task RunMaintenanceOnce_HookCanceled_DoesNotRecordADestructionFailureAsync() {
+    // The companion to HookThrows_RecordsFailureForRetry. A hook that throws could not judge the
+    // batch, so recording a failure is right: the batch retries under a bounded cap and is
+    // force-deleted past it. A shutdown judged nothing — counting an attempt spends part of a
+    // budget that ends in a forced delete, and a few restarts across a deploy would walk
+    // ephemeral bodies toward that end without a hook ever having been consulted.
+    var log = new List<string>();
+    var coord = new FakeCoordinator(log) {
+      Targets = [new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "T")],
+      FailureAttemptToReturn = 1,
+    };
+
+    await Assert.That(async () => await _buildWorker(
+        coord, new RecordingHook(log, beforeThrows: new OperationCanceledException()))
+      .RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown travels rather than being folded into the batch's retry accounting");
+    await Assert.That(coord.Failures).IsEmpty()
+      .Because("no hook judged this batch, so none of its retry budget may be spent — the cap ends "
+             + "in a forced delete and this would walk it there unattended");
+    await Assert.That(log).DoesNotContain("reap")
+      .Because("the reap comes after the hook; a stopping host must not run it");
+  }
+
+  [Test]
+  public async Task RunMaintenanceOnce_PostDestructionHookCanceled_StopsAfterTheReapAsync() {
+    // The post-destruction hook runs AFTER the bodies are gone, so by the time a shutdown lands
+    // here the destructive work is committed and stopping cannot undo it. What the cancellation
+    // buys is the rest of the cycle: the steps that follow take locks and open connections on a
+    // host that has asked to stop.
+    var log = new List<string>();
+    var coord = new FakeCoordinator(log) {
+      Targets = [new EphemeralDestructionTarget(Guid.NewGuid(), Guid.NewGuid(), "T")],
+    };
+
+    await Assert.That(async () => await _buildWorker(
+        coord, new RecordingHook(log, afterThrows: new OperationCanceledException()))
+      .RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>();
+    await Assert.That(log).Contains("reap")
+      .Because("the reap ran before the hook — the cancellation cannot and should not undo it");
+    await Assert.That(coord.Failures).IsEmpty()
+      .Because("the batch was destroyed successfully; recording a destruction failure for it "
+             + "would retry work that is already done");
   }
 }

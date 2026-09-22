@@ -108,9 +108,9 @@ public class RabbitMQOptions {
   #region FIFO / Single Active Consumer
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:EnableSingleActiveConsumer_DefaultsToFalseAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:SAC_Capabilities_IncludesOrderedAsync</tests>
-  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQFifoIntegrationTests.cs:NonSAC_Capabilities_ExcludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:EnableSingleActiveConsumer_DefaultsToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:SAC_Capabilities_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQFifoIntegrationTests.cs:NonSAC_Capabilities_ExcludesOrderedAsync</tests>
   /// If true, queues are declared with x-single-active-consumer = true.
   /// This ensures only one consumer processes messages at a time, guaranteeing FIFO ordering.
   /// RabbitMQ guarantees per-publisher per-channel ordering, so with SAC, ordering is preserved.

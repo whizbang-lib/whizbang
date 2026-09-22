@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Fluent builder for defining roles with permissions.
 /// </summary>
 /// <docs>fundamentals/security/security#role-definition</docs>
-/// <tests>Whizbang.Core.Tests/Security/RoleBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/RoleBuilderTests.cs</tests>
 /// <example>
 /// var orderManager = new RoleBuilder("OrderManager")
 ///   .HasReadPermission("orders")

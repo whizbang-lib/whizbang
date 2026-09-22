@@ -157,7 +157,7 @@ public class MessageKindDetectorTests {
 
   [Test]
   public async Task Detect_ConsumerCommandsSystemNamespace_IsNotSystemAsync() {
-    // Act - a CONSUMER namespace merely ending in ".Commands.System" is not framework traffic;
+    // Act - a CONSUMER namespace merely ending in ".Commands.System" is not framework traffic —
     // the generic Commands-segment convention applies.
     var result = MessageKindDetector.Detect(
       typeof(MyAppTest.Commands.System.DetectorTestConsumerSystemLookalike));

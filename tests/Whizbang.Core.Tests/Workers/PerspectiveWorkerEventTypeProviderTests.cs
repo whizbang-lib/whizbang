@@ -1,15 +1,22 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -20,7 +27,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class PerspectiveWorkerEventTypeProviderTests {
 
   [Test]
-  public async Task EventTypeProvider_ResolvedFromScope_WhenConstructorInjectionIsNull_Async() {
+  public async Task EventTypeProvider_SuppliedThroughTheConstructor_IsUsedAsync() {
     // Arrange — DO NOT pass eventTypeProvider to constructor (simulates DI registration order issue).
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
@@ -36,31 +43,49 @@ public class PerspectiveWorkerEventTypeProviderTests {
     var eventTypeProvider = new FakeEventTypeProvider([typeof(TestEvent)]);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
-    services.AddSingleton<IEventTypeProvider>(eventTypeProvider); // Available in DI, NOT in constructor
+    services.AddSingleton<IEventTypeProvider>(eventTypeProvider);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
 
     // Constructor gets null for eventTypeProvider — simulates the real DI registration order bug
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      eventTypeProvider: null,
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: eventTypeProvider,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       StreamId = streamId,
       PerspectiveName = "Test.FakePerspective",
@@ -74,7 +99,13 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // half-written state the way a poll on the counter could.
     await eventStore.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no shutdown barrier at
+    // all and left the worker running past the end of the test. SuppressThrowing because a body
+    // leaving through a cancellation catch settles RanToCompletion or Canceled depending on
+    // thread-pool timing — either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — If lazy-resolve works, the worker should have resolved IEventTypeProvider from scope
     // and used it to load events from the event store for trace context extraction.
@@ -83,7 +114,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
   }
 
   [Test]
-  public async Task EventTypeProvider_ReturnsNonEmptyTypeList_WhenResolvedFromScope_Async() {
+  public async Task EventTypeProvider_SuppliedThroughTheConstructor_ReturnsNonEmptyTypeListAsync() {
     // Arrange — Same setup: null constructor, provider in DI with real event types.
     // Channel mode (post commit C): wire harness channels and feed work via the channel writer.
     var coordinator = new FakeWorkCoordinator();
@@ -99,6 +130,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
     var eventTypeProvider = new TrackingEventTypeProvider([typeof(TestEvent)]);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -109,20 +141,38 @@ public class PerspectiveWorkerEventTypeProviderTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      new InstantCompletionStrategy(),
-      eventTypeProvider: null, // Explicitly null
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: eventTypeProvider,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      // Explicitly null
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       StreamId = streamId,
       PerspectiveName = "Test.FakePerspective",
@@ -137,7 +187,8 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // that no amount of extra deadline would have fixed.
     await eventTypeProvider.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — The resolved provider should have been called and returned non-empty types
     await Assert.That(eventTypeProvider.GetEventTypesCallCount).IsGreaterThanOrEqualTo(1)
@@ -242,15 +293,6 @@ public class PerspectiveWorkerEventTypeProviderTests {
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
     public int ReportCompletionCallCount { get; private set; }
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      try {
-        await _completionReported.Task.WaitAsync(cts.Token);
-      } catch (OperationCanceledException) {
-        throw new TimeoutException($"Completion was not reported within {timeout}");
-      }
-    }
-
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
       PerspectiveWorkToReturn.Clear();
@@ -264,7 +306,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
     }
 
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
@@ -286,7 +328,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed });
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
       RunAsync(streamId, perspectiveName, null, cancellationToken);

@@ -23,12 +23,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>IFeatureManager</c>, <c>appsettings.json reloadOnChange</c>, Azure App
 /// Configuration refresh).
 ///
-/// <para>Unlike <c>tests/Whizbang.Hosting.AspNet.Tests/Configuration/
-/// HostConfigurationDisposalTests.cs</c> which replicates the buggy and fixed
+/// <para>Unlike <code>tests/Whizbang.Hosting.AspNet.Tests/Configuration/
+/// HostConfigurationDisposalTests.cs</code> which replicates the buggy and fixed
 /// patterns inline, these tests exercise the <strong>actual generator
 /// output</strong>: site 1 via the generated <c>AddWorkCoordinationDbContext()</c>
-/// extension method, and site 2 via the <c>AddWhizbang(…).WithEFCore&lt;T&gt;().
-/// WithDriver.Postgres</c> chain that invokes the
+/// extension method, and site 2 via the <code>AddWhizbang(…).WithEFCore&lt;T&gt;().
+/// WithDriver.Postgres</code> chain that invokes the
 /// <c>DbContextRegistrationRegistry.Register&lt;T&gt;(…)</c> callback the
 /// generator emits in its module initializer.</para>
 ///
@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// with the pre-fix generator (verified by reverting the
 /// <c>EFCoreServiceRegistrationGenerator.cs</c> patch and rebuilding).</para>
 /// </summary>
+[Category("Shard2")]
 public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
 
   [Test]
@@ -92,9 +93,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
 
     // SITE 2 invocation — the AddWhizbang chain that resolves the generated
     // callback via PostgresDriverExtensions.Postgres.
-    _ = services.AddWhizbang(options => {
-      options.DefaultQueryScope = QueryScope.Tenant;
-    })
+    _ = services.AddWhizbang(options => options.DefaultQueryScope = QueryScope.Tenant)
       .WithEFCore<WorkCoordinationDbContext>()
       .WithDriver.Postgres;
 
@@ -123,7 +122,7 @@ public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
 
   private sealed class ProbeSource : IConfigurationSource {
     public ProbeProvider? Provider;
-    public IConfigurationProvider Build(IConfigurationBuilder b) => Provider = new ProbeProvider();
+    public IConfigurationProvider Build(IConfigurationBuilder builder) => Provider = new ProbeProvider();
   }
 
   private sealed class ProbeProvider : ConfigurationProvider {

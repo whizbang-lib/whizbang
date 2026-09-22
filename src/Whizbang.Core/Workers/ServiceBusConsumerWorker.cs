@@ -33,25 +33,23 @@ namespace Whizbang.Core.Workers;
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
-  JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
-  ServiceBusConsumerOptions? options = null,
-  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-  IEnvelopeSerializer? envelopeSerializer = null,
-  MessageProcessingOptions? messageProcessingOptions = null,
-  IReceptorRegistryQuery? receptorRegistry = null,
-  IReceptorRegistry? runtimeReceptorRegistry = null,
-  IEventMarkerResolver? eventMarkerResolver = null,
-  IEphemeralModeResolver? ephemeralModeResolver = null,
   // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
   // database work against a schema that may not exist yet on a first boot. Optional only so
   // existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
-  ) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  ISchemaReadyGate schemaReadyGate,
+  ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+  IEnvelopeSerializer envelopeSerializer,
+  IReceptorRegistryQuery receptorRegistry,
+  IReceptorRegistry runtimeReceptorRegistry,
+  IEventMarkerResolver eventMarkerResolver,
+  IEphemeralModeResolver ephemeralModeResolver,
+  ServiceBusConsumerOptions? options = null,
+  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>
@@ -67,17 +65,16 @@ public partial class ServiceBusConsumerWorker(
   /// <inheritdoc />
   Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
-  private readonly IEventMarkerResolver? _eventMarkerResolver = eventMarkerResolver;
-  private readonly IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
+  private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
+  private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-  private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
-  private readonly IReceptorRegistryQuery? _receptorRegistry = receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry = runtimeReceptorRegistry;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer;
+  private readonly IReceptorRegistryQuery _receptorRegistry = receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry = runtimeReceptorRegistry;
   private readonly SemaphoreSlim? _concurrencySemaphore = (messageProcessingOptions?.MaxConcurrentMessages ?? 40) > 0
     ? new SemaphoreSlim(messageProcessingOptions?.MaxConcurrentMessages ?? 40) : null;
   private readonly List<ISubscription> _subscriptions = [];
@@ -89,7 +86,8 @@ public partial class ServiceBusConsumerWorker(
   // Different streams continue to run in parallel via independent per-stream workers.
   private readonly PerStreamSerializer<AsbReceivedItem> _streamSerializer = new(
     streamIdSelector: static item => _extractStreamId(item.Envelope),
-    processor: static (item, ct) => item.HandleAsync(ct));
+    processor: static (item, ct) => item.HandleAsync(ct),
+    logger: logger);
 
   private sealed record AsbReceivedItem(
     IMessageEnvelope Envelope,
@@ -139,8 +137,6 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
@@ -247,12 +243,12 @@ public partial class ServiceBusConsumerWorker(
     // itself; its consumers are registered for the INNER events, which only become addressable
     // after the dispatch seam fans it out. Dropping here loses the whole bundle before any inbox
     // row is written. See CompositeInboxFanout.IsCompositeWireType.
-    if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(envelopeType)
+    if (!string.IsNullOrWhiteSpace(envelopeType)
         && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
       if (innerMessageType is not null
           && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-          && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+          && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
           && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
         return;
@@ -294,7 +290,7 @@ public partial class ServiceBusConsumerWorker(
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
+      inboxActivity?.SetTag("exception.type", TypeNameFormatter.DisplayName(ex.GetType()));
       inboxActivity?.SetTag("exception.message", ex.Message);
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw;
@@ -347,7 +343,7 @@ public partial class ServiceBusConsumerWorker(
   /// </summary>
   private async Task _invokePreInboxLifecycleAsync(
     List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
-    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+    if (receptorInvoker is null) {
       return;
     }
 
@@ -369,8 +365,7 @@ public partial class ServiceBusConsumerWorker(
       // dynamic registrations). Mirrors the InboxDispatchWorker gate fix; null
       // registries preserve legacy fire-unconditionally behavior for test harnesses.
       var runtimeMessageType = typedEnvelope.Payload?.GetType();
-      if (_receptorRegistry is not null
-          && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
+      if (!_receptorRegistry.HasReceptors(LifecycleStage.PreInboxDetached, work.MessageType)
           && !_receptorRegistry.HasReceptors(LifecycleStage.PreInboxInline, work.MessageType)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxDetached)
           && !_runtimeHasReceptors(runtimeMessageType, LifecycleStage.PreInboxInline)) {
@@ -424,7 +419,7 @@ public partial class ServiceBusConsumerWorker(
   private async Task _invokePostInboxLifecycleAsync(
     List<InboxWork> myWork, IReceptorInvoker? receptorInvoker,
     IServiceProvider scopedProvider, CancellationToken ct) {
-    if (receptorInvoker is null || _lifecycleMessageDeserializer is null) {
+    if (receptorInvoker is null) {
       return;
     }
 
@@ -487,7 +482,7 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
-    if (_runtimeReceptorRegistry is null || messageType is null) {
+    if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
@@ -560,6 +555,13 @@ public partial class ServiceBusConsumerWorker(
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 
+  [LoggerMessage(
+    EventId = 24,
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
   /// <summary>
   /// Checks if the given message type is an event type that has NO associated perspectives.
   /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
@@ -592,8 +594,6 @@ public partial class ServiceBusConsumerWorker(
   /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
   /// The actual type information is preserved in envelopeTypeFromTransport for later deserialization.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, string? envelopeTypeFromTransport, IServiceProvider scopeServiceProvider) {
     // Envelopes from transport can be:
     // 1. Strongly-typed: MessageEnvelope<ProductCreatedEvent> - needs serialization to JsonElement form
@@ -633,10 +633,7 @@ public partial class ServiceBusConsumerWorker(
         "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
-      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>()
-        ?? throw new InvalidOperationException(
-          "IEnvelopeSerializer is required but not registered. " +
-          "Ensure you call services.AddWhizbang() to register core services.");
+      var serializer = _envelopeSerializer;
 
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
@@ -651,8 +648,8 @@ public partial class ServiceBusConsumerWorker(
     // Determine if message is an event using IEventTypeProvider
     // This is more reliable than "payload is IEvent" when payload is JsonElement
     var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider != null) {
+    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
     } else {
@@ -660,42 +657,16 @@ public partial class ServiceBusConsumerWorker(
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name for handler name
-    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
-    var handlerName = simpleTypeName + "Handler";
-
     var streamId = _extractStreamId(envelope);
-
-    // Guard: fail-fast if StreamId is Guid.Empty for events
-    if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox", messageTypeName);
-    }
-
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
-    // Name-first flag derivation: transport payloads are typically JsonElement here, where
-    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
-    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
-    // flags intact across a service boundary. Same contract as TransportConsumerWorker.
-    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
-      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
-    var inboxMessage = new InboxMessage {
-      MessageId = envelope.MessageId.Value,
-      HandlerName = handlerName,
-      Envelope = jsonEnvelope,
-      EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
-      StreamId = streamId,
-      IsEvent = isEvent,
-      Flags = flags,
-      Scope = envelope.GetCurrentScope()?.Scope,
-      Metadata = new EnvelopeMetadata {
-        MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
-      },
-      MessageType = messageTypeName
-    };
+    // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
+    // from the envelope) is built by the helper both consumer workers share (#739).
+    var inboxMessage = ReceivedInboxMessageBuilder.Build(
+      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
+      ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
+      "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
 
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
@@ -709,16 +680,11 @@ public partial class ServiceBusConsumerWorker(
   /// and returns "MyApp.CreateProductCommand, MyApp".
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException(
+    // The one parser of envelope type names (issue #698).
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
         "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException(
@@ -732,28 +698,11 @@ public partial class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    // Fall back to message ID (ensures all messages have a stream)
-    return envelope.MessageId.Value;
-  }
+  private static Guid _extractStreamId(IMessageEnvelope envelope) => ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
 
   /// <summary>
   /// Stops the worker and disposes all subscriptions.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
@@ -941,13 +890,6 @@ public partial class ServiceBusConsumerWorker(
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 
   [LoggerMessage(
-    EventId = 24,
-    Level = LogLevel.Error,
-    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
-  )]
-  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
-
-  [LoggerMessage(
     EventId = 25,
     Level = LogLevel.Debug,
     Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
@@ -958,14 +900,10 @@ public partial class ServiceBusConsumerWorker(
 /// <summary>
 /// Configuration options for ServiceBusConsumerWorker.
 /// </summary>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public class ServiceBusConsumerOptions {
   /// <summary>
   /// List of topic subscriptions to consume messages from.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public List<TopicSubscription> Subscriptions { get; set; } = [];
 }
 
@@ -975,6 +913,4 @@ public class ServiceBusConsumerOptions {
 /// <param name="TopicName">The Service Bus topic name</param>
 /// <param name="SubscriptionName">The subscription name for this consumer</param>
 /// <param name="DestinationFilter">Optional destination filter value (e.g., "inventory-service")</param>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public record TopicSubscription(string TopicName, string SubscriptionName, string? DestinationFilter = null);

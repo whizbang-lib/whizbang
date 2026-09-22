@@ -14,22 +14,21 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// Tests lock acquisition, contention, expiry, renewal, and release.
 /// </summary>
 [Category("Integration")]
-public class DapperPerspectiveStreamLockerTests : IDisposable {
+public sealed class DapperPerspectiveStreamLockerTests : IDisposable {
   private TestFixture _testBase = null!;
   private DapperPerspectiveStreamLocker _locker = null!;
-  private PerspectiveStreamLockOptions _lockOptions = null!;
 
   [Before(Test)]
   public async Task SetupAsync() {
     _testBase = new TestFixture();
     await _testBase.SetupAsync();
-    _lockOptions = new PerspectiveStreamLockOptions {
+    var lockOptions = new PerspectiveStreamLockOptions {
       LockTimeout = TimeSpan.FromSeconds(30),
       KeepAliveInterval = TimeSpan.FromSeconds(10)
     };
     _locker = new DapperPerspectiveStreamLocker(
       _testBase.TestConnectionString,
-      Options.Create(_lockOptions));
+      Options.Create(lockOptions));
   }
 
   public void Dispose() {
@@ -137,7 +136,12 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
     await _insertCursorRowAsync(stream1, perspectiveName);
     await _insertCursorRowAsync(stream2, perspectiveName);
 
-    await _locker.TryAcquireLockAsync(stream1, perspectiveName, instanceId, "rewind");
+    var acquired = await _locker.TryAcquireLockAsync(stream1, perspectiveName, instanceId, "rewind");
+
+    // Stream1 must actually be locked — an UPDATE whose WHERE matched nothing would leave BOTH
+    // cursors unlocked and satisfy the "stream2 is untouched" half on its own.
+    await Assert.That(acquired).IsTrue();
+    await _assertLockHeldByAsync(stream1, perspectiveName, instanceId, "rewind");
 
     // Stream2 should still be unlocked
     await _assertNoLockAsync(stream2, perspectiveName);
@@ -198,7 +202,12 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
-    await _locker.TryAcquireLockAsync(streamId, perspectiveName, instanceId, "rewind");
+    var acquired = await _locker.TryAcquireLockAsync(streamId, perspectiveName, instanceId, "rewind");
+
+    // Without this the release is being checked against a row that may never have been locked,
+    // and "all lock fields are null" would hold before the release ever ran.
+    await Assert.That(acquired).IsTrue();
+
     await _locker.ReleaseLockAsync(streamId, perspectiveName, instanceId);
 
     await _assertNoLockAsync(streamId, perspectiveName);
@@ -229,6 +238,10 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
 
     // Release a lock that was never acquired — should not throw
     await _locker.ReleaseLockAsync(streamId, perspectiveName, Guid.CreateVersion7());
+
+    // ...and must leave the cursor row exactly as it was: still present, still unlocked. A
+    // release keyed on the wrong instance must not delete the row or stamp lock fields onto it.
+    await _assertNoLockAsync(streamId, perspectiveName);
   }
 
   [Test]

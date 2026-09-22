@@ -113,7 +113,7 @@ public sealed class AsbMessageHeaderReader {
       // message — caller will dead-letter on the null return.
     }
 
-    messageId = default;
+    messageId = Guid.Empty;
     return false;
   }
 

@@ -33,15 +33,27 @@ public static class JsonContextRegistry {
   /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
   /// priorities preserve registration order via <paramref name="Seq"/>.
   /// </summary>
-  private readonly record struct _resolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
+  private readonly record struct ResolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
 
-  private readonly record struct _converterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
+  private readonly record struct ConverterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
 
   /// <summary>
   /// Thread-safe collection of registered resolvers with priority + profile.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
+  private static readonly ConcurrentQueue<ResolverEntry> _resolvers = new();
+
+  /// <summary>A per-type metadata customization and the profile it applies to.</summary>
+  /// <remarks>
+  /// A plain class rather than a record because nothing ever compares one. An entry is enqueued and
+  /// later read; there is no equality, no hashing and no deconstruction, so a record's synthesized
+  /// members would be unreachable by construction rather than merely untested.
+  /// </remarks>
+  private sealed class ModifierEntry(Action<JsonTypeInfo> modifier, SerializationProfile? profile, long seq) {
+    public Action<JsonTypeInfo> Modifier { get; } = modifier;
+    public SerializationProfile? Profile { get; } = profile;
+    public long Seq { get; } = seq;
+  }
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
@@ -49,7 +61,20 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentQueue<_converterEntry> _converters = new();
+  private static readonly ConcurrentQueue<ConverterEntry> _converters = new();
+
+  /// <summary>
+  /// Per-type customizations applied to the resolved metadata, scoped by profile.
+  /// </summary>
+  /// <remarks>
+  /// A converter registered on the options applies to every occurrence of its type, everywhere. That
+  /// is right for a value object, whose representation is a property of the type itself, and wrong
+  /// for a representation chosen per property: the perspective's canonical temporal form applies to
+  /// a model's own dates and must not reach a date on a framework document that is mapped and read
+  /// by something else entirely. A modifier can say which properties of which type it applies to,
+  /// which is the precision that requires.
+  /// </remarks>
+  private static readonly ConcurrentQueue<ModifierEntry> _modifiers = new();
 
   private static bool _appliesTo(SerializationProfile? entryProfile, SerializationProfile requested)
     => entryProfile is null || entryProfile.Value == requested;
@@ -82,7 +107,7 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(new _resolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -109,7 +134,93 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(new _converterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _converters.Enqueue(new ConverterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+  }
+
+  /// <summary>
+  /// Registers a per-type customization of the resolved metadata, scoped to a profile.
+  /// </summary>
+  /// <param name="modifier">Runs for each type the serializer resolves; it should return immediately
+  /// for a type it does not apply to.</param>
+  /// <param name="profile">Profile to scope this to, or <c>null</c> for every profile.</param>
+  /// <remarks>
+  /// <para>
+  /// Use this where a representation belongs to a property rather than to a type. A converter
+  /// registered on the options applies to every occurrence of its type everywhere, which is correct
+  /// for a value object and wrong for a choice made per property: the perspective's canonical
+  /// temporal form applies to a model's own dates, and applying it to every date in every document
+  /// reaches framework documents that are mapped and read by something else, where it is not merely
+  /// unnecessary but unreadable.
+  /// </para>
+  /// <para>
+  /// No reflection: a modifier inspects the source-generated metadata it is handed and compares a
+  /// type it names, so this stays ahead-of-time safe.
+  /// </para>
+  /// </remarks>
+  public static void RegisterTypeInfoModifier(
+      Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
+    ArgumentNullException.ThrowIfNull(modifier);
+
+    _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+  }
+  /// <summary>
+  /// Removes a modifier a test registered, keeping every other registration in its original order.
+  /// </summary>
+  /// <param name="modifier">The exact delegate instance that was registered.</param>
+  /// <remarks>
+  /// There is deliberately no public unregister: a host registers its modifiers once at startup and
+  /// they apply for the life of the process. A test is the one caller that needs to take one back,
+  /// because a modifier left registered changes how every later type info in the process is built --
+  /// including the trial configure the polymorphic builder runs on its own thread, which depends on
+  /// the scratch resolver being reference-unequal to the real one. A test that registers a modifier
+  /// therefore runs alone and removes it in a finally.
+  /// </remarks>
+  internal static void RemoveTypeInfoModifierForTests(Action<JsonTypeInfo> modifier) {
+    ArgumentNullException.ThrowIfNull(modifier);
+
+    var kept = new List<ModifierEntry>();
+    while (_modifiers.TryDequeue(out var entry)) {
+      // Delegate equality, not reference equality: two conversions of the same method over the same
+      // captured state are equal but not the same instance, and a caller should not have to hold one.
+      if (entry.Modifier != modifier) {
+        kept.Add(entry);
+      }
+    }
+    foreach (var entry in kept.OrderBy(e => e.Seq)) {
+      _modifiers.Enqueue(entry);
+    }
+  }
+
+
+  /// <summary>
+  /// Wraps a resolver so the registered per-type customizations run over whatever it resolves.
+  /// </summary>
+  /// <param name="resolver">The resolver to wrap.</param>
+  /// <param name="profile">The profile whose modifiers apply.</param>
+  /// <returns>The resolver with the profile's modifiers attached.</returns>
+  /// <remarks>
+  /// <para>
+  /// Exposed because attaching modifiers to the union alone is not enough. A caller that combines
+  /// another resolver <em>after</em> the union produces metadata the modifiers never see, since they
+  /// were attached to the inner resolver rather than the outer one. Every type that outer resolver is
+  /// the first to answer for would then be serialized unconverted.
+  /// </para>
+  /// <para>
+  /// That matters here more than it would elsewhere: a missed conversion is not a formatting
+  /// difference but a row the reader cannot parse. So a caller that builds its own resolver chain
+  /// wraps the finished chain with this rather than relying on the union it started from.
+  /// </para>
+  /// </remarks>
+  public static IJsonTypeInfoResolver WithRegisteredModifiers(
+      IJsonTypeInfoResolver resolver, SerializationProfile profile) {
+    ArgumentNullException.ThrowIfNull(resolver);
+
+    // Registration order, so a later modifier sees what an earlier one did.
+    foreach (var entry in _modifiers.Where(e => _appliesTo(e.Profile, profile)).OrderBy(e => e.Seq)) {
+      resolver = resolver.WithAddedModifier(entry.Modifier);
+    }
+
+    return resolver;
   }
 
   /// <summary>
@@ -135,9 +246,9 @@ public static class JsonContextRegistry {
   /// so polymorphic payloads survive a PostgreSQL <c>jsonb</c> round-trip, which reorders object keys and
   /// would otherwise push the <c>$type</c> discriminator out of the first position STJ requires.</para>
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
-  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
-  /// <tests>Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
   public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile) {
     if (_resolvers.IsEmpty) {
       throw new InvalidOperationException(
@@ -159,7 +270,9 @@ public static class JsonContextRegistry {
     // typeinfo for the interface bases themselves, so without this any nested IMessage/IEvent/ICommand
     // member fails to (de)serialize. The base resolvers handle every concrete type.
     var combinedResolver = JsonTypeInfoResolver.Combine(
-      [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
+      [new PolymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
+
+    combinedResolver = WithRegisteredModifiers(combinedResolver, profile);
     var options = new JsonSerializerOptions {
       TypeInfoResolver = combinedResolver,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -246,6 +359,19 @@ public static class JsonContextRegistry {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
   public static int RegisteredCount => _resolvers.Count;
+
+  /// <summary>
+  /// A number that advances on every registration of a context, a converter or a modifier, and
+  /// holds still otherwise.
+  /// </summary>
+  /// <remarks>
+  /// What lets a caller reuse a set of options built from this registry without either rebuilding
+  /// per call, which throws the serializer's metadata cache away every time, or caching forever,
+  /// which cannot resolve a type from an assembly whose contexts registered after the cache was
+  /// built. Compare it to the value seen when the options were built; a difference means rebuild.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryGenerationTests.cs</tests>
+  public static long Generation => Interlocked.Read(ref _registrationSeq);
 
   /// <summary>
   /// Gets the count of registered type name mappings (for diagnostics/testing).
@@ -465,7 +591,7 @@ public static class JsonContextRegistry {
   /// resolves each lazily at serialize time against the already-cached base typeinfo.</para>
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync</tests>
-  private sealed class _polymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
+  private sealed class PolymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       // Explicit generic dispatch over the three known polymorphic base interfaces keeps this
       // AOT-safe (no MakeGenericMethod / reflection).
@@ -752,7 +878,7 @@ public static class JsonContextRegistry {
     JsonTypeInfo<TBase> _payloadTypeInfo)
     where TBase : class {
     // Create property metadata - the key is specifying PropertyTypeInfo for Payload
-    var properties = new JsonPropertyInfo[3];
+    var properties = new JsonPropertyInfo[4];
 
     properties[0] = _createProperty<ValueObjects.MessageId, MessageEnvelope<TBase>>(
       _options,
@@ -773,6 +899,15 @@ public static class JsonContextRegistry {
       "Hops",
       obj => obj.Hops?.ToList() ?? [],
       null);
+
+    // Priority step 1: hand-built metadata names every field it carries; a number it does not name is dropped
+    // on every round trip. Omitted when zero, like the attribute-honoring shape.
+    properties[3] = _createProperty<int, MessageEnvelope<TBase>>(
+      _options,
+      "Priority",
+      obj => obj.Priority,
+      (obj, value) => obj.Priority = value);
+    properties[3].ShouldSerialize = static (_, value) => value is int priority && priority != 0;
 
     // Constructor parameters for deserialization
     var ctorParams = new JsonParameterInfoValues[] {

@@ -45,11 +45,16 @@ public static class PostgresDriverExtensions {
     ///     .WithDriver.Postgres;
     /// </code>
     /// </example>
-    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
-    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_ReturnedBuilder_HasSameServicesAsync</tests>
-    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
-    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersIClaimedEmissionStore_ScopedAsync</tests>
-    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_ReturnedBuilder_HasSameServicesAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersIClaimedEmissionStore_ScopedAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LibraryVersionRegistrationTests.cs:Postgres_WhenTheConsumerRegisteredItsOwnDbContext_StillRegistersTheLibraryVersionAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs:Elector_UnderUseNpgsqlDataSource_WithNoNotificationConfiguration_AcquiresTheDutyAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverRegistrationTests.cs:Postgres_CarriesMaxInFlightCommandsIntoTheWorkCoordinatorGateAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresGatePrecedenceTests.cs:ASectionValue_WinsOverMaxInFlightCommandsAsync</tests>
+    /// <docs>data/drivers#bring-your-own-dbcontext</docs>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
     public WhizbangPerspectiveBuilder Postgres {
@@ -65,6 +70,14 @@ public static class PostgresDriverExtensions {
         // Handles connection string resolution, JSON config, EnableDynamicJson(), and UseVector() if needed
         // The connection string name can be overridden via WithEFCore<T>("connection-string-name")
         DbContextRegistrationRegistry.InvokeRegistration(selector.Services, selector.DbContextType, selector.ConnectionStringName);
+
+        // TURNKEY: the library version as a value, whoever owns the DbContext (issue #619). The
+        // generated callback above registers it too, but that callback is skipped when the consumer
+        // already registered the DbContext — a supported shape that then had no version at all, and
+        // an assessor with no version stands down, which is a host that never reports ready.
+        // TryAdd: the generated registration (same value) or an explicit consumer registration wins.
+        selector.Services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
+            new Whizbang.Core.Observability.LibraryVersionProvider(LibraryVersionInfo.Value));
 
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
@@ -108,7 +121,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.
-        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupAssessor>(sp =>
+        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
             new EFCorePostgresStartupAssessor(
                 sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
                 dbContextType,
@@ -158,6 +171,12 @@ public static class PostgresDriverExtensions {
         // if a worker's StartAsync runs first, it blocks on the gate until the initializer
         // calls MarkReady() at the end of migrations.
         selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
+        // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; carry
+        // it into the gate the worker pipeline builds (it used to reach nothing: the gate was a literal 50).
+        // Fill the gap only: a cap the Whizbang:WorkCoordinatorGate section set is the operator's word.
+        selector.Services.AddOptions<WorkCoordinatorGateOptions>()
+          .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
+            (gate, postgres) => gate.MaxConcurrent ??= postgres.Value.MaxInFlightCommands);
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
@@ -182,7 +201,7 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: Register perspective snapshot store for efficient rewind
         // Uses NpgsqlDataSource for connection management (same as readiness check)
-        selector.Services.TryAddSingleton<IPerspectiveSnapshotStore>(sp => {
+        selector.Services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp => {
           var ds = sp.GetRequiredService<NpgsqlDataSource>();
           var snapshotLogger = sp.GetService<ILogger<EFCorePerspectiveSnapshotStore>>();
           return new EFCorePerspectiveSnapshotStore(ds, snapshotLogger);
@@ -196,7 +215,7 @@ public static class PostgresDriverExtensions {
         selector.Services.AddSingleton<IWhizbangHealthSource>(sp =>
           ConnectivityHealthSource.AlwaysRequired(
             "event-store",
-            ct => _pingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
+            ct => PingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
             sp.GetRequiredService<IWhizbangLifecycleState>(),
             "event-store database unreachable"));
 
@@ -212,13 +231,49 @@ public static class PostgresDriverExtensions {
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
 
+        // Durable suppression for the findings that cycle raises. Without it the advisory remembers
+        // in process memory, so every replica reports the same table independently and every
+        // restart starts the count again -- advice on a cadence, which is how advice stops being
+        // read. Schema-qualified for the same reason as the provider above.
+        selector.Services.TryAddSingleton<IAdvisoryLedger>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          // The logger is asked for directly rather than built from a factory: AddLogging registers
+          // the open generic, so this resolves when logging is configured and is null when it is
+          // not, which is the same answer with no conditional to leave half-tested.
+          return new PostgresAdvisoryLedger(ds, schema, sp.GetService<ILogger<PostgresAdvisoryLedger>>());
+        });
+
         // Durable stream-integrity convergence state. The in-memory ledger is per-process and
         // dies on restart, which is sound only while restarts are rare — but a report storm is
         // what causes the restarts, so every boot cleared the state that would have suppressed
         // it, and each replica reported the same divergence independently.
         selector.Services.TryAddSingleton<Whizbang.Core.Messaging.IIntegrityRepairLedger,
           CoordinatorIntegrityRepairLedger>();
+        // The repair-decision policy the checkpoint receptor consults (issue #582). Singleton
+        // because its window state IS the protection: per-window attempts and the global
+        // under-repair budget only bound anything if they persist across checkpoints. TryAdd so a
+        // host can supply its own tuning by registering first.
+        selector.Services.TryAddSingleton(
+          new Whizbang.Core.Messaging.IntegrityRepairPolicy(
+            new Whizbang.Core.Messaging.IntegrityRepairPolicy.Settings()));
         selector.Services.AddHostedService<TableStatisticsCollector>();
+
+        // TURNKEY: adaptive notify-debounce (137) observability — the provider reads the regime and
+        // fired/suppressed volumes from wh_notify_state, the collector refreshes the gauges. Schema-
+        // qualified the same way as the table-stats provider so multi-schema services report THEIR
+        // controller, not a bare public schema.
+        selector.Services.TryAddSingleton<INotifyDebounceStatsProvider>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          return new PostgresNotifyDebounceStatsProvider(ds, schema);
+        });
+        selector.Services.TryAddSingleton<NotifyDebounceMetrics>();
+        selector.Services.AddHostedService<NotifyDebounceStatsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
         // dispatch worker can move failed inbox rows into wh_dead_letters and the
@@ -233,18 +288,14 @@ public static class PostgresDriverExtensions {
         //
         // IDeadLetterRecoveryService is SCOPED — DeadLetterRecoveryWorker explicitly
         // creates a scope per scan and resolves from it (see DeadLetterRecoveryWorker.cs).
-        selector.Services.TryAddSingleton<IDeadLetterStore>(sp =>
+        selector.Services.TryAddSingletonOverNullDefault<IDeadLetterStore>(sp =>
           new ScopedEFCoreDeadLetterStore(
             sp.GetRequiredService<IServiceScopeFactory>(),
             dbContextType,
-            sp.GetService<ILogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>>()
-              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
             sp.GetService<WorkCoordinatorGate>()));
         selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
           new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
             (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
-            sp.GetService<ILogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>>()
-              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
             sp.GetService<WorkCoordinatorGate>()));
 
         // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
@@ -252,8 +303,17 @@ public static class PostgresDriverExtensions {
         // when neither Whizbang:Database:DirectConnectionString nor ConnectionStringKey is
         // configured. Operators only need the explicit notification config when they want a
         // bypass-pgbouncer "-direct" variant.
-        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+        // One instance answers both questions: the connection STRING (for string-configured
+        // contexts) and the DATA SOURCE (for UseNpgsql(NpgsqlDataSource) contexts, where Npgsql
+        // redacts the password from every string surface and the data source is the only object in
+        // the host that can still open an authenticated connection). Notification auto-discovery
+        // borrows the data source when configuration carries no credential of its own.
+        selector.Services.TryAddSingleton<DbContextNotificationConnectionStringFallback>(sp =>
           new DbContextNotificationConnectionStringFallback(sp, dbContextType));
+        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+          sp.GetRequiredService<DbContextNotificationConnectionStringFallback>());
+        selector.Services.TryAddSingleton<Whizbang.Data.Postgres.Notifications.INotificationDataSourceFallback>(sp =>
+          sp.GetRequiredService<DbContextNotificationConnectionStringFallback>());
 
         // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
         // from "Whizbang:Database" so users only need to set ConnectionStringKey +
@@ -303,7 +363,11 @@ public static class PostgresDriverExtensions {
   /// Throwing (connection refused, auth, timeout) is caught by <see cref="ConnectivityHealthSource"/>
   /// and read as unreachable. Deliberately trivial so it never queries a mid-migration table.
   /// </summary>
-  private static async ValueTask<bool> _pingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
+  /// <remarks>
+  /// Internal rather than private so the health-source tests can drive the REAL probe. They
+  /// previously kept a local copy of this body, which meant a change here would not fail them.
+  /// </remarks>
+  internal static async ValueTask<bool> PingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
     await using var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var command = connection.CreateCommand();
     command.CommandText = "SELECT 1";

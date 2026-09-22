@@ -8,7 +8,7 @@ namespace Whizbang.Core.Temporal;
 /// concurrency and return <c>false</c> when the row was not in a transitionable state or the version
 /// did not match.
 /// </summary>
-/// <docs>fundamentals/temporal/temporal-engine</docs>
+/// <docs>fundamentals/dispatcher/dispatch-patterns</docs>
 public interface IScheduleManager {
   /// <summary>Create a schedule, or idempotently update it when its <see cref="ScheduleDefinition.Key"/> exists.</summary>
   Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default);

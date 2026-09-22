@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -24,7 +25,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_WithPendingAudits_AppendsAfterQueuedOutboxMessagesAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     var normalMessage = _createOutboxMessage();
     var auditMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
@@ -40,7 +41,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_NoPendingAudits_LeavesOutboxQueueUntouchedAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     var normalMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
 
@@ -52,7 +53,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_IsIdempotent_SecondCallAddsNothingAsync() {
-    var queues = new WorkCoordinatorQueues();
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
     queues.PendingAuditMessages.Add(_createOutboxMessage());
 
     queues.MergeAuditMessages();

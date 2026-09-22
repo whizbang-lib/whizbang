@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// perspective workers inject <see cref="IDeadLetterStore"/> while the
 /// underlying EFCore impl still gets a per-call scoped DbContext.
 /// </summary>
+[Category("Shard3")]
 public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
 
   // ===== Constructor null guards =====
@@ -25,7 +26,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     await Assert.That(() => new ScopedEFCoreDeadLetterStore(
       scopeFactory: null!,
       dbContextType: typeof(WorkCoordinationDbContext),
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
       gate: null))
       .Throws<ArgumentNullException>();
   }
@@ -37,19 +37,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     await Assert.That(() => new ScopedEFCoreDeadLetterStore(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       dbContextType: null!,
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
-      gate: null))
-      .Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    var services = new ServiceCollection();
-    await using var sp = services.BuildServiceProvider();
-    await Assert.That(() => new ScopedEFCoreDeadLetterStore(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      dbContextType: typeof(WorkCoordinationDbContext),
-      logger: null!,
       gate: null))
       .Throws<ArgumentNullException>();
   }
@@ -68,7 +55,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     var adapter = new ScopedEFCoreDeadLetterStore(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       dbContextType: typeof(WorkCoordinationDbContext),
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
       gate: null);
 
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -112,7 +98,7 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
   private static async Task<int> _countAsync(NpgsqlConnection conn, string table, string column, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT COUNT(*) FROM {table} WHERE {column} = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }

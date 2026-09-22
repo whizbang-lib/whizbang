@@ -15,7 +15,6 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithReceptor_GeneratesDispatcherAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithVoidReceptor_GeneratesDispatcherAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithMultipleReceptors_GeneratesAllRoutesAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithNoReceptors_GeneratesWarningAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithPerspectiveButNoReceptor_DoesNotWarnAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_GeneratesDispatcherRegistrationsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithClassNoBaseList_SkipsAsync</tests>
@@ -155,26 +154,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       System.Threading.CancellationToken cancellationToken) {
 
     if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
-      return ImmutableArray<ReceptorInfo>.Empty;
+      return [];
     }
 
     // The generated registrations reference these types from generated public code, so every link in
     // the containment chain must be public.
     for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
       if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return ImmutableArray<ReceptorInfo>.Empty;
+        return [];
       }
     }
 
-    var attribute = context.Attributes.FirstOrDefault();
-    if (attribute is null) {
-      return ImmutableArray<ReceptorInfo>.Empty;
-    }
+    // ForAttributeWithMetadataName only yields a context that carries at least one matching attribute.
+    var attribute = context.Attributes[0];
 
     foreach (var namedArgument in attribute.NamedArguments) {
       if (namedArgument.Key == SagaRecoveryReceptorShapes.GENERATE_SERVICE_ARGUMENT &&
           namedArgument.Value.Value is bool generateService && !generateService) {
-        return ImmutableArray<ReceptorInfo>.Empty;
+        return [];
       }
     }
 
@@ -282,9 +279,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       var messageTypeSymbol = found.TypeArguments[0];
       // 2-arg interfaces have a response type; 1-arg are void receptors
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes and EscapeKeywordIdentifiers, which the shared FullyQualifiedWithNullability lacks
       var responseType = argCount == 2
           ? found.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability)
           : null;
+#pragma warning restore RS0030
 
       return new ReceptorInfo(
           ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
@@ -298,7 +297,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
           IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
-          IsIdempotent: isIdempotent
+          IsIdempotent: isIdempotent,
+          SuppressesRegistration: _suppressesRegistration(classSymbol),
+          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol)
       );
     }
 
@@ -392,7 +393,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var stages = new System.Collections.Generic.List<string>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != FIRE_AT_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, FIRE_AT_ATTRIBUTE)) {
         continue;
       }
 
@@ -434,7 +435,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -448,7 +449,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var syncAttributes = new System.Collections.Generic.List<SyncAttributeInfo>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, AWAIT_SYNC_ATTRIBUTE)) {
         continue;
       }
 
@@ -466,12 +467,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // An unresolvable type is still an INamedTypeSymbol (Roslyn supplies an error symbol), so the kind
+    // alone does not prove the name exists. Reject error types the way the [FireAt] stage and the
+    // [DefaultRouting] mode parsers do: skipping the attribute keeps the receptor registered at its
+    // defaults and leaves the author with exactly one error, the one in their own file, instead of a
+    // second CS0246 inside a generated file they cannot open (issue 743).
     var perspectiveTypeArg = attribute.ConstructorArguments[0];
-    if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
+    if (perspectiveTypeArg.Value is not INamedTypeSymbol { TypeKind: not TypeKind.Error } perspectiveTypeSymbol) {
       return null;
     }
 
-    var perspectiveType = perspectiveTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var perspectiveType = TypeNameUtilities.FullyQualified(perspectiveTypeSymbol);
 
     // Extract EventTypes from named argument (Type[]?)
     string[]? eventTypes = null;
@@ -479,8 +485,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
       var eventTypesList = new System.Collections.Generic.List<string>();
       foreach (var typeConstant in eventTypesArg.Value.Values) {
-        if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-          eventTypesList.Add(eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        if (typeConstant.Value is INamedTypeSymbol { TypeKind: not TypeKind.Error } eventTypeSymbol) {
+          eventTypesList.Add(TypeNameUtilities.FullyQualified(eventTypeSymbol));   // an unresolvable entry is dropped, never emitted
         }
       }
       if (eventTypesList.Count > 0) {
@@ -639,7 +645,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string DEFAULT_ROUTING_ATTRIBUTE = "Whizbang.Core.Dispatch.DefaultRoutingAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != DEFAULT_ROUTING_ATTRIBUTE) {
+      if (attribute.AttributeClass is not { } attributeClass || !TypeNameUtilities.IsNamed(attributeClass, DEFAULT_ROUTING_ATTRIBUTE)) {
         continue;
       }
 
@@ -652,7 +658,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      return _resolveEnumValueName(attribute.AttributeClass, modeValue);
+      return _resolveEnumValueName(attributeClass, modeValue);
     }
 
     return null;
@@ -678,7 +684,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -690,7 +696,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string WHIZBANG_TRACE_ATTRIBUTE = "Whizbang.Core.Tracing.WhizbangTraceAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == WHIZBANG_TRACE_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, WHIZBANG_TRACE_ATTRIBUTE)) {
         return true;
       }
     }
@@ -704,16 +710,90 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// including already-processed ones". Used to stamp the AlwaysFireOnReplay flag on
   /// ReceptorInfo so the invoker can branch without runtime reflection.
   /// </summary>
+  /// <summary>
+  /// Returns true when the receptor declares that its owner constructs it by hand, via
+  /// <c>[SuppressReceptorRegistration]</c>.
+  /// </summary>
+  /// <remarks>
+  /// Only DI REGISTRATION is suppressed. The receptor is still discovered and still routed — the
+  /// attribute says "I own this one's lifetime", not "ignore this type". The distinction matters
+  /// because such a receptor's constructor takes arguments the container cannot supply (a callback,
+  /// a value chosen at runtime, state owned by the caller), and registering it anyway leaves an
+  /// un-constructible descriptor. Under container validation ONE of those aborts construction of
+  /// the entire service provider, not merely that receptor.
+  /// </remarks>
+  /// <summary>
+  /// Returns <c>"name|type"</c> for the first constructor parameter dependency injection is unlikely
+  /// to supply, or <c>null</c> when the constructor looks resolvable.
+  /// </summary>
+  /// <remarks>
+  /// This is a HEURISTIC and cannot be anything else. A generator has no view of what an application
+  /// registers, so it cannot distinguish <c>Action&lt;T&gt;</c> from <c>ILogger&lt;T&gt;</c> by
+  /// constructibility — only by shape. Delegates and bare primitives are the shapes essentially never
+  /// registered in a container, and they are what a hand-constructed receptor takes. Everything else
+  /// is left alone, because guessing more aggressively would warn on legitimate code and train people
+  /// to ignore the warning.
+  /// </remarks>
+  private static string? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
+    // Widest accessible constructor is the one the container would choose.
+    IMethodSymbol? candidate = null;
+    foreach (var ctor in classSymbol.InstanceConstructors) {
+      if (ctor.DeclaredAccessibility == Accessibility.Private || ctor.IsStatic) {
+        continue;
+      }
+      if (candidate is null || ctor.Parameters.Length > candidate.Parameters.Length) {
+        candidate = ctor;
+      }
+    }
+
+    if (candidate is null) {
+      return null;
+    }
+
+    foreach (var parameter in candidate.Parameters) {
+      // A parameter with a default value is not a hazard: the container can omit it.
+      if (parameter.HasExplicitDefaultValue) {
+        continue;
+      }
+
+      var type = parameter.Type;
+      var isDelegate = type.TypeKind == TypeKind.Delegate;
+      var isBarePrimitive = type.SpecialType is SpecialType.System_String
+          or SpecialType.System_Boolean
+          or SpecialType.System_Int32
+          or SpecialType.System_Int64
+          or SpecialType.System_Double
+          or SpecialType.System_Decimal;
+
+      if (isDelegate || isBarePrimitive) {
+        return parameter.Name + "|" + TypeNameUtilities.Display(type);
+      }
+    }
+
+    return null;
+  }
+
+  private static bool _suppressesRegistration(INamedTypeSymbol classSymbol) {
+    const string SUPPRESS_REGISTRATION_ATTRIBUTE = "Whizbang.Core.SuppressReceptorRegistrationAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, SUPPRESS_REGISTRATION_ATTRIBUTE)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
     const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      var fqName = attribute.AttributeClass?.ToDisplayString();
-      if (fqName == FIRE_DURING_REPLAY_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, FIRE_DURING_REPLAY_ATTRIBUTE)) {
         return true;
       }
-      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
         // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
         foreach (var arg in attribute.NamedArguments) {
           if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
@@ -736,8 +816,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      var fqName = attribute.AttributeClass?.ToDisplayString();
-      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
         return true;
       }
     }
@@ -752,7 +831,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="typeName">The fully qualified type name to unwrap.</param>
   /// <returns>The unwrapped type name, or null for RoutedNone.</returns>
-  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleOfRoutedResponses_*</tests>
   private static string? _unwrapRoutedTypeString(string typeName) {
     // Check for RoutedNone - skip in cascade
     if (typeName.Contains("RoutedNone")) {
@@ -855,7 +933,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <param name="receptors">The collection of discovered receptors.</param>
   /// <returns>Unique set of fully qualified event type names.</returns>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
-  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
   private static HashSet<string> _extractUniqueEventTypes(ImmutableArray<ReceptorInfo> receptors) {
     var eventTypes = new HashSet<string>(StringComparer.Ordinal);
 
@@ -954,7 +1032,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <param name="tupleType">Tuple type string like "(Type1, Type2)" or "(Type1, (Type2, Type3))"</param>
   /// <returns>List of extracted type names.</returns>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
-  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleResponse_ExtractsEventsForCascadeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleResponse_ExtractsEventsForCascadeAsync</tests>
   private static List<string> _extractTupleElements(string tupleType) {
     var elements = new List<string>();
 
@@ -1121,6 +1199,42 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           handlerNames
       ));
     }
+
+    _reportLikelyNotInjectableReceptors(context, receptors);
+  }
+
+  /// <summary>
+  /// Reports WHIZ014 for receptors that will be registered but take a constructor parameter DI is
+  /// unlikely to supply.
+  /// </summary>
+  /// <remarks>
+  /// Receptors that opt out via <c>[SuppressReceptorRegistration]</c> are skipped: they are not
+  /// registered, so their constructor is nobody's problem, and warning about a shape the author has
+  /// already declared deliberate would be noise. The warning exists to catch the case where the
+  /// author has NOT declared it — where an un-constructible receptor is about to be registered and
+  /// take the whole service provider down with it at startup.
+  /// </remarks>
+  private static void _reportLikelyNotInjectableReceptors(
+      SourceProductionContext context,
+      ImmutableArray<ReceptorInfo> receptors) {
+    foreach (var receptor in receptors) {
+      if (receptor.SuppressesRegistration || receptor.LikelyNotInjectableParameter is null) {
+        continue;
+      }
+
+      var parts = receptor.LikelyNotInjectableParameter.Split('|');
+      if (parts.Length != 2) {
+        continue;
+      }
+
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.ReceptorLikelyNotInjectable,
+          Location.None,
+          TypeNameUtilities.GetSimpleName(receptor.ClassName),
+          parts[0],
+          parts[1]
+      ));
+    }
   }
 
   /// <summary>
@@ -1166,9 +1280,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "VOID_SYNC_RECEPTOR_REGISTRATION_SNIPPET"
     );
 
-    // Generate registration calls using appropriate snippet
+    // Generate registration calls using appropriate snippet.
+    //
+    // Receptors marked [SuppressReceptorRegistration] are skipped HERE and only here — they remain
+    // discovered and routed, because the attribute declares who owns construction, not that the type
+    // should be ignored. Their constructors take arguments DI cannot supply, so registering them
+    // would leave un-constructible descriptors; under container validation a single one of those
+    // aborts the entire service provider, taking down every service in the assembly.
     var registrations = new StringBuilder();
-    foreach (var receptor in receptors) {
+    foreach (var receptor in receptors.Where(r => !r.SuppressesRegistration)) {
       var generatedCode = _generateRegistrationCode(
           receptor, registrationSnippet, voidRegistrationSnippet,
           syncRegistrationSnippet, voidSyncRegistrationSnippet);
@@ -1931,6 +2051,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Fallback method to generate ReceptorInfo entry manually if snippet extraction fails.
   /// </summary>
+  /// <remarks>
+  /// Unreachable in practice: extraction fails only when a snippet has lost the
+  /// <c>new global::Whizbang.Core.Messaging.ReceptorInfo(</c> marker, and
+  /// <c>ReceptorRegistrySnippetInvariantTests</c> pins that marker in all four snippets
+  /// <c>_selectSnippet</c> can return. Kept as the safety net for that edit, but it is a second
+  /// copy of the entry shape that no snippet change updates — so if it ever does run, the entries
+  /// it emits will have drifted from the template's.
+  /// </remarks>
+  // Justification lives in the remarks above: netstandard2.0's ExcludeFromCodeCoverageAttribute
+  // has no Justification property (it arrived in .NET 5), so generator projects carry it in prose.
+  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
   private static string _generateReceptorInfoEntryManually(
       ReceptorInfo receptor,
       string syncAttributesCode) {
@@ -1974,7 +2105,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
+    // Deterministic: wall-clock here would change the compiled output hash every build.
+    var timestamp = TemplateUtilities.GetDeterministicBuildStamp(typeof(ReceptorDiscoveryGenerator).Assembly);
 
     // Load template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(

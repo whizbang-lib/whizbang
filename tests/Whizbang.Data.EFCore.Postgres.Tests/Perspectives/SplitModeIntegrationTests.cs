@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class SplitModeIntegrationTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -106,7 +107,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
         await adminConnection.ExecuteAsync($@"
           SELECT pg_terminate_backend(pid) FROM pg_stat_activity
           WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* cleanup errors */ }
       _testDatabaseName = null;
     }
@@ -264,7 +265,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
       "SELECT scope::text FROM wh_per_split_test WHERE id = @id", new { id = (Guid)testId });
 
     await Assert.That(scopeJson).IsNotNull();
-    await Assert.That(scopeJson!).Contains("c0ffee00")
+    await Assert.That(scopeJson).Contains("c0ffee00")
       .Because("Scope should contain the tenant ID from the event hop metadata");
   }
 

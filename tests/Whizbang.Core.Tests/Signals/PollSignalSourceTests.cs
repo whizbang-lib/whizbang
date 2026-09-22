@@ -130,4 +130,116 @@ public class PollSignalSourceTests {
 
     await Assert.That(source.Interval).IsEqualTo(TimeSpan.FromMilliseconds(200));
   }
+
+  /// <summary>
+  /// A source whose detection query always fails, recording what the base class hands to
+  /// <c>OnTickError</c> and then delegating to the base implementation — which is the no-op that
+  /// concrete sources inherit when they don't override it.
+  /// </summary>
+  private sealed class FailingPollSource(FakeTimeProvider clock, TimeSpan interval)
+    : BasePollSignalSource<PollProbe>(clock, interval) {
+    private readonly Lock _gate = new();
+    private readonly List<Exception> _observed = [];
+    private int _detectCalls;
+
+    public bool FailNextDetect { get; set; } = true;
+    public int DetectCalls => Volatile.Read(ref _detectCalls);
+    public bool BaseReturnedNormally { get; private set; }
+    public TaskCompletionSource FirstError { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public List<Exception> Observed {
+      get { lock (_gate) { return [.. _observed]; } }
+    }
+
+    protected override ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
+      Interlocked.Increment(ref _detectCalls);
+      return FailNextDetect
+        ? throw new InvalidOperationException("detection query failed")
+        : ValueTask.FromResult(true);
+    }
+
+    protected override void OnTickError(Exception ex) {
+      lock (_gate) { _observed.Add(ex); }
+      // The base is the crash-free default every source inherits. If it did anything other than
+      // return, the flag below would never be set and the timer thread would be carrying an
+      // exception a source with no override could not have handled.
+      base.OnTickError(ex);
+      BaseReturnedNormally = true;
+      FirstError.TrySetResult();
+    }
+  }
+
+  [Test]
+  public async Task TimerTick_DetectionThrows_GoesToOnTickErrorAndTheSourceKeepsPollingAsync() {
+    // A poll source runs on a timer callback with nobody awaiting it. If a failed detection query
+    // — a dropped connection, a locked table — escaped the tick, the source would stop polling
+    // for the rest of the process and the signal it reconciles would silently never fire again.
+    var clock = new FakeTimeProvider();
+    var source = new FailingPollSource(clock, TimeSpan.FromSeconds(1));
+    var sink = new CountingSink();
+    await source.StartAsync(sink);
+
+    clock.Advance(TimeSpan.FromSeconds(1));
+    await source.FirstError.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(source.Observed).Count().IsEqualTo(1);
+    await Assert.That(source.Observed[0]).IsTypeOf<InvalidOperationException>();
+    await Assert.That(source.Observed[0].Message).IsEqualTo("detection query failed")
+      .Because("the exact detection failure has to reach the source so it can be logged");
+    await Assert.That(source.BaseReturnedNormally).IsTrue()
+      .Because("the inherited default must swallow the exception and return — a source that "
+             + "does not override OnTickError still has to get crash-free semantics");
+    await Assert.That(sink.Received).IsEqualTo(0)
+      .Because("a failed detection raises nothing — a doorbell on a query that never answered "
+             + "would wake every subscriber on no evidence at all");
+
+    // The timer must still be armed after the failure.
+    source.FailNextDetect = false;
+    clock.Advance(TimeSpan.FromSeconds(1));
+
+    await Assert.That(source.DetectCalls).IsEqualTo(2)
+      .Because("the tick that threw must not take the polling schedule down with it");
+    await Assert.That(sink.Received).IsEqualTo(1)
+      .Because("once detection succeeds again the source resumes raising the signal");
+  }
+
+  /// <summary>
+  /// A transient database failure in a tick, the kind a deadlock or a dropped connection raises, is
+  /// handed to the source and the schedule survives: the next tick detects and raises as before.
+  /// </summary>
+  [Test]
+  public async Task Tick_TransientDatabaseFailure_IsHandedToOnTickErrorAndTheScheduleSurvivesAsync() {
+    var clock = new FakeTimeProvider();
+    var source = new RecordingPollSource(clock, TimeSpan.FromSeconds(1)) { NextDetectException = Workers.FakeDbException.WithSqlState("40P01") };
+    var sink = new CountingSink();
+    await source.StartAsync(sink);
+
+    clock.Advance(TimeSpan.FromSeconds(1));
+    await Task.Yield();
+
+    await Assert.That(source.Errors).Count().IsEqualTo(1);
+    await Assert.That(source.Errors[0]).IsTypeOf<Workers.FakeDbException>();
+    await Assert.That(sink.Received).IsEqualTo(0);
+
+    clock.Advance(TimeSpan.FromSeconds(1));
+    await Task.Yield();
+
+    await Assert.That(source.DetectCallCount).IsEqualTo(2)
+      .Because("a tick that hit a transient database failure must not take the schedule down");
+    await Assert.That(sink.Received).IsEqualTo(1);
+  }
+
+  private sealed class RecordingPollSource(FakeTimeProvider clock, TimeSpan interval)
+    : BasePollSignalSource<PollProbe>(clock, interval) {
+    public int DetectCallCount { get; private set; }
+    public Exception? NextDetectException { get; set; }
+    public List<Exception> Errors { get; } = [];
+    protected override ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
+      DetectCallCount++;
+      var failure = NextDetectException;
+      NextDetectException = null;
+      return failure is not null ? throw failure : ValueTask.FromResult(true);
+    }
+    protected override void OnTickError(Exception ex) => Errors.Add(ex);
+  }
 }

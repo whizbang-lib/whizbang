@@ -123,11 +123,11 @@ public static class CollectiveApplyHookPlanner {
     // r => r.Data — the compiler bakes the Data PropertyInfo into the tree; no Expression.Property(string) reflection.
     Expression<Func<PerspectiveRow<TModel>, TModel>> dataSelector = r => r.Data;
     var rowParam = dataSelector.Parameters[0];
-    var body = new _parameterReplacer(markerParam, dataSelector.Body).Visit(markerPredicate.Body);
+    var body = new ParameterReplacer(markerParam, dataSelector.Body).Visit(markerPredicate.Body);
     return Expression.Lambda<Func<PerspectiveRow<TModel>, bool>>(body, rowParam);
   }
 
-  private sealed class _parameterReplacer(ParameterExpression from, Expression to) : ExpressionVisitor {
+  private sealed class ParameterReplacer(ParameterExpression from, Expression to) : ExpressionVisitor {
     protected override Expression VisitParameter(ParameterExpression node) =>
       ReferenceEquals(node, from) ? to : base.VisitParameter(node);
   }

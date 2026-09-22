@@ -14,10 +14,8 @@ namespace Whizbang.Core.Workers;
 public sealed partial class PerspectiveMigrationWorker(
     IPerspectiveRebuilder rebuilder,
     ILogger<PerspectiveMigrationWorker> logger,
-    // Startup barrier: pending-rebuild queries and rebuilds are database work. Optional only
-    // so existing fixtures construct unchanged; DI always supplies it.
-    ISchemaReadyGate? schemaReadyGate = null) : BackgroundService {
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+    ISchemaReadyGate schemaReadyGate) : BackgroundService {
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
 
   /// <summary>

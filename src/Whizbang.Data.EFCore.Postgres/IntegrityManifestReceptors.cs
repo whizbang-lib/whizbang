@@ -70,7 +70,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
 
     if (message.Windowed) {
       // #80-B negotiated scope: answer only [SinceSequence, UntilSequence) — epoch-served, so the
-      // cost is the open window, not the store. A null result means the engine cannot window;
+      // cost is the open window, not the store. A null result means the engine cannot window —
       // the honest fallback is the legacy full answer below (correct, just unbounded) — never a
       // fabricated watermark the engine cannot stand behind.
       var windowed = message.Level == ManifestLevel.Types
@@ -138,6 +138,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     do {
       var chunk = digests.Skip(offset).Take(options.MaxDigestsPerManifest).ToList();
       var envelope = new MessageEnvelope<IntegrityManifest> {
+        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new IntegrityManifest {
           ManifestStreamId = originServiceId,
@@ -153,11 +154,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = DateTimeOffset.UtcNow,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-          }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = message.RequesterService,
@@ -350,7 +347,7 @@ public sealed partial class IntegrityManifestReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     var repairBudget = options.MaxAutoRepairRequestsPerAudit;
     var repairBatches = new Dictionary<(string? TenantScope, string EventType), List<Guid>>();
-    var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), _divergenceTally>();
+    var divergenceTallies = new Dictionary<(string? TenantScope, string EventType), DivergenceTally>();
     var reportCap = Math.Max(1, options.MaxDivergenceReportsPerManifest);
     var reportsPublished = 0;
     var divergentSeen = 0;
@@ -382,7 +379,11 @@ public sealed partial class IntegrityManifestReceptor(
       // say-so. Both alarm; neither repairs.
       var localCount = mine?.EventCount ?? 0;
       var isDeficit = localCount < origin.EventCount;
-      var reason = isDeficit ? "deficit" : localCount == origin.EventCount ? "identity_mismatch" : "local_extra";
+      var reason = (isDeficit, localCount == origin.EventCount) switch {
+        (true, _) => "deficit",
+        (false, true) => "identity_mismatch",
+        _ => "local_extra",
+      };
       divergent.Add((origin, mine, isDeficit, reason));
     }
 
@@ -419,7 +420,7 @@ public sealed partial class IntegrityManifestReceptor(
     // legacy burst path remains behind RepairDrainEnabled=false for engines without a
     // drain-capable coordinator.
     if (options.RepairDrainEnabled && deficitIndexes.Count > 0 && message.ComputedThrough is long stampUntil) {
-      var stampKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      var stampKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
       var stampCoordinator = services.GetService<IWorkCoordinator>();
       if (stampCoordinator is not null) {
         await stampCoordinator.IntegrityStampRepairWindowsAsync(
@@ -430,7 +431,7 @@ public sealed partial class IntegrityManifestReceptor(
       && !options.RepairDrainEnabled;
     IReadOnlyList<bool> repairFlags = [];
     if (repairEligible && deficitIndexes.Count > 0) {
-      var deficitKeys = deficitIndexes.Select(i => observations[i].Key).ToList();
+      var deficitKeys = deficitIndexes.ConvertAll(i => observations[i].Key);
       repairFlags = await ledger.TryBeginRepairBatchAsync(
         deficitKeys, now, backoff, options.MaxRepairAttemptsPerBucket, repairBudget, cancellationToken).ConfigureAwait(false);
     }
@@ -477,7 +478,7 @@ public sealed partial class IntegrityManifestReceptor(
       // exactly when there was most to report, and switching publishing off would have silenced the
       // operator-facing log entirely rather than only the durable writes.
       if (!divergenceTallies.TryGetValue((origin.TenantScope, origin.EventType), out var tally)) {
-        tally = new _divergenceTally { SampleStreamId = origin.StreamId };
+        tally = new DivergenceTally { SampleStreamId = origin.StreamId };
         divergenceTallies[(origin.TenantScope, origin.EventType)] = tally;
       }
       tally.Count++;
@@ -560,11 +561,11 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var now = DateTimeOffset.UtcNow;
     var burstWindow = TimeSpan.FromMinutes(Math.Max(1, options.AuditIntervalMinutes));
-    var entry = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
+    var (Pages, _) = _pagesFollowed.TryGetValue(key, out var seen) && now - seen.Last < burstWindow
       ? seen
       : (Pages: 0, Last: now);
-    if (entry.Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
-      LogCursorFollowCapped(logger, message.OriginServiceName, entry.Pages);
+    if (Pages >= Math.Max(0, options.MaxManifestPagesPerAudit)) {
+      LogCursorFollowCapped(logger, message.OriginServiceName, Pages);
       services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesCapped.Add(1,
         new KeyValuePair<string, object?>("origin", message.OriginServiceName));
       return;   // the rest of the lane re-audits from the seal next cycle.
@@ -586,13 +587,14 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
-    _pagesFollowed[key] = (entry.Pages + 1, now);
+    _pagesFollowed[key] = (Pages + 1, now);
     services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.ManifestPagesFollowed.Add(1,
       new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     if (_pagesFollowed.Count > 256) {
       _pagesFollowed.Clear();   // windows advance; stale keys are waste, not state.
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
@@ -609,11 +611,7 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = now,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -622,7 +620,7 @@ public sealed partial class IntegrityManifestReceptor(
     await transport.PublishAsync(serialized.JsonEnvelope,
       Whizbang.Core.Transports.ControlPlaneDestination.For(originRequestTopic, envelope.MessageId.Value, typeof(RequestIntegrityManifest)), serialized.EnvelopeType,
       cancellationToken: cancellationToken).ConfigureAwait(false);
-    LogCursorFollowed(logger, entry.Pages + 1, message.OriginServiceName);
+    LogCursorFollowed(logger, Pages + 1, message.OriginServiceName);
   }
 
   /// <summary>
@@ -714,8 +712,8 @@ public sealed partial class IntegrityManifestReceptor(
       var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
       var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
       var keys = bulkCandidates
-        .Select(c => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, c.Origin.TenantScope, c.Origin.EventType, Guid.Empty))
-        .ToList();
+        .ConvertAll(c => new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, c.Origin.TenantScope, c.Origin.EventType, Guid.Empty))
+;
       // Report before repair: the durable ledger only grants repairs for KNOWN divergences, and
       // the report row is the operator-facing record of the type-level deficit itself.
       var observations = new IntegrityReportObservation[bulkCandidates.Count];
@@ -767,6 +765,7 @@ public sealed partial class IntegrityManifestReceptor(
       _lastDrilled[(message.OriginServiceId, t)] = drilledAt;
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
@@ -782,11 +781,7 @@ public sealed partial class IntegrityManifestReceptor(
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -853,6 +848,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,
@@ -869,11 +865,7 @@ public sealed partial class IntegrityManifestReceptor(
         StateOnly = true,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,
@@ -909,6 +901,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,
@@ -924,11 +917,7 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,
@@ -944,7 +933,7 @@ public sealed partial class IntegrityManifestReceptor(
   /// stream. Hundreds of near-identical lines cost real work on the thread that owes the liveness
   /// probe an answer, and bury the signal an operator is actually looking for.
   /// </summary>
-  private sealed class _divergenceTally {
+  private sealed class DivergenceTally {
     public int Count;
     public long OriginTotal;
     public long LocalTotal;

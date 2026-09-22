@@ -19,12 +19,12 @@ public partial class JsonContextRegistryTests {
   /// <summary>
   /// Test converter for MessageId-like type (simulates generated WhizbangId converter).
   /// </summary>
-  private sealed class TestIdJsonConverter : JsonConverter<_testId> {
-    public override _testId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
-      return new _testId { Value = reader.GetString() ?? string.Empty };
+  private sealed class TestIdJsonConverter : JsonConverter<TestId> {
+    public override TestId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+      return new TestId { Value = reader.GetString() ?? string.Empty };
     }
 
-    public override void Write(Utf8JsonWriter writer, _testId value, JsonSerializerOptions options) {
+    public override void Write(Utf8JsonWriter writer, TestId value, JsonSerializerOptions options) {
       writer.WriteStringValue(value.Value);
     }
   }
@@ -32,7 +32,7 @@ public partial class JsonContextRegistryTests {
   /// <summary>
   /// Test ID type (simulates generated WhizbangId value object).
   /// </summary>
-  private struct _testId {
+  private struct TestId {
     public string Value { get; set; }
   }
 
@@ -103,7 +103,7 @@ public partial class JsonContextRegistryTests {
     // not via Activator.CreateInstance() or other reflection at runtime.
     //
     // The generated code should look like:
-    //   JsonContextRegistry.RegisterConverter(new ProductIdJsonConverter());
+    //   JsonContextRegistry.RegisterConverter(new ProductIdJsonConverter()) —
     //
     // NOT like:
     //   JsonContextRegistry.RegisterConverterType(typeof(ProductIdJsonConverter)); // WRONG - uses reflection
@@ -132,8 +132,7 @@ public partial class JsonContextRegistryTests {
   /// Test JsonSerializerContext for type name mapping tests.
   /// </summary>
   [JsonSerializable(typeof(TestMessage))]
-  internal sealed partial class TestMessageJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class TestMessageJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task RegisterTypeName_WithValidArguments_RegistersSuccessfullyAsync() {
@@ -305,8 +304,7 @@ public partial class JsonContextRegistryTests {
   /// </summary>
   [JsonSerializable(typeof(TestEvent))]
   [JsonSerializable(typeof(MessageEnvelope<TestEvent>))]
-  internal sealed partial class TestEventJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class TestEventJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task GetTypeInfoByName_WithEnvelopeType_ReturnsEnvelopeJsonTypeInfoAsync() {
@@ -424,8 +422,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestOrderPlacedEvent))]
   [JsonSerializable(typeof(TestOrderShippedEvent))]
   [JsonSerializable(typeof(TestCreateOrderCommand))]
-  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext;
 
   /// <summary>
   /// Test composite event — bundles inner events that all inherit the composite's stream at the
@@ -444,8 +441,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestOrderPlacedEvent))]
   [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
   [JsonSerializable(typeof(List<IMessage>))]
-  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext;
 
   /// <summary>Plain (non-composite) event carrying a polymorphic IMessage collection.</summary>
   internal sealed record TestEventWithMessageList(Guid Id, List<IMessage> Items) : IEvent;
@@ -472,8 +468,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(List<IMessage>))]
   [JsonSerializable(typeof(List<IEvent>))]
   [JsonSerializable(typeof(List<ICommand>))]
-  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext;
 
   /// <summary>One-line consumer composite built on the turnkey <see cref="CompositeEventBase"/> helper.
   /// Public so the source generator discovers it and auto-registers its wire metadata — exactly as a
@@ -625,6 +620,21 @@ public partial class JsonContextRegistryTests {
     var items = ((TestEventWithMessageList)back.Payload).Items;
     await Assert.That(items.Count).IsEqualTo(1);
     await Assert.That(items[0]).IsTypeOf<TestOrderPlacedEvent>();
+  }
+
+  [Test]
+  public async Task PolymorphicEnvelope_RoundTripsThePriorityAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), new TestOrderPlacedEvent(Guid.NewGuid(), "C"), []) { Priority = 250 };
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Priority).IsEqualTo(250)
+      .Because("the polymorphic metadata is hand-built; a number it does not name is dropped on every round trip");
   }
 
   [Test]
@@ -962,8 +972,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestRecordWithPrimitives))]
   [JsonSerializable(typeof(MessageEnvelope<TestRecordWithGuid>))]
   [JsonSerializable(typeof(List<TestRecordWithGuid>))]
-  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task NonNullableGuid_SerializesCorrectlyAsync() {
@@ -1121,8 +1130,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(MessageEnvelope<TestRecordWithNullablePrimitives>))]
   [JsonSerializable(typeof(List<TestRecordWithNullableGuid>))]
   [JsonSerializable(typeof(TestRecordWithNullableGuid[]))]
-  internal sealed partial class NullablePrimitiveTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class NullablePrimitiveTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task NullableGuid_WithValue_SerializesCorrectlyAsync() {
@@ -1427,8 +1435,7 @@ public partial class JsonContextRegistryTests {
   /// </summary>
   [JsonSerializable(typeof(PolymorphicFallbackTestEvent))]
   [JsonSerializable(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>))]
-  internal sealed partial class PolymorphicFallbackTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicFallbackTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task GetTypeInfoByName_WithInterfaceEnvelopeTypeName_ReturnsNullAsync() {
@@ -1672,5 +1679,57 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.Payload).IsNotNull();
     await Assert.That(deserialized.Payload).IsTypeOf<PolymorphicFallbackTestEvent>();
+  }
+
+  // ============================================================
+  // Asking about a type nobody registered
+  // ============================================================
+
+  /// <summary>A base nothing has ever registered a derived type against.</summary>
+  private interface IUnregisteredBase;
+
+  /// <summary>A concrete type under that base, equally unknown to the registry.</summary>
+  private sealed record UnregisteredDerived : IUnregisteredBase;
+
+  [Test]
+  public async Task GetRegisteredDerivedTypes_ForABaseNobodyRegistered_IsEmptyRatherThanThrowingAsync() {
+    // These are the diagnostic entry points — a health endpoint or a startup check asking what the
+    // registry knows. An unknown base is the ordinary answer on a partially-loaded host, so it has
+    // to come back empty; throwing turns a diagnostic into the outage it was meant to describe.
+    var derived = JsonContextRegistry.GetRegisteredDerivedTypes<IUnregisteredBase>();
+
+    await Assert.That(derived).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetDiscriminator_ForATypeNobodyRegistered_IsNullAsync() {
+    var discriminator = JsonContextRegistry.GetDiscriminator<IUnregisteredBase, UnregisteredDerived>();
+
+    await Assert.That(discriminator).IsNull()
+      .Because("no registration means no discriminator — inventing one would produce wire values "
+             + "that nothing on the other side can resolve");
+  }
+
+  [Test]
+  public async Task GetPolymorphicListTypeInfo_ForANonPolymorphicBase_IsNullAsync() {
+    // The caller uses null to decide whether the polymorphic path applies at all. A thrown
+    // exception here would make "this base is not polymorphic" — a normal, expected answer —
+    // indistinguishable from a broken registry.
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetPolymorphicListTypeInfo<IUnregisteredBase>(options);
+
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetPolymorphicEnvelopeTypeInfo_ForANonPolymorphicBase_IsNullAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<UnregisteredDerived>(options);
+
+    await Assert.That(typeInfo).IsNull()
+      .Because("the envelope helper answers null so the caller can fall back to the concrete "
+             + "payload path rather than failing the send");
   }
 }

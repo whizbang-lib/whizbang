@@ -10,8 +10,8 @@ namespace Whizbang.Sagas.Generated;
 /// types directly (their per-saga generated contracts cover all the
 /// lifecycle events), so the per-consumer <c>MessageJsonContextGenerator</c>
 /// never sees them — the framework MUST own its own context or every
-/// consumer trips a <c>JsonTypeInfo metadata for type ... was not
-/// provided</c> failure the first time
+/// consumer trips a <code>JsonTypeInfo metadata for type ... was not
+/// provided</code> failure the first time
 /// <c>BaseSagaService.InitiateSagaAsync</c> publishes the auto-armed
 /// watchdog tick.
 /// </summary>
@@ -37,6 +37,12 @@ namespace Whizbang.Sagas.Generated;
 // pair of registrations is needed for publish + transport-consume.
 [JsonSerializable(typeof(SagaCompletionAbandonedEvent))]
 [JsonSerializable(typeof(MessageEnvelope<SagaCompletionAbandonedEvent>))]
+// SagaContinuationRequestedEvent — bare + envelope. Emitted by
+// BaseSagaService.CompleteSagaAsync for each declared continuation whose trigger
+// matches the final status. The request crosses the transport like any other
+// framework-published saga event, so it needs the same pair.
+[JsonSerializable(typeof(SagaContinuationRequestedEvent))]
+[JsonSerializable(typeof(MessageEnvelope<SagaContinuationRequestedEvent>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class SagasJsonContext : JsonSerializerContext;

@@ -1,14 +1,20 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -42,10 +48,24 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("monitor-topic"));
     var worker = new TransportConsumerWorker(
-      transport, options, resilience,
-      sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null, logger);
+      transport: transport,
+      options: options,
+      resilienceOptions: resilience,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: null,
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

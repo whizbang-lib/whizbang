@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Testing.Async;
@@ -11,9 +12,9 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public class PerspectiveSyncSignalerTests {
   // Dummy perspective types for testing
-  private sealed class TestPerspective { }
-  private sealed class PerspectiveA { }
-  private sealed class PerspectiveB { }
+  private sealed class TestPerspective;
+  private sealed class PerspectiveA;
+  private sealed class PerspectiveB;
 
   // ==========================================================================
   // PerspectiveCursorSignal record tests
@@ -47,7 +48,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_SignalCheckpointUpdated_NotifiesSubscribersAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -75,13 +76,13 @@ public class PerspectiveSyncSignalerTests {
   public async Task LocalSyncSignaler_HandlerThrows_LogsWarningAndStillNotifiesOthersAsync() {
     // A throwing handler must not block the others — but the drop must be logged, not silent
     // (a dropped signal can leave a sync waiter blocked until its poll/timeout).
-    var captured = new _capturingLogger<LocalSyncSignaler>();
+    var captured = new CapturingLogger<LocalSyncSignaler>();
     using var signaler = new LocalSyncSignaler(captured);
     var perspectiveType = typeof(TestPerspective);
     var goodRan = false;
 
     using var badSub = signaler.Subscribe(perspectiveType, _ => throw new InvalidOperationException("boom"));
-    using var goodSub = signaler.Subscribe(perspectiveType, _ => { goodRan = true; });
+    using var goodSub = signaler.Subscribe(perspectiveType, _ => goodRan = true);
 
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
 
@@ -91,7 +92,7 @@ public class PerspectiveSyncSignalerTests {
       .Because("a dropped handler exception must be logged, not silently swallowed");
   }
 
-  private sealed class _capturingLogger<T> : ILogger<T> {
+  private sealed class CapturingLogger<T> : ILogger<T> {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -101,12 +102,10 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_SignalCheckpointUpdated_OnlyNotifiesMatchingSubscribersAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var receivedCount = 0;
 
-    using var subscription = signaler.Subscribe(typeof(PerspectiveA), _ => {
-      Interlocked.Increment(ref receivedCount);
-    });
+    using var subscription = signaler.Subscribe(typeof(PerspectiveA), _ => Interlocked.Increment(ref receivedCount));
 
     signaler.SignalCheckpointUpdated(typeof(PerspectiveB), Guid.NewGuid(), Guid.NewGuid());
 
@@ -119,19 +118,29 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_MultipleSubscribers_AllReceiveSignalAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
-    var signal1Received = new TaskCompletionSource<bool>();
-    var signal2Received = new TaskCompletionSource<bool>();
+    var signal1Received = new TaskCompletionSource<PerspectiveCursorSignal>();
+    var signal2Received = new TaskCompletionSource<PerspectiveCursorSignal>();
 
-    using var subscription1 = signaler.Subscribe(perspectiveType, _ => signal1Received.TrySetResult(true));
-    using var subscription2 = signaler.Subscribe(perspectiveType, _ => signal2Received.TrySetResult(true));
+    using var subscription1 = signaler.Subscribe(perspectiveType, s => signal1Received.TrySetResult(s));
+    using var subscription2 = signaler.Subscribe(perspectiveType, s => signal2Received.TrySetResult(s));
 
-    signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    signaler.SignalCheckpointUpdated(perspectiveType, streamId, eventId);
 
     // Wait for both signals with proper timeout
-    await signal1Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await signal2Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var first = await signal1Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var second = await signal2Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Fan-out must hand every subscriber the SAME cursor, not a per-subscriber variant: a waiter
+    // that got a different stream/event id would resume on a checkpoint that never happened.
+    await Assert.That(first.StreamId).IsEqualTo(streamId);
+    await Assert.That(first.LastEventId).IsEqualTo(eventId);
+    await Assert.That(second.StreamId).IsEqualTo(streamId);
+    await Assert.That(second.LastEventId).IsEqualTo(eventId);
+    await Assert.That(second.PerspectiveType).IsEqualTo(perspectiveType);
   }
 
   // ==========================================================================
@@ -140,7 +149,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_Subscribe_ReturnsDisposableAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
 
     var subscription = signaler.Subscribe(typeof(TestPerspective), _ => { });
 
@@ -151,13 +160,11 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_DisposeSubscription_StopsReceivingSignalsAsync() {
-    using var signaler = new LocalSyncSignaler();
+    using var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     var perspectiveType = typeof(TestPerspective);
     var signalsReceived = 0;
 
-    var subscription = signaler.Subscribe(perspectiveType, _ => {
-      Interlocked.Increment(ref signalsReceived);
-    });
+    var subscription = signaler.Subscribe(perspectiveType, _ => Interlocked.Increment(ref signalsReceived));
 
     // Send first signal and wait for it to be processed
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
@@ -187,7 +194,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_Dispose_CanBeCalledMultipleTimesAsync() {
-    var signaler = new LocalSyncSignaler();
+    var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
 
     signaler.Dispose();
     signaler.Dispose(); // Should not throw
@@ -207,7 +214,7 @@ public class PerspectiveSyncSignalerTests {
 
   [Test]
   public async Task LocalSyncSignaler_AfterDispose_SignalingDoesNotThrowAsync() {
-    var signaler = new LocalSyncSignaler();
+    var signaler = new LocalSyncSignaler(logger: NullLogger<LocalSyncSignaler>.Instance);
     signaler.Dispose();
 
     // Should not throw, just silently do nothing

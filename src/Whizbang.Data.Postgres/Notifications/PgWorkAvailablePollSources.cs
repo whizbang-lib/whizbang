@@ -8,15 +8,13 @@ using Whizbang.Core.Signals;
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
-/// Concrete Postgres pull sources for the three work-available signal types. Each subclass
+/// Pull source for <see cref="WorkOutboxAvailableSignal"/>, and the first of the three concrete
+/// Postgres pull sources for the work-available signal types. Each of them
 /// supplies a small <c>EXISTS</c> query against its work table scoped to this pod's
 /// <see cref="IServiceInstanceProvider.InstanceId"/>. The shared plumbing (connection resolve,
 /// parameter bind, error logging) lives on <see cref="PgWorkAvailablePollSourceBase{TSignal}"/>.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-internal static class PgWorkAvailablePollSourcesOverview { }
-
-/// <summary>Pull source for <see cref="WorkOutboxAvailableSignal"/>.</summary>
 public sealed class PgOutboxWorkAvailablePollSource(
   TimeProvider clock,
   IOptions<WhizbangNotificationOptions> options,
@@ -58,7 +56,7 @@ public sealed class PgInboxWorkAvailablePollSource(
   protected override string DetectSql => @"
     SELECT EXISTS (
       SELECT 1
-      FROM wh_inbox i
+      FROM wh_inbox_state i
       JOIN wh_active_streams s ON s.stream_id = i.stream_id
       WHERE s.assigned_instance_id = @instance_id
         AND i.processed_at IS NULL
@@ -107,5 +105,14 @@ internal static class WorkAvailablePollDefaults {
   // notifies + drive when NOTIFY is unavailable. Tightening happens with a follow-on adaptive
   // interval when we wire the health gate through the poll sources.
   public const int INTERVAL_MILLISECONDS = 5_000;
+  // Idle backoff: after this many empty ticks at the base cadence the interval doubles per empty
+  // tick up to the ceiling, and a hit or a gate flip restores the base. With every queue empty the
+  // poll loops alone were committing over a hundred transactions a second per busy database.
+  public const int IDLE_BACKOFF_AFTER_TICKS = 3;
+  public const int IDLE_CEILING_MILLISECONDS = 60_000;
 #pragma warning restore CA1707
+
+  /// <summary>The backoff every store-backed pull source polls with.</summary>
+  public static readonly PollIdleBackoff IdleBackoff =
+    new(IDLE_BACKOFF_AFTER_TICKS, TimeSpan.FromMilliseconds(IDLE_CEILING_MILLISECONDS));
 }

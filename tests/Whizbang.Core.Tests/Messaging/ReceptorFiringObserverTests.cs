@@ -42,8 +42,10 @@ public class ReceptorFiringObserverTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -109,9 +111,7 @@ public class ReceptorFiringObserverTests {
 
   [Test]
   public async Task ObserverReceivesFiringAndFiredCallbacksAsync() {
-    var (invoker, observer, provider) = _buildWithObserver(r => {
-      r.Add(_stubReceptor("Rx"), LifecycleStage.PostInboxInline);
-    });
+    var (invoker, observer, provider) = _buildWithObserver(r => r.Add(_stubReceptor("Rx"), LifecycleStage.PostInboxInline));
     await using (provider) {
       await invoker.InvokeAsync(_envelope(), LifecycleStage.PostInboxInline);
 
@@ -125,9 +125,7 @@ public class ReceptorFiringObserverTests {
 
   [Test]
   public async Task ObserverFiredCallbackCarriesExceptionOnFailureAsync() {
-    var (invoker, observer, provider) = _buildWithObserver(r => {
-      r.Add(_stubReceptor("Boom", () => throw new InvalidOperationException("boom")), LifecycleStage.PostInboxInline);
-    });
+    var (invoker, observer, provider) = _buildWithObserver(r => r.Add(_stubReceptor("Boom", () => throw new InvalidOperationException("boom")), LifecycleStage.PostInboxInline));
     await using (provider) {
       await Assert.That(async () => await invoker.InvokeAsync(_envelope(), LifecycleStage.PostInboxInline))
         .Throws<InvalidOperationException>();
@@ -143,16 +141,18 @@ public class ReceptorFiringObserverTests {
   public async Task WaitForFiredAsync_UnblocksDeterministicallyOnReceptorCompletionAsync() {
     // Demonstrates the primary use case: tests await `WaitForFiredAsync` instead of polling
     // or sleeping. The invocation drives a real TaskCompletionSource completion.
-    var (invoker, observer, provider) = _buildWithObserver(r => {
-      r.Add(_stubReceptor("Target"), LifecycleStage.PostInboxInline);
-    });
+    var (invoker, observer, provider) = _buildWithObserver(r => r.Add(_stubReceptor("Target"), LifecycleStage.PostInboxInline));
     await using (provider) {
       var waitTask = observer.WaitForFiredAsync("Target", TimeSpan.FromSeconds(5));
 
       await invoker.InvokeAsync(_envelope(), LifecycleStage.PostInboxInline);
 
-      await waitTask; // completes deterministically once the receptor's finally ran
-      // If we reach this line, the observer fired and the test is green — no timeout path needed.
+      await waitTask; // throws TimeoutException rather than hanging if the firing never lands
+
+      // Unblocked BY the receptor completing rather than by the timeout elapsing: the fired
+      // callback ran, and it ran for this receptor.
+      await Assert.That(observer.Completed.Count).IsEqualTo(1);
+      await Assert.That(observer.Completed.First().ReceptorId).IsEqualTo("Target");
     }
   }
 
@@ -160,9 +160,7 @@ public class ReceptorFiringObserverTests {
   public async Task ObserverNotCalledWhenGuardrailSkipsInvocationAsync() {
     // When the dedup guardrail blocks a duplicate fire attempt, the observer should NOT
     // see a Firing/Fired pair — the skip is a pre-invocation decision.
-    var (invoker, observer, provider) = _buildWithObserver(r => {
-      r.Add(_stubReceptor("Rx"), LifecycleStage.PostInboxInline);
-    });
+    var (invoker, observer, provider) = _buildWithObserver(r => r.Add(_stubReceptor("Rx"), LifecycleStage.PostInboxInline));
     await using (provider) {
       var envelope = _envelope();
       envelope.ReceptorInvocations = [

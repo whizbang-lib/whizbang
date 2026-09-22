@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -144,8 +146,10 @@ public class TagPolicyValidatorTests {
     // host.RunAsync(). The registration source is injectable so this test does not have to
     // pollute the process-global MessageTagRegistry.
     var validator = new TagPolicyStartupValidator(
-      new TagOptions(),
-      () => [_registration(typeof(TestUserEvent), "sys-mine")]);
+      options: new TagOptions(),
+      registrationSource: () => [_registration(typeof(TestUserEvent), "sys-mine")],
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => await validator.StartAsync(CancellationToken.None))
       .Throws<TagPolicyConfigurationException>();
@@ -154,8 +158,10 @@ public class TagPolicyValidatorTests {
   [Test]
   public async Task StartAsync_CleanRegistrations_CompletesAsync() {
     var validator = new TagPolicyStartupValidator(
-      new TagOptions(),
-      () => [_registration(typeof(TestUserEvent), "audit")]);
+      options: new TagOptions(),
+      registrationSource: () => [_registration(typeof(TestUserEvent), "audit")],
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => {
       await validator.StartAsync(CancellationToken.None);
@@ -207,6 +213,28 @@ public class TagPolicyValidatorTests {
     await Assert.That(tagOptions.CoalesceBindings["digest-a"].SlideSeconds).IsEqualTo(30)
       .Because("last-wins per tag applies across AddWhizbang calls too");
     await Assert.That(tagOptions.CoalesceBindings["digest-b"].MaxBatchCount).IsEqualTo(50);
+  }
+
+  [Test]
+  public async Task AddWhizbang_SecondCall_MergesPerTagPayloadThresholdsIntoTheFirstTagOptionsAsync() {
+    // Per-tag payload thresholds follow the same rule as every other per-tag declaration: a later
+    // call's value wins for that tag, including an explicit null, which disables the threshold, and
+    // tags only one call names keep their values.
+    var services = new ServiceCollection();
+    services.AddWhizbang(o => o.Tags.UsePayloadSizeThresholds("wide", warningBytes: 16_384, errorBytes: 65_536));
+
+    services.AddWhizbang(o => {
+      o.Tags.UsePayloadSizeThresholds("wide", warningBytes: 32_768, errorBytes: null);
+      o.Tags.UsePayloadSizeThresholds("narrow", warningBytes: 1_024, errorBytes: 4_096);
+    });
+
+    var tagOptions = (TagOptions)services.Single(d => d.ServiceType == typeof(TagOptions)).ImplementationInstance!;
+    await Assert.That(tagOptions.PayloadSizeWarningThresholdBytesByTag["wide"]).IsEqualTo(32_768)
+      .Because("last-wins per tag applies across AddWhizbang calls too");
+    await Assert.That(tagOptions.PayloadSizeErrorThresholdBytesByTag["wide"]).IsNull()
+      .Because("a later call disabling the threshold with null wins the same way a number does");
+    await Assert.That(tagOptions.PayloadSizeWarningThresholdBytesByTag["narrow"]).IsEqualTo(1_024);
+    await Assert.That(tagOptions.PayloadSizeErrorThresholdBytesByTag["narrow"]).IsEqualTo(4_096);
   }
 
   #endregion

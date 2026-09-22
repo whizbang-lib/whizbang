@@ -51,7 +51,7 @@ namespace Whizbang.Core.Perspectives;
 /// }
 ///
 /// // Return action directly - implicit conversion to ApplyResult with null model
-/// public ApplyResult&lt;OrderView&gt; Apply(OrderView current, OrderCancelled @event) {
+/// public ApplyResult&lt;OrderView&gt; Apply(OrderView current, OrderCanceled @event) {
 ///   return ModelAction.Delete;
 /// }
 ///

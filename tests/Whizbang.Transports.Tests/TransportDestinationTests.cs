@@ -150,7 +150,7 @@ public class TransportDestinationTests {
   public async Task TransportDestination_EmptyOrWhitespaceAddress_ThrowsArgumentExceptionAsync(string address) {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentException>(() => {
-      var destination = new TransportDestination(address);
+      _ = new TransportDestination(address);
       return Task.CompletedTask;
     });
   }
@@ -159,7 +159,7 @@ public class TransportDestinationTests {
   public async Task TransportDestination_NullAddress_ThrowsArgumentExceptionAsync() {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentException>(() => {
-      var destination = new TransportDestination(null!);
+      _ = new TransportDestination(null!);
       return Task.CompletedTask;
     });
   }

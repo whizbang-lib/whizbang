@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using CancellationToken = System.Threading.CancellationToken;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -44,6 +45,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 #pragma warning restore S1144
 
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
+  private const string CLOSE_BRACE_INDENT_4 = "    }";
+  private const string CLOSE_BRACE_INDENT_6 = "      }";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover all [WhizbangId] struct declarations in the compilation.
@@ -64,8 +67,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
         predicate: static (node, _) =>
             (node is ClassDeclarationSyntax cls && cls.BaseList is not null) ||
             (node is RecordDeclarationSyntax rec && rec.BaseList is not null),
-        transform: static (ctx, ct) => _hasPerspectiveInterface(ctx, ct))
-      .Where(static result => result);
+        transform: static (ctx, ct) => _perspectiveModelBehind(ctx, ct))
+      .Where(static result => result is not null);
 
     var assemblyAndState = context.CompilationProvider
         .Select(static (compilation, _) => compilation.AssemblyName ?? "Generated")
@@ -82,26 +85,35 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   }
 
   /// <summary>
-  /// Returns true when the class/record declaration implements any
+  /// The model type behind a class or record that implements any
   /// <c>IPerspectiveFor&lt;TModel, …&gt;</c> or <c>IPerspectiveWithActionsFor&lt;TModel, …&gt;</c>
-  /// interface. Mirrors the discovery logic in <c>EFCorePerspectiveAssociationGenerator</c>
-  /// and <c>MessageJsonContextGenerator</c>, ensuring we only auto-wire when a
-  /// MessageJsonContext will exist in the same assembly.
+  /// interface, or null for anything else. Mirrors the discovery logic in
+  /// <c>EFCorePerspectiveAssociationGenerator</c> and <c>MessageJsonContextGenerator</c>, ensuring
+  /// we only auto-wire when a MessageJsonContext will exist in the same assembly.
   /// </summary>
-  private static bool _hasPerspectiveInterface(GeneratorSyntaxContext ctx, CancellationToken ct) {
+  /// <remarks>
+  /// A name rather than a symbol, so the incremental pipeline caches on value equality. Nothing
+  /// about the model's members is discovered here: the canonical temporal form is applied by the
+  /// persistence profile's own converters to every document, not per model.
+  /// </remarks>
+  private static string? _perspectiveModelBehind(GeneratorSyntaxContext ctx, CancellationToken ct) {
     var symbol = ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct);
     if (symbol is not INamedTypeSymbol named || named.IsAbstract) {
-      return false;
+      return null;
     }
     foreach (var iface in named.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
-      if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
-          originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal) ||
-          originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<", StringComparison.Ordinal)) {
-        return true;
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
+      if (!originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) &&
+          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal) &&
+          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<", StringComparison.Ordinal)) {
+        continue;
       }
+
+      return iface.TypeArguments.Length == 0 || iface.TypeArguments[0] is not INamedTypeSymbol model
+        ? null
+        : TypeNameUtilities.FullyQualified(model);
     }
-    return false;
+    return null;
   }
 
   /// <summary>
@@ -119,8 +131,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     var hasWhizbangIdAttribute = structSymbol.GetAttributes().Any(static a =>
         a.AttributeClass?.Name == "WhizbangIdAttribute" ||
         a.AttributeClass?.Name == "WhizbangId" ||
-        a.AttributeClass?.ToDisplayString() == WHIZBANG_ID_ATTRIBUTE ||
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANG_ID_ATTRIBUTE) ||
+        (a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}"));
 
     if (!hasWhizbangIdAttribute) {
       return null;
@@ -133,8 +145,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     return new WhizbangIdInfo(
         TypeName: structSymbol.Name,
-        Namespace: structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global",
-        FullyQualifiedName: structSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        Namespace: structSymbol.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global",
+        FullyQualifiedName: TypeNameUtilities.FullyQualified(structSymbol));
   }
 
   /// <summary>
@@ -187,10 +199,10 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
         var fqn = info.FullyQualifiedName;
         sb.AppendLine($"    if (type == typeof({fqn})) {{");
         sb.AppendLine($"      return _create{info.TypeName}TypeInfo(options);");
-        sb.AppendLine("    }");
+        sb.AppendLine(CLOSE_BRACE_INDENT_4);
         sb.AppendLine($"    if (type == typeof({fqn}?)) {{");
         sb.AppendLine($"      return _create{info.TypeName}NullableTypeInfo(options);");
-        sb.AppendLine("    }");
+        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       }
       sb.AppendLine("    return null;");
     }
@@ -202,6 +214,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("  /// Chain order: this context (object-mode [WhizbangId]) — first, so it wins for WhizbangId types;");
     sb.AppendLine("  /// then any other resolver caller chooses to add. Deliberately does NOT include");
     sb.AppendLine("  /// WhizbangIdJsonContext or its value-converter, which would re-flatten WhizbangId structs.");
+    sb.AppendLine("  /// Based on the persistence profile's own options, so the profile's converters (the canonical");
+    sb.AppendLine("  /// temporal form among them) apply to a document serialized with these directly, exactly as");
+    sb.AppendLine("  /// they apply to one the upsert writes.");
     sb.AppendLine("  /// </summary>");
     sb.AppendLine("  public static JsonSerializerOptions CreateOptions(params IJsonTypeInfoResolver[] additionalResolvers) {");
     sb.AppendLine("    var resolvers = new IJsonTypeInfoResolver[1 + (additionalResolvers?.Length ?? 0)];");
@@ -209,9 +224,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("    if (additionalResolvers != null) {");
     sb.AppendLine("      for (int i = 0; i < additionalResolvers.Length; i++) {");
     sb.AppendLine("        resolvers[i + 1] = additionalResolvers[i];");
-    sb.AppendLine("      }");
-    sb.AppendLine("    }");
-    sb.AppendLine("    return new JsonSerializerOptions {");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
+    sb.AppendLine("    return new JsonSerializerOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(global::Whizbang.Core.Serialization.SerializationProfile.Persistence)) {");
     sb.AppendLine("      TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers),");
     sb.AppendLine("      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
     sb.AppendLine("    };");
@@ -294,6 +309,10 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("      priority: 1000,");
     sb.AppendLine("      profile: global::Whizbang.Core.Serialization.SerializationProfile.Persistence);");
     sb.AppendLine();
+
+    // Nothing is registered for the canonical temporal form here. The converters are on the
+    // persistence profile's options, registered by the framework's own initializer, and the
+    // serializer applies them wherever a temporal occurs in any document.
     sb.AppendLine("    ServiceRegistrationCallbacks.PerspectivePersistenceOptions = _ =>");
     sb.AppendLine("      BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>");
     sb.AppendLine("        PerspectivePersistenceJsonContext.CreateOptions(");
@@ -307,45 +326,53 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
   /// <summary>
   /// Emits the per-WhizbangId factory method pair: object-mode JsonTypeInfo and its nullable counterpart.
-  /// The object-mode form treats the struct as a single-property object with a "Value" property of type Guid,
-  /// producing the JSON shape <c>{"Value":"&lt;guid&gt;"}</c> that EF Core 10's writer expects.
+  /// The object-mode form writes the struct as a single-property object, <c>{"Value":"&lt;guid&gt;"}</c>,
+  /// the JSON shape EF Core 10's writer produces for the same property, and reads that shape or the
+  /// scalar string a row written under the default profile holds.
   /// </summary>
+  /// <remarks>
+  /// A converter rather than object metadata, because object metadata reads the object form and
+  /// nothing else. A document stored as one value once took its identifiers in the scalar form when
+  /// the atomic path was unavailable and Entity Framework wrote it under the default profile; those
+  /// rows are still rows. The scalar read is counted, so the tolerance can go once nothing needs it.
+  /// </remarks>
   private static void _emitWhizbangIdFactory(StringBuilder sb, WhizbangIdInfo info) {
     var fqn = info.FullyQualifiedName;
-    sb.AppendLine($"  private static JsonTypeInfo<{fqn}> _create{info.TypeName}TypeInfo(JsonSerializerOptions options) {{");
-    sb.AppendLine($"    var objectInfo = new JsonObjectInfoValues<{fqn}> {{");
-    sb.AppendLine($"      ObjectCreator = static () => default({fqn}),");
-    sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {fqn}((global::System.Guid)args[0]!),");
-    sb.AppendLine("      ConstructorParameterMetadataInitializer = static () => new JsonParameterInfoValues[] {");
-    sb.AppendLine("        new() {");
-    sb.AppendLine("          Name = \"Value\",");
-    sb.AppendLine("          ParameterType = typeof(global::System.Guid),");
-    sb.AppendLine("          Position = 0,");
-    sb.AppendLine("          HasDefaultValue = false,");
-    sb.AppendLine("          DefaultValue = default!");
+    sb.AppendLine($"  private sealed class _{info.TypeName}DocumentConverter : JsonConverter<{fqn}> {{");
+    sb.AppendLine($"    public override {fqn} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
+    sb.AppendLine("      if (reader.TokenType == JsonTokenType.String) {");
+    sb.AppendLine($"        global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"{info.TypeName}\");");
+    sb.AppendLine($"        return new {fqn}(reader.GetGuid());");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
+    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be an object holding a Value or a string, but the document holds {{reader.TokenType}}\");");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine("      global::System.Guid value = default;");
+    sb.AppendLine("      var found = false;");
+    sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");
+    sb.AppendLine("        if (reader.TokenType == JsonTokenType.PropertyName && reader.GetString() == \"Value\") {");
+    sb.AppendLine("          reader.Read();");
+    sb.AppendLine("          value = reader.GetGuid();");
+    sb.AppendLine("          found = true;");
+    sb.AppendLine("        } else {");
+    sb.AppendLine("          reader.Skip();");
     sb.AppendLine("        }");
-    sb.AppendLine("      },");
-    // PropertyMetadataInitializer takes JsonSerializerContext (per JsonObjectInfoValues<T>),
-    // not JsonSerializerOptions. Discard the parameter and capture the outer `options` instead.
-    sb.AppendLine("      PropertyMetadataInitializer = _ => {");
-    sb.AppendLine("        var properties = new JsonPropertyInfo[1];");
-    sb.AppendLine("        properties[0] = JsonMetadataServices.CreatePropertyInfo<global::System.Guid>(");
-    sb.AppendLine("          options,");
-    sb.AppendLine("          new JsonPropertyInfoValues<global::System.Guid> {");
-    sb.AppendLine("            IsProperty = true,");
-    sb.AppendLine("            IsPublic = true,");
-    sb.AppendLine("            IsVirtual = false,");
-    sb.AppendLine($"            DeclaringType = typeof({fqn}),");
-    sb.AppendLine($"            Getter = static obj => (({fqn})obj!).Value,");
-    sb.AppendLine("            Setter = null,");
-    sb.AppendLine("            JsonPropertyName = \"Value\",");
-    sb.AppendLine("            PropertyName = \"Value\"");
-    sb.AppendLine("          });");
-    sb.AppendLine("        return properties;");
-    sb.AppendLine("      }");
-    sb.AppendLine("    };");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine("      if (!found) {");
+    sb.AppendLine($"        throw new JsonException(\"A stored {info.TypeName} object holds no Value\");");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine($"      return new {fqn}(value);");
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
-    sb.AppendLine($"    return JsonMetadataServices.CreateObjectInfo<{fqn}>(options, objectInfo);");
+    sb.AppendLine($"    public override void Write(Utf8JsonWriter writer, {fqn} value, JsonSerializerOptions options) {{");
+    sb.AppendLine("      writer.WriteStartObject();");
+    sb.AppendLine("      writer.WriteString(\"Value\", value.Value);");
+    sb.AppendLine("      writer.WriteEndObject();");
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine($"  private static JsonTypeInfo<{fqn}> _create{info.TypeName}TypeInfo(JsonSerializerOptions options) {{");
+    sb.AppendLine($"    return JsonMetadataServices.CreateValueInfo<{fqn}>(options, new _{info.TypeName}DocumentConverter());");
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine($"  private static JsonTypeInfo<{fqn}?> _create{info.TypeName}NullableTypeInfo(JsonSerializerOptions options) {{");

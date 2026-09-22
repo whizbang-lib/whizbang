@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresStartupAssessor.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class StartupAssessorTests : EFCoreTestBase {
 
   // ── the verdict table, as a pure function ───────────────────────────────
@@ -46,6 +47,19 @@ public class StartupAssessorTests : EFCoreTestBase {
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
       .Because("numeric pre-release identifiers compare numerically — alpha.10 is newer than "
              + "alpha.2, and being wrong here means migrating when the instance must stand down");
+  }
+
+  [Test]
+  public async Task NoLibraryVersionProvider_StandsDownNamingTheMissingRegistrationAsync() {
+    // Absent and unreadable are different facts. Nobody registering a provider is a wiring gap the
+    // driver now closes on its own; an unparseable value is a genuine ambiguity. Both stand down,
+    // but the reason must say which one happened — a hang with "(none) is unreadable" cost a
+    // process dump to diagnose (issue #619).
+    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict(null, ["0.9.4"]);
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
+      .Because("with no version to compare, migrating would be a guess — stand down, as before");
+    await Assert.That(assessment.Reason).Contains("ILibraryVersionProvider")
+      .Because("the reason must name the missing registration, not describe a value that was never there");
   }
 
   [Test]

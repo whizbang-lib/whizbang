@@ -19,7 +19,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// </para>
 /// </remarks>
 /// <docs>apis/graphql/sorting</docs>
-/// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/QueryExecutionTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Integration.Tests/QueryExecutionTests.cs</tests>
 public static class OrderByStrippingMiddleware {
   private static readonly OrderByStrippingExpressionVisitor _visitor = new();
 

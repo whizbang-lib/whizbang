@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresApplyStackQuery.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class ApplyPathFoldSqlTests : EFCoreTestBase {
 
   private async Task _seedStreamAsync(Guid streamId, params string[] eventTypes) {
@@ -37,7 +38,7 @@ public class ApplyPathFoldSqlTests : EFCoreTestBase {
     }
   }
 
-  private IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 

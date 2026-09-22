@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -26,22 +27,35 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegritySweepScheduler.cs</code-under-test>
 /// <docs>resilience/stream-integrity</docs>
+[Category("Shard2")]
 public class IntegritySweepSchedulingTests {
 
-  private sealed class _captureScheduleManager : IScheduleManager {
+  private sealed class CaptureScheduleManager : IScheduleManager {
     public ScheduleDefinition? Created;
-    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken ct = default) {
+    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
       Created = definition;
       return Task.FromResult(new ScheduleHandle(TrackedGuid.NewMedo().Value, DateTimeOffset.UtcNow, WasCreated: true));
     }
-    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }
 
-  private sealed class _runner : IIntegritySweepRunner {
+  /// <summary>Captures the receptor's log lines so "the guard returned" is observable — the firing
+  /// line is emitted only once a runner has been resolved.</summary>
+  private sealed class RecordingLogger : ILogger<ScheduledIntegritySweepReceptor> {
+    public List<string> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) =>
+      Entries.Add(formatter(state, exception));
+  }
+
+  private sealed class Runner : IIntegritySweepRunner {
     public int Runs;
     public Task RunSweepOnceAsync(CancellationToken cancellationToken) {
       Runs++;
@@ -49,7 +63,7 @@ public class IntegritySweepSchedulingTests {
     }
   }
 
-  private sealed class _instanceProvider(string name) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string name) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => name;
     public string HostName => "test-host";
@@ -62,14 +76,26 @@ public class IntegritySweepSchedulingTests {
     };
   }
 
-  private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, _captureScheduleManager Manager)
+  /// <summary>Records what <see cref="ScheduledIntegritySweepReceptorRegistrar"/> registered and
+  /// where — the whole contract of a runtime-registered receptor is which stages it reaches.</summary>
+  private sealed class RecordingRegistry : IReceptorRegistry {
+    public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
+      Registered.Add((typeof(TMessage), stage));
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, CaptureScheduleManager Manager)
       _build(string? cron, bool withManager = true, string serviceName = "auditor-svc") {
     var services = new ServiceCollection();
-    var manager = new _captureScheduleManager();
+    var manager = new CaptureScheduleManager();
     if (withManager) {
       services.AddSingleton<IScheduleManager>(manager);
     }
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider(serviceName));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     var state = new IntegritySweepScheduleState();
     services.AddSingleton(state);
     var sp = services.BuildServiceProvider();
@@ -150,7 +176,7 @@ public class IntegritySweepSchedulingTests {
 
   [Test]
   public async Task SweepReceptor_RunsTheSweep_WhenTheOccurrenceFiresAsync() {
-    var runner = new _runner();
+    var runner = new Runner();
     var services = new ServiceCollection();
     services.AddSingleton<IIntegritySweepRunner>(runner);
     var sp = services.BuildServiceProvider();
@@ -166,10 +192,67 @@ public class IntegritySweepSchedulingTests {
   [Test]
   public async Task SweepReceptor_NoRunnerRegistered_IsANoOpAsync() {
     var sp = new ServiceCollection().BuildServiceProvider();
+    var logger = new RecordingLogger();
     var receptor = new ScheduledIntegritySweepReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+      sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
     await receptor.HandleAsync(new ScheduledIntegritySweep());
-    // Reaching here without throwing is the assertion — schema-only hosts still boot and dispatch.
+
+    // "No-op" is stronger than "did not throw": the receptor has to stop at the missing-runner
+    // guard, which it announces by NOT logging the sweep as firing. A host that reported a sweep
+    // it never ran would make an unverified database look verified.
+    await Assert.That(logger.Entries).IsEmpty()
+      .Because("the firing log line sits after the runner guard — an empty log is what proves the "
+             + "guard returned rather than the sweep having run against nothing");
+  }
+
+  [Test]
+  public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
+    var registry = new RecordingRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+
+    await Assert.That(registry.Registered.Count).IsEqualTo(3);
+    var stages = new HashSet<LifecycleStage>();
+    foreach (var (msg, stage) in registry.Registered) {
+      await Assert.That(msg).IsEqualTo(typeof(ScheduledIntegritySweep));
+      stages.Add(stage);
+    }
+    await Assert.That(stages.Contains(LifecycleStage.LocalImmediateInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PreOutboxInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PostInboxInline)).IsTrue()
+      .Because("a scheduled integrity sweep arriving down any of the three inline stages must be handled — "
+             + "registering at only some of them would let sweeps dispatched through the others be silently dropped.");
+  }
+
+  [Test]
+  public async Task Registrar_NoRegistry_IsInertAsync() {
+    var services = new ServiceCollection();   // no IReceptorRegistry
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await Assert.That(async () => await registrar.StartAsync(CancellationToken.None))
+      .ThrowsNothing()
+      .Because("the registrar is a hosted service — a host that never wired the messaging registry is a normal "
+             + "configuration, not a startup failure, so throwing here would take down the whole process over it.");
+  }
+
+  [Test]
+  public async Task Registrar_StopAsync_CompletesWithoutThrowingAsync() {
+    var services = new ServiceCollection();
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await Assert.That(async () => await registrar.StopAsync(CancellationToken.None))
+      .ThrowsNothing()
+      .Because("StopAsync is deliberately a no-op — the registration lives for the process lifetime, not the "
+             + "registrar's, so there is nothing to unwind on shutdown.");
   }
 }

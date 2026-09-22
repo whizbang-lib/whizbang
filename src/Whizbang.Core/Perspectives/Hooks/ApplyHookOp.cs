@@ -35,6 +35,7 @@ public static class ApplyHookColumns {
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:SetProperty_RecordsNameValueAndTypeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:RemoveSetter_RecordsPropertyNameAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:CollectiveBuilder_RecordsAndWhereAndReplaceWhereAsync</tests>
+[global::System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2094:Classes should not be empty", Justification = "The closed base of the hook-op hierarchy; every member lives on the derived records that carry the data.")]
 public abstract record ApplyHookOp;
 
 /// <summary>

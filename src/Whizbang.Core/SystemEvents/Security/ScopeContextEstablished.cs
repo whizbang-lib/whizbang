@@ -11,7 +11,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// Useful for auditing request authentication.
 /// </summary>
 /// <docs>fundamentals/events/system-events#scope-context-established</docs>
-/// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_EnableAuditLoggingTrue_EmitsAuditEventAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:ScopeContextEstablished_HasAllFieldsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:ScopeContextEstablished_IsSystemEvent_ReturnsTrueAsync</tests>

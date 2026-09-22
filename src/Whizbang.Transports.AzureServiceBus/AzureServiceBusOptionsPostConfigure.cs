@@ -29,7 +29,7 @@ internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? config
   public void PostConfigure(string? name, AzureServiceBusOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return;
     }
 

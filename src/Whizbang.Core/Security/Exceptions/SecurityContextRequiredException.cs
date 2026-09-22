@@ -39,7 +39,7 @@ public sealed class SecurityContextRequiredException : Exception {
   /// </summary>
   /// <param name="messageType">The type of message that required security context</param>
   public SecurityContextRequiredException(Type messageType)
-    : base($"Security context is required for message type '{messageType.FullName}' but could not be established.") {
+    : base($"Security context is required for message type '{TypeNameFormatter.DisplayName(messageType)}' but could not be established.") {
     MessageType = messageType;
   }
 

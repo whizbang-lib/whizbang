@@ -1,5 +1,4 @@
-#pragma warning disable CA1707
-#pragma warning disable CA1859 // tests assert against the interface return type
+#pragma warning disable CA1707, CA1859 // tests assert against the interface return type
 
 using System.Linq.Expressions;
 using Dapper;
@@ -65,19 +64,19 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   private static CollectiveApplyEntry _jobEntry() => new(
-    ModelType: typeof(_jobModel), EventType: typeof(_archiveEvent), HandlerType: typeof(_jobPerspective),
-    MethodName: nameof(_jobPerspective.Archive), ScopeHandling: CollectiveScopeHandling.Framework,
-    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+    ModelType: typeof(JobModel), EventType: typeof(ArchiveEvent), HandlerType: typeof(JobPerspective),
+    MethodName: nameof(JobPerspective.Archive), ScopeHandling: CollectiveScopeHandling.Framework,
+    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e));
 
   private Task<int> _applyWithHooksAsync(CollectiveApplyHookRegistry hooks, string tenant = "t-A") =>
-    DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      _jobEntry(), new _jobPerspective(), new _archiveEvent { Scope = new TenantCollectiveScope(tenant) },
+    DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      _jobEntry(), new JobPerspective(), new ArchiveEvent { Scope = new TenantCollectiveScope(tenant) },
       new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default,
       logger: null, hookRegistry: hooks);
 
-  private sealed class _collectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class CollectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : ICollectiveApplyHook<TMarker> {
-    public void Configure(ICollectiveApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
+    public void Configure(ICollectiveApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
 
   [Test]
@@ -87,8 +86,8 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(job, "t-A", "Active");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "first")))
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "second")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.SetProperty(j => j.Status, "first")))
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.SetProperty(j => j.Status, "second")));
 
     await _applyWithHooksAsync(hooks);
 
@@ -104,7 +103,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<object>(new _collectiveHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
+      .Register<object>(new CollectiveHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     await _applyWithHooksAsync(hooks);
@@ -123,7 +122,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(job, "t-A", "Active");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.RemoveSetter(j => j.Status)));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.RemoveSetter(j => j.Status)));
 
     await _applyWithHooksAsync(hooks);
 
@@ -140,7 +139,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(draft, "t-A", "Draft");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.AndWhere(j => j.Status == "Active")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.AndWhere(j => j.Status == "Active")));
 
     var affected = await _applyWithHooksAsync(hooks);
 
@@ -162,7 +161,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(draftB, "t-B", "Draft");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.ReplaceWhere(j => j.Status == "Draft")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.ReplaceWhere(j => j.Status == "Draft")));
 
     var affected = await _applyWithHooksAsync(hooks);
 
@@ -181,15 +180,15 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(job, "t-A", "Active");
     var sentinel = new DateTimeOffset(1999, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    // Gated on _statusModel — a class _jobModel is NOT assignable to; registered UNKEYED so the default stays.
+    // Gated on StatusModel — a class JobModel is NOT assignable to; registered UNKEYED so the default stays.
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_statusModel>(new _collectiveHook<_statusModel>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
+      .Register<StatusModel>(new CollectiveHook<StatusModel>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
 
     await _applyWithHooksAsync(hooks);
 
     var (updatedAt, version) = await _updatedAtVersionAsync(job);
     await Assert.That(updatedAt.Year).IsNotEqualTo(1999)
-      .Because("The _unrelatedMarker hook does not match _jobModel, so its sentinel stamp never applies.");
+      .Because("The _unrelatedMarker hook does not match JobModel, so its sentinel stamp never applies.");
     await Assert.That(version).IsEqualTo(2L)
       .Because("Only the default hook fired — it bumped version 1 → 2.");
   }
@@ -218,7 +217,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   [Test]
   public async Task ApplyAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync() {
     // The cohort is defined by a status that lives on a SIBLING table (same id). The handler's Where uses
-    // q.Of<_statusModel>().Any(...), which the Dapper compiler turns into a correlated EXISTS over the
+    // q.Of<StatusModel>().Any(...), which the Dapper compiler turns into a correlated EXISTS over the
     // sibling table — proving cross-perspective projection end-to-end on the Dapper driver.
     await _createTableAsync();
     await _createStatusTableAsync();
@@ -233,12 +232,12 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedStatusAsync(eligible, "Draft");
     await _seedStatusAsync(ineligible, "Published");
 
-    var siblings = new Dictionary<Type, string> { [typeof(_statusModel)] = STATUS_TABLE };
+    var siblings = new Dictionary<Type, string> { [typeof(StatusModel)] = STATUS_TABLE };
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
       _crossEntry(),
-      new _crossPerspective(),
-      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new CrossPerspective(),
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
@@ -255,30 +254,34 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   private static CollectiveApplyEntry _crossEntry() => new(
-    ModelType: typeof(_jobModel),
-    EventType: typeof(_archiveEvent),
-    HandlerType: typeof(_crossPerspective),
-    MethodName: nameof(_crossPerspective.Archive),
+    ModelType: typeof(JobModel),
+    EventType: typeof(ArchiveEvent),
+    HandlerType: typeof(CrossPerspective),
+    MethodName: nameof(CrossPerspective.Archive),
     ScopeHandling: CollectiveScopeHandling.Framework,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_crossPerspective)h).Archive((_archiveEvent)e, q));
+    Invoker: static (h, e, q) => ((CrossPerspective)h).Archive((ArchiveEvent)e, q));
 
-  private sealed class _statusModel {
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
+  private sealed class StatusModel {
     public string Status { get; set; } = "";
   }
 
   // Cross-perspective handler: scopes the mutated job table by a status on the SIBLING status table.
-  private sealed class _crossPerspective {
+  private sealed class CrossPerspective {
     private static readonly string[] _eligible = ["Draft"];
 
-    public ICollectiveSpec<_jobModel> Archive(_archiveEvent e, ICollectiveQuery q) =>
-      new _whereSpec(
-        s => s.SetProperty(j => j.Status, "Archived"),
-        r => q.Of<_statusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature; the event parameter is part of that contract.")]
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
-        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> Archive(ArchiveEvent e, ICollectiveQuery q) =>
+      new WhereSpec(
+        s => s.SetProperty(j => j.Status, "Archived"),
+        r => q.Of<StatusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
+
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<JobModel>>> Setters,
+        Expression<Func<PerspectiveRow<JobModel>, bool>>? Where) : ICollectiveSpec<JobModel>;
   }
 
   [Test]
@@ -291,20 +294,20 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(a2, "t-A", "Active");
     await _seedAsync(b1, "t-B", "Active");
 
-    var handler = new _jobPerspective();
+    var handler = new JobPerspective();
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_jobModel),
-      EventType: typeof(_archiveEvent),
-      HandlerType: typeof(_jobPerspective),
-      MethodName: nameof(_jobPerspective.Archive),
+      ModelType: typeof(JobModel),
+      EventType: typeof(ArchiveEvent),
+      HandlerType: typeof(JobPerspective),
+      MethodName: nameof(JobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e));
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
       entry,
       handler,
-      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
@@ -332,19 +335,19 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
         new { id, data = "{\"Status\": \"Active\"}", scope = "{\"t\": \"t-stamp\"}", updatedAt = stale });
     }
 
-    var handler = new _jobPerspective();
+    var handler = new JobPerspective();
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_jobModel),
-      EventType: typeof(_archiveEvent),
-      HandlerType: typeof(_jobPerspective),
-      MethodName: nameof(_jobPerspective.Archive),
+      ModelType: typeof(JobModel),
+      EventType: typeof(ArchiveEvent),
+      HandlerType: typeof(JobPerspective),
+      MethodName: nameof(JobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e));
 
     var before = DateTime.UtcNow;
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
-      entry, handler, new _archiveEvent { Scope = new TenantCollectiveScope("t-stamp") },
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
+      entry, handler, new ArchiveEvent { Scope = new TenantCollectiveScope("t-stamp") },
       new TenantCollectiveScopeResolver(), ConnectionFactory, TABLE, _noSiblings, CollectiveApplyOptions.Default, default);
     await Assert.That(affected).IsEqualTo(1);
 
@@ -370,20 +373,20 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
       await _seedAsync(id, "t-A", "Active");
     }
 
-    var handler = new _jobPerspective();
+    var handler = new JobPerspective();
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_jobModel),
-      EventType: typeof(_archiveEvent),
-      HandlerType: typeof(_jobPerspective),
-      MethodName: nameof(_jobPerspective.Archive),
+      ModelType: typeof(JobModel),
+      EventType: typeof(ArchiveEvent),
+      HandlerType: typeof(JobPerspective),
+      MethodName: nameof(JobPerspective.Archive),
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+      Invoker: static (h, e, _) => ((JobPerspective)h).Archive((ArchiveEvent)e));
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
       entry,
       handler,
-      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
@@ -409,10 +412,10 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(approvedA, "t-A", "Approved");
     await _seedAsync(draftB, "t-B", "Draft");
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
       _draftsEntry(CollectiveScopeHandling.Framework),
-      new _draftPerspective(),
-      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new DraftPerspective(),
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
@@ -440,10 +443,10 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedAsync(draftB, "t-B", "Draft");
     await _seedAsync(approvedB, "t-B", "Approved");
 
-    var affected = await DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<JobModel>.ApplyAsync(
       _draftsEntry(CollectiveScopeHandling.Custom),
-      new _draftPerspective(),
-      new _archiveEvent { Scope = new TenantCollectiveScope("t-A") },
+      new DraftPerspective(),
+      new ArchiveEvent { Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       TABLE,
@@ -460,39 +463,43 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   private static CollectiveApplyEntry _draftsEntry(CollectiveScopeHandling handling) => new(
-    ModelType: typeof(_jobModel),
-    EventType: typeof(_archiveEvent),
-    HandlerType: typeof(_draftPerspective),
-    MethodName: nameof(_draftPerspective.ArchiveDrafts),
+    ModelType: typeof(JobModel),
+    EventType: typeof(ArchiveEvent),
+    HandlerType: typeof(DraftPerspective),
+    MethodName: nameof(DraftPerspective.ArchiveDrafts),
     ScopeHandling: handling,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_draftPerspective)h).ArchiveDrafts((_archiveEvent)e));
+    Invoker: static (h, e, _) => ((DraftPerspective)h).ArchiveDrafts((ArchiveEvent)e));
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = "";
   }
 
   // Projects the cohort onto its own data column via spec.Where — the per-perspective projection capability.
-  private sealed class _draftPerspective {
-    public ICollectiveSpec<_jobModel> ArchiveDrafts(_archiveEvent e) =>
-      new _whereSpec(
+  private sealed class DraftPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature; the event parameter is part of that contract.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> ArchiveDrafts(ArchiveEvent e) =>
+      new WhereSpec(
         s => s.SetProperty(j => j.Status, "Archived"),
         r => r.Data.Status == "Draft");
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
-        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<JobModel>>> Setters,
+        Expression<Func<PerspectiveRow<JobModel>, bool>>? Where) : ICollectiveSpec<JobModel>;
   }
 
-  private sealed class _jobPerspective {
-    public ICollectiveSpec<_jobModel> Archive(_archiveEvent e) =>
-      new _spec(s => s.SetProperty(j => j.Status, "Archived"));
+  private sealed class JobPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature; the event parameter is part of that contract.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> Archive(ArchiveEvent e) =>
+      new Spec(s => s.SetProperty(j => j.Status, "Archived"));
 
-    private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
-      : ICollectiveSpec<_jobModel>;
+    private sealed record Spec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+      : ICollectiveSpec<JobModel>;
   }
 
-  private sealed record _archiveEvent : ICollectiveEvent {
+  private sealed record ArchiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
 
@@ -541,10 +548,10 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     await _seedOverlayAsync(sibling, "t-A", isActive: true, gid);
     await _seedOverlayAsync(unrelated, "t-A", isActive: true, otherGid);
 
-    var affected = await DapperCollectiveEventApplier<_overlayModel>.ApplyAsync(
+    var affected = await DapperCollectiveEventApplier<OverlayModel>.ApplyAsync(
       _setActiveEntry(),
-      new _overlayActivePerspective(),
-      new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      new OverlayActivePerspective(),
+      new SetActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
       new TenantCollectiveScopeResolver(),
       ConnectionFactory,
       OVERLAY_TABLE,
@@ -562,32 +569,33 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
   }
 
   private static CollectiveApplyEntry _setActiveEntry() => new(
-    ModelType: typeof(_overlayModel),
-    EventType: typeof(_setActiveEvent),
-    HandlerType: typeof(_overlayActivePerspective),
-    MethodName: nameof(_overlayActivePerspective.SetActive),
+    ModelType: typeof(OverlayModel),
+    EventType: typeof(SetActiveEvent),
+    HandlerType: typeof(OverlayActivePerspective),
+    MethodName: nameof(OverlayActivePerspective.SetActive),
     ScopeHandling: CollectiveScopeHandling.Custom,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e));
+    Invoker: static (h, e, _) => ((OverlayActivePerspective)h).SetActive((SetActiveEvent)e));
 
-  private sealed class _overlayModel {
-    public Guid Id { get; set; }
-    public bool IsActive { get; set; }
-    public Guid GlobalTemplateId { get; set; }
+  private sealed class OverlayModel {
+    public Guid Id { get; }
+    public bool IsActive { get; }
+    public Guid GlobalTemplateId { get; }
   }
 
-  private sealed class _overlayActivePerspective {
-    public ICollectiveSpec<_overlayModel> SetActive(_setActiveEvent e) =>
-      new _whereSpec(
+  private sealed class OverlayActivePerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<OverlayModel> SetActive(SetActiveEvent e) =>
+      new WhereSpec(
         s => s.SetProperty(o => o.IsActive, o => o.Id == e.OverlayId),
         r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_overlayModel>>> Setters,
-        Expression<Func<PerspectiveRow<_overlayModel>, bool>>? Where) : ICollectiveSpec<_overlayModel>;
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<OverlayModel>>> Setters,
+        Expression<Func<PerspectiveRow<OverlayModel>, bool>>? Where) : ICollectiveSpec<OverlayModel>;
   }
 
-  private sealed record _setActiveEvent : ICollectiveEvent {
+  private sealed record SetActiveEvent : ICollectiveEvent {
     public required Guid OverlayId { get; init; }
     public required Guid GlobalTemplateId { get; init; }
     public required CollectiveScope Scope { get; init; }

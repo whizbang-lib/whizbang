@@ -14,14 +14,14 @@ namespace Whizbang.Core.Tests.Temporal;
 public class SagaDeadlineSchedulerTests {
   private sealed class FakeManager : IScheduleManager {
     public ScheduleDefinition? LastDefinition { get; private set; }
-    public Guid? LastCancelledId { get; private set; }
+    public Guid? LastCanceledId { get; private set; }
 
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
       LastDefinition = definition;
       return Task.FromResult(new ScheduleHandle(definition.ScheduleId ?? Guid.Empty, definition.StartAt ?? default, true));
     }
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) {
-      LastCancelledId = scheduleId;
+      LastCanceledId = scheduleId;
       return Task.FromResult(true);
     }
     public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) =>
@@ -83,10 +83,10 @@ public class SagaDeadlineSchedulerTests {
     var fake = new FakeManager();
     var sut = new SagaDeadlineScheduler(fake);
 
-    var cancelled = await sut.CancelDeadlineAsync(_saga, "payment-timeout");
+    var canceled = await sut.CancelDeadlineAsync(_saga, "payment-timeout");
 
-    await Assert.That(cancelled).IsTrue();
-    await Assert.That(fake.LastCancelledId).IsEqualTo(sut.DeadlineScheduleId(_saga, "payment-timeout"));
+    await Assert.That(canceled).IsTrue();
+    await Assert.That(fake.LastCanceledId).IsEqualTo(sut.DeadlineScheduleId(_saga, "payment-timeout"));
   }
 
   [Test]

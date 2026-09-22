@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 
@@ -34,15 +35,16 @@ public class MessageDiscardPolicyTests {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Add((logLevel, formatter(state, exception)));
     }
-    private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
   }
+
+  private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
 
   private static (MessageDiscardPolicy Policy, TestRegistry Registry, RecordingLogger<MessageDiscardPolicy> Logger, Meter Meter)
     _newPolicy() {
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests");
-    var policy = new MessageDiscardPolicy(registry, logger, meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     return (policy, registry, logger, meter);
   }
 
@@ -71,7 +73,7 @@ public class MessageDiscardPolicyTests {
     routing.AbsorbNamespaces(absorb);
     var registry = new TestRegistry(); // UNCONSUMED_TYPE has NO consumer
     var logger = new RecordingLogger<MessageDiscardPolicy>();
-    return new MessageDiscardPolicy(registry, logger, meter, Options.Create(routing));
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
   }
 
   [Test]
@@ -173,7 +175,7 @@ public class MessageDiscardPolicyTests {
   public async Task RecordDiscard_IncrementsCounter_WithExpectedTagsAsync() {
     var (policy, _, _, meter) = _newPolicy();
     long total = 0;
-    var tagSnapshots = new List<IReadOnlyDictionary<string, object?>>();
+    var countedSnapshots = new List<IReadOnlyDictionary<string, object?>>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
         if (instrument.Meter == meter && instrument.Name == "whizbang.message.skipped") {
@@ -183,23 +185,27 @@ public class MessageDiscardPolicyTests {
     };
     listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
       total += value;
+      // Passive counter: every series reports at collection — the untagged one and the declared
+      // per-gate series at zero — so only a series that counted something carries this discard's tags.
+      if (value == 0) { return; }
       var snapshot = new Dictionary<string, object?>(tags.Length);
       foreach (var t in tags) { snapshot[t.Key] = t.Value; }
-      tagSnapshots.Add(snapshot);
+      countedSnapshots.Add(snapshot);
     });
     listener.Start();
 
     var decision = new MessageDiscardDecision(ShouldDiscard: true, Reason: MessageDiscardReason.NoLocalConsumer, Detail: null);
     policy.RecordDiscard(MessageDiscardGate.Receive, decision, UNCONSUMED_TYPE,
       additionalTags: new Dictionary<string, object?> { ["topic"] = "topic.a", ["subscription"] = "sub-1" });
+    listener.RecordObservableInstruments();
 
     await Assert.That(total).IsEqualTo(1L);
-    await Assert.That(tagSnapshots.Count).IsEqualTo(1);
-    await Assert.That(tagSnapshots[0]["gate"]).IsEqualTo("receive");
-    await Assert.That(tagSnapshots[0]["reason"]).IsEqualTo("NoLocalConsumer");
-    await Assert.That(tagSnapshots[0]["payload_type"]).IsEqualTo(UNCONSUMED_TYPE);
-    await Assert.That(tagSnapshots[0]["topic"]).IsEqualTo("topic.a");
-    await Assert.That(tagSnapshots[0]["subscription"]).IsEqualTo("sub-1");
+    await Assert.That(countedSnapshots.Count).IsEqualTo(1);
+    await Assert.That(countedSnapshots[0]["gate"]).IsEqualTo("receive");
+    await Assert.That(countedSnapshots[0]["reason"]).IsEqualTo("NoLocalConsumer");
+    await Assert.That(countedSnapshots[0]["payload_type"]).IsEqualTo(UNCONSUMED_TYPE);
+    await Assert.That(countedSnapshots[0]["topic"]).IsEqualTo("topic.a");
+    await Assert.That(countedSnapshots[0]["subscription"]).IsEqualTo("sub-1");
   }
 
   // ============================================================
@@ -216,7 +222,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry(); // composite type has NO consumer — faithful to every service
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var markerResolver = new EventMarkerResolver(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
-    return new MessageDiscardPolicy(registry, logger, meter, routingOptions: null, markerResolver: markerResolver);
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver);
   }
 
   [Test]
@@ -263,5 +269,85 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.ShouldDiscard).IsTrue();
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
   }
-}
 
+  // ---------- a per-message log on a bulk path is a memory leak with extra steps ----------
+
+  /// <summary>
+  /// RegistryChanged must not log per message at a level that is on by default.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Observed in production: a service discarding a type it no longer consumes emitted this line
+  /// ~735 times per second for a sustained bulk backlog — 22,000 log lines per 30 seconds. The
+  /// process was OOM-killed repeatedly, and the log volume was the driver, not the work.
+  /// </para>
+  /// <para>
+  /// The first occurrence per type genuinely matters: it means rows were written when a consumer
+  /// existed and that consumer is gone now, which is a real deployment-shape signal an operator
+  /// wants. The ten-thousandth occurrence carries no additional information — the counter already
+  /// tags every discard by reason and payload type, so the rate is fully observable without the
+  /// text.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RegistryChanged_LogsOncePerType_ThenFallsToDebugAsync() {
+    var (policy, _, logger, _) = _newPolicy();
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    for (var i = 0; i < 500; i++) {
+      policy.RecordDiscard(MessageDiscardGate.Inbox, decision, UNCONSUMED_TYPE);
+    }
+
+    var atOrAboveInfo = logger.Entries.Count(e => e.Level >= LogLevel.Information);
+    await Assert.That(atOrAboveInfo).IsEqualTo(1)
+      .Because("500 identical discards carry exactly as much information as the first — and at "
+             + "production rates the repeats are what exhausts the container's memory");
+  }
+
+  [Test]
+  public async Task RegistryChanged_StillSurfacesTheFirstOccurrenceOfEachDistinctTypeAsync() {
+    var (policy, _, logger, _) = _newPolicy();
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.AlphaEvent");
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.AlphaEvent");
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.BetaEvent");
+
+    var surfaced = logger.Entries.Where(e => e.Level >= LogLevel.Information).ToList();
+    await Assert.That(surfaced.Count).IsEqualTo(2)
+      .Because("suppressing the repeats must not suppress a DIFFERENT type going unconsumed — "
+             + "that is a distinct deployment signal, and collapsing them would hide it");
+    await Assert.That(surfaced.Any(e => e.Message.Contains("AlphaEvent", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(surfaced.Any(e => e.Message.Contains("BetaEvent", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task RegistryChanged_CounterStillCountsEveryDiscardAsync() {
+    var meter = new Meter("Whizbang.Tests.DiscardFloodCounter");
+    var measured = 0L;
+    using var listener = new MeterListener {
+      InstrumentPublished = (inst, l) => {
+        if (inst.Meter == meter) { l.EnableMeasurementEvents(inst); }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => Interlocked.Add(ref measured, v));
+    listener.Start();
+
+    var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    for (var i = 0; i < 250; i++) {
+      policy.RecordDiscard(MessageDiscardGate.Inbox, decision, UNCONSUMED_TYPE);
+    }
+    // Passive counter: one collection reports the cumulative count of every series.
+    listener.RecordObservableInstruments();
+
+    await Assert.That(measured).IsEqualTo(250)
+      .Because("the log is throttled, the MEASUREMENT never is — otherwise quieting the flood "
+             + "would also blind the dashboard that proves it is happening");
+  }
+}

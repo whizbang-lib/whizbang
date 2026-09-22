@@ -8,8 +8,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 2b of zero-idle-polling — integration regression locks for the
@@ -63,6 +62,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer#listen-as-heartbeat</docs>
+[Category("Shard1")]
 public class ListenLivenessSqlTests : EFCoreTestBase {
 
   private static readonly DateTimeOffset _staleCutoff = DateTimeOffset.UtcNow.AddMinutes(-1);
@@ -301,17 +301,20 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// Opens a side connection carrying the
   /// <c>application_name='whizbang-&lt;instance_id&gt;'</c> stamp that
   /// PgSharedNotifyConnection emits on its real per-pod LISTEN connection.
   /// From <c>pg_stat_activity</c>'s perspective this is indistinguishable
   /// from the real thing — any client backend connection with the matching
   /// application_name proves the pod is alive at the TCP layer.
-  ///
+  /// </para>
+  /// <para>
   /// Each test that calls this must wrap the result in <c>await using</c>
   /// so the connection closes (and its <c>pg_stat_activity</c> row vanishes)
   /// when the test scope ends — otherwise tests interfere with each other
   /// when run in parallel.
+  /// </para>
   /// </summary>
   private async Task<NpgsqlConnection> _openSideConnectionAsync(Guid instanceId) {
     var csBuilder = new NpgsqlConnectionStringBuilder(ConnectionString) {
@@ -328,7 +331,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     return sideConn;
   }
 
-  private async Task<(Guid InstanceId, bool ListenAlive)?> _readLiveInstanceRowAsync(
+  private static async Task<(Guid InstanceId, bool ListenAlive)?> _readLiveInstanceRowAsync(
       NpgsqlConnection conn, Guid instanceId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT instance_id, listen_alive FROM wh_live_instances WHERE instance_id = @id";
@@ -380,7 +383,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
 
   private static async Task<Guid?> _readInboxInstanceIdAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT instance_id FROM wh_inbox WHERE message_id = @msg";
+    cmd.CommandText = "SELECT instance_id FROM wh_inbox_state WHERE message_id = @msg";
     cmd.Parameters.AddWithValue("msg", messageId);
     var result = await cmd.ExecuteScalarAsync();
     return result switch {
@@ -451,11 +454,17 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
       Guid? instanceId, DateTimeOffset? leaseExpiry, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, @att, NOW(),
-              @inst, @lease, @stream, @part)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @att,
+             @inst, @lease, @part FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("part", partitionNumber);

@@ -32,25 +32,25 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
-/// <tests>Whizbang.Core.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
 public sealed partial class BackupTickCoordinator(
   IIdleActivityTracker tracker,
   IBackupTickRegistry registry,
   IOptions<BackupTickCoordinatorOptions> options,
   ILogger<BackupTickCoordinator> logger,
-  INotifySignalingGate? gate = null,
-  TimeProvider? timeProvider = null,
   // Startup barrier: registered backstop ticks poll the database. Optional only so existing
   // fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
+  ISchemaReadyGate schemaReadyGate,
+  INotifySignalingGate gate,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
   private readonly IIdleActivityTracker _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
   private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
   private readonly BackupTickCoordinatorOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<BackupTickCoordinator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly INotifySignalingGate? _gate = gate;
+  private readonly INotifySignalingGate _gate = gate;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   private long _totalTickCycles;
@@ -141,7 +141,7 @@ public sealed partial class BackupTickCoordinator(
   // Effective polling cadence given the gate state. Public-internal so tests
   // can call it directly without spinning up the BackgroundService loop.
   internal TimeSpan ComputeEffectivePollingInterval() {
-    return _gate?.IsAvailable == false ? _options.FastPollingInterval : _options.PollingInterval;
+    return _gate.IsConfigured && !_gate.IsAvailable ? _options.FastPollingInterval : _options.PollingInterval;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,

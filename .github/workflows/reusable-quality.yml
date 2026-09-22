@@ -27,11 +27,16 @@ jobs:
   quality:
     name: Quality Analysis
     runs-on: ubuntu-latest
+    # pull-requests: write lets the uncovered-new-lines gate comment on the PR; the caller must grant it too.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
     timeout-minutes: 60
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # Full history for SonarCloud
 
@@ -41,7 +46,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Cache SonarCloud packages
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
@@ -54,8 +59,17 @@ jobs:
 
       # SonarCloud free plan only supports main branch + PR analysis, so the scanner is
       # skipped for push events to non-main branches (e.g. develop).
+      #
+      # merge_group is skipped too, and NOT because it is cheap to drop: the queue ref is a
+      # throwaway (gh-readonly-queue/develop/pr-N-<sha>) and carries no pull_request context,
+      # so the scanner would submit a BRANCH analysis of a branch that ceases to exist minutes
+      # later — rejected outright on the main-plus-PRs free plan. The PR analysis already
+      # gated this exact change, and keeping the queue run lean is the point of the queue.
       - name: SonarScanner Begin
-        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+        # ONLY a pull request or a push to main. Every other context — develop pushes, the
+        # merge queue, and a workflow_dispatch on any branch — skips the scanner entirely.
+        # Analyzing anything else is actively harmful here: see the branch note below.
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -69,10 +83,22 @@ jobs:
             /k:"whizbang-lib_whizbang" /o:"whizbang-lib"
             /d:sonar.token="${SONAR_TOKEN}"
             /d:sonar.host.url="https://sonarcloud.io"
-            /d:sonar.qualitygate.wait=true
             /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml"
           )
 
+          # A PR is a pull-request analysis against its base; a main push is the main-branch
+          # analysis (no sonar.branch.name — SonarCloud's default). There is deliberately no third
+          # shape.
+          #
+          # This organization's SonarCloud plan does not serve non-main branch data: reads return
+          # "Organization is not allowed to access data from non main branches." Submitting a
+          # long-lived branch analysis still half-creates the branch — it appears in
+          # project_branches/list with no analysis date — and a PR's quality gate is resolved
+          # against its BASE branch, so once `develop` existed in that unreadable state every
+          # PR into develop failed post-processing with "Not authorized or project not found"
+          # AFTER uploading its report successfully. The analysis is fine; the gate lookup is what
+          # cannot resolve the base. Do not submit a branch analysis here until the plan supports
+          # it, and delete any branch that was created (Administration -> Branches & Pull Requests).
           if [ "$EVENT_NAME" = "pull_request" ]; then
             SONAR_ARGS+=(
               /d:sonar.pullrequest.key="$PR_NUMBER"
@@ -80,6 +106,7 @@ jobs:
               /d:sonar.pullrequest.base="$BASE_REF"
             )
           fi
+          SONAR_ARGS+=(/d:sonar.qualitygate.wait=true)
 
           # Load ALL sonar.* properties from shared config (single source of truth with local scripts)
           while IFS='=' read -r key value; do
@@ -95,8 +122,46 @@ jobs:
       # Single build serves both the scanner (analysis hooks) and ReportGenerator
       # (source-generated files must exist before the coverage merge). Runs while the
       # test suites are still executing in their own jobs.
+      # Build ONLY what Sonar analyzes. sonar.config excludes samples, benchmarks, tools and
+      # scripts from analysis, yet the full-solution build compiled them anyway — 28 of the 93
+      # projects, built purely to be thrown away. Tests are NOT excluded (sonar.config carries
+      # per-rule ignores for **/tests/**, which only makes sense if they are analyzed).
+      #
+      # The exclusion list is READ FROM sonar.config rather than hardcoded here, so the build
+      # scope and the analysis scope cannot drift apart — one source of truth, and adding an
+      # exclusion there automatically stops building it.
+      #
+      # The solution is produced by FILTERING the real Whizbang.slnx, not by synthesising a bare
+      # one. A synthesised solution omits the <Configurations> block, and without it MSBuild can
+      # resolve a project under more than one platform concurrently — two writers on the same
+      # deps.json, which fails as "the process cannot access the file".
+      - name: Generate analysis solution
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          cfg = open('sonar.config').read()
+          m = re.search(r'^sonar\.exclusions=(.+)$', cfg, re.M)
+          pats = [p.strip() for p in m.group(1).split(',') if p.strip()]
+          dirs = [mm.group(1) for p in pats if (mm := re.match(r'\*\*/([^/*]+)/\*\*', p))]
+          sln = open('Whizbang.slnx').read()
+          kept, dropped = [], 0
+          for line in sln.splitlines(keepends=True):
+              pm = re.search(r'<Project Path="([^"]+)"', line)
+              if pm and any(re.search(rf'(^|/){re.escape(d)}/', pm.group(1)) for d in dirs):
+                  dropped += 1
+                  continue
+              kept.append(line)
+          out = ''.join(kept)
+          open('Whizbang.Analysis.slnx','w').write(out)
+          print(f"excluded dirs from sonar.config: {dirs}")
+          print(f"dropped {dropped} projects; analysing {out.count('<Project Path=')}")
+          assert '<Configurations>' in out, 'Configurations block must survive — see comment above'
+          assert out.count('<Project Path=') > 0, 'refusing to analyse an empty solution'
+          PY
+
       - name: Build (analyzed)
-        run: dotnet build --configuration Release
+        run: dotnet build Whizbang.Analysis.slnx --configuration Release
 
       - name: Wait for test suites to publish coverage
         env:
@@ -142,7 +207,7 @@ jobs:
           ls -laR coverage/ || echo "Coverage directory empty or missing"
 
       - name: Upload Merged Coverage to Codecov
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: coverage
@@ -224,8 +289,97 @@ jobs:
           fi
 
       - name: SonarScanner End
-        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+        # ONLY a pull request or a push to main. Every other context — develop pushes, the
+        # merge queue, and a workflow_dispatch on any branch — skips the scanner entirely.
+        # Analyzing anything else is actively harmful here: see the branch note below.
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+
+      # ---- PR quality gate: 100% coverage of new lines, zero open Sonar findings ----------------------
+      # Both lists are computed after the scanner has submitted the analysis, uploaded, posted on the
+      # PR in one comment, and only then does one step fail the job when either list is not empty.
+      - name: Uncovered New Lines
+        if: github.event_name == 'pull_request'
+        id: uncovered
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -BaseRef "origin/${{ github.base_ref }}" -OutFile coverage/uncovered-new-lines.txt | Write-Host
+          $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Sonar Findings on New Code
+        if: github.event_name == 'pull_request'
+        id: sonar-findings
+        shell: pwsh
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          & pwsh scripts/Get-SonarPrFindings.ps1 -PullRequest ${{ github.event.pull_request.number }} -WaitForAnalysis .sonarqube/out/.sonar/report-task.txt -OutFile coverage/sonar-findings.txt | Write-Host
+          $count = @(Get-Content coverage/sonar-findings.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload PR Gate Reports
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pr-quality-gate
+          path: |
+            coverage/uncovered-new-lines.txt
+            coverage/sonar-findings.txt
+          if-no-files-found: ignore
+
+      - name: Comment PR Gate Results
+        if: github.event_name == 'pull_request' && always() && steps.uncovered.outputs.count != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UNCOVERED: ${{ steps.uncovered.outputs.count }}
+          FINDINGS: ${{ steps.sonar-findings.outputs.count }}
+        run: |
+          MARKER="<!-- pr-quality-gate -->"
+          BODY="${MARKER}
+          ## PR quality gate
+
+          | Check | Result |
+          |---|---|
+          | Coverage of new lines | $([ "${UNCOVERED}" = "0" ] && echo "100%, every added library line is executed by a test" || echo "**${UNCOVERED} line(s) not executed by any test**") |
+          | Sonar findings on new code | $([ "${FINDINGS:-?}" = "0" ] && echo "none" || echo "**${FINDINGS:-?} open finding(s)**") |
+          "
+          if [ "${UNCOVERED}" != "0" ]; then
+            BODY="${BODY}
+          <details><summary>Uncovered new lines</summary>
+
+          \`\`\`
+          $(cat coverage/uncovered-new-lines.txt)
+          \`\`\`
+          </details>
+          "
+          fi
+          if [ -s coverage/sonar-findings.txt ]; then
+            BODY="${BODY}
+          <details><summary>Sonar findings</summary>
+
+          \`\`\`
+          $(cat coverage/sonar-findings.txt)
+          \`\`\`
+          </details>
+          "
+          fi
+          BODY="${BODY}
+          Reproduce locally: \`pwsh scripts/Invoke-PrHealth.ps1 -PullRequest ${{ github.event.pull_request.number }}\`"
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
+          if [ -n "${EXISTING}" ]; then
+            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING}" -f body="${BODY}" >/dev/null
+          else
+            gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
+          fi
+
+      - name: Fail on PR Gate Violations
+        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.sonar-findings.outputs.count != '0')
+        run: |
+          echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s). Both must be zero (see the pr-quality-gate artifact and the PR comment)."
+          exit 1

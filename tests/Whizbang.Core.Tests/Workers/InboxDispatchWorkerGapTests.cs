@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -16,6 +17,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -59,8 +61,9 @@ public class InboxDispatchWorkerGapTests {
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
     public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public ConcurrentBag<Guid> RemovedInFlight { get; } = [];
     public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
+    public void RemoveInFlight(Guid messageId) => RemovedInFlight.Add(messageId);
     public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _channel.Writer.Complete();
     public event Action? OnNewInboxWorkAvailable;
@@ -70,7 +73,7 @@ public class InboxDispatchWorkerGapTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -80,7 +83,7 @@ public class InboxDispatchWorkerGapTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       First.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -96,6 +99,17 @@ public class InboxDispatchWorkerGapTests {
     public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default)
       => Task.FromException<Guid?>(new InvalidOperationException("simulated wh_dead_letters outage"));
+  }
+
+  /// <summary>DLQ store whose MoveAsync reports the source row already gone (the documented
+  /// null no-op) — drives the #571 already-terminal branch.</summary>
+  private sealed class AlreadyGoneDeadLetterStore : IDeadLetterStore {
+    public int Calls;
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      Interlocked.Increment(ref Calls);
+      return Task.FromResult<Guid?>(null);
+    }
   }
 
   /// <summary>DLQ store that succeeds and records the call.</summary>
@@ -145,6 +159,13 @@ public class InboxDispatchWorkerGapTests {
   }
 
   private sealed record InnerImportEvent(string Id) : IEvent;
+
+  /// <summary>A composite that expands cleanly — its own cap is generous, so only the
+  /// consumer-side expansion budget can refuse it.</summary>
+  private sealed class WideComposite(int count) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 1_000_000;
+    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"W-{i}"));
+  }
 
   private sealed class OverCapComposite(int count) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 1;
@@ -202,10 +223,11 @@ public class InboxDispatchWorkerGapTests {
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Enqueue((logLevel, formatter(state, exception)));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   /// <summary>
@@ -275,15 +297,24 @@ public class InboxDispatchWorkerGapTests {
     public ILogger<InboxDispatchWorker>? Logger { get; set; } = NullLogger<InboxDispatchWorker>.Instance;
 
     public InboxDispatchWorker Build() => new(
-      ScopeFactory!,
-      InstanceProvider!,
-      InboxChannelWriter!,
-      HandlerCommitChannel!,
-      FailureChannel!,
-      SchemaGate!,
-      WorkerOptions!,
-      CoordinatorOptions!,
-      Logger!);
+      scopeFactory: ScopeFactory!,
+      instanceProvider: InstanceProvider!,
+      inboxChannelWriter: InboxChannelWriter!,
+      handlerCommitChannel: HandlerCommitChannel!,
+      failureChannel: FailureChannel!,
+      schemaReadyGate: SchemaGate!,
+      options: WorkerOptions!,
+      coordinatorOptions: CoordinatorOptions!,
+      logger: Logger!,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
   }
 
   private static async Task _assertCtorGuardAsync(CtorDeps deps, string expectedParamName) {
@@ -360,7 +391,7 @@ public class InboxDispatchWorkerGapTests {
   /// no dispatched work).
   /// </summary>
   [Test]
-  public async Task SchemaGateWaitCancelledByShutdown_ExitsCleanlyWithoutDispatchingAsync() {
+  public async Task SchemaGateWaitCanceledByShutdown_ExitsCleanlyWithoutDispatchingAsync() {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
@@ -368,11 +399,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     await worker.StartAsync(CancellationToken.None);
     var executeTask = worker.ExecuteTask;
@@ -406,15 +450,28 @@ public class InboxDispatchWorkerGapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var logger = new RecordingLogger<InboxDispatchWorker>();
-    using var coordinatorGate = new WorkCoordinatorGate(maxConcurrent: 2);
+    using var coordinatorGate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       gate: coordinatorGate);
 
     using var cts = new CancellationTokenSource();
@@ -454,11 +511,22 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: new ThrowingDeadLetterStore(),
       generationProvider: new FakeGenerationProvider());
 
@@ -485,7 +553,7 @@ public class InboxDispatchWorkerGapTests {
   public async Task MaxAttemptsExceeded_StoreSucceeds_IncrementsDlqAddedCounterAndSkipsCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     await using var sp = new ServiceCollection().BuildServiceProvider();
@@ -493,7 +561,7 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument, metrics.Added)) {
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -513,24 +581,39 @@ public class InboxDispatchWorkerGapTests {
     listener.Start();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: store,
       generationProvider: new FakeGenerationProvider(),
       dlqMetrics: metrics);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+    // Passive counter: the listener sees every series (the declared-at-zero ones included) only
+    // at collection, so collect once and read the cumulative value of the series this promotion wrote.
+    listener.RecordObservableInstruments();
 
     await Assert.That(store.Moves).Count().IsEqualTo(1);
-    await Assert.That(added).Count().IsEqualTo(1)
-      .Because("each successful DLQ promotion must increment the Added counter exactly once");
-    await Assert.That(added[0].Value).IsEqualTo(1L);
-    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(added[0].Reason).IsEqualTo("MaxAttemptsExceeded");
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1)
+      .Because("each successful DLQ promotion must increment the Added counter exactly once — one series carries the count and every other series still reads zero");
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("MaxAttemptsExceeded");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("the SQL move deletes the wh_inbox row in the same transaction — the legacy commit path must be bypassed");
   }
@@ -546,18 +629,29 @@ public class InboxDispatchWorkerGapTests {
       ICompositeEvent composite,
       IDeadLetterStore? deadLetterStore,
       IGenerationProvider? generationProvider,
-      DeadLetterMetrics? dlqMetrics = null) {
+      DeadLetterMetrics? dlqMetrics = null,
+      InboxDispatchWorkerOptions? options = null) {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(options ?? new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      deadLetterStore: deadLetterStore,
-      generationProvider: generationProvider,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: generationProvider ?? new DefaultGenerationProvider(),
       dlqMetrics: dlqMetrics);
   }
 
@@ -629,7 +723,7 @@ public class InboxDispatchWorkerGapTests {
   public async Task CompositeOverCap_StoreSucceeds_IncrementsDlqAddedCounterAndSkipsCommitAsync() {
     var handlerCommit = new FakeHandlerCommitChannel();
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -637,7 +731,7 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument, metrics.Added)) {
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -667,9 +761,13 @@ public class InboxDispatchWorkerGapTests {
 
     await Assert.That(store.Moves).Count().IsEqualTo(1);
     await Assert.That(store.Moves.Single().Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
-    await Assert.That(added).Count().IsEqualTo(1);
-    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(added[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
+    // Passive counter: series report only at collection, the declared ones at zero.
+    listener.RecordObservableInstruments();
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1);
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("a successful composite dead-letter deletes the row atomically — no handler commit may follow");
   }
@@ -692,12 +790,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      lifecycleMessageDeserializer: new ThrowingDeserializer());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new ThrowingDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -726,12 +836,24 @@ public class InboxDispatchWorkerGapTests {
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      discardPolicy: policy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: policy,
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -765,16 +887,30 @@ public class InboxDispatchWorkerGapTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ =>
       new StageThrowingInvoker(LifecycleStage.PreInboxDetached, new InvalidOperationException("simulated detached receptor fault")));
     await using var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
@@ -810,11 +946,24 @@ public class InboxDispatchWorkerGapTests {
     var signalingFactory = new SignalingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
 
     var worker = new InboxDispatchWorker(
-      signalingFactory,
-      new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      scopeFactory: signalingFactory,
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     var work = _makeWork();
     var inlineInvoker = new CapturingReceptorInvoker();
@@ -853,7 +1002,7 @@ public class InboxDispatchWorkerGapTests {
     var failure = new FakeFailureChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var metrics = new InboxMetrics(new WhizbangMetrics());
+    var metrics = new InboxMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await using var sp = new ServiceCollection().BuildServiceProvider();
 
     var measured = new TaskCompletionSource<(double Value, string? MessageType)>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -876,11 +1025,24 @@ public class InboxDispatchWorkerGapTests {
     listener.Start();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       inboxMetrics: metrics);
 
     using var cts = new CancellationTokenSource();
@@ -896,4 +1058,407 @@ public class InboxDispatchWorkerGapTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  // ============================================================
+  // Consumer-side expansion budget (MaxCompositeChildrenPerExpansion)
+  // ============================================================
+
+  /// <summary>
+  /// Enforcement on and the expansion over budget: the composite is dead-lettered rather than
+  /// expanded, so none of its children reach the inbox.
+  /// </summary>
+  /// <remarks>
+  /// The composite declares its own MaxInnerEventsAllowed, so a producer can wave through any
+  /// size it likes. This budget is the consumer's own limit — the only one it controls — and
+  /// expansion happens after admission control has already accepted the message, so without it
+  /// a single accepted composite can add more inbox rows than every downstream bound was sized
+  /// for.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_Enforced_DeadLettersInsteadOfExpandingAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(50),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 10,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var (SourceTable, SourceId, Reason) = store.Moves.Single();
+    await Assert.That(SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(SourceId).IsEqualTo(work.MessageId);
+    await Assert.That(Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    await Assert.That(handlerCommit.All).IsEmpty()
+      .Because("the DLQ move deletes the wh_inbox row in the same transaction — no children and no legacy commit");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("50", StringComparison.Ordinal))).IsTrue()
+      .Because("the operator needs the actual child count to size the budget");
+  }
+
+  /// <summary>
+  /// The refusal increments the DLQ Added counter with the budget reason, so an inflating
+  /// producer shows up on the dead-letter dashboard rather than only in logs.
+  /// </summary>
+  [Test]
+  public async Task CompositeOverConsumerBudget_Enforced_RecordsTheDeadLetterMetricAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+
+    var added = new List<(long Value, string? SourceTable, string? Reason)>();
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        // Exactly THIS test's Added counter: the meter also carries arrivals_by_stack (same
+        // emission, richer tags), parallel tests build DeadLetterMetrics on the same meter
+        // name, and this lock is about Added's arithmetic alone.
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? sourceTable = null;
+      string? reason = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "source_table") { sourceTable = tag.Value?.ToString(); }
+        if (tag.Key == "reason") { reason = tag.Value?.ToString(); }
+      }
+      added.Add((value, sourceTable, reason));
+    });
+    listener.Start();
+
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(25),
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics,
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 4,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+    // Passive counter: series report only at collection, the declared ones at zero.
+    listener.RecordObservableInstruments();
+    listener.Dispose();
+
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1);
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
+  }
+
+  /// <summary>
+  /// The budget refusal's DLQ move is best-effort like every other: when the store throws, the
+  /// row still terminates via the legacy mark-Published completion.
+  /// </summary>
+  /// <remarks>
+  /// Without the fallback the composite stays claimable, so it re-claims, re-expands past the
+  /// budget, and re-fails — the exact inbox growth the budget exists to stop.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_StoreThrows_FallsBackToTerminalCommitAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(30),
+      deadLetterStore: new ThrowingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 5,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)(work.Status | MessageProcessingStatus.Published));
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue()
+      .Because("refusing the expansion is all-or-nothing: the fallback must not smuggle children through");
+    await Assert.That(logger.Entries.Any(e =>
+      e.Message.Contains("falling back to legacy mark-Published", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// Same refusal with no DLQ store wired: straight to the terminal completion.
+  /// </summary>
+  [Test]
+  public async Task CompositeOverConsumerBudget_NoDeadLetterStore_TerminatesViaLegacyCommitAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(12),
+      deadLetterStore: null,
+      generationProvider: null,
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 3,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)(work.Status | MessageProcessingStatus.Published));
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue();
+  }
+
+  /// <summary>
+  /// Enforcement off is report-only: the breach is logged, and the expansion still goes through.
+  /// </summary>
+  /// <remarks>
+  /// This is the rollout default. An operator turning the budget on blind would dead-letter live
+  /// traffic, so the first phase only reports what *would* have been refused — which means the
+  /// report path has to leave the children intact.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_NotEnforced_LogsButStillExpandsAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(20),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 6,
+        EnforceCompositeExpansionBudget = false,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty()
+      .Because("report-only must never dead-letter — that is the whole point of the rollout phase");
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.NewInboxMessages).IsNotNull();
+    await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(20)
+      .Because("every child must still be committed while the budget is only reporting");
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored);
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("the report is the only signal an operator gets before enabling enforcement");
+  }
+
+  /// <summary>
+  /// A budget of zero or less disables the check entirely, however wide the expansion.
+  /// </summary>
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task CompositeExpansionBudget_NonPositive_IsDisabledAsync(int budget) {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(40),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = budget,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty();
+    await Assert.That(handlerCommit.All.Single().NewInboxMessages!.Count).IsEqualTo(40);
+  }
+
+  /// <summary>
+  /// An expansion inside the budget takes the ordinary path untouched.
+  /// </summary>
+  [Test]
+  public async Task CompositeWithinConsumerBudget_ExpandsNormallyAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(8),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 8,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty()
+      .Because("the budget is a ceiling, not an exclusive bound — exactly-at-budget must pass");
+    await Assert.That(handlerCommit.All.Single().NewInboxMessages!.Count).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task MaxAttemptsExceeded_StoreSucceeds_ReleasesInFlightAsync() {
+    // #571: the dead-letter path bypasses the handler-commit channel (the SQL move deleted
+    // the row), so nothing downstream releases the in-flight guard. Without an explicit
+    // release the message id stays "in flight" until the age-out, and the asymmetry with
+    // OutboxPublishWorker (which releases on every terminal path) is exactly where the
+    // endless re-dead-letter loop hid.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: new RecordingLogger<InboxDispatchWorker>(),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider());
+
+    var work = _makeWork(attempts: 4);
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(writer.RemovedInFlight.Contains(work.MessageId)).IsTrue()
+      .Because("a dead-lettered message is TERMINAL — the in-flight guard must release on "
+             + "this path exactly as it does on completion, or the id wedges until age-out");
+  }
+
+  [Test]
+  public async Task MaxAttemptsExceeded_RowAlreadyGone_IsTerminal_NoCountNoRetryAsync() {
+    // #571: MoveAsync returns null when the inbox row is already gone (documented no-op).
+    // Discarding that result counted a dead-letter that never happened and left the
+    // in-memory work item un-terminal — re-fed and re-'moved' ~6.5x/sec indefinitely.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var store = new AlreadyGoneDeadLetterStore();
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+
+    long added = 0;
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) { l.EnableMeasurementEvents(instrument); }
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref added, value));
+    listener.Start();
+
+    var worker = new InboxDispatchWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics);
+
+    var work = _makeWork(attempts: 4);
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+    // Passive counter: collect so the assertion reads the real (zero) count of every series.
+    listener.RecordObservableInstruments();
+
+    await Assert.That(Interlocked.Read(ref added)).IsEqualTo(0L)
+      .Because("no dead letter was created — counting the no-op overstated every storm's "
+             + "DLQ arrivals with phantom rows");
+    await Assert.That(writer.RemovedInFlight.Contains(work.MessageId)).IsTrue()
+      .Because("already-gone IS terminal: the row was dead-lettered or deleted by someone "
+             + "else, and this work item must release, not re-feed forever");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("already gone", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("the no-op is worth a line — a burst of them is the signature of double-feed");
+  }
+
+
+  [Test]
+  public async Task DisabledSubsystemMessage_IsDiscardedByCompleting_NotDispatchedAsync() {
+    // #664 worker half: a leftover wrapped checkpoint arriving while checkpoints are
+    // disabled is discarded AS its processing — a terminal completion through the normal
+    // commit channel (lifecycle signaled by construction), an in-flight release, a log
+    // line, and no dispatch attempt. Before this, it dispatched into a nonexistent
+    // handler and livelocked on lease-expiry re-claims.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: writer,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false }),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
+
+    var work = _makeWork();
+    work = work with {
+      MessageType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.IntegrityCheckpoint, "
+                  + "Whizbang.Core, Version=0.900.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core",
+    };
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus)
+      .Because("the discard IS the processing — a terminal completion through the normal "
+             + "machinery, so the row deletes and can never re-claim");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("disabled", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a discarded message logs WHAT was dropped and WHY — never a silent swallow");
+  }
+
 }

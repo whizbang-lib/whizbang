@@ -8,7 +8,6 @@ namespace Whizbang.Hosting.AspNet;
 /// the request pipeline, so an inbound correlation id is captured before any endpoint dispatches a message.
 /// Registered by <see cref="ServiceCollectionExtensions.AddWhizbangAspNet"/> — correlation capture is turnkey.
 /// </summary>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/WhizbangCorrelationStartupFilterTests.cs</tests>
 internal sealed class WhizbangCorrelationStartupFilter : IStartupFilter {
   public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) {
     return app => {

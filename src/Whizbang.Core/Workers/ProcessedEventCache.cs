@@ -14,14 +14,14 @@ namespace Whizbang.Core.Workers;
 /// allowed (correct for rewind/rebuild scenarios).</para>
 /// </remarks>
 /// <docs>operations/workers/perspective-worker#event-deduplication</docs>
-/// <tests>Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
 /// <param name="retentionPeriod">How long retained entries survive after DB acknowledgement (aligned to lease duration).</param>
-/// <param name="timeProvider">Time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
 /// <param name="observer">Observer for lifecycle callbacks. Defaults to <see cref="NullProcessedEventCacheObserver"/>.</param>
+/// <param name="timeProvider">Time provider for testability. Defaults to <see cref="TimeProvider.System"/>.</param>
 internal sealed class ProcessedEventCache(
   TimeSpan retentionPeriod,
-  TimeProvider? timeProvider = null,
-  IProcessedEventCacheObserver? observer = null) {
+  IProcessedEventCacheObserver observer,
+  TimeProvider? timeProvider = null) {
   private readonly ConcurrentDictionary<Guid, EventCacheEntry> _entries = new();
   private readonly TimeSpan _retentionPeriod = retentionPeriod;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -29,7 +29,7 @@ internal sealed class ProcessedEventCache(
   /// <summary>
   /// The observer for lifecycle callbacks.
   /// </summary>
-  internal IProcessedEventCacheObserver Observer { get; } = observer ?? NullProcessedEventCacheObserver.Instance;
+  internal IProcessedEventCacheObserver Observer { get; } = observer;
 
   /// <summary>
   /// Number of active entries in the cache (InFlight + non-expired Retained).

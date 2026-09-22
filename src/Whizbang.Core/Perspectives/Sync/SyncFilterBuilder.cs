@@ -16,7 +16,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// // Complex AND/OR combination
 /// var options = SyncFilter.ForStream(orderId)
 ///     .AndEventTypes&lt;OrderCreatedEvent&gt;()
-///     .Or(SyncFilter.ForEventTypes&lt;OrderCancelledEvent&gt;())
+///     .Or(SyncFilter.ForEventTypes&lt;OrderCanceledEvent&gt;())
 ///     .WithTimeout(TimeSpan.FromSeconds(10))
 ///     .Build();
 /// </code>
@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed class SyncFilterBuilder {
   private SyncFilterNode _filter;
   private TimeSpan _timeout = TimeSpan.FromSeconds(5);

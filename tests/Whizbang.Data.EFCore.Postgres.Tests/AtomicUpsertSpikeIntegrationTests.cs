@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// This is the gating regression for slice 22b.3b. Once GREEN, the SQL + parameter
 /// binding can be lifted straight into <c>BaseUpsertStrategy._tryAtomicUpsertAsync</c>.
 /// </remarks>
+[Category("Shard1")]
 public class AtomicUpsertSpikeIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task AtomicInsert_NewRow_PersistedAndReadableByEFAsync() {

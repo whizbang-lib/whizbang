@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationObjectExtractor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationRedefinitionClosure.cs</code-under-test>
 [Category("Migrations")]
+[Category("Shard3")]
 public class MigrationRedefinitionClosureTests {
 
   // ── extractor: parsed DDL forms ─────────────────────────────────────────

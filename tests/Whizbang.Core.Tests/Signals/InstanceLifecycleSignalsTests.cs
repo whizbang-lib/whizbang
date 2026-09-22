@@ -11,6 +11,7 @@ namespace Whizbang.Core.Tests.Signals;
 /// be Durable — orphan takeover depends on it being replayable. Joined/Leaving are best-effort;
 /// missing either only costs bounded latency until the heartbeat scan reconciles.
 /// </summary>
+[NotInParallel("SignalTypeRegistryStatic")]
 public class InstanceLifecycleSignalsTests {
   [Test]
   public async Task InstanceJoined_MetadataAsync() {

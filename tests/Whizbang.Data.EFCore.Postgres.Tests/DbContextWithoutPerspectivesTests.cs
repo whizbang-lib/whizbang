@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// even when there are no custom perspectives.
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
+[Category("Shard4")]
 public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;
@@ -64,7 +65,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }
@@ -171,7 +172,11 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Act - Initialize database schema
     await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
-    // Assert - Verify wh_inbox has instance_id, lease_expiry, and status columns (from migration 002)
+    // Assert - the claim's work-state columns are provisioned. Migration 002 put them on wh_inbox —
+    // 162 moved them to wh_inbox_state, because they are rewritten on every claim, lease renewal and
+    // completion while the message row is written once. The property under test is unchanged -- a
+    // database initialized with no perspectives still gets the columns a claim needs -- so the
+    // assertion follows them to the table that now owns them rather than being dropped.
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
@@ -179,7 +184,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
 
     foreach (var columnName in columnNames) {
       await using var command = new NpgsqlCommand(
-        $"SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'wh_inbox' AND column_name = '{columnName}');",
+        $"SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'wh_inbox_state' AND column_name = '{columnName}');",
         connection);
 
       var exists = (bool)(await command.ExecuteScalarAsync())!;

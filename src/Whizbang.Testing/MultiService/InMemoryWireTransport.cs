@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -62,7 +63,7 @@ public sealed class InMemoryWireTransport : ITransport {
     } else {
       var typeInfo = _wireOptions.GetTypeInfo(envelope.GetType())
         ?? throw new InvalidOperationException(
-          $"No JsonTypeInfo for envelope type {envelope.GetType().FullName}. " +
+          $"No JsonTypeInfo for envelope type {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
           "Register the payload's JsonSerializerContext (JsonContextRegistry) before publishing.");
       bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, typeInfo);
     }

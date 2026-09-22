@@ -35,16 +35,14 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_exempt_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
     ));
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestLoginEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestLoginEvent)));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -68,7 +66,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_envelope_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
@@ -98,7 +96,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_with_security_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -129,9 +127,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     var registry = new TestReceptorRegistry();
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestLoginEvent));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestLoginEvent)));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -139,8 +135,25 @@ public class ReceptorInvokerSecurityGracefulTests {
     var invoker = new ReceptorInvoker(registry, scope.ServiceProvider);
     var envelope = _createTypedEnvelopeWithoutScope();
 
-    // Act & Assert: Should NOT throw
+    // Act: Should NOT throw
     await invoker.InvokeAsync(envelope, LifecycleStage.PreDistributeDetached);
+
+    // Assert: the exemption is what carried the call, not the empty registry. Security is
+    // established BEFORE receptors are looked up, so an empty registry is no shelter — drop the
+    // exemption and the same envelope is refused. Without this control the test would keep passing
+    // if the exempt-type set stopped being consulted at all.
+    var strictServices = new ServiceCollection();
+    strictServices.AddWhizbangMessageSecurity();
+    strictServices.AddSingleton<IReceptorRegistry>(registry);
+    var strictProvider = strictServices.BuildServiceProvider();
+    using var strictScope = strictProvider.CreateScope();
+    var strictInvoker = new ReceptorInvoker(registry, strictScope.ServiceProvider);
+
+    await Assert.That(async () =>
+      await strictInvoker.InvokeAsync(_createTypedEnvelopeWithoutScope(), LifecycleStage.PreDistributeDetached))
+      .Throws<SecurityContextRequiredException>()
+      .Because("an unexempt message with no scope and no extractor must be refused, which is what "
+             + "makes the exempt path above a guarantee rather than an accident of registration");
   }
 
   #region Data Sources
@@ -253,8 +266,10 @@ public class ReceptorInvokerSecurityGracefulTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

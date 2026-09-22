@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,17 +26,80 @@ namespace Whizbang.Core.Tests.Tags;
 public class MessageTagProcessorTests {
 
   [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task WithDebugLoggingOn_TheProcessorNarratesWhatItDecidedAsync() {
+    // The processor's diagnostic logging is guarded on IsEnabled(Debug), and the suite has always
+    // run it with a null logger — so the narration an operator turns on to find out WHY a tag hook
+    // did or did not fire had never executed. That is the half of this class people reach for when
+    // a hook silently does nothing.
+    _cleanupRegistry();
+    var logs = new List<string>();
+    var services = new ServiceCollection();
+    services.AddLogging(b => {
+      b.SetMinimumLevel(LogLevel.Debug);
+      b.AddProvider(new ListLoggerProvider(logs));
+    });
+    var sp = services.BuildServiceProvider();
+    var processor = new MessageTagProcessor(
+      new TagOptions(), sp.GetRequiredService<IServiceScopeFactory>());
+
+    await processor.ProcessTagsAsync(
+      new { OrderId = "123" }, typeof(object), LifecycleStage.PreOutboxInline);
+
+    // The narration only earns its keep if it names the two things the operator came for: which
+    // message type and lifecycle stage the processor was asked about, and how many registrations it
+    // found for that type. A hook that never fires is diagnosed by the second line reading zero.
+    await Assert.That(logs).Contains(l =>
+      l.Contains("ProcessTagsAsync called for Object", StringComparison.Ordinal)
+      && l.Contains(nameof(LifecycleStage.PreOutboxInline), StringComparison.Ordinal));
+    await Assert.That(logs).Contains(l =>
+      l.Contains("Found 0 tag registrations for Object", StringComparison.Ordinal));
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync() {
+    // Nothing can resolve a hook, so there is no work to do and no reason to build a scope. The
+    // early return is what keeps a host that registered no hooks from paying for tag processing
+    // on every message.
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+    var processor = new MessageTagProcessor(new TagOptions());
+
+    await processor.ProcessTagsAsync(
+      new TaggedTestMessage("123"), typeof(TaggedTestMessage), LifecycleStage.PreOutboxInline);
+
+    // "Without work" is the claim, and this message type does have a registration -- so a processor
+    // that had not returned early would have gone looking for it. The registry is never asked, which
+    // is the per-message cost the guard exists to avoid.
+    await Assert.That(registry.LookupCount).IsEqualTo(0);
+  }
+
+  [Test]
   public async Task ProcessAsync_WithNoHooks_CompletesSuccessfullyAsync() {
-    // Arrange
+    // Arrange - a resolver IS wired, so the no-hooks claim is about the registration list being
+    // empty rather than about the resolver-less early return (which
+    // WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync already pins).
+    var resolverCalls = 0;
     var options = new TagOptions();
-    var processor = new MessageTagProcessor(options);
+    var processor = new MessageTagProcessor(options, _ => {
+      resolverCalls++;
+      return null;
+    });
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { OrderId = "123" }
     );
 
-    // Act & Assert - no exception means success
+    // Act
     await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert - with no hooks registered for the attribute the processor asks the container for
+    // nothing. Resolving speculatively is the per-message cost this path exists to avoid, and it
+    // is the only externally visible difference between "no hooks ran" and "no hooks were sought".
+    await Assert.That(resolverCalls).IsEqualTo(0);
   }
 
   [Test]
@@ -167,7 +231,7 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseHook<SignalTagAttribute, CancellationTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(CancellationTrackingHook) ? hook : null);
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { }
@@ -265,7 +329,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -277,7 +341,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -288,7 +352,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -300,7 +364,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       _executionOrder.Add(_name);
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -309,7 +373,7 @@ public class MessageTagProcessorTests {
   private sealed class PayloadModifyingHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       var modified = new { Modified = true };
       return ValueTask.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(modified));
     }
@@ -320,7 +384,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       ReceivedPayload = context.Payload;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -342,7 +406,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       ReceivedScope = context.Scope;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -351,7 +415,7 @@ public class MessageTagProcessorTests {
   private sealed class PassThroughHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -363,7 +427,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -579,6 +643,9 @@ public class MessageTagProcessorTests {
   private sealed class TestMessageTagRegistry : IMessageTagRegistry {
     private readonly List<MessageTagRegistration> _registrations = [];
 
+    /// <summary>Number of times this registry has been asked for a message type's tags.</summary>
+    public int LookupCount { get; private set; }
+
     public void AddRegistration(Type messageType, Type attributeType, string tag, string? metricName = null) {
       _registrations.Add(new MessageTagRegistration {
         MessageType = messageType,
@@ -607,7 +674,36 @@ public class MessageTagProcessorTests {
     }
 
     public IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType) {
+      LookupCount++;
       return _registrations.Where(r => r.MessageType == messageType);
+    }
+  }
+
+  /// <summary>
+  /// Real <see cref="ILoggerProvider"/> collecting formatted messages, so a test can assert on the
+  /// narration the processor emits at Debug rather than only on it not throwing.
+  /// </summary>
+  private sealed class ListLoggerProvider(List<string> sink) : ILoggerProvider {
+    private readonly List<string> _sink = sink;
+
+    public ILogger CreateLogger(string categoryName) => new ListLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release -- the sink is owned by the test.
+    }
+
+    private sealed class ListLogger(List<string> sink) : ILogger {
+      private readonly List<string> _sink = sink;
+
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(
+          LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+          Exception? exception, Func<TState, Exception?, string> formatter) {
+        lock (_sink) {
+          _sink.Add(formatter(state, exception));
+        }
+      }
     }
   }
 
@@ -840,7 +936,6 @@ public class MessageTagProcessorTests {
   }
 
   private sealed class TrackingScope(Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
-    private readonly Func<Type, object?> _resolver = resolver;
 
     public bool Disposed { get; private set; }
     public IServiceProvider ServiceProvider { get; } = new TrackingServiceProvider(resolver);
@@ -1010,12 +1105,12 @@ public class MessageTagProcessorTests {
   }
 
   // Custom test attribute type (simulates a consumer's custom attributes)
-  private sealed class CustomTestTagAttribute : MessageTagAttribute {
-  }
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
+  private sealed class CustomTestTagAttribute : MessageTagAttribute;
 
   // Another custom attribute type with no dispatcher
-  private sealed class UnknownTestTagAttribute : MessageTagAttribute {
-  }
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
+  private sealed class UnknownTestTagAttribute : MessageTagAttribute;
 
   // Test message types
   private sealed record CustomTaggedMessage(string Value);
@@ -1068,7 +1163,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<CustomTestTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1443,7 +1538,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastContext = context;
       AllReceivedStages.Add(context.Stage);
@@ -1460,7 +1555,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       TotalCallCount++;
 
       // Only act on PostPerspectiveInline — the consumer pattern
@@ -1480,7 +1575,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1494,7 +1589,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1508,7 +1603,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       LastStage = context.Stage;
       return ValueTask.FromResult<JsonElement?>(null);
@@ -1521,7 +1616,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -1532,7 +1627,7 @@ public class MessageTagProcessorTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -1654,6 +1749,79 @@ public class MessageTagProcessorTests {
     await Assert.That(hook.InvokedCount).IsEqualTo(1);
     await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("warn-me", StringComparison.Ordinal))).IsTrue();
     await Assert.That(capturingLogger.Warnings.Any(w => w.Contains("LargePayloadMessage", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagWarningThreshold_WinsOverTheGlobalOneAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "wide-by-design");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UsePayloadSizeThresholds("wide-by-design", warningBytes: 100_000, errorBytes: null);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, new LoggingScopeFactory(capturingLogger, hook));
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty()
+      .Because("a tag whose payloads are legitimately wide raises its own line without touching the global one");
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagNullWarning_DisablesTheWarningForThatTagAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "unbounded");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UsePayloadSizeThresholds("unbounded", warningBytes: null, errorBytes: null);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, new LoggingScopeFactory(capturingLogger, hook));
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty();
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagErrorThreshold_ThrowsWhenTheGlobalOneIsOffAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "strict");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = null,
+      PayloadSizeErrorThresholdBytes = null
+    };
+    options.UsePayloadSizeThresholds("strict", warningBytes: null, errorBytes: 16);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await Assert.That(async () =>
+      await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion))
+      .ThrowsExactly<InvalidOperationException>();
+    await Assert.That(hook.InvokedCount).IsEqualTo(0);
   }
 
   [Test]

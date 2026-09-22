@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Integration</WhizbangTestTags>
     <!-- Integration: Tests that require external resources (git, file system) -->
     <WhizbangTestType>Integration</WhizbangTestType>
     <!-- Enable viewing generated files -->

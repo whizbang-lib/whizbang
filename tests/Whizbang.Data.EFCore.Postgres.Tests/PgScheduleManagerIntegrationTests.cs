@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// client-side argument guards.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard3")]
 public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
   private static DateTimeOffset _utc(int y, int mo, int d, int h, int mi) =>
     new(y, mo, d, h, mi, 0, TimeSpan.Zero);
@@ -200,7 +201,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     await Assert.That(await mgr.ResumeAsync(handle.ScheduleId)).IsTrue();
     await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)0);   // Active
     await Assert.That(await mgr.CancelAsync(handle.ScheduleId)).IsTrue();
-    await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)3);   // Cancelled
+    await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)3);   // Canceled
     await Assert.That(await mgr.PauseAsync(handle.ScheduleId)).IsFalse();           // terminal
   }
 

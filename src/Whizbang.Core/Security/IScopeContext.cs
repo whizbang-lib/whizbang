@@ -7,7 +7,7 @@ namespace Whizbang.Core.Security;
 /// Populated from HTTP claims, message headers, or explicit injection.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
 /// <example>
 /// // Check permissions
 /// if (scopeContext.HasPermission(Permission.Read("orders"))) {

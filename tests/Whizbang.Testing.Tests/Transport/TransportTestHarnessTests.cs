@@ -14,7 +14,7 @@ namespace Whizbang.Testing.Tests.Transport;
 /// The full happy-path of <c>SetupSubscriptionAsync</c> (warmup publish loop) is not
 /// exercised end-to-end because the harness hard-codes SubscriptionWarmup's 5-second
 /// initial delay with no way to configure it; instead setup is driven up to the warmup
-/// delay with a pre-cancelled token, which still wires the subscription and test awaiter.
+/// delay with a pre-canceled token, which still wires the subscription and test awaiter.
 /// </remarks>
 public class TransportTestHarnessTests {
   private static readonly TransportDestination _subscribeDestination = new("topic/subscription");
@@ -29,7 +29,7 @@ public class TransportTestHarnessTests {
   }
 
   /// <summary>
-  /// Runs setup far enough to register the subscription and test awaiter. The pre-cancelled
+  /// Runs setup far enough to register the subscription and test awaiter. The pre-canceled
   /// token aborts the warmup publish loop at its initial delay, deterministically.
   /// </summary>
   private static async Task _setupSubscriptionAsync(

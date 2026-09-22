@@ -29,7 +29,7 @@ internal static class TagRouteNamespaceConfigurationBinder {
     ArgumentNullException.ThrowIfNull(tagOptions);
 
     var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return;
     }
 

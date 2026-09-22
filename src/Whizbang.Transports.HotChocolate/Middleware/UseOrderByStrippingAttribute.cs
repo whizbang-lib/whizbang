@@ -24,7 +24,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// </example>
 /// </remarks>
 /// <docs>apis/graphql/sorting</docs>
-/// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/QueryExecutionTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Integration.Tests/QueryExecutionTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithSortArguments_StripsPreExistingOrderByAsync</tests>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithSortAscending_StripsAndAppliesAscendingAsync</tests>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingMiddlewareTests.cs:Middleware_WithNoSortArguments_PreservesOriginalOrderAsync</tests>

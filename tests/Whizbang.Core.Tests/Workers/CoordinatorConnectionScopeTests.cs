@@ -32,7 +32,7 @@ public class CoordinatorConnectionScopeTests {
     // No pin in context. The Dapper path should construct a fresh conn from
     // the fresh-string and try to open it — both succeeding (which we can't
     // verify in unit) or failing against the unreachable host (which we CAN).
-    var freshUnreachable = $"Host=127.0.0.99;Port=1;Database=fresh-sentinel;Username=x;Password=x;Timeout=1;ApplicationName=FRESH_PATH_SENTINEL";
+    const string freshUnreachable = "Host=127.0.0.99;Port=1;Database=fresh-sentinel;Username=x;Password=x;Timeout=1;ApplicationName=FRESH_PATH_SENTINEL";
 
     NpgsqlException? thrown = null;
     try {
@@ -121,14 +121,14 @@ public class CoordinatorConnectionScopeTests {
   }
 
   [Test]
-  public async Task AcquireAsync_CancelledToken_PropagatesOperationCanceledAsync() {
+  public async Task AcquireAsync_CanceledToken_PropagatesOperationCanceledAsync() {
     var connString = "Host=192.0.2.60;Port=1;Database=x;Username=x;Password=x;Timeout=1";
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await CoordinatorConnectionScope.AcquireAsync(connString, cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("Already-cancelled CT MUST short-circuit before any network round-trip — workers rely on CT for graceful shutdown.");
+      .Because("Already-canceled CT MUST short-circuit before any network round-trip — workers rely on CT for graceful shutdown.");
   }
 }

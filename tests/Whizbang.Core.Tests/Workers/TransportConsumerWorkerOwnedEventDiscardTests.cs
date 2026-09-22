@@ -5,15 +5,18 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -129,7 +132,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedCommand_FromOtherService_IsProcessedAsync() {
-    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createCommandEnvelope(sourceServiceName: OTHER_SERVICE);
@@ -141,10 +147,11 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // Message was NOT discarded — it attempted processing (serialization threw, but the
-    // echo check passed it through). The key assertion: the message was NOT short-circuited
-    // by the echo discard. We verify the inverse: if it WAS discarded, the test above
-    // (OwnedCommand_FromThisService_IsDiscardedAsync) proves that path works.
+
+    // The echo discard is what this test is about, and every discard is counted: the message
+    // arrived (received=1) and the echo check let it through (no deduplicated count). A regression
+    // that treated cross-service commands as self-echo would swallow real work silently.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
@@ -157,7 +164,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task NonOwnedEvent_IsNotDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
@@ -169,7 +179,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // Non-owned events are never discarded by the echo check
+
+    // Non-owned events are never discarded by the echo check — an over-broad namespace match
+    // here would drop every other service's events on the floor, counted as deduplicated.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
@@ -181,7 +194,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task NoOwnedDomains_AllMessagesPassThroughAsync() {
-    var worker = _createWorker(ownedDomains: [], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE);
@@ -193,14 +209,39 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // With no owned domains, the echo check is skipped entirely
+
+    // With no owned domains the echo check is skipped entirely — the very same message the
+    // owned-domain tests above discard passes through untouched here.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
   // Test Infrastructure
   // ========================================
 
-  private static TestWorkerWrapper _createWorker(string[] ownedDomains, string serviceName) {
+  /// <summary>
+  /// The pass-through verdict, stated in the only place it is observable: the transport counted
+  /// the message as received, and the echo discard — which increments the deduplicated counter on
+  /// every drop — counted nothing. Asserting the received leg too keeps the "no discard" leg from
+  /// passing vacuously when a message never reached the handler at all.
+  /// </summary>
+  private static async Task _assertReceivedButNotDiscardedAsync(MetricAssertionHelper metricHelper) {
+    var received = metricHelper.GetByName("whizbang.transport.inbox.messages_received")
+      .Where(m => m.Value > 0)
+      .Sum(m => m.Value);
+    await Assert.That(received).IsEqualTo(1d)
+      .Because("the message must reach the receive path — otherwise 'not discarded' proves nothing");
+
+    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_deduplicated")
+      .Where(m => m.Value > 0)
+      .ToList();
+    await Assert.That(discarded).IsEmpty()
+      .Because("the echo check must NOT discard this message — every discard increments the "
+             + "deduplicated counter, so a non-zero series here is a swallowed message");
+  }
+
+  private static TestWorkerWrapper _createWorker(
+      string[] ownedDomains, string serviceName, TransportMetrics? metrics = null) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
     var noOpCoordinator = new NoOpWorkCoordinator();
@@ -208,24 +249,34 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new StubEventTypeProvider());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
-    services.Configure<RoutingOptions>(opts => { opts.OwnDomains(ownedDomains); });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains(ownedDomains));
     var sp = services.BuildServiceProvider();
 
     var instanceProvider = new StubServiceInstanceProvider(serviceName);
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
-      metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: metrics,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: instanceProvider,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
-      serviceInstanceProvider: instanceProvider
-    );
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }
@@ -323,7 +374,9 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     public async Task StopAsync() {
-      _cts?.Cancel();
+      if (_cts is not null) {
+        await _cts.CancelAsync();
+      }
       await Task.Yield();
     }
 
@@ -344,7 +397,6 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   }
 
   private sealed class StubTransport : ITransport, IDisposable {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -361,21 +413,12 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
       if (_batchHandler != null) {
         await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-      } else if (_handler != null) {
-        await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination, CancellationToken cancellationToken = default) {
-      _handler = handler;
-      _subscribeSignal.Release();
-      return Task.FromResult<ISubscription>(new StubSubscription());
-    }
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
       TransportDestination destination,
@@ -394,7 +437,6 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   private sealed class StubSubscription : ISubscription {
     public bool IsActive => true;
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
-    public Task UnsubscribeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs()); }

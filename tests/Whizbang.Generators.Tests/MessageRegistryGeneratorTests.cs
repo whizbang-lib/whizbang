@@ -1282,7 +1282,7 @@ public class SomeClass {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_SendAsyncWithZeroArguments_ReturnsNullAsync() {
-    // Arrange - Tests ExtractDispatcher line 121: if (invocation.ArgumentList.Arguments.Count > 0)
+    // Arrange - exercises ExtractDispatcher's guard on a non-empty argument list
     const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;

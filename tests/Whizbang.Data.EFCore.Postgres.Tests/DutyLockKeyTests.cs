@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/DutyLockKey.cs</code-under-test>
 [Category("Migrations")]
+[Category("Shard3")]
 public class DutyLockKeyTests {
 
   [Test]

@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security-context-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
 /// </remarks>
@@ -55,6 +55,7 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : Forw
     var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
 
     var envelope = new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [

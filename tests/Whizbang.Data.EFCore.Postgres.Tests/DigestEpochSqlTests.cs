@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard2")]
 public class DigestEpochSqlTests : EFCoreTestBase {
 
   private const string ZERO = "00000000-0000-0000-0000-000000000000";
@@ -76,19 +77,18 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", tenant is null ? "null" : $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue("seq", commitSeq);
-      store.Parameters.AddWithValue("flags", flags);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta",
-        deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue("meta",
+      deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
+    await body.ExecuteNonQueryAsync();
   }
 
   /// <summary>Seeds one RECEIVED-lane event carrying the origin's stamp; the local commit sequence
@@ -107,18 +107,17 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("origin", origin);
+      store.Parameters.AddWithValue(nameof(origin), origin);
       store.Parameters.AddWithValue("oseq", originSeq);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn, int settleSeconds = 3600, int maxEpochs = 100) {
@@ -182,10 +181,10 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull()
       .Because("closing must materialize the bucket-epoch fold row");
-    var expected = await _expectedFoldAsync(conn, e1, e2);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
       .Because("the fold must be the XOR of exactly the epoch's events — lane 0");
-    await Assert.That(row.Value.Hi).IsEqualTo(expected.Hi)
+    await Assert.That(row.Value.Hi).IsEqualTo(Hi)
       .Because("and lane 1; a wrong fold silently corrupts every future range comparison");
     await Assert.That(row.Value.Count).IsEqualTo(2);
 
@@ -234,10 +233,10 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull();
-    var expected = await _expectedFoldAsync(conn, kept);
+    var (Lo, _) = await _expectedFoldAsync(conn, kept);
     await Assert.That(row!.Value.Count).IsEqualTo(1)
       .Because("ephemeral and at-most-once events must not be counted — they are outside the audited set");
-    await Assert.That(row.Value.Lo).IsEqualTo(expected.Lo)
+    await Assert.That(row.Value.Lo).IsEqualTo(Lo)
       .Because("and must not be folded — otherwise every reap would corrupt a sealed epoch");
   }
 
@@ -261,8 +260,8 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     var row = await _epochRowAsync(conn, origin.ToString(), "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull()
       .Because("each origin gets its own lane with its own frontier");
-    var expected = await _expectedFoldAsync(conn, e1, e2);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(row.Value.Count).IsEqualTo(2);
 
     await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNull()
@@ -317,8 +316,8 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     }
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
-    var expected = await _expectedFoldAsync(conn, e1, late);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, late);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
       .Because("after refold the epoch reflects the repaired reality, not the stale pre-repair fold");
     await Assert.That(row.Value.Count).IsEqualTo(2);
   }
@@ -326,7 +325,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
   [Test]
   public async Task EpochWidth_PinnedAtFirstClose_LaterSettingChangeIsIgnoredAsync() {
     // Epoch identity is floor(seq / width): changing the width remaps every epoch boundary and
-    // makes existing folds meaningless. The width is therefore pinned per lane at first close;
+    // makes existing folds meaningless. The width is therefore pinned per lane at first close —
     // changing the setting afterwards must not shift the boundaries of an existing lane.
     await using var conn = await _openAsync();
     await _setWidthAsync(conn, 100);
@@ -370,4 +369,104 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNotNull()
       .Because("the live effect — a persisted epoch row — is the proof the call reached the database");
   }
+
+  [Test]
+  public async Task CloseDigestEpochs_StarvedLane_GoesFirstUnderTheBudgetAsync() {
+    // #515 sub-fix 1: the closure budget was global and the lane loop UNORDERED, so
+    // whichever lanes the hash-agg emitted first ate the whole budget every cycle and
+    // later lanes starved deterministically. Lanes now order least-recently-advanced
+    // first, so the budget round-robins across cycles by construction.
+    await using var conn = await _openAsync();
+    await _setWidthAsync(conn, 100);
+    var starved = Guid.NewGuid();
+    var greedy = Guid.NewGuid();
+    // Seed the GREEDY lane's events first — an unordered scan tends to emit it first.
+    await _seedReceivedAsync(conn, greedy, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, greedy, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    await _seedReceivedAsync(conn, starved, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, starved, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    // The starved lane's frontier has not advanced for hours; the greedy lane's just did.
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_digest_epoch_frontiers (origin_service_id, closed_through_epoch, epoch_width, updated_at)
+        VALUES (@starved, -1, 100, NOW() - INTERVAL '6 hours'),
+               (@greedy, -1, 100, NOW() - INTERVAL '1 second')";
+      seed.Parameters.AddWithValue("starved", starved);
+      seed.Parameters.AddWithValue("greedy", greedy);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    var closed = await _closeAsync(conn, maxEpochs: 1);
+
+    await Assert.That(closed).IsEqualTo(1);
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT closed_through_epoch FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", starved);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? -1L)).IsEqualTo(0L)
+      .Because("one budget slot exists and the lane that has waited LONGEST must take it — "
+             + "a frontier frozen for days while other lanes close every cycle was the "
+             + "observed starvation");
+  }
+
+  [Test]
+  public async Task CloseDigestEpochs_PermanentTrickle_StallEscapeClosesAnywayAsync() {
+    // #515 sub-fix 2: the fresh-arrival guard is re-armed by every new in-range arrival, so
+    // a lane receiving a permanent trickle of old-sequence rows (redelivery, repair) froze
+    // its frontier FOREVER. After the stall window (settings key
+    // integrity_epoch_max_stall_seconds, default 3600) the epoch closes anyway — the verify
+    // sweep recomputes closed epochs and refolds on drift, so a late straggler is corrected
+    // by the existing backstop instead of pinning the lane for days.
+    await using var conn = await _openAsync();
+    await _setWidthAsync(conn, 100);
+    var origin = Guid.NewGuid();
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 50, settled: false); // fresh, old seq
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    // The lane has been stalled for 2 hours (past the 1-hour default stall window).
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_digest_epoch_frontiers (origin_service_id, closed_through_epoch, epoch_width, updated_at)
+        VALUES (@lane, -1, 100, NOW() - INTERVAL '2 hours')";
+      seed.Parameters.AddWithValue("lane", origin);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    var closed = await _closeAsync(conn);
+
+    await Assert.That(closed).IsGreaterThanOrEqualTo(1)
+      .Because("a lane stalled past the window closes its blocked epoch anyway — frozen-for-"
+             + "days frontiers were observed live while the store ran epochs ahead");
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT closed_through_epoch FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", origin);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? -1L)).IsGreaterThanOrEqualTo(0L);
+  }
+
+  [Test]
+  public async Task CloseDigestEpochs_LedgerOnlyOrigin_GetsAFrontierRowAsync() {
+    // #515 sub-fix 3: an origin whose events never landed locally — the LOSS case — had
+    // ledger buckets but no frontier row, so verify skipped the lane and rebase no-opped:
+    // the one origin most worth flagging was structurally invisible. Lanes now source from
+    // the ledger too, so the frontier row exists and downstream machinery sees the lane.
+    await using var conn = await _openAsync();
+    var ghostOrigin = Guid.NewGuid();
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_integrity_ledger (origin_service_id, tenant_scope, event_type, stream_id, origin_lo, origin_hi, local_lo, local_hi)
+        VALUES (@origin, '', 'Contracts.GhostEvent', @stream, 1, 2, 0, 0)";
+      seed.Parameters.AddWithValue("origin", ghostOrigin);
+      seed.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    _ = await _closeAsync(conn);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT count(*) FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", ghostOrigin);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(1L)
+      .Because("an origin with ledger history but no local events is the loss signature — "
+             + "it must exist as a lane for verify to flag, not vanish from the audit");
+  }
+
 }

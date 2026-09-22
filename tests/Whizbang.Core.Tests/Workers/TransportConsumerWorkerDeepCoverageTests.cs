@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -6,6 +8,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -15,6 +18,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -57,25 +61,40 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // Subscribing is what registers the transport's handler, so this signal -- not a fixed delay --
+    // is what lets the simulated delivery below reach the worker at all.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var metadataJson = JsonSerializer.SerializeToElement(
       new Dictionary<string, object> { { "AggregateId", expectedStreamId.ToString() } });
@@ -102,10 +121,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(expectedStreamId)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(expectedStreamId)
       .Because("Valid GUID AggregateId should be extracted from metadata");
   }
 
@@ -124,25 +143,39 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Envelope with empty Hops (no metadata at all)
     var envelope = new MessageEnvelope<JsonElement> {
@@ -156,10 +189,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(messageId.Value)
       .Because("Empty hops should fall back to MessageId for StreamId");
   }
 
@@ -178,25 +211,39 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var metadataJson = JsonSerializer.SerializeToElement(
       new Dictionary<string, object> { { "SomeOtherKey", "value" } });
@@ -223,10 +270,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(messageId.Value)
       .Because("Missing AggregateId key should fall back to MessageId");
   }
 
@@ -245,30 +292,49 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ITransportReadinessCheck>(new FalseReadinessCheck());
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    using var cts = new CancellationTokenSource();
 
     // Act
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await worker.StartAsync(cts.Token);
+
+    // The readiness-false branch settles SubscriptionsReady on its way out (so readiness waiters
+    // don't hang) -- the only signal this path emits. Awaiting it is what makes the "never
+    // subscribed" assertion below discriminating: a fixed delay was equally satisfied by a worker
+    // whose ExecuteAsync had not been dequeued yet, and the timed CTS could cancel the token
+    // before the body ever ran.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert - no subscriptions should be created when readiness returns false
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
       .Because("Worker should not subscribe when readiness check returns false");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -286,29 +352,46 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<ITransportReadinessCheck>(new TrueReadinessCheck());
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Await the transport's own subscribe signal rather than sleeping. A 300 ms delay decided by
+    // thread-pool timing whether ExecuteAsync had been dequeued at all, so this test could fail
+    // under load with the worker perfectly healthy -- and would also have passed had the body
+    // never run, if the assertion had been "no subscribe" instead of "one subscribe".
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should subscribe after readiness check returns true");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -327,6 +410,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Options.Create(
       new RoutingOptions().OwnDomains("myapp.users")));
@@ -334,18 +418,33 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Provisioning happens before the first subscribe, so the transport's subscribe signal proves
+    // the provisioning decision below is already settled. Sleeping instead made this test a bet
+    // on the thread pool having dequeued ExecuteAsync within 300 ms.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(provisioner.WasCalled).IsTrue()
@@ -353,7 +452,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Subscriptions should be created after provisioning");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -375,32 +474,46 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - no completions/failures since it was a duplicate
     await Assert.That(workStrategy.CompletionCount).IsEqualTo(0)
@@ -419,28 +532,53 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    var workStrategy = new ThrowingOnQueueStrategy();
+    var workStrategy = new DeepCoverageWorkStrategy(messageId.Value);
+
+    // StartActivity returns null with nobody listening, so the whole tagging path is dead unless
+    // the test subscribes. Activities are process-wide; the delivery below is matched by its
+    // message id rather than by being the only one in the list.
+    var captured = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = a => { lock (captured) { captured.Add(a); } }
+    };
+    ActivitySource.AddActivityListener(listener);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Envelope with traceparent to create activity for error tagging
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -458,20 +596,38 @@ public class TransportConsumerWorkerDeepCoverageTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    // Not an envelope type name at all: the inner-type parser rejects it, and it does so inside the
+    // try that owns the inbox activity. That is the failure this test is about -- the receive span
+    // has to come back marked as an error, or a failed delivery is indistinguishable from a healthy
+    // one in a trace.
+    const string envelopeType = "TestApp.NotAnEnvelopeTypeName, TestApp";
 
-    // Act - per-message error isolation catches the exception (Activity error tags still set internally)
+    // Act - per-message error isolation catches the exception; the span records it
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
+
+    // Assert
+    Activity? inboxActivity;
+    lock (captured) {
+      inboxActivity = captured.Find(
+        a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString());
+    }
+    await Assert.That(inboxActivity).IsNotNull()
+      .Because("the envelope carries a traceparent, so the receive is traced");
+    await Assert.That(inboxActivity!.Status).IsEqualTo(ActivityStatusCode.Error);
+    await Assert.That(inboxActivity.StatusDescription).Contains("TestApp.NotAnEnvelopeTypeName");
+    // The failed message is dropped rather than stored: a row that cannot be deserialized would be
+    // redelivered forever.
+    await Assert.That(noOpCoordinator.StoreInboxCallCount).IsEqualTo(0);
   }
 
   // ========================================
-  // _handleMessageAsync with whitespace envelopeType throws
+  // _handleMessageAsync with whitespace envelopeType is logged and dropped
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithWhitespaceEnvelopeType_ThrowsInvalidOperationExceptionAsync() {
+  public async Task HandleMessage_WithWhitespaceEnvelopeType_LogsTheFailureAndDropsTheMessageAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new DeepCoverageTransport();
@@ -480,33 +636,60 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value);
 
+    var loggedFailures = new List<Exception>();
+    var loggerFactory = LoggerFactory.Create(builder => {
+      builder.SetMinimumLevel(LogLevel.Error);
+      builder.AddProvider(new ExceptionCollectingLoggerProvider(loggedFailures));
+    });
+    var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
+
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
 
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, "   ");
 
-    cts.Cancel();
+    await cts.CancelAsync();
+
+    // Assert - the exception does not escape the handler (an escape would abandon the whole batch),
+    // so the two things that DO leave the worker are what the guarantee rests on: the message is
+    // dropped instead of stored, and the reason is on record.
+    await Assert.That(noOpCoordinator.StoreInboxCallCount).IsEqualTo(0);
+    await Assert.That(loggedFailures).Contains(e => e is InvalidOperationException);
   }
 
   // ========================================
@@ -524,36 +707,50 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     // Intentionally NOT registering IEventTypeProvider
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - JsonElement payload is not IEvent, so isEvent should be false
-    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages[^1].IsEvent).IsFalse()
       .Because("JsonElement payload is not IEvent so runtime check should return false");
   }
 
@@ -577,34 +774,58 @@ public class TransportConsumerWorkerDeepCoverageTests {
     };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, resilienceOptions,
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: resilienceOptions,
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Allow subscription to fail
+    await worker.StartAsync(cts.Token);
+
+    // SubscriptionsReady settles after the initial subscription pass, failures included, so this
+    // is proof the one allowed attempt has already failed -- what the 300 ms sleep only guessed at.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.SubscriptionStates.Values.All(s => s.Subscription is null)).IsTrue()
+      .Because("the failed attempt leaves a null Subscription, which is the state whose disposal " +
+               "during recovery this test is about");
 
     // Now stop failing and simulate recovery
     transport.StopFailing();
-    await transport.SimulateRecoveryAsync();
-    await Task.Delay(200);
 
-    cts.Cancel();
+    // SimulateRecoveryAsync awaits the worker's recovery handler, which awaits the re-subscribe --
+    // recovery is therefore complete when this returns and there is nothing left to sleep for.
+    await transport.SimulateRecoveryAsync();
+
+    await cts.CancelAsync();
 
     // Assert - recovery should succeed without throwing even when subscription was null
     await Assert.That(transport.RecoveryCount).IsEqualTo(1)
       .Because("Recovery handler should have been invoked");
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
+      .Because("one failed initial attempt plus one re-subscribe driven by recovery");
+    await Assert.That(worker.SubscriptionStates.Values.All(s => s.Status == SubscriptionStatus.Healthy)).IsTrue()
+      .Because("recovery re-established the subscription that had failed");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -630,42 +851,51 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, resilienceOptions,
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: resilienceOptions,
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
-    // Wait for initial subscription attempt to fail (condition-based, not fixed delay)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-    while (transport.SubscribeCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // SubscriptionsReady settles once the initial pass is done, failures included -- proof the one
+    // allowed attempt already failed and left a Failed state for the health monitor to find.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Stop failing so health monitor recovery succeeds
     transport.StopFailing();
 
-    // Wait for health monitor to retry (condition-based, not fixed delay)
-    deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-    while (transport.SubscribeCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // Wait on the transport's own "N subscribes reached" signal rather than polling: the recovery
+    // attempt arrives on the health monitor's cadence, and a poll loop that runs out of deadline
+    // falls through to the assertion instead of failing on the wait.
+    await transport.WaitForSubscribeCountAsync(2).WaitAsync(TimeSpan.FromSeconds(30));
 
     // At this point health monitor should have attempted recovery
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(2)
       .Because("Health monitor should retry failed subscriptions");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -684,26 +914,41 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: false);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddScoped<IReceptorInvoker>(_ => invoker);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, // No deserializer
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      // No deserializer
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -715,7 +960,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       // deserialization may fail
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - invoker should NOT be called since deserializer is null
     await Assert.That(invoker.InvokeCallCount).IsEqualTo(0)
@@ -737,25 +982,39 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Create envelope with valid traceparent to exercise activity creation path
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -777,7 +1036,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act - should succeed and activity should be created with "Inbox OrderCreated" name
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message processed successfully
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
@@ -798,25 +1057,39 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     // Type without assembly qualifier (no comma in message type)
@@ -824,10 +1097,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().HandlerName).IsEqualTo("SimpleCommandHandler")
+    await Assert.That(noOpCoordinator.StoredMessages[^1].HandlerName).IsEqualTo("SimpleCommandHandler")
       .Because("Simple type name without namespace dots should work");
   }
 
@@ -844,24 +1117,42 @@ public class TransportConsumerWorkerDeepCoverageTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // Both destinations must actually be subscribed before stopping, or the dispose assertions
+    // below iterate an empty list and pass without proving anything. SubscriptionsReady settles
+    // only after the initial pass over every destination.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert states exist before stop
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(2);
+    await Assert.That(transport.SubscriptionCount).IsEqualTo(2)
+      .Because("both destinations should be subscribed before StopAsync disposes them");
 
     // Act
     await worker.StopAsync(CancellationToken.None);
@@ -881,7 +1172,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
-  public async Task ExecuteAsync_WhenCancelled_LogsCancellationRequestedAsync() {
+  public async Task ExecuteAsync_WhenCanceled_LogsCancellationRequestedAsync() {
     // Arrange
     var transport = new DeepCoverageTransport();
     var options = new TransportConsumerOptions();
@@ -891,31 +1182,48 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      logger
-    );
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Act - cancel to trigger the OperationCanceledException catch
-    cts.Cancel();
-    await Task.Delay(100);
+    await cts.CancelAsync();
+
+    // ExecuteAsync catches the cancellation, logs it and returns, so the completion of its task is
+    // the signal that the catch actually ran. A 100 ms sleep proved nothing about it.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+      .Because("cancellation must be caught and logged, not faulted out of ExecuteAsync");
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should have subscribed before cancellation");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -933,26 +1241,40 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddSingleton<IEventTypeProvider>(new DeepCoverageEventTypeProvider());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     // Use a command type (not in the event type provider list)
@@ -960,10 +1282,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - should not be detected as event since SomeCommand is not in event list
-    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages[^1].IsEvent).IsFalse()
       .Because("Message type not in IEventTypeProvider list should not be detected as event");
   }
 
@@ -982,25 +1304,39 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value, returnEmptyInboxWork: true);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Hop with null metadata (no Metadata property set)
     var envelope = new MessageEnvelope<JsonElement> {
@@ -1021,10 +1357,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(messageId.Value)
       .Because("Null metadata should fall back to MessageId");
   }
 
@@ -1040,21 +1376,53 @@ public class TransportConsumerWorkerDeepCoverageTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      scopeFactory, new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
-    // Act & Assert - should not throw with null subscriptions
+    // Act - an admin or health-probe pause arriving before the host finished starting
     await worker.PauseAllSubscriptionsAsync();
     await worker.ResumeAllSubscriptionsAsync();
+
+    // Assert - there was genuinely nothing to pause: neither call reached the transport
+    await Assert.That(transport.SubscriptionCount).IsEqualTo(0)
+      .Because("no subscription exists before ExecuteAsync runs, so pause/resume touch nothing");
+
+    // ...and the premature pause left no latch behind. This is the failure that would actually
+    // hurt: a pause landing during startup that made the subscriptions come up paused would stop
+    // consumption for the life of the process with nothing in the logs to say why.
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(transport.SubscriptionCount).IsGreaterThan(0);
+    foreach (var subscription in transport.Subscriptions) {
+      await Assert.That(subscription.IsActive).IsTrue()
+        .Because("subscriptions created after a pre-start pause must come up active");
+    }
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   // ========================================
@@ -1081,14 +1449,28 @@ public class TransportConsumerWorkerDeepCoverageTests {
   // ========================================
 
   private sealed class DeepCoverageTransport : ITransport {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<DeepCoverageSubscription> _subscriptions = [];
+    private readonly TaskCompletionSource _firstSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// A body-emitted signal to await instead of sleeping: .NET 10 dispatches
+    /// <c>ExecuteAsync</c> via <c>Task.Run</c>, so a fixed delay is a bet on the thread pool
+    /// rather than proof the subscribe path ran.
+    /// </remarks>
+    public Task FirstSubscribe => _firstSubscribe.Task;
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public IReadOnlyList<DeepCoverageSubscription> Subscriptions => _subscriptions;
+
+    /// <summary>How many subscriptions the worker has created against this transport.</summary>
+    public int SubscriptionCount => _subscriptions.Count;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1099,17 +1481,6 @@ public class TransportConsumerWorkerDeepCoverageTests {
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      _handler = handler;
-      var subscription = new DeepCoverageSubscription();
-      _subscriptions.Add(subscription);
-      return Task.FromResult<ISubscription>(subscription);
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -1119,6 +1490,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       _batchHandler = batchHandler;
       var subscription = new DeepCoverageSubscription();
       _subscriptions.Add(subscription);
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(subscription);
     }
 
@@ -1133,8 +1505,6 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
       if (_batchHandler != null) {
         await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-      } else if (_handler != null) {
-        await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
   }
@@ -1183,17 +1553,6 @@ public class TransportConsumerWorkerDeepCoverageTests {
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      if (_shouldFail) {
-        throw new InvalidOperationException("Simulated subscription failure");
-      }
-      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -1217,10 +1576,50 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
   private sealed class DeepCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
     private readonly HashSet<string> _failingTopics = [.. failingTopics];
+    private readonly Lock _subscribeLock = new();
+    private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
     private int _subscribeCallCount;
     private volatile bool _isFailing = true;
 
-    public int SubscribeCallCount => Volatile.Read(ref _subscribeCallCount);
+    /// <summary>How many subscribe attempts the worker made. Written from the worker's threads.</summary>
+    public int SubscribeCallCount {
+      get { lock (_subscribeLock) { return _subscribeCallCount; } }
+    }
+
+    /// <summary>
+    /// Completes once at least <paramref name="count"/> subscribe attempts have been made.
+    /// </summary>
+    /// <remarks>
+    /// The health monitor's recovery attempt runs on its own cadence, so the subscribe count is the
+    /// only evidence it happened. A body-emitted signal fails loudly if it never does, where the
+    /// poll loop this replaced ran out of deadline and fell through to the assertion instead.
+    /// </remarks>
+    /// <param name="count">The subscribe-attempt count to wait for.</param>
+    /// <returns>A task that completes when the count is reached.</returns>
+    public Task WaitForSubscribeCountAsync(int count) {
+      lock (_subscribeLock) {
+        if (_subscribeCallCount >= count) { return Task.CompletedTask; }
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _countWaiters.Add((count, signal));
+        return signal.Task;
+      }
+    }
+
+    private void _recordSubscribe() {
+      List<TaskCompletionSource> ready = [];
+      lock (_subscribeLock) {
+        _subscribeCallCount++;
+        for (var i = _countWaiters.Count - 1; i >= 0; i--) {
+          if (_subscribeCallCount >= _countWaiters[i].Count) {
+            ready.Add(_countWaiters[i].Signal);
+            _countWaiters.RemoveAt(i);
+          }
+        }
+      }
+      // Completed outside the lock: a continuation must never run while holding it.
+      foreach (var signal in ready) { signal.TrySetResult(); }
+    }
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
@@ -1235,23 +1634,12 @@ public class TransportConsumerWorkerDeepCoverageTests {
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCallCount);
-      if (_isFailing && _failingTopics.Contains(destination.Address)) {
-        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
-      }
-      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCallCount);
+      _recordSubscribe();
       if (_isFailing && _failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }
@@ -1286,17 +1674,17 @@ public class TransportConsumerWorkerDeepCoverageTests {
       LastQueuedIsEvent = message.IsEvent;
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) {
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
       CompletionCount++;
     }
 
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) {
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
       FailureCount++;
     }
 
     public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -1339,27 +1727,34 @@ public class TransportConsumerWorkerDeepCoverageTests {
     }
   }
 
-  private sealed class ThrowingOnQueueStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) {
-      throw new InvalidOperationException("Simulated queue failure");
+  /// <summary>
+  /// Collects the exceptions handed to <c>LogError</c>, so a test can assert on the failure the
+  /// worker swallowed. Per-message error isolation means the exception itself never reaches the
+  /// caller, and the log entry is the only place it survives.
+  /// </summary>
+  private sealed class ExceptionCollectingLoggerProvider(List<Exception> sink) : ILoggerProvider {
+    private readonly List<Exception> _sink = sink;
+
+    public ILogger CreateLogger(string categoryName) => new CollectingLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release -- the sink is owned by the test.
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-    public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    private sealed class CollectingLogger(List<Exception> sink) : ILogger {
+      private readonly List<Exception> _sink = sink;
 
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return Task.FromResult(new WorkBatch {
-        InboxWork = [],
-        OutboxWork = [],
-        PerspectiveWork = []
-      });
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(
+          LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+          Exception? exception, Func<TState, Exception?, string> formatter) {
+        if (exception is not null) {
+          lock (_sink) {
+            _sink.Add(exception);
+          }
+        }
+      }
     }
   }
 
@@ -1407,5 +1802,5 @@ public class TransportConsumerWorkerDeepCoverageTests {
     }
   }
 
-  private sealed class DeepTestEvent : IEvent { }
+  private sealed class DeepTestEvent : IEvent;
 }

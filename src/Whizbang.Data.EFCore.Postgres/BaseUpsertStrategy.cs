@@ -53,8 +53,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <c>InfrastructureJsonContext.Default</c>. The chain MUST place a context that
   /// returns object-mode <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
   /// for <c>[WhizbangId]</c> structs first, so EF Core 10's nested-object byte format
-  /// is matched (otherwise reads through EF will throw <c>InvalidOperationException:
-  /// Invalid token type</c>).
+  /// is matched (otherwise reads through EF will throw <code>InvalidOperationException:
+  /// Invalid token type</code>).
   /// </para>
   /// <para>
   /// Setting this hook is process-wide and shared by every <see cref="BaseUpsertStrategy"/>
@@ -65,28 +65,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
 
   /// <summary>
-  /// Persistence serialization options, sourced from the cross-assembly union
-  /// (<see cref="JsonContextRegistry.CreateCombinedOptions(SerializationProfile)"/> under the
-  /// <see cref="SerializationProfile.Persistence"/> profile — object-mode WhizbangId for EF Core 10's
-  /// jsonb byte format, aggregated across every assembly), combined with any user-supplied options from
-  /// <see cref="PathOnePersistenceOptionsProvider"/> as a fallback resolver. Rebuilt per call so late
-  /// assembly registrations and test-supplied options are always reflected — replacing the prior
-  /// process-wide single-slot snapshot that only ever held one assembly's view (and raced across tests).
+  /// Persistence serialization options: the one set every perspective document is written and read
+  /// with, from <see cref="Perspectives.PerspectiveDocumentSerialization"/>, with any user-supplied
+  /// options from <see cref="PathOnePersistenceOptionsProvider"/> folded in as a fallback resolver.
+  /// Reused until the registry changes, so late assembly registrations are reflected without
+  /// rebuilding the serializer's metadata cache on every upsert.
   /// </summary>
-  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) {
-    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
-    var user = userProvider?.Invoke();
-    if (user?.TypeInfoResolver is null) {
-      return union;
-    }
-
-    // Union first (object-mode WhizbangId + all registered persistence contexts), user options as a
-    // fallback for anything the union doesn't cover. User converters are intentionally NOT copied — the
-    // Persistence profile deliberately omits the scalar WhizbangId converters so object-mode wins.
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver)
-    };
-  }
+  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) =>
+    Perspectives.PerspectiveDocumentSerialization.Resolve(userProvider);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(
@@ -217,7 +203,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
         }
         return;
-      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && _isDuplicateKeyException(ex)) {
+      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && IsDuplicateKeyException(ex)) {
         // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
         // Clear the failed change tracker state and retry as an UPDATE.
         context.ChangeTracker.Clear();
@@ -346,7 +332,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var schema = entityType?.GetSchema();
     var qualifiedTable = string.IsNullOrEmpty(schema)
       ? args.TableName
-      : $"\"{schema}\".{args.TableName}";
+      : $"{Whizbang.Data.Postgres.PgIdentifier.Quote(schema)}.{args.TableName}";
 
     // Opt-in via IVersionedApplyTarget: a model that implements the marker gets a stricter
     // WHERE clause that adds a UUIDv7 EventId tie-breaker on top of the legacy CommitSequence
@@ -447,7 +433,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <summary>
   /// Detects PostgreSQL unique-constraint violation (23505) inside a DbUpdateException.
   /// </summary>
-  private static bool _isDuplicateKeyException(DbUpdateException ex) {
+  internal static bool IsDuplicateKeyException(DbUpdateException ex) {
     for (var inner = ex.InnerException; inner != null; inner = inner.InnerException) {
       // Npgsql.PostgresException exposes SqlState; check via reflection-free duck typing
       if (inner is Npgsql.PostgresException pg && pg.SqlState == "23505") {
@@ -568,7 +554,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         // When forceUpdateScope is true (IScopeEvent), scope IS included in UPDATE.
         // Guard: only mark as unmodified when Scope is mapped as a complex property.
         var entityType = context.Entry(row).Metadata;
-        if (entityType.FindComplexProperty(nameof(PerspectiveRow<TModel>.Scope)) != null) {
+        if (entityType.FindComplexProperty(nameof(PerspectiveRow<>.Scope)) != null) {
           context.Entry(row).ComplexProperty(e => e.Scope).IsModified = false;
         }
       }
@@ -661,7 +647,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// Required for EF Core 10 ComplexProperty().ToJson() to avoid index corruption.
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
-  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateMetadataInPlace_AllProperties_UpdatesTargetCorrectlyAsync</tests>
   protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
     target.EventType = source.EventType;
@@ -679,7 +665,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// Replacing List instances corrupts those indexes causing ArgumentOutOfRangeException.
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
-  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_ScalarProperties_UpdatesTargetCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_ClearsAndAddsNewItemsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_EmptySource_ClearsTargetAsync</tests>

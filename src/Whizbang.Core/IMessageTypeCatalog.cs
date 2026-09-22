@@ -22,7 +22,7 @@ public sealed record MessageTypeCatalogEntry(
   /// been renamed. Used by the registry populator to recognise an acknowledged rename and reconcile
   /// a stale <c>wh_message_type_registry</c> row (old name -&gt; current name) in place.
   /// </summary>
-  public IReadOnlyList<string> FormerNames { get; init; } = System.Array.Empty<string>();
+  public IReadOnlyList<string> FormerNames { get; init; } = [];
 
   /// <summary>
   /// The type's resolved ephemeral mode, or <c>null</c> when it is Sourced (the durable default). The
@@ -92,8 +92,29 @@ public sealed record MessageTypeCatalogEntry(
 /// </remarks>
 /// <docs>core-concepts/pinned-identity</docs>
 public interface IMessageTypeCatalog {
+  /// <summary>True when generated registrations supplied a catalog. The framework's null default returns false so
+  /// catalog-driven passes (type-definition reconciliation, event flag derivation) skip rather than run over an empty set.</summary>
+  bool IsAvailable => true;
+
   /// <summary>
   /// Returns every known concrete message / perspective type with its metadata.
   /// </summary>
   IReadOnlyList<MessageTypeCatalogEntry> GetAll();
+}
+
+/// <summary>
+/// The catalog registered when no generated catalog exists in the host. The union catalog is only
+/// built when at least one assembly contributed one, so a host with no message types previously
+/// resolved null here; an empty catalog keeps every consumer on its ordinary path.
+/// </summary>
+/// <docs>core-concepts/pinned-identity</docs>
+public sealed class NullMessageTypeCatalog : IMessageTypeCatalog, INullDefault {
+  /// <inheritdoc />
+  public bool IsAvailable => false;
+
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullMessageTypeCatalog Instance { get; } = new();
+  private NullMessageTypeCatalog() { }
+  /// <inheritdoc />
+  public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [];
 }

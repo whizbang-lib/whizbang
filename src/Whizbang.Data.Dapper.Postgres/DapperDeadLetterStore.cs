@@ -13,11 +13,9 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
 public sealed class DapperDeadLetterStore(
   string connectionString,
-  ILogger<DapperDeadLetterStore> logger,
   WorkCoordinatorGate? gate = null
 ) : IDeadLetterStore {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
-  private readonly ILogger<DapperDeadLetterStore> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
 
   /// <inheritdoc />

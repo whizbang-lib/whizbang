@@ -29,7 +29,8 @@ namespace Whizbang.Core.Perspectives;
 /// // Extracted mode: JSONB contains full model, physical columns are indexed copies
 /// [PerspectiveStorage(FieldStorageMode.Extracted)]
 /// public record ProductDto {
-///   [PhysicalField(Indexed = true)]
+///   [PhysicalField]
+///   [Indexed]
 ///   public decimal Price { get; init; }
 ///   public string Description { get; init; }
 /// }
@@ -38,6 +39,7 @@ namespace Whizbang.Core.Perspectives;
 /// [PerspectiveStorage(FieldStorageMode.Split)]
 /// public record ProductSearchDto {
 ///   [VectorField(1536)]
+///   [Indexed]
 ///   public float[]? Embedding { get; init; }  // Only in physical column
 ///   public string Name { get; init; }          // Only in JSONB
 /// }

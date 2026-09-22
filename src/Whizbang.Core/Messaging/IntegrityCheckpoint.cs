@@ -138,8 +138,22 @@ public enum IntegrityRepairMode {
   /// report-and-decide (every report still states exactly what auto-repair would have done).</summary>
   ReportOnly = 0,
 
-  /// <summary>Report AND repair (default): a scoped re-delivery request / local rebuild per
-  /// confirmed gap, hard-capped at every rung so a mass divergence can never storm.</summary>
+  /// <summary>
+  /// Report AND repair (default): a scoped re-delivery request / local rebuild per confirmed gap.
+  /// </summary>
+  /// <remarks>
+  /// Bounded in two dimensions, and both are required. Per occurrence,
+  /// <c>MaxAutoRepairRequestsPerAudit</c> / <c>MaxAutoRepairRequestsPerCheckpoint</c> cap one
+  /// batch. Across occurrences, the repair ledger's <c>RepairRequestBackoffSeconds</c> and
+  /// <c>MaxRepairAttemptsPerBucket</c> cap how often the SAME bucket may be re-requested.
+  /// <para>
+  /// The second is what actually prevents a storm; a per-batch cap alone only sets its rate.
+  /// Checkpoints fire on <c>CheckpointIntervalSeconds</c>, and a gap whose events are genuinely
+  /// gone never heals, so it is re-confirmed and re-requested on every checkpoint for as long as
+  /// the service runs. This documentation previously claimed the per-batch caps alone made a storm
+  /// impossible. They do not, and the checkpoint rung consulted only those until it was corrected.
+  /// </para>
+  /// </remarks>
   AutoRepairCapped = 1,
 }
 
@@ -264,9 +278,11 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
 
-  /// <summary>What to do with a CONFIRMED gap (default <see cref="IntegrityRepairMode.AutoRepairCapped"/>
-  /// — self-healing out of the box; <see cref="IntegrityRepairMode.ReportOnly"/> is the opt-down).</summary>
-  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.AutoRepairCapped;
+  /// <summary>What to do with a CONFIRMED gap (default <see cref="IntegrityRepairMode.ReportOnly"/>:
+  /// detect and report, let an operator decide; <see cref="IntegrityRepairMode.AutoRepairCapped"/> is the
+  /// opt-in to self-healing with storm caps). A default that mutates data unasked is not a default a
+  /// consumer can trust out of the box; repair re-delivery has looped under a misconfigured consumer.</summary>
+  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.ReportOnly;
 
   /// <summary>Storm cap: at most this many auto-repair requests per received checkpoint (default 10).</summary>
   public int MaxAutoRepairRequestsPerCheckpoint { get; set; } = 10;

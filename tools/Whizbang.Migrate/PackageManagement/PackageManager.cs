@@ -162,11 +162,8 @@ public static class PackageManager {
       foreach (var csproj in csprojFiles) {
         var content = File.ReadAllText(csproj);
         // Quick check if file contains any old package references
-        foreach (var oldPackage in oldPackageNames) {
-          if (content.Contains($"Include=\"{oldPackage}\"", StringComparison.OrdinalIgnoreCase)) {
-            projects.Add(csproj);
-            break;
-          }
+        if (oldPackageNames.Any(oldPackage => content.Contains($"Include=\"{oldPackage}\"", StringComparison.OrdinalIgnoreCase))) {
+          projects.Add(csproj);
         }
       }
     } catch {
@@ -224,9 +221,17 @@ public static class PackageManager {
 
       existingPackages.Add(include);
 
+      // Central package management splits a reference across two files, so an operator's
+      // "keep this one" has to be honored in BOTH. Checking it only in the project file left
+      // a preserved package with its PackageReference intact and its PackageVersion deleted,
+      // which is NU1010 -- a package with no version -- and a worse outcome than not
+      // preserving it at all.
+      var preserved = settings.PreservePackages
+          .Contains(include, StringComparer.OrdinalIgnoreCase);
+
       // Check if this is a package to remove/replace
       if (_packageMappings.TryGetValue(include, out var replacement)) {
-        if (settings.RemoveOldPackages) {
+        if (settings.RemoveOldPackages && !preserved) {
           pv.Remove();
           changes.Add(new PackageChange(
               propsPath,
@@ -239,7 +244,7 @@ public static class PackageManager {
         if (!string.IsNullOrEmpty(replacement)) {
           packagesToAdd.Add(replacement);
         }
-      } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages) {
+      } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages && !preserved) {
         pv.Remove();
         changes.Add(new PackageChange(
             propsPath,
@@ -312,9 +317,16 @@ public static class PackageManager {
 
         existingPackages.Add(include);
 
+        // PreservePackages is the operator's explicit "keep this one". It is collected by the
+        // wizard, stored in the decision file and threaded through by ApplyCommand -- but was
+        // never consulted here, so a package somebody asked to keep was removed anyway, silently
+        // and against a setting the tool told them would work.
+        var preserved = settings.PreservePackages
+            .Contains(include, StringComparer.OrdinalIgnoreCase);
+
         // Check if this is a package to remove/replace
         if (_packageMappings.TryGetValue(include, out var replacement)) {
-          if (settings.RemoveOldPackages) {
+          if (settings.RemoveOldPackages && !preserved) {
             pr.Remove();
             changes.Add(new PackageChange(
                 projectPath,
@@ -327,7 +339,7 @@ public static class PackageManager {
           if (!string.IsNullOrEmpty(replacement)) {
             packagesToAdd.Add(replacement);
           }
-        } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages) {
+        } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages && !preserved) {
           pr.Remove();
           changes.Add(new PackageChange(
               projectPath,

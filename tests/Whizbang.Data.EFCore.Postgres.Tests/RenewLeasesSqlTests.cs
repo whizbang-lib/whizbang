@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard4")]
 public class RenewLeasesSqlTests : EFCoreTestBase {
 
   [Test]

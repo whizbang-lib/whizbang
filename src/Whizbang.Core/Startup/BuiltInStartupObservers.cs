@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -43,12 +44,8 @@ public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
 
   /// <inheritdoc />
   public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken cancellationToken) {
-    var failed = 0;
-    var skipped = 0;
-    foreach (var result in summary.Results) {
-      if (result.Outcome == StartupStepOutcome.Failed) { failed++; }
-      if (result.Outcome == StartupStepOutcome.Skipped) { skipped++; }
-    }
+    var failed = summary.Results.Count(result => result.Outcome == StartupStepOutcome.Failed);
+    var skipped = summary.Results.Count(result => result.Outcome == StartupStepOutcome.Skipped);
     LogPipelineCompleted(_logger, summary.Results.Count, skipped, failed);
     return ValueTask.CompletedTask;
   }

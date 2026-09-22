@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+[Category("Shard2")]
 public class RecordHeartbeatSqlTests : EFCoreTestBase {
 
   [Test]

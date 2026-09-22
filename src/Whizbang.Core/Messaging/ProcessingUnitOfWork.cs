@@ -8,8 +8,6 @@ namespace Whizbang.Core.Messaging;
 /// Similar to DispatchUnitOfWork but for worker-side processing.
 /// Accumulates completions and failures to report back to process_work_batch.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerTests.cs</tests>
 public class ProcessingUnitOfWork {
   /// <summary>
   /// Unique time-ordered identifier for this unit (Uuid7).

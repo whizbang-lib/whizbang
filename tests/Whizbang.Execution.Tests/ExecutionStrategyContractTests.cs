@@ -74,7 +74,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (_, ctx) => {
         handlerCalled = true;
         return ValueTask.FromResult(42);
       },
@@ -97,7 +97,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     var result = await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(42),
+      (_, ctx) => ValueTask.FromResult(42),
       context
     );
 
@@ -118,7 +118,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (env, _) => {
         receivedEnvelope = env;
         return ValueTask.FromResult(0);
       },
@@ -143,7 +143,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => throw new InvalidOperationException("Handler error"),
+        (_, ctx) => throw new InvalidOperationException("Handler error"),
         context
       );
     }).ThrowsExactly<InvalidOperationException>().WithMessage("Handler error");
@@ -158,14 +158,14 @@ public abstract class ExecutionStrategyContractTests {
     await strategy.StartAsync();
     var envelope = CreateTestEnvelope("test");
     var context = CreateTestContext();
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, ctx) => {
           await Task.Delay(1000, cts.Token);
           return 0;
         },
@@ -181,13 +181,40 @@ public abstract class ExecutionStrategyContractTests {
   public async Task StartAsync_ShouldBeIdempotentAsync() {
     // Arrange
     var strategy = CreateStrategy();
+    var envelope = CreateTestEnvelope("test");
+    var context = CreateTestContext();
+    var invocations = 0;
 
     // Act
     await strategy.StartAsync();
-    await strategy.StartAsync(); // Second call should not throw
+    await strategy.StartAsync(); // Second call must be a no-op, not a second start
 
-    // Assert - No exception
+    var result = await strategy.ExecuteAsync<int>(
+      envelope,
+      (_, _) => {
+        Interlocked.Increment(ref invocations);
+        return ValueTask.FromResult(42);
+      },
+      context
+    );
+
+    // Assert - idempotent means the second call CHANGED NOTHING, which is more than "did not
+    // throw". Hosts start strategies from more than one place (a hosted service and the first
+    // dispatch that needs one), so the double call is routine.
+    await Assert.That(result).IsEqualTo(42)
+      .Because("the strategy has to remain usable — a second start that reset its state would "
+             + "leave a running-looking executor that no longer executes");
+    await Assert.That(Volatile.Read(ref invocations)).IsEqualTo(1)
+      .Because("a second start that spun up a second consumer of the same queue would run the "
+             + "handler twice — at-most-once processing lost to a duplicated startup call");
+
+    // A single Stop must undo a double Start: reference-counted state would leave the strategy
+    // running after the one Stop a shutdown path issues, so its worker outlives the host.
     await strategy.StopAsync();
+    await Assert.That(async () => await strategy.ExecuteAsync<int>(
+      envelope, (_, _) => ValueTask.FromResult(0), context))
+      .Throws<InvalidOperationException>()
+      .Because("one StopAsync has to stop it, however many times StartAsync was called");
   }
 
   [Test]
@@ -203,7 +230,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => ValueTask.FromResult(0),
+        (_, _) => ValueTask.FromResult(0),
         context
       );
     }).Throws<InvalidOperationException>();
@@ -222,7 +249,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act - Start a long-running handler
     var executionTask = strategy.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => {
+      async (_, _) => {
         handlerStarted.SetResult(true);
         await handlerCompleted.Task;
         return 0;
@@ -235,6 +262,14 @@ public abstract class ExecutionStrategyContractTests {
 
     // Call DrainAsync (should wait for handler)
     var drainTask = strategy.DrainAsync();
+
+    // The handler is provably still in flight — it is parked on handlerCompleted, which nothing
+    // has set. A drain that has already finished here has not drained anything; the shutdown that
+    // called it proceeds to tear down while a handler is mid-write, which is exactly the partial
+    // work draining exists to prevent. The realistic regression (returning Task.CompletedTask)
+    // fails this deterministically.
+    await Assert.That(drainTask.IsCompleted).IsFalse()
+      .Because("draining means waiting for in-flight work, not reporting success while it runs");
 
     // Complete the handler
     handlerCompleted.SetResult(true);
@@ -281,7 +316,7 @@ public abstract class ExecutionStrategyContractTests {
       var envelope = CreateTestEnvelope($"message-{index}");
       var task = strategy.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, _) => {
           await Task.Delay(10); // Simulate work
           lock (lockObj) {
             executionOrder.Add(index);

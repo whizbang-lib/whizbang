@@ -58,9 +58,18 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
   /// Exposed for exhaustive unit coverage — the IO around it is a single SELECT.
   /// </summary>
   internal static StartupAssessment ComputeVerdict(string? mine, IReadOnlyList<string> recorded) {
+    if (mine is null) {
+      // Absent and unreadable are different facts (issue #619): nobody registered a provider, which
+      // the Postgres driver now always does — a host that bypasses the driver must register
+      // LibraryVersionProvider itself. Naming the registration is what makes the stand-down diagnosable.
+      return new StartupAssessment(StartupVerdict.StandDown,
+        "no ILibraryVersionProvider is registered, so this binary's own library version is unknown — "
+        + "refusing to migrate; every wrong answer here is worse than stopping. The Postgres driver "
+        + "registers one; a host that bypasses it must register LibraryVersionProvider itself");
+    }
     if (!SemanticVersion.TryParse(mine, out var myVersion)) {
       return new StartupAssessment(StartupVerdict.StandDown,
-        $"own library version '{mine ?? "(none)"}' is unreadable — refusing to migrate; every wrong answer here is worse than stopping");
+        $"own library version '{mine}' is unreadable — refusing to migrate; every wrong answer here is worse than stopping");
     }
 
     if (recorded.Count == 0) {
@@ -96,12 +105,12 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = string.IsNullOrWhiteSpace(schema) || schema == "public" ? "" : $"\"{schema}\".";
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
     await using var cmd = connectionScope.Connection.CreateCommand();
-#pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as the coordinator
+#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
     cmd.CommandText = $@"
       SELECT DISTINCT v.library_version
       FROM {prefix}wh_schema_migrations m
@@ -112,7 +121,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
     var versions = new List<string>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      if (!reader.IsDBNull(0)) {
+      if (!await reader.IsDBNullAsync(0, cancellationToken)) {
         versions.Add(reader.GetString(0));
       }
     }

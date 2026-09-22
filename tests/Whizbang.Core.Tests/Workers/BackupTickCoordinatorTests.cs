@@ -32,19 +32,12 @@ namespace Whizbang.Core.Tests.Workers;
 public class BackupTickCoordinatorTests {
 
   private sealed class FakeGate(bool isAvailable) : INotifySignalingGate {
-    public bool IsAvailable { get; private set; } = isAvailable;
+    public bool IsAvailable { get; } = isAvailable;
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;
-    public event Action<bool>? OnAvailabilityChanged;
+    public event Action<bool>? OnAvailabilityChanged { add { /* the fake never raises this event */ } remove { /* nothing was attached */ } }
     public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsAvailable);
-    public void Set(bool available) {
-      if (IsAvailable == available) {
-        return;
-      }
-      IsAvailable = available;
-      OnAvailabilityChanged?.Invoke(available);
-    }
   }
 
   private static BackupTickCoordinator _build(
@@ -57,8 +50,9 @@ public class BackupTickCoordinatorTests {
       registry,
       Options.Create(options ?? new BackupTickCoordinatorOptions()),
       NullLogger<BackupTickCoordinator>.Instance,
-      gate,
-      timeProvider);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      gate: gate ?? NullNotifySignalingGate.Instance,
+      timeProvider: timeProvider);
 
   // ============================================================================
   // FireOneCycleAsync
@@ -143,7 +137,7 @@ public class BackupTickCoordinatorTests {
   }
 
   [Test]
-  public async Task FireOneCycleAsync_StoppingTokenCancelled_HaltsIterationAsync() {
+  public async Task FireOneCycleAsync_StoppingTokenCanceled_HaltsIterationAsync() {
     var registry = new BackupTickRegistry();
     var ranFirst = false;
     var ranSecond = false;

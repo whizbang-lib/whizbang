@@ -9,24 +9,13 @@ namespace Whizbang.Core.Messaging;
 /// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
 /// <docs>messaging/outbox-pattern</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ThreeInstances_DistributesPartitionsViaModuloAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CrossInstanceStreamOrdering_PreventsClaimingWhenEarlierMessagesHeldAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StreamBasedFailureCascade_ReleasesLaterMessagesInSameStreamAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinationDbContext.cs:WorkCoordinationDbContext</tests>
-/// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_CreatesConfigurationForPerspective_ContainsOutboxRecordMapping</tests>
 public sealed class OutboxRecord {
 
   /// <summary>
   /// Unique message ID (idempotency key for downstream consumers).
   /// Indexed for fast lookups and deduplication.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
   public required Guid MessageId { get; set; }
 
   /// <summary>
@@ -35,7 +24,6 @@ public sealed class OutboxRecord {
   /// Null indicates event-store-only mode (transport is bypassed).
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteLocal_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
   public string? Destination { get; set; }
@@ -44,7 +32,6 @@ public sealed class OutboxRecord {
   /// Fully-qualified message type name (e.g., "MyApp.Events.OrderCreated", "MyApp.Commands.CreateOrder").
   /// Used for routing and deserialization.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
   public required string MessageType { get; set; }
 
   /// <summary>
@@ -52,7 +39,6 @@ public sealed class OutboxRecord {
   /// Contains the actual message data to be published.
   /// Schema matches the message type.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
   public required OutboxMessageData MessageData { get; set; }
 
   /// <summary>
@@ -60,7 +46,6 @@ public sealed class OutboxRecord {
   /// Contains correlation ID, causation ID, timestamp, security context, etc.
   /// Schema: { "CorrelationId": "guid", "CausationId": "guid", "Timestamp": "ISO8601", "UserId": "...", "TenantId": "..." }
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
   public required EnvelopeMetadata Metadata { get; set; }
 
   /// <summary>
@@ -68,7 +53,6 @@ public sealed class OutboxRecord {
   /// Contains tenant/user/customer/organization information for query filtering.
   /// Schema: { "t": "...", "u": "...", "c": "...", "o": "...", "ap": [...], "ex": [...] }
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
   public PerspectiveScope? Scope { get; set; }
 
 
@@ -76,36 +60,30 @@ public sealed class OutboxRecord {
   /// Number of publishing attempts (starts at 0).
   /// Used for retry logic and poison message detection.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
   public int Attempts { get; set; }
 
   /// <summary>
   /// Error message if publishing failed.
   /// Null if publishing succeeded or not yet attempted.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailedMessageWithSpecialCharacters_EscapesJsonCorrectlyAsync</tests>
   public string? Error { get; set; }
 
   /// <summary>
   /// UTC timestamp when the message was first persisted to outbox.
   /// Automatically set by database on insert.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CrossInstanceStreamOrdering_PreventsClaimingWhenEarlierMessagesHeldAsync</tests>
   public DateTimeOffset CreatedAt { get; set; }
 
   /// <summary>
   /// UTC timestamp when the message was last published (attempt made).
   /// Null if not yet published.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatchAsync_PublishSuccessful_MarksMessageAsPublished</tests>
   public DateTime? PublishedAt { get; set; }
 
   /// <summary>
   /// UTC timestamp when the message processing was fully completed.
   /// Used to track completion time separate from published_at.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
   public DateTime? ProcessedAt { get; set; }
 
   /// <summary>
@@ -113,8 +91,6 @@ public sealed class OutboxRecord {
   /// Used for multi-instance coordination and tracking which instance owns the lease.
   /// Null if message is not currently being processed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
   public Guid? InstanceId { get; set; }
 
   /// <summary>
@@ -122,7 +98,6 @@ public sealed class OutboxRecord {
   /// Used for orphaned work recovery - messages with expired leases can be claimed by other instances.
   /// Null if message is not currently being processed or has been completed/failed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
   public DateTimeOffset? LeaseExpiry { get; set; }
 
 
@@ -135,8 +110,6 @@ public sealed class OutboxRecord {
   /// Events from the same stream must be processed in order.
   /// Used for partition-based work distribution via consistent hashing.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CrossInstanceStreamOrdering_PreventsClaimingWhenEarlierMessagesHeldAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StreamBasedFailureCascade_ReleasesLaterMessagesInSameStreamAsync</tests>
   public Guid? StreamId { get; set; }
 
   /// <summary>
@@ -144,8 +117,6 @@ public sealed class OutboxRecord {
   /// Used for load distribution and ensuring same stream goes to same instance.
   /// Range: 0-9999 (10,000 partitions by default).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ThreeInstances_DistributesPartitionsViaModuloAsync</tests>
   public int? PartitionNumber { get; set; }
 
   /// <summary>
@@ -153,9 +124,6 @@ public sealed class OutboxRecord {
   /// Indicates which stages have been completed (e.g., Stored, EventStored, Published).
   /// Uses MessageProcessingStatus enum.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletionWithStatusZero_DoesNotChangeStatusFlagsAsync</tests>
   public MessageProcessingStatus StatusFlags { get; set; }
 
   /// <summary>

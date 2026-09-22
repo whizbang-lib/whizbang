@@ -12,13 +12,9 @@ namespace Whizbang.Core.Observability;
 /// singleton is lazy-constructed and the global hooks may not be in place when the first
 /// abandoned-Task exception happens.
 /// </summary>
-public sealed class UnobservedExceptionDiagnosticsWarmUp : IHostedService {
-  private readonly UnobservedExceptionDiagnostics _diagnostics;
-
-  /// <summary>Constructor — taking the diagnostics dependency triggers its construction.</summary>
-  public UnobservedExceptionDiagnosticsWarmUp(UnobservedExceptionDiagnostics diagnostics) {
-    _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
-  }
+/// <remarks>Constructor — taking the diagnostics dependency triggers its construction.</remarks>
+public sealed class UnobservedExceptionDiagnosticsWarmUp(UnobservedExceptionDiagnostics diagnostics) : IHostedService {
+  private readonly UnobservedExceptionDiagnostics _diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
 
   /// <inheritdoc/>
   public Task StartAsync(CancellationToken cancellationToken) {
@@ -77,17 +73,36 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
 
     _unobservedHandler = (sender, args) => _onUnobservedTaskException(args);
 
+    if (!_claimRegistration(this)) {
+      // Another instance already owns the subscription. Wire null handlers so Dispose is a no-op.
+      return;
+    }
+    TaskScheduler.UnobservedTaskException += _unobservedHandler;
+    if (_options.EnableFirstChanceExceptionLogging) {
+      _firstChanceHandler = (sender, args) => _onFirstChanceException(args);
+      AppDomain.CurrentDomain.FirstChanceException += _firstChanceHandler;
+    }
+  }
+
+  /// <summary>Makes <paramref name="owner"/> the one instance holding the process-wide subscription, unless another already does.</summary>
+  private static bool _claimRegistration(UnobservedExceptionDiagnostics owner) {
     lock (_gate) {
       if (_registered is not null) {
-        // Another instance already owns the subscription. Wire null handlers so Dispose is a no-op.
-        return;
+        return false;
       }
-      TaskScheduler.UnobservedTaskException += _unobservedHandler;
-      if (_options.EnableFirstChanceExceptionLogging) {
-        _firstChanceHandler = (sender, args) => _onFirstChanceException(args);
-        AppDomain.CurrentDomain.FirstChanceException += _firstChanceHandler;
+      _registered = owner;
+      return true;
+    }
+  }
+
+  /// <summary>Releases the process-wide subscription when <paramref name="owner"/> is the instance holding it.</summary>
+  private static bool _releaseRegistration(UnobservedExceptionDiagnostics owner) {
+    lock (_gate) {
+      if (_registered != owner) {
+        return false;
       }
-      _registered = this;
+      _registered = null;
+      return true;
     }
   }
 
@@ -113,7 +128,7 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
     if (ex is OperationCanceledException) {
       return;
     }
-    if (!_options.IncludeExceptionTypeInFirstChanceLog(ex.GetType().FullName ?? string.Empty)) {
+    if (!_options.IncludeExceptionTypeInFirstChanceLog(TypeNameFormatter.DisplayName(ex.GetType()))) {
       return;
     }
     if (!_logger.IsEnabled(LogLevel.Debug)) {
@@ -123,7 +138,7 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
     _logger.LogDebug(
       ex,
       "FirstChanceException: {ExceptionType} — {Message}",
-      ex.GetType().FullName, ex.Message);
+      TypeNameFormatter.DisplayName(ex.GetType()), ex.Message);
 #pragma warning restore CA1848
   }
 
@@ -131,13 +146,10 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
   public void Dispose() {
     if (_disposed) { return; }
     _disposed = true;
-    lock (_gate) {
-      if (_registered != this) { return; }
-      TaskScheduler.UnobservedTaskException -= _unobservedHandler;
-      if (_firstChanceHandler is not null) {
-        AppDomain.CurrentDomain.FirstChanceException -= _firstChanceHandler;
-      }
-      _registered = null;
+    if (!_releaseRegistration(this)) { return; }
+    TaskScheduler.UnobservedTaskException -= _unobservedHandler;
+    if (_firstChanceHandler is not null) {
+      AppDomain.CurrentDomain.FirstChanceException -= _firstChanceHandler;
     }
   }
 }

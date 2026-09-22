@@ -67,6 +67,11 @@ public static class ControlPlaneTypeRegistry {
   /// </summary>
   public static bool IsControlPlane(string messageTypeName) =>
     !string.IsNullOrEmpty(messageTypeName)
-      && _names.ContainsKey(EventTypeMatchingHelper.NormalizeTypeName(messageTypeName));
+      && (_names.ContainsKey(EventTypeMatchingHelper.NormalizeTypeName(messageTypeName))
+          // #664 wrapper-awareness: control plane arrives WRAPPED (MessageEnvelope`1[[Inner]])
+          // and a check keyed on the wrapper type waves it through — the exact blindness
+          // behind the disabled-subsystem livelock. Judge the inner payload too.
+          || _names.ContainsKey(EventTypeMatchingHelper.NormalizeTypeName(
+               EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageTypeName))));
 
 }

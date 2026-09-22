@@ -375,7 +375,7 @@ public class OrderListPerspective :
     IPerspectiveOf<OrderCreated>,
     IPerspectiveOf<OrderUpdated>,
     IPerspectiveOf<OrderShipped>,
-    IPerspectiveOf<OrderCancelled> {
+    IPerspectiveOf<OrderCanceled> {
 
     private readonly Dictionary<Guid, OrderListItem> _orders;
 
@@ -390,7 +390,7 @@ public class OrderListPerspective :
 
     public Task Update(OrderUpdated @event) { /* ... */ }
     public Task Update(OrderShipped @event) { /* ... */ }
-    public Task Update(OrderCancelled @event) { /* ... */ }
+    public Task Update(OrderCanceled @event) { /* ... */ }
 }
 ```
 
@@ -413,8 +413,8 @@ Consumes events:
 │  └─ Updates order details
 ├─ OrderShipped (1 dispatcher)
 │  └─ Updates order status
-└─ OrderCancelled (2 dispatchers)
-   └─ Removes or marks order as cancelled
+└─ OrderCanceled (2 dispatchers)
+   └─ Removes or marks order as canceled
 
 [Show All Events] [Show Flow Diagram]
 ```
@@ -495,7 +495,7 @@ A single perspective can implement multiple `IPerspectiveOf<T>` interfaces:
           "line": 39
         },
         {
-          "type": "OrderCancelled",
+          "type": "OrderCanceled",
           "method": "Update",
           "line": 47
         }
@@ -1000,7 +1000,7 @@ Filters:
 Results (3):
 ├─ OrderCreatedEvent (14:23:45.123)
 ├─ OrderUpdatedEvent (14:24:12.456)
-└─ OrderCancelledEvent (14:25:33.789)
+└─ OrderCanceledEvent (14:25:33.789)
 ```
 
 **Features**:

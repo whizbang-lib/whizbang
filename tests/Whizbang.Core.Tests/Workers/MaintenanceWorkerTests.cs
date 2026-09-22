@@ -16,7 +16,7 @@ public class MaintenanceWorkerTests {
     public TaskCompletionSource FirstCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int CallCount { get; private set; }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       CallCount++;
       FirstCall.TrySetResult();
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([
@@ -33,8 +33,15 @@ public class MaintenanceWorkerTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public TaskCompletionSource LifecycleCleanupCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TimeSpan? LifecycleCleanupRetention { get; private set; }
+
+    public Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default) {
+      LifecycleCleanupRetention = retentionPeriod;
+      LifecycleCleanupCalled.TrySetResult();
+      return Task.FromResult(0);
+    }
   }
 
   [Test]
@@ -141,4 +148,35 @@ public class MaintenanceWorkerTests {
     var defaults = new MaintenanceWorkerOptions();
     await Assert.That(defaults.Enabled).IsTrue();
   }
+
+  [Test]
+  public async Task ExecuteAsync_Tick_CallsCleanupLifecycleCompletionsAsync() {
+    // wh_lifecycle_completions grows by one row per event, forever. IWorkCoordinator has always
+    // exposed CleanupLifecycleCompletionsAsync, and migration 035 states the table is cleaned up
+    // periodically, but no production code path ever invoked it — the method existed, was tested,
+    // and was wired to nothing. A deployment therefore accumulated the table without bound while
+    // appearing to have retention. This pins the call site so the sweep cannot silently detach again.
+    var coord = new FakeCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new MaintenanceWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      gate,
+      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, LifecycleCompletionRetentionDays = 7 }),
+      NullLogger<MaintenanceWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await coord.LifecycleCleanupCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(coord.LifecycleCleanupRetention).IsEqualTo(TimeSpan.FromDays(7));
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
 }

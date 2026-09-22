@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// Roles aggregate permissions into logical groups that can be assigned to users.
 /// </summary>
 /// <docs>fundamentals/security/security#roles</docs>
-/// <tests>Whizbang.Core.Tests/Security/RoleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/RoleTests.cs</tests>
 /// <example>
 /// // Define a role with specific permissions
 /// var orderManager = new Role {

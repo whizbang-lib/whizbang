@@ -62,8 +62,11 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
                 | (entry.IsComposite ? EventFlags.Composite : EventFlags.None)
                 // Compacted wins over Ephemeral (a compaction summary is permanent StateBased, never
                 // reaped) — the same precedence EphemeralFlagDeriver applies on the typed path.
-                | (entry.IsCompacted ? EventFlags.Compacted
-                   : entry.Ephemeral is not null ? EventFlags.Ephemeral : EventFlags.None);
+                | (entry switch {
+                  { IsCompacted: true } => EventFlags.Compacted,
+                  { Ephemeral: not null } => EventFlags.Ephemeral,
+                  _ => EventFlags.None,
+                });
       _byClrTypeName[entry.ClrTypeName] = flags;
       _byType[entry.Type] = flags;
     }

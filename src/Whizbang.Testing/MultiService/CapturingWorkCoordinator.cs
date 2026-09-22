@@ -38,7 +38,7 @@ public sealed class CapturingWorkCoordinator : IWorkCoordinator {
     });
 
   /// <inheritdoc />
-  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+  public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
     lock (_lock) {
       _stored.AddRange(messages);
       var signal = _signal;

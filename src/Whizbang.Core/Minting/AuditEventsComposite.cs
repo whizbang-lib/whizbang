@@ -52,9 +52,14 @@ public sealed class AuditEventsComposite
   /// <summary>Each folded single's ORIGINAL outbox message id, parallel to <see cref="InnerPayloads"/>.</summary>
   public List<Guid> InnerEventIds { get; init; } = [];
 
+  /// <summary>Each folded single's ORIGINAL stream id, parallel to the inner payloads (#596). Empty on composites minted by older builds — children then inherit the composite's stream.</summary>
+  public List<Guid> InnerStreamIds { get; init; } = [];
+
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 
   IReadOnlyList<string> IRawInnerComposite.InnerTypeNames => InnerTypeNames;
 
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
+
+  IReadOnlyList<Guid>? IRawInnerComposite.InnerStreamIds => InnerStreamIds.Count > 0 ? InnerStreamIds : null;
 }

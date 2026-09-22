@@ -1,4 +1,5 @@
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -248,7 +249,7 @@ public class DispatcherTagProcessingTests {
 
   // Receptor that always throws
   public class ThrowingReceptor : IReceptor<ThrowingCommand, ThrowingResult> {
-    public static void Reset() { }
+    public static void Reset() { /* the fake has nothing to do here */ }
 
     public ValueTask<ThrowingResult> HandleAsync(ThrowingCommand message, CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("Receptor failed");
@@ -262,13 +263,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt test message types from security — these tests are about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Replace the registered IMessageTagProcessor with our spy
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
@@ -279,7 +276,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -297,13 +294,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt test message types from security — these tests are about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(TestCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Remove the IMessageTagProcessor registration to test null handling
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
@@ -313,7 +306,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();
@@ -333,13 +326,9 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt ThrowingCommand from security — this test is about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => {
-      options.ExemptMessageTypes.Add(typeof(ThrowingCommand));
-    });
+    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(ThrowingCommand)));
 
-    services.AddWhizbang(options => {
-      configure?.Invoke(options);
-    });
+    services.AddWhizbang(options => configure?.Invoke(options));
 
     // Replace the registered IMessageTagProcessor with our spy
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
@@ -350,7 +339,7 @@ public class DispatcherTagProcessingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors and dispatcher
     services.AddReceptors();

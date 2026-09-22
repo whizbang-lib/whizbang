@@ -14,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
@@ -391,8 +392,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -430,12 +432,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
       )
     );
 
@@ -540,8 +549,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -568,12 +578,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
       )
     );
 
@@ -616,7 +633,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       var pendingOutbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check inbox: any messages not marked as Completed (status & 2 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0";
       var pendingInbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check perspective cursors: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
@@ -686,7 +703,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0";
     var finalOutbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0";
     var finalInbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0";

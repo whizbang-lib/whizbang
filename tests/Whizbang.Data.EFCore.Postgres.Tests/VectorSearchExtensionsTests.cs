@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These unit tests verify the API contracts and helper methods.
 /// </remarks>
 [Category("VectorSearch")]
+[Category("Shard4")]
 public class VectorSearchExtensionsTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
@@ -429,7 +430,7 @@ public class VectorSearchExtensionsTests {
     var query = context.Set<PerspectiveRow<EmbeddingTestModel>>().AsQueryable();
 
     // Act & Assert - Lambda that isn't a property access should throw
-    await Assert.That(() => query.OrderByCosineDistance(m => new float[] { 1, 0, 0 }, searchVector))
+    await Assert.That(() => query.OrderByCosineDistance(_ => new float[] { 1, 0, 0 }, searchVector))
         .Throws<ArgumentException>();
   }
 
@@ -1015,7 +1016,7 @@ public class VectorSearchExtensionsTests {
     var memberAccess = Expression.Property(
         Expression.Property(
             Expression.Property(param, nameof(JoinRow.Row)),
-            nameof(PerspectiveRow<EmbeddingTestModel>.Data)),
+            nameof(PerspectiveRow<>.Data)),
         nameof(EmbeddingTestModel.ContentEmbedding));
     var convertingSelector = Expression.Lambda<Func<JoinRow, float[]?>>(
         Expression.Convert(memberAccess, typeof(float[])), param);

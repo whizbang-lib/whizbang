@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -118,19 +119,29 @@ public class DispatcherTests {
 
   [Test]
   public async Task Publish_WithEvent_ShouldNotifyAllHandlersAsync() {
-    // Arrange
+    // Arrange - no receptor is registered for OrderCreated in this fixture, so "all handlers" is
+    // the empty set. What IS observable here is that the publish reached the routing decision and
+    // reported it: the receipt is the caller's only evidence that the event went anywhere. Local
+    // receptor invocation on publish is pinned separately, where a probe receptor exists, by
+    // DispatcherScheduledForLocalReceptorTests.PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync.
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
 
-    // Subscribe multiple handlers (this will be via perspectives in implementation)
-    // For now, test that Publish doesn't throw
-
     // Act
-    await dispatcher.PublishAsync(orderCreated);
+    var receipt = await dispatcher.PublishAsync(orderCreated);
 
-    // Assert
-    // Should complete without error
-    // In full implementation, verify all perspectives were notified
+    // Assert - an event with no local subscriber must still be minted and routed, not quietly
+    // discarded: subscribers live in OTHER services, reached through the outbox, and the receipt's
+    // message id is what ties this call to the row they will eventually read.
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("having no local handler is not a delivery failure — the event still goes to the "
+             + "outbox for every subscribing service");
+    await Assert.That(receipt.MessageId.Value).IsNotEqualTo(Guid.Empty)
+      .Because("a receipt with no message id cannot be correlated to anything downstream");
+    await Assert.That(receipt.Destination).Contains(nameof(OrderCreated))
+      .Because("the destination names the event type that was routed — a receipt naming another "
+             + "type would mean the publish went to the wrong entity");
   }
 
   [Test]
@@ -315,7 +326,7 @@ public class DispatcherTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register receptors
     services.AddReceptors();
@@ -529,10 +540,11 @@ public class DispatcherTests {
     // Arrange
     LogReceptor.Reset();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
@@ -576,8 +588,9 @@ public class DispatcherTests {
   public async Task SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -602,7 +615,7 @@ public class DispatcherTests {
     await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
 
     // Verify the envelope has the correct generic type parameter
-    var envelope = traces.First();
+    var envelope = traces[0];
     var envelopeType = envelope.GetType();
     await Assert.That(envelopeType.IsGenericType).IsTrue()
       .Because("MessageEnvelope should be a generic type");
@@ -621,8 +634,9 @@ public class DispatcherTests {
   public async Task SendManyAsync_Generic_CreatesTypedEnvelopesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -670,8 +684,9 @@ public class DispatcherTests {
 
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -736,8 +751,9 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -774,8 +790,9 @@ public class DispatcherTests {
     // Arrange
     LogReceptor.Reset();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -805,8 +822,9 @@ public class DispatcherTests {
   public async Task SendAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -844,8 +862,9 @@ public class DispatcherTests {
     // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
     // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var receptorInvoker = new MockReceptorInvoker();
     services.AddSingleton<IReceptorInvoker>(receptorInvoker);
@@ -872,8 +891,9 @@ public class DispatcherTests {
     // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
     // because the dispatcher already invokes receptors directly via generated delegates.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var receptorInvoker = new MockReceptorInvoker();
     services.AddSingleton<IReceptorInvoker>(receptorInvoker);
@@ -916,8 +936,9 @@ public class DispatcherTests {
   public async Task SendAsync_WithDispatchOptions_Generic_PreservesTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -937,12 +958,12 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1003,12 +1024,12 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1035,13 +1056,13 @@ public class DispatcherTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_Void_WithCancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Void_WithCanceledToken_ThrowsAsync() {
     // Arrange
     LogReceptor.Reset();
     var dispatcher = _createDispatcher();
-    var command = new LogCommand("Test with cancelled token");
+    var command = new LogCommand("Test with canceled token");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1055,24 +1076,33 @@ public class DispatcherTests {
 
   [Test]
   public async Task PublishAsync_WithDispatchOptions_CompletesAsync() {
-    // Arrange
+    // Arrange - default options: no ScheduledFor, no cancellation.
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
     var options = new Whizbang.Core.Dispatch.DispatchOptions();
 
-    // Act - Should complete without throwing
-    await dispatcher.PublishAsync(orderCreated, options);
+    // Act
+    var receipt = await dispatcher.PublishAsync(orderCreated, options);
 
-    // Assert - No exception means success for fire-and-forget
+    // Assert - the options overload carries the ScheduledFor gate, whose whole job is to DEFER
+    // publication. Default options must not trip it: an event published with a plain
+    // DispatchOptions has to be delivered now, exactly as the no-options overload does. A regression
+    // that treated "no ScheduledFor" as "not yet due" would still complete without throwing.
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("default options carry no deferral — anything less than Delivered means the "
+             + "options overload gated a publish that was due immediately");
+    await Assert.That(receipt.MessageId.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(receipt.Destination).Contains(nameof(OrderCreated));
   }
 
   [Test]
-  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 

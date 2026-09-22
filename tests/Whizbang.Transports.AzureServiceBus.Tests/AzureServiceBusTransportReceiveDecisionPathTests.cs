@@ -123,10 +123,10 @@ public class AzureServiceBusTransportReceiveDecisionPathTests {
       AsbTransportTestData.SessionArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
 
     await Assert.That(discardPolicy.Recorded).Count().IsEqualTo(1);
-    var recorded = discardPolicy.Recorded[0];
-    await Assert.That(recorded.Gate).IsEqualTo(MessageDiscardGate.Receive);
-    await Assert.That(recorded.Decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
-    await Assert.That(recorded.PayloadClrType).IsEqualTo(typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName);
+    var (Gate, Decision, PayloadClrType) = discardPolicy.Recorded[0];
+    await Assert.That(Gate).IsEqualTo(MessageDiscardGate.Receive);
+    await Assert.That(Decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
+    await Assert.That(PayloadClrType).IsEqualTo(typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName);
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(handlerInvoked).IsFalse();
   }

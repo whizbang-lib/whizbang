@@ -46,7 +46,7 @@ public sealed record UnserializableBatchMessage(string Content);
 [Timeout(240_000)] // 240s — emulator initialization + DLQ redelivery cycles need headroom
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -85,7 +85,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var envelopes = Enumerable.Range(0, 10)
       .Select(i => _createTestEnvelope($"{marker}-{i}"))
       .ToList();
-    var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+    var items = envelopes.ConvertAll(e => _createBulkItem(e));
     var contentById = envelopes.ToDictionary(
       e => e.MessageId.Value.ToString(),
       e => e.Payload.Content);
@@ -157,8 +157,18 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     await Assert.That(received[envelopeA1.MessageId.Value.ToString()].SessionId).IsEqualTo(streamA.ToString());
     await Assert.That(received[envelopeA2.MessageId.Value.ToString()].SessionId).IsEqualTo(streamA.ToString());
     await Assert.That(received[envelopeB1.MessageId.Value.ToString()].SessionId).IsEqualTo(streamB.ToString());
-    await Assert.That(string.IsNullOrEmpty(received[envelopeNull.MessageId.Value.ToString()].SessionId)).IsTrue()
-      .Because("items without a StreamId must not get a SessionId");
+    // DELIBERATELY INVERTED. This previously required a streamless item to carry NO session id,
+    // which is the defect: a session-enabled entity REJECTS a null session id outright, so
+    // control-plane broadcasts (which have no stream) were dead-lettered by the broker before any
+    // consumer saw them. Streamless items now get a bounded synthetic session instead — see
+    // AsbSessionKey for why it is neither a GUID nor a single shared constant.
+    var streamlessSession = received[envelopeNull.MessageId.Value.ToString()].SessionId;
+    await Assert.That(string.IsNullOrEmpty(streamlessSession)).IsFalse()
+      .Because("a streamless item still needs a session id — without one the broker refuses it and "
+             + "the message never reaches a consumer");
+    await Assert.That(Guid.TryParse(streamlessSession, out _)).IsFalse()
+      .Because("the streamless key must not be GUID-shaped: inbound paths recover StreamId by "
+             + "Guid-parsing the session id and would otherwise invent a stream that does not exist");
   }
 
   [Test]
@@ -174,7 +184,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var envelopes = Enumerable.Range(0, 6)
       .Select(i => _createTestEnvelope($"{marker}-{i}-{new string('x', 200_000)}"))
       .ToList();
-    var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+    var items = envelopes.ConvertAll(e => _createBulkItem(e));
 
     // Act
     var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-00"));
@@ -194,7 +204,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   [Test]
   public async Task PublishBatchAsync_OversizedItem_ReportsPerItemFailureAndDeliversRemainingItemsAsync() {
-    // Arrange — a ~2MB payload can never fit in any batch, even a fresh one;
+    // Arrange — a ~2MB payload can never fit in any batch, even a fresh one —
     // the transport must record a per-item failure and keep going
     var transport = _createTransport(_publishOnlyJsonOptions());
     await transport.InitializeAsync();
@@ -292,10 +302,8 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     var subscription = await transport.SubscribeBatchAsync(
       async (batch, ct) => {
-        foreach (var transportMessage in batch) {
-          if (expectedIds.Contains(transportMessage.Envelope.MessageId.Value)) {
-            await receivedChannel.Writer.WriteAsync(transportMessage.Envelope.MessageId.Value, ct);
-          }
+        foreach (var messageId in batch.Select(m => m.Envelope.MessageId.Value).Where(expectedIds.Contains)) {
+          await receivedChannel.Writer.WriteAsync(messageId, ct);
         }
       },
       new TransportDestination("topic-00", "sub-00-a"),
@@ -304,7 +312,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     try {
       // Act — publish all 5 through the bulk path
-      var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+      var items = envelopes.ConvertAll(e => _createBulkItem(e));
       var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-00"));
       foreach (var result in results) {
         await Assert.That(result.Success).IsTrue()
@@ -357,7 +365,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     try {
       // Act — publish 5 messages in one session so ordering is guaranteed
-      var items = envelopes.Select(e => _createBulkItem(e, streamId)).ToList();
+      var items = envelopes.ConvertAll(e => _createBulkItem(e, streamId));
       var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-fifo-02"));
       foreach (var result in results) {
         await Assert.That(result.Success).IsTrue()
@@ -575,7 +583,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
   /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
   private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
-    new Whizbang.Core.Routing.PoisonMessageDetector(
+    new(
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
         AgeThreshold = ageThreshold,
       }),

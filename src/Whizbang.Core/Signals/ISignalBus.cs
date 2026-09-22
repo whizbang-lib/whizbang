@@ -8,6 +8,10 @@ namespace Whizbang.Core.Signals;
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 public interface ISignalBus {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Publish a signal. Doorbell semantics: the signal carries no authoritative payload —
   /// subscribers fetch current state from the database. Reliability (best-effort vs durable)
@@ -29,5 +33,32 @@ public interface ISignalBus {
 
 /// <summary>Handle for an active subscription. Dispose to unsubscribe.</summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-public interface ISignalSubscription : IDisposable {
+public interface ISignalSubscription : IDisposable;
+
+/// <summary>
+/// The framework's null default for <see cref="ISignalBus"/>: reports <see cref="ISignalBus.IsConfigured"/> false,
+/// publishes nothing and hands out subscriptions that never fire. Registered by the core with TryAdd; the signal
+/// bus subsystem displaces it through <see cref="NullDefaultServiceCollectionExtensions"/>.
+/// </summary>
+public sealed class NullSignalBus : ISignalBus, INullDefault {
+  private NullSignalBus() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullSignalBus Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => ValueTask.CompletedTask;
+
+  /// <inheritdoc />
+  public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal => NullSignalSubscription.Instance;
+}
+
+/// <summary>The subscription <see cref="NullSignalBus"/> hands out: nothing was attached, so disposing releases nothing.</summary>
+internal sealed class NullSignalSubscription : ISignalSubscription {
+  public static NullSignalSubscription Instance { get; } = new();
+  public void Dispose() { /* nothing was attached */ }
 }

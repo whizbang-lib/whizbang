@@ -73,4 +73,25 @@
 
   <!-- Import shared message registry extraction target (also shipped in NuGet package) -->
   <Import Project="src/Whizbang.Generators/build/SoftwareExtravaganza.Whizbang.Generators.targets" />
+
+  <!--
+    Every test project must declare WhizbangTestTags.
+
+    The tags are load-bearing, not documentation: scripts/Run-Tests.ps1 selects suites with
+    -Tag, and CI's integration jobs are built on that selection (Postgres, RabbitMQ,
+    AzureServiceBus, AzureBlob, InMemory). A test project with no tags is invisible to every
+    tag-based job — it does not fail, it simply never runs, and CI stays green while the suite
+    silently stops being exercised.
+
+    This is an MSBuild check rather than a Roslyn analyzer on purpose: WhizbangTestTags is an
+    MSBuild property, so it is not reachable from an analyzer without plumbing it through
+    CompilerVisibleProperty, and evaluation-time failure is both simpler and earlier than
+    compile-time.
+  -->
+  <Target Name="ValidateWhizbangTestTags"
+          BeforeTargets="Build"
+          Condition="'$(IsTestProject)' == 'true' AND '$(WhizbangTestTags)' == ''">
+    <Error Code="WHZ0001"
+           Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestTags&gt;. Tag-based selection (Run-Tests.ps1 -Tag, and the CI integration jobs built on it) would skip it silently. Add a kind tag (Unit or Integration), plus Docker and the infrastructure it needs (Postgres, RabbitMQ, AzureServiceBus, AzureBlob, InMemory) when it uses containers." />
+  </Target>
 </Project>

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -70,7 +71,7 @@ public class DispatcherCoverageWave3Tests {
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     DispatchModes? defaultRouting = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       envelopeRegistry: envelopeRegistry,
@@ -133,6 +134,25 @@ public class DispatcherCoverageWave3Tests {
     }
 
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => _defaultRouting;
+
+    /// <summary>Messages handed to the base (no-op) outbox cascade hook — the generated dispatcher
+    /// overrides this, so recording it is how a test sees which branch CascadeMessageAsync took.</summary>
+    public List<IMessage> CascadedToOutbox { get; } = [];
+
+    /// <summary>Messages handed to the base (no-op) event-store-only cascade hook.</summary>
+    public List<IMessage> CascadedToEventStoreOnly { get; } = [];
+
+    protected override Task CascadeToOutboxAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToOutbox.Add(message);
+      return base.CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+    }
+
+    protected override Task CascadeToEventStoreOnlyAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToEventStoreOnly.Add(message);
+      return base.CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+    }
   }
 
   // ========================================
@@ -169,56 +189,6 @@ public class DispatcherCoverageWave3Tests {
     public MessageEnvelope<T>? TryGetEnvelope<T>(T message) where T : notnull => null;
     public void Unregister<T>(T message) where T : notnull => UnregisterCount++;
     public void Unregister<T>(MessageEnvelope<T> envelope) => UnregisterCount++;
-  }
-
-  private sealed class StubEnvelopeSerializer : IEnvelopeSerializer {
-    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
-      var jsonEnvelope = new MessageEnvelope<JsonElement> {
-        MessageId = envelope.MessageId,
-        Payload = JsonSerializer.SerializeToElement(new { }),
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      };
-      var messageType = typeof(TMessage).AssemblyQualifiedName ?? typeof(TMessage).FullName ?? typeof(TMessage).Name;
-      var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core";
-      return new SerializedEnvelope(jsonEnvelope, envelopeType, messageType);
-    }
-
-    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => new();
-  }
-
-  private sealed class StubWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public List<OutboxMessage> QueuedOutbox { get; } = [];
-    public int FlushCount { get; private set; }
-
-    public void QueueOutboxMessage(OutboxMessage message) => QueuedOutbox.Add(message);
-    public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      FlushCount++;
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-  }
-
-  private sealed class StubScopedEventTracker : IScopedEventTracker {
-    private readonly List<TrackedEvent> _events = [];
-
-    public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) {
-      _events.Add(new TrackedEvent(streamId, eventType, eventId));
-    }
-
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents() => _events;
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => _events;
-    public bool AreAllProcessed(SyncFilterNode filter, IReadOnlySet<Guid> processedEventIds) {
-      return _events.All(e => processedEventIds.Contains(e.EventId));
-    }
   }
 
   // ========================================
@@ -280,10 +250,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   private static ReceptorInvoker<object> _defaultInvoker() =>
-    msg => {
-      var cmd = (W3Command)msg;
-      return new ValueTask<object>(new W3Result(Guid.NewGuid(), true));
-    };
+    _ => new ValueTask<object>(new W3Result(Guid.NewGuid(), true));
 
   private static VoidReceptorInvoker _defaultVoidInvoker() => msg => ValueTask.CompletedTask;
 
@@ -322,12 +289,12 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_Generic_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_Generic_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new W3Command("cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -365,11 +332,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_NonGeneric_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_NonGeneric_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -393,11 +360,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_WithContextAndOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_WithContextAndOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -445,11 +412,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Result_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Result_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -475,11 +442,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Void_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Void_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -572,10 +539,13 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Void_AnyInvokerFallback_CompletesAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Void_AnyInvokerFallback_UsesTheAnyInvokerAsync() {
     // Arrange - only anyInvoker, no void or sync
-    ValueTask<object?> anyInvoker(object msg) =>
-      new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
+    object? invokedWith = null;
+    ValueTask<object?> anyInvoker(object msg) {
+      invokedWith = msg;
+      return new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-fallback-options");
     var options = new DispatchOptions();
@@ -583,7 +553,12 @@ public class DispatcherCoverageWave3Tests {
     // Act
     await dispatcher.LocalInvokeAsync((object)command, options);
 
-    // Assert - should complete without error (anyInvoker was used)
+    // Assert - the void overload discards the result, so completion alone cannot tell the
+    // fallback from a silent no-op. Falling through to the any-invoker when no void invoker is
+    // registered is the whole behavior this covers, and the invoker's own record is the only
+    // place it shows.
+    await Assert.That(invokedWith).IsSameReferenceAs(command)
+      .Because("with no void or sync invoker registered the call must fall back to the any-invoker");
   }
 
   // ========================================
@@ -739,11 +714,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -858,11 +833,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -907,11 +882,11 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_CancelledToken_ThrowsAsync() {
+  public async Task CascadeMessageAsync_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () =>
@@ -941,22 +916,55 @@ public class DispatcherCoverageWave3Tests {
 
   [Test]
   public async Task CascadeMessageAsync_OutboxMode_CompletesWithoutErrorAsync() {
-    // Arrange - base implementation of CascadeToOutboxAsync is a no-op
-    var dispatcher = _createDispatcher();
+    // Arrange - base implementation of CascadeToOutboxAsync is a no-op, but which hook the mode
+    // selects is the routing decision worth pinning. A publisher is supplied so the "and NOT
+    // locally" half is observable too: Outbox carries no LocalDispatch flag.
+    var publisherInvoked = false;
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
+      publisherInvoked = true;
+      return Task.CompletedTask;
+    }
+    var dispatcher = _createDispatcher(
+      untypedPublisher: publisher,
+      handleMessageType: typeof(W3Event));
     var evt = new W3Event(Guid.NewGuid());
 
     // Act - should not throw (base CascadeToOutboxAsync is no-op)
     await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.Outbox);
+
+    // Assert
+    await Assert.That(dispatcher.CascadedToOutbox).Count().IsEqualTo(1);
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).IsEmpty()
+      .Because("outbox writes already persist the event; also going down the event-store-only hook "
+             + "would store it twice");
+    await Assert.That(publisherInvoked).IsFalse()
+      .Because("Outbox is transport-only — fanning out to in-process receptors as well would double-"
+             + "handle every cascaded event once the transport delivered it back");
   }
 
   [Test]
   public async Task CascadeMessageAsync_EventStoreMode_CompletesWithoutErrorAsync() {
     // Arrange - base implementation of CascadeToEventStoreOnlyAsync is a no-op
-    var dispatcher = _createDispatcher();
+    var publisherInvoked = false;
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
+      publisherInvoked = true;
+      return Task.CompletedTask;
+    }
+    var dispatcher = _createDispatcher(
+      untypedPublisher: publisher,
+      handleMessageType: typeof(W3Event));
     var evt = new W3Event(Guid.NewGuid());
 
     // Act - EventStore flag without Outbox flag -> calls CascadeToEventStoreOnlyAsync
     await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.EventStore);
+
+    // Assert
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).Count().IsEqualTo(1);
+    await Assert.That(dispatcher.CascadedToOutbox).IsEmpty()
+      .Because("EventStoreOnly exists precisely to persist without transport; reaching the outbox "
+             + "hook would publish an event the caller asked to keep local");
+    await Assert.That(publisherInvoked).IsFalse()
+      .Because("EventStore carries no LocalDispatch flag — persistence without immediate processing");
   }
 
   [Test]
@@ -1039,13 +1047,21 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_VoidAnyInvokerFallback_NullResult_CompletesAsync() {
     // Arrange - anyInvoker returns null
-    ValueTask<object?> anyInvoker(object msg) =>
-      new ValueTask<object?>((object?)null);
+    var anyInvokedWith = new List<object>();
+    ValueTask<object?> anyInvoker(object msg) {
+      anyInvokedWith.Add(msg);
+      return new ValueTask<object?>((object?)null);
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-null");
 
     // Act - should complete without error even with null result
     await dispatcher.LocalInvokeAsync((object)command, MessageContext.New());
+
+    // Assert - a null result means "the receptor returned nothing", not "no receptor ran". Treating
+    // it as unhandled would make every void receptor look missing on the fallback path.
+    await Assert.That(anyInvokedWith).Count().IsEqualTo(1);
+    await Assert.That(anyInvokedWith[0]).IsSameReferenceAs(command);
   }
 
   // ========================================
@@ -1352,7 +1368,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalSendManyAsync_Generic_NoReceptor_ThrowsReceptorNotFoundAsync() {
     // Arrange - no invoker for UnhandledW3Command
-    var dispatcher = _createDispatcher(
+    _ = _createDispatcher(
       invoker: _defaultInvoker(),
       handleMessageType: typeof(UnhandledW3Command)); // doesn't match W3Command
     var commands = new[] { new W3Command("x") };

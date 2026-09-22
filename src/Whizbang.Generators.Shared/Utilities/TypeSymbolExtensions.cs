@@ -14,7 +14,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Properties and methods are deduplicated by name/signature, with derived class members taking precedence.
 /// </remarks>
 /// <docs>extending/source-generators/type-symbol-extensions</docs>
-/// <tests>Whizbang.Generators.Tests/Utilities/TypeSymbolExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeSymbolExtensionsTests.cs</tests>
 public static class TypeSymbolExtensions {
   /// <summary>
   /// Gets all properties from a type and its base types.
@@ -82,7 +82,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == attributeFullName)) {
+            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
           return member;
         }
       }
@@ -118,7 +118,7 @@ public static class TypeSymbolExtensions {
         var isStaticMatch = includeStatic || !member.IsStatic;
 
         // Use method signature for deduplication (name + parameter types)
-        var signature = $"{member.Name}({string.Join(",", member.Parameters.Select(p => p.Type.ToDisplayString()))})";
+        var signature = $"{member.Name}({string.Join(",", member.Parameters.Select(p => TypeNameUtilities.Display(p.Type)))})";
 
         if (isAccessible && isStaticMatch && seenSignatures.Add(signature)) {
           yield return member;
@@ -153,7 +153,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == attributeFullName)) {
+            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
           return member;
         }
       }

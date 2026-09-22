@@ -48,7 +48,7 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
       await admin.OpenAsync();
       await admin.ExecuteAsync($@"SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid()");
-      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
     } catch { /* ignore */ }
     _testDatabaseName = null;
     _connectionString = null;

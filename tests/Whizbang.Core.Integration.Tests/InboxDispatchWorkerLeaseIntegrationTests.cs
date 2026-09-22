@@ -11,12 +11,15 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Integration.Tests;
 
@@ -77,7 +80,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
     }
@@ -85,7 +88,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -98,7 +101,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       => new TestMessage("integration-test");
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
       => new TestMessage("integration-test");
-    public object DeserializeFromBytes(byte[] bytes, string messageTypeName)
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
       => new TestMessage("integration-test");
   }
 
@@ -196,14 +199,24 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       gate.MarkReady();
 
       var worker = new InboxDispatchWorker(
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        instance, inbox, handlerCommit, failure, gate,
-        Options.Create(new InboxDispatchWorkerOptions()),
-        Options.Create(new WorkCoordinatorOptions()),
-        NullLogger<InboxDispatchWorker>.Instance,
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        instanceProvider: instance,
+        inboxChannelWriter: inbox,
+        handlerCommitChannel: handlerCommit,
+        failureChannel: failure,
+        schemaReadyGate: gate,
+        options: Options.Create(new InboxDispatchWorkerOptions()),
+        coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+        logger: NullLogger<InboxDispatchWorker>.Instance,
+        integrityOptions: Options.Create(new StreamIntegrityOptions()),
         lifecycleMessageDeserializer: deserializer,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        deadLetterStore: NullDeadLetterStore.Instance,
+        generationProvider: new DefaultGenerationProvider(),
         leaseRegistry: registry,
         timeProvider: fakeTime);
 
@@ -214,7 +227,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       await inbox.WriteAsync(work, workerCts.Token);
 
       // Wait for the inline path to complete (handler-commit channel receives the EventStored marker).
-      // After this, the dispatch's `using var lease` scope has ended → lease disposed → CT cancelled.
+      // After this, the dispatch's `using var lease` scope has ended → lease disposed → CT canceled.
       var commit = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(10));
       await Assert.That(commit.HandlerId).IsEqualTo(work.MessageId);
 

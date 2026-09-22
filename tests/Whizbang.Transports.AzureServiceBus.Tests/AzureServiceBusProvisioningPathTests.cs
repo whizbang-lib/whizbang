@@ -12,16 +12,19 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Unit tests for AzureServiceBusTransport's provisioning and options-validation paths:
 /// constructor guards, InitializeAsync branches, _ensureInfrastructureExistsAsync,
 /// _createSubscriptionAsync, _ensureTopicExistsViaAdminAsync,
 /// _migrateSubscriptionToSessionsIfNeededAsync, subscription-name derivation, and the
 /// SqlFilter / CorrelationFilter rule application paths.
-///
+/// </para>
+/// <para>
 /// The ASB emulator has no management plane, so every admin-plane path is driven through a
 /// recording fake IServiceBusAdminClient. The broker itself is replaced with mockable
 /// ServiceBusClient/ServiceBusProcessor subclasses (the Azure SDK's documented mocking
 /// surface), so SubscribeAsync/SubscribeBatchAsync complete end-to-end without any network.
+/// </para>
 /// </summary>
 [Timeout(10_000)]
 public class AzureServiceBusProvisioningPathTests {
@@ -156,9 +159,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(transport.IsInitialized).IsFalse();
   }
 
-  /// <summary>Pre-cancelled token short-circuits before any work.</summary>
+  /// <summary>Pre-canceled token short-circuits before any work.</summary>
   [Test]
-  public async Task InitializeAsync_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task InitializeAsync_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var adminClient = new RecordingAdminClient();
     var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient);
     using var cts = new CancellationTokenSource();
@@ -189,12 +192,12 @@ public class AzureServiceBusProvisioningPathTests {
 
     await Assert.That(adminClient.CreatedTopics).Contains("orders-topic");
     await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
-    var created = adminClient.CreatedSubscriptions[0];
-    await Assert.That(created.Topic).IsEqualTo("orders-topic");
-    await Assert.That(created.Subscription).IsEqualTo("unit-sub");
-    await Assert.That(created.RequiresSession is null).IsTrue()
+    var (Topic, Subscription, RequiresSession, MaxDeliveryCount, _) = adminClient.CreatedSubscriptions[0];
+    await Assert.That(Topic).IsEqualTo("orders-topic");
+    await Assert.That(Subscription).IsEqualTo("unit-sub");
+    await Assert.That(RequiresSession is null).IsTrue()
       .Because("non-session mode must use the overload without RequiresSession");
-    await Assert.That(created.MaxDeliveryCount).IsEqualTo(10);
+    await Assert.That(MaxDeliveryCount).IsEqualTo(10);
     await Assert.That(subscription.IsActive).IsTrue();
     await Assert.That(client.LastProcessor!.StartCalled).IsTrue();
   }
@@ -214,9 +217,9 @@ public class AzureServiceBusProvisioningPathTests {
     var subscription = await transport.SubscribeAsync(_noopHandler, _destination("orders-topic"));
 
     await Assert.That(adminClient.CreatedSubscriptions).Count().IsEqualTo(1);
-    var created = adminClient.CreatedSubscriptions[0];
-    await Assert.That(created.RequiresSession == true).IsTrue();
-    await Assert.That(created.MaxDeliveryCount).IsEqualTo(7);
+    var (_, _, RequiresSession, MaxDeliveryCount, _) = adminClient.CreatedSubscriptions[0];
+    await Assert.That(RequiresSession == true).IsTrue();
+    await Assert.That(MaxDeliveryCount).IsEqualTo(7);
     await Assert.That(adminClient.CreatedTopics).IsEmpty()
       .Because("the topic already exists; only the subscription is created");
     await Assert.That(subscription.IsActive).IsTrue();
@@ -527,9 +530,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "$Default"))).IsTrue()
       .Because("the default match-all rule must be removed before the SqlFilter is applied");
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
-    var rule = adminClient.CreatedRules[0];
-    await Assert.That(rule.Options.Name).IsEqualTo("RoutingPatternFilter");
-    var sqlFilter = rule.Options.Filter as SqlRuleFilter;
+    var (_, _, Options) = adminClient.CreatedRules[0];
+    await Assert.That(Options.Name).IsEqualTo("RoutingPatternFilter");
+    var sqlFilter = Options.Filter as SqlRuleFilter;
     await Assert.That(sqlFilter).IsNotNull();
     await Assert.That(sqlFilter!.SqlExpression)
       .IsEqualTo("sys.Label LIKE 'orders.%' OR sys.Label LIKE 'audit.%'");
@@ -798,9 +801,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(adminClient.DeletedRules.Contains(("orders-topic", "unit-sub", "DestinationFilter"))).IsTrue()
       .Because("a stale DestinationFilter rule is replaced, not duplicated");
     await Assert.That(adminClient.CreatedRules).Count().IsEqualTo(1);
-    var rule = adminClient.CreatedRules[0];
-    await Assert.That(rule.Options.Name).IsEqualTo("DestinationFilter");
-    var correlationFilter = rule.Options.Filter as CorrelationRuleFilter;
+    var (_, _, Options) = adminClient.CreatedRules[0];
+    await Assert.That(Options.Name).IsEqualTo("DestinationFilter");
+    var correlationFilter = Options.Filter as CorrelationRuleFilter;
     await Assert.That(correlationFilter).IsNotNull();
     await Assert.That(correlationFilter!.ApplicationProperties["Destination"]).IsEqualTo("svc-a");
   }
@@ -1023,7 +1026,7 @@ public class AzureServiceBusProvisioningPathTests {
     }
 
     public override ServiceBusSessionProcessor CreateSessionProcessor(
-      string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options) {
+      string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options = default!) {
       LastSessionProcessor = new FakeSessionProcessor();
       return LastSessionProcessor;
     }
@@ -1063,8 +1066,7 @@ public class AzureServiceBusProvisioningPathTests {
 
     public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    private sealed class InnerFakeProcessor : ServiceBusProcessor {
-    }
+    private sealed class InnerFakeProcessor : ServiceBusProcessor;
   }
 
   /// <summary>

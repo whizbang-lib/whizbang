@@ -23,11 +23,11 @@ namespace Whizbang.Core.Workers;
 public sealed partial class RecentlyProcessedEventCacheSweepWorker(
     RecentlyProcessedEventCache cache,
     IOptions<RecentlyProcessedEventCacheOptions> options,
-    ILogger<RecentlyProcessedEventCacheSweepWorker>? logger = null) : BackgroundService {
+    ILogger<RecentlyProcessedEventCacheSweepWorker> logger) : BackgroundService {
   private readonly RecentlyProcessedEventCache _cache = cache ?? throw new ArgumentNullException(nameof(cache));
   private readonly RecentlyProcessedEventCacheOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly ILogger<RecentlyProcessedEventCacheSweepWorker> _logger =
-    logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RecentlyProcessedEventCacheSweepWorker>.Instance;
+    logger;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {

@@ -100,13 +100,13 @@ public class TopologyManifestTests {
       .ToHashSet(StringComparer.Ordinal);
     var namedByInbox = inbox.GetSubscriptions(context).Select(s => s.Topic).ToHashSet(StringComparer.Ordinal);
 
-    foreach (var published in manifest.PublishDestinations) {
-      await Assert.That(namedByOutbox.Contains(published.Address)).IsTrue()
-        .Because($"publish address '{published.Address}' must come from GetDestination.");
+    foreach (var address in manifest.PublishDestinations.Select(published => published.Address)) {
+      await Assert.That(namedByOutbox.Contains(address)).IsTrue()
+        .Because($"publish address '{address}' must come from GetDestination.");
     }
-    foreach (var subscription in manifest.Subscriptions) {
-      await Assert.That(namedByInbox.Contains(subscription.Topic)).IsTrue()
-        .Because($"subscription topic '{subscription.Topic}' must come from GetSubscriptions.");
+    foreach (var topic in manifest.Subscriptions.Select(subscription => subscription.Topic)) {
+      await Assert.That(namedByInbox.Contains(topic)).IsTrue()
+        .Because($"subscription topic '{topic}' must come from GetSubscriptions.");
     }
   }
 
@@ -155,7 +155,7 @@ public class TopologyManifestTests {
       .Because("The manifest is a set projection — input enumeration order must not matter.");
     // Deterministic order: sorted by message type name
     await Assert.That(fromForward.PublishDestinations[0].MessageTypeName)
-      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName!);
+      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName);
   }
 
   [Test]
@@ -192,7 +192,7 @@ public class TopologyManifestTests {
 
     await Assert.That(manifest.PublishDestinations.Count).IsEqualTo(1);
     await Assert.That(manifest.PublishDestinations[0].MessageTypeName)
-      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName!);
+      .IsEqualTo(typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName);
   }
 
   [Test]

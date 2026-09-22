@@ -18,8 +18,15 @@ namespace Whizbang.Generators.Tests;
 public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   private const string GENERATED_FILE = "WhizbangModelBuilderExtensions.g.cs";
 
-  /// <summary>Standard-mode snippet marker (ComplexProperty().ToJson() path).</summary>
-  private const string STANDARD_CONFIG_MARKER = "entity.ComplexProperty(e => e.Data, d => d.ToJson(\"data\"));";
+  /// <summary>
+  /// Standard-mode snippet marker (ComplexProperty().ToJson() path).
+  /// </summary>
+  /// <remarks>
+  /// The call itself rather than the whole statement, because the builder is configured in a block
+  /// once a model has temporal properties to convert. What identifies the path is that the document
+  /// is mapped as a complex property at all, not how many lines configure it.
+  /// </remarks>
+  private const string STANDARD_CONFIG_MARKER = "d.ToJson(\"data\");";
 
   /// <summary>Polymorphic-mode snippet marker (Property().HasColumnType("jsonb") path).</summary>
   private const string POLYMORPHIC_CONFIG_MARKER = "POLYMORPHIC MODEL";
@@ -299,7 +306,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         [PerspectiveStorage(FieldStorageMode.Split)]
         public class SensorReading {
-          [PhysicalField(Indexed = true)]
+          [PhysicalField]
+          [Indexed]
           public string DeviceId { get; init; } = "";
 
           public string Payload { get; init; } = "";
@@ -322,6 +330,81 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER);
     await Assert.That(generated).Contains("entity.Property<string>(\"device_id\")");
     await Assert.That(generated).Contains(".HasDatabaseName(\"ix_wh_per_sensor_reading_device_id\")");
+  }
+
+  /// <summary>
+  /// A declared column type reaches the Entity Framework model configuration verbatim.
+  /// </summary>
+  /// <remarks>
+  /// The model side and the DDL side derive the column type separately, so both have to honour the
+  /// declaration or the model and the table describe different columns. This is the model side; the
+  /// DDL side is covered in the service-registration generator's own tests.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeclaredColumnType_ReachesTheModelConfigurationAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class Lineage {
+          [PhysicalField(ColumnType = "uuid[]")]
+          public Guid[] AncestorIds { get; init; } = [];
+        }
+
+        public class LineagePerspective(IPerspectiveStore<Lineage> store)
+          : IPerspectiveFor<Lineage, LineageChanged> {
+          public Lineage Apply(Lineage currentData, LineageChanged @event) => currentData;
+        }
+
+        public record LineageChanged : IEvent;
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(".HasColumnType(\"uuid[]\")", StringComparison.Ordinal)
+      .Because("a native array is the case the conventional mapping cannot reach, and the "
+             + "derivation's fallback is text, so a declaration that did not win here would store "
+             + "the array as a delimited string.");
+  }
+
+  /// <summary>
+  /// Without a declaration the conventional mapping still decides.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutADeclaredColumnType_KeepsTheDerivedOneAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class Holder {
+          [PhysicalField]
+          public Guid OwnerId { get; init; }
+        }
+
+        public class HolderPerspective(IPerspectiveStore<Holder> store)
+          : IPerspectiveFor<Holder, HolderChanged> {
+          public Holder Apply(Holder currentData, HolderChanged @event) => currentData;
+        }
+
+        public record HolderChanged : IEvent;
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(".HasColumnType(\"uuid\")", StringComparison.Ordinal)
+      .Because("the declaration is opt-in, so the default behaviour has to be unchanged.");
   }
 
   /// <summary>
@@ -456,7 +539,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
         namespace TestApp;
 
         public class Catalog {
-          [PhysicalField(Indexed = true, Unique = true)]
+          [PhysicalField(Unique = true)]
+          [Indexed]
           public string Sku { get; init; } = "";
         }
 
@@ -607,6 +691,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Document {
           [VectorField(768, DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, ColumnName = "embedding_vec", IndexLists = 200)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 
@@ -648,6 +733,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Article {
           [VectorField(384, DistanceMetric = VectorDistanceMetric.InnerProduct)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 
@@ -673,7 +759,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   }
 
   /// <summary>
-  /// Test that [VectorField(Indexed = false)] generates the vector column but NO index,
+  /// Test that [VectorField()] generates the vector column but NO index,
   /// while still requiring the pgvector extension.
   /// </summary>
   [Test]
@@ -687,7 +773,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
         namespace TestApp;
 
         public class Snapshot {
-          [VectorField(128, Indexed = false)]
+          [VectorField(128)]
           public float[]? Embedding { get; init; }
         }
 
@@ -727,6 +813,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Sketch {
           [VectorField(64, DistanceMetric = (VectorDistanceMetric)99)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 
@@ -891,7 +978,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER);
-    await Assert.That(generated).Contains("entity.Property(e => e.Data).HasColumnName(\"data\").HasColumnType(\"jsonb\");");
+    await Assert.That(generated).Contains("entity.Property(e => e.Data).HasColumnName(\"data\").HasColumnType(\"jsonb\")");
   }
 
   /// <summary>
@@ -1232,6 +1319,524 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER);
     await Assert.That(generated).DoesNotContain(POLYMORPHIC_CONFIG_MARKER);
+  }
+
+  #endregion
+
+  #region Record models classify on their declared shape
+
+  /// <summary>
+  /// A record model is classified by the properties its author declared, exactly as the equivalent
+  /// class model is.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A record carries a compiler-generated <c>EqualityContract</c> of type <c>System.Type</c>, and
+  /// <c>System.Type</c> is an abstract class. Read as a declared property, it answered "polymorphic"
+  /// on the first member of every record before the detector reached anything the author wrote, so
+  /// <c>record</c> versus <c>class</c> silently decided how the document was stored.
+  /// </para>
+  /// <para>
+  /// That mattered far beyond the snippet chosen. The polymorphic path maps the document as a single
+  /// opaque column, so nothing inside it is a mapped property: no extraction to build an index over,
+  /// nothing for the containment rewrite to recognize, and nowhere to attach a value conversion. A
+  /// record model was therefore excluded from every one of those, while an identical class model was
+  /// not, and the framework's own sample models are records.
+  /// </para>
+  /// <para>
+  /// The rule that settles it is the one both serializers already use: only public properties are
+  /// mapped, so only a public property can make a document polymorphic. <c>EqualityContract</c> is
+  /// protected and is serialized by nothing.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("record")]
+  [Arguments("class")]
+  public async Task AModelOfSimplePropertiesUsesStandardConfigAsync(string declaration) {
+    // Arrange
+    var source = $$"""
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public {{declaration}} OrderDto {
+          public string Name { get; init; } = "";
+          public int Quantity { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER)
+      .Because($"a {declaration} of a string and an int holds nothing polymorphic, and how it is "
+        + "stored has to follow from what the author declared rather than from which keyword "
+        + "they declared it with");
+    await Assert.That(generated).DoesNotContain(POLYMORPHIC_CONFIG_MARKER);
+  }
+
+  /// <summary>
+  /// A record that really does hold a polymorphic member is still classified polymorphic, so the
+  /// rule above narrows the question rather than answering it away.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ARecordHoldingAnAbstractPropertyIsStillPolymorphicAsync() {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public record OrderDto {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("the declared property is genuinely abstract, which is the thing the detection is "
+        + "for; only the compiler-generated member stopped counting");
+  }
+
+  /// <summary>
+  /// A non-public property is not evidence either way, because neither serializer maps one.
+  /// </summary>
+  /// <remarks>
+  /// The general form of the <c>EqualityContract</c> case. Reported separately so the rule is pinned
+  /// as a rule rather than as a special case for records.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ANonPublicPropertyDoesNotMakeAModelPolymorphicAsync() {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDto {
+          public string Reference { get; init; } = "";
+          protected PaymentMethod? Hidden { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER)
+      .Because("a protected property reaches neither the JSON document nor the mapped model, so it "
+        + "cannot be what decides how the document is stored");
+  }
+
+  #endregion
+
+  #region Polymorphic detection on class models
+
+  // Every case below uses a CLASS model on purpose, which it no longer strictly has to: a record
+  // model is now classified on its declared properties like any other. Left as classes because the
+  // cases are about the shape of a property's type rather than about the keyword the model was
+  // declared with, and AModelOfSimplePropertiesUsesStandardConfigAsync covers that separately.
+
+  /// <summary>
+  /// A List of an abstract element type is polymorphic: the element type is what has to be
+  /// inspected, not the List itself.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithListOfAbstract_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDto {
+          public List<PaymentMethod> Methods { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("ComplexProperty().ToJson() cannot round-trip a list of an abstract element type");
+  }
+
+  /// <summary>
+  /// A concrete nested class that itself holds an abstract property makes the model polymorphic:
+  /// the detection has to descend through the concrete type, not stop at it.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithNestedTypeHoldingAbstract_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDetails {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderDto {
+          public OrderDetails Details { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("polymorphism one level down is still polymorphism when the whole graph is serialized");
+  }
+
+  /// <summary>
+  /// Dictionary is not one of the collection shapes the element-type helper recognizes, so an
+  /// abstract value type still has to be found some other way.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithDictionaryOfAbstract_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDto {
+          public Dictionary<string, PaymentMethod> ByName { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("an abstract value type inside a map still cannot round-trip through ToJson()");
+  }
+
+  /// <summary>
+  /// A generic type argument that is itself a concrete wrapper holding an abstract property is
+  /// detected recursively through the argument scan.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithDictionaryOfWrapperType_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDetails {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderDto {
+          public Dictionary<string, OrderDetails> ByRegion { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("a wrapper reached only through a map value still has to be descended into");
+  }
+
+  /// <summary>
+  /// A concrete (non-abstract) class carrying [JsonPolymorphic] is polymorphic by declaration:
+  /// abstractness is not the only signal.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithJsonPolymorphicProperty_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Text.Json.Serialization;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        [JsonPolymorphic]
+        [JsonDerivedType(typeof(Circle), "circle")]
+        public class Shape {
+          public string Color { get; init; } = "";
+        }
+
+        public class Circle : Shape {
+          public double Radius { get; init; }
+        }
+
+        public class CanvasDto {
+          public Shape? MainShape { get; init; }
+        }
+
+        public class CanvasPerspective(IPerspectiveStore<CanvasDto> store)
+          : IPerspectiveFor<CanvasDto, CanvasSaved> {
+          public CanvasDto Apply(CanvasDto currentData, CanvasSaved @event) => currentData;
+        }
+
+        public record CanvasSaved : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("a declared type hierarchy round-trips through the discriminator, not ToJson()");
+  }
+
+  /// <summary>
+  /// A set-typed collection of an abstract element is polymorphic even though HashSet is not one
+  /// of the recognized collection shapes: the abstract element is only reachable by inspecting
+  /// the closed generic type's own type arguments.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithSetOfAbstract_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDto {
+          public HashSet<PaymentMethod> Methods { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("an unrecognized collection shape must not become a blind spot that routes an abstract element back to ToJson()");
+  }
+
+  /// <summary>
+  /// The same unrecognized collection shape closed over a concrete element that itself holds an
+  /// abstract property: the type argument has to be descended into, not just tested for
+  /// abstractness.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithSetOfWrapperType_UsesPolymorphicConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDetails {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderDto {
+          public HashSet<OrderDetails> Details { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("a concrete type argument can still carry polymorphism one level further down");
+  }
+
+  /// <summary>
+  /// The counterpart: an equivalent class model whose whole graph is concrete stays on the
+  /// standard configuration, so the marker above is not something every class model produces.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ClassModelWithConcreteGraph_UsesStandardConfigAsync() {
+    // Arrange
+    const string source = """
+        using System.Collections.Generic;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDetails {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderDto {
+          public List<PaymentMethod> Methods { get; init; } = new();
+          public HashSet<PaymentMethod> MethodSet { get; init; } = new();
+          public Dictionary<string, OrderDetails> ByRegion { get; init; } = new();
+          public HashSet<OrderDetails> DetailSet { get; init; } = new();
+          public OrderDetails Details { get; init; } = new();
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER);
+    await Assert.That(generated).DoesNotContain(POLYMORPHIC_CONFIG_MARKER)
+      .Because("the same shapes without an abstract or [JsonPolymorphic] type must stay on ToJson()");
   }
 
   #endregion

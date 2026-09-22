@@ -17,6 +17,20 @@ public static class Program {
     // Show branded banner with tool info
     WhizbangBanner.PrintHeader("Whizbang Migrate");
 
+    return await BuildRootCommand().InvokeAsync(args);
+  }
+
+  /// <summary>
+  /// Builds the command tree.
+  /// </summary>
+  /// <remarks>
+  /// Separated from <see cref="Main"/> so the CLI surface can be asserted without invoking
+  /// anything: the command names and option aliases are a contract that scripts and the
+  /// documentation depend on, and a rename or a dropped registration breaks them silently
+  /// while the tool still runs.
+  /// </remarks>
+  /// <returns>The configured root command.</returns>
+  public static RootCommand BuildRootCommand() {
     var rootCommand = new RootCommand("Migration tool for converting Marten/Wolverine projects to Whizbang");
 
     // analyze command
@@ -31,7 +45,9 @@ public static class Program {
 
     analyzeCommand.AddOption(projectOption);
     analyzeCommand.AddOption(formatOption);
-    analyzeCommand.SetHandler(async (project, format) => {
+    analyzeCommand.SetHandler(async context => {
+      var project = context.ParseResult.GetValueForOption(projectOption);
+      var format = context.ParseResult.GetValueForOption(formatOption);
       var path = project ?? Directory.GetCurrentDirectory();
       Console.WriteLine($"Analyzing: {path}");
       Console.WriteLine();
@@ -48,6 +64,7 @@ public static class Program {
 
       if (!Directory.Exists(sourceDir)) {
         await Console.Error.WriteLineAsync($"Directory not found: {sourceDir}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -65,11 +82,17 @@ public static class Program {
       };
 
       if (format == "json") {
-        Console.WriteLine("JSON output not yet implemented (requires AOT-compatible serialization)");
-      } else {
-        _printTableFormat(combinedResult);
+        // Printing an English sentence on stdout and exiting 0 hands a caller that asked for
+        // JSON something that is not JSON, with a success code: `analyze --format json | jq`
+        // fails on the parse while any exit-code check upstream reports the analysis worked.
+        await Console.Error.WriteLineAsync(
+            "Error: JSON output is not yet implemented (requires AOT-compatible serialization).");
+        context.ExitCode = 1;
+        return;
       }
-    }, projectOption, formatOption);
+
+      _printTableFormat(combinedResult);
+    });
 
     // plan command
     var planCommand = new Command("plan", "Create a migration plan without applying changes");
@@ -78,11 +101,14 @@ public static class Program {
         aliases: ["--output", "-o"],
         description: "Output file for the plan");
     planCommand.AddOption(outputOption);
-    planCommand.SetHandler(async (project, output) => {
-      Console.WriteLine($"Planning migration for: {project ?? "current directory"}");
-      Console.WriteLine("Plan command is not yet implemented. Use 'wizard' command for interactive migration.");
-      await Task.CompletedTask;
-    }, projectOption, outputOption);
+    planCommand.SetHandler(async context => {
+      // Exiting 0 tells a caller a plan was produced. Nothing was written to --output, so a
+      // pipeline that goes on to read that file finds the previous run's plan, or nothing.
+      await Console.Error.WriteLineAsync(
+          "Error: the plan command is not yet implemented. "
+        + "Use the wizard command for interactive migration.");
+      context.ExitCode = 1;
+    });
 
     // apply command
     var applyCommand = new Command("apply", "Apply migration transformations");
@@ -164,6 +190,7 @@ public static class Program {
       if (!string.IsNullOrEmpty(decisionFilePath)) {
         if (!File.Exists(decisionFilePath)) {
           await Console.Error.WriteLineAsync($"Decision file not found: {decisionFilePath}");
+          context.ExitCode = 1;
           return;
         }
         loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
@@ -192,6 +219,7 @@ public static class Program {
 
       if (!result.Success) {
         await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -242,20 +270,31 @@ public static class Program {
         description: "List available checkpoints");
     rollbackCommand.AddArgument(checkpointArgument);
     rollbackCommand.AddOption(listOption);
-    rollbackCommand.SetHandler(async (checkpoint, list) => {
+    rollbackCommand.SetHandler(async context => {
+      var checkpoint = context.ParseResult.GetValueForArgument(checkpointArgument);
+      var list = context.ParseResult.GetValueForOption(listOption);
+
+      // Neither branch is implemented yet. Exiting 0 would report success for work that did
+      // not happen, so `whizbang-migrate rollback <id> && deploy` would carry on as though the
+      // tree had been restored. An unimplemented operation has to fail loudly instead.
       if (list) {
-        Console.WriteLine("Available checkpoints:");
-        Console.WriteLine("Checkpoint listing is not yet implemented.");
+        await Console.Error.WriteLineAsync("Error: checkpoint listing is not yet implemented.");
       } else if (checkpoint != null) {
-        Console.WriteLine($"Rolling back to checkpoint: {checkpoint}");
-        Console.WriteLine("Rollback is not yet implemented.");
+        await Console.Error.WriteLineAsync(
+            $"Error: rollback to checkpoint '{checkpoint}' is not yet implemented.");
+      } else {
+        await Console.Error.WriteLineAsync(
+            "Error: specify a checkpoint to roll back to, or --list to show available checkpoints.");
       }
-    }, checkpointArgument, listOption);
+
+      context.ExitCode = 1;
+    });
 
     // status command
     var statusCommand = new Command("status", "Show migration status");
     statusCommand.AddOption(projectOption);
-    statusCommand.SetHandler(async project => {
+    statusCommand.SetHandler(async context => {
+      var project = context.ParseResult.GetValueForOption(projectOption);
       var path = project ?? Directory.GetCurrentDirectory();
 
       // Get source directory from solution or project path
@@ -270,6 +309,7 @@ public static class Program {
 
       if (!result.Success) {
         await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -282,7 +322,7 @@ public static class Program {
       Console.WriteLine($"  Pending steps:       {result.PendingTransformerCount}");
       Console.WriteLine($"  Files transformed:   {result.TotalFilesTransformed}");
       Console.WriteLine();
-    }, projectOption);
+    });
 
     rootCommand.AddCommand(analyzeCommand);
     rootCommand.AddCommand(planCommand);
@@ -290,7 +330,7 @@ public static class Program {
     rootCommand.AddCommand(rollbackCommand);
     rootCommand.AddCommand(statusCommand);
 
-    return await rootCommand.InvokeAsync(args);
+    return rootCommand;
   }
 
   private static void _printTableFormat(AnalysisResult result) {

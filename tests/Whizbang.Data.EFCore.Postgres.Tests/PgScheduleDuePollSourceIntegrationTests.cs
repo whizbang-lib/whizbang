@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// owned by this pod's instance is due (<c>next_fire_at &lt;= NOW()</c>), and not otherwise.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard4")]
 public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
   private sealed class CountingSink : ISignalSink {
     public int Received { get; private set; }
@@ -65,7 +66,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
       VALUES (gen_random_uuid(), @stream, 0, 0, NOW() + @off::interval, @status, 'TestOccurrence');", conn);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("off", fireOffset);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(status), status);
     await cmd.ExecuteNonQueryAsync();
   }
 

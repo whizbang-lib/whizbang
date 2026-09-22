@@ -25,7 +25,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -59,9 +59,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
 
     // Subscribe with session processor
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination
     );
 
@@ -195,9 +193,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var receivedChannel = Channel.CreateUnbounded<Guid>();
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination
     );
 
@@ -272,7 +268,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     const int messageCount = 10;
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
+      async (_, _, ct) => {
         concurrencyTracker.Enter();
         try {
           // Simulate some work

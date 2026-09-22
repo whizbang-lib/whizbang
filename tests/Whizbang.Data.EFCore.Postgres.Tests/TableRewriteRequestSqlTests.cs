@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
+[Category("Shard4")]
 public class TableRewriteRequestSqlTests : EFCoreTestBase {
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());

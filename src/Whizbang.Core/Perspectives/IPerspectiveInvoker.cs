@@ -10,8 +10,6 @@ namespace Whizbang.Core.Perspectives;
 /// Registered as Scoped service - one instance per HTTP request or message batch.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public interface IPerspectiveInvoker : IAsyncDisposable {
   /// <summary>
   /// Queues an event to be sent to perspectives when scope completes.
@@ -26,7 +24,5 @@ public interface IPerspectiveInvoker : IAsyncDisposable {
   /// Automatically called on scope disposal (IAsyncDisposable).
   /// Can be called manually for explicit control.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   Task InvokePerspectivesAsync(CancellationToken cancellationToken = default);
 }

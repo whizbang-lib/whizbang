@@ -17,6 +17,15 @@ public sealed class MessageBodyOffloadOptions {
   public string? ProviderName { get; set; }
 
   /// <summary>
+  /// The registered <see cref="IMessageBodyCipher"/> that seals every offloaded body before it is
+  /// uploaded (issue #704). Null (the default) stores bodies as serialized. When set, the upload
+  /// call receives sealed bytes, the claim carries the cipher descriptor, and the receiver must
+  /// have the same cipher name registered (<c>AddWhizbangMessageBodyCipher</c> or
+  /// <c>AddWhizbangAesGcmBodyCipher</c>) or it dead-letters the claim as cipher-unknown.
+  /// </summary>
+  public string? CipherName { get; set; }
+
+  /// <summary>
   /// Body size in bytes at or above which offload kicks in. Set BELOW the
   /// transport's <c>MaxMessageSizeBytes</c> to leave headroom for envelope
   /// metadata (typical: 64 KB for Azure Service Bus Standard's 256 KB

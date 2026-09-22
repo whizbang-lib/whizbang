@@ -893,9 +893,26 @@ BEGIN
     RETURN;
   END IF;
 
+  -- DETERMINISTIC LOCK ORDER. jsonb_array_elements preserves the CALLER's array order, so without
+  -- this ORDER BY the row locks are taken in whatever order the flusher happened to assemble the
+  -- batch — which differs between instances and between batches on the same instance. Two concurrent
+  -- batches whose handler sets overlap then acquire the same rows in opposite orders and block each
+  -- other; observed in production as a circular wait (pg_blocking_pids showing each of two backends
+  -- blocked by the other on wait_event=transactionid) with commits degrading to ~100-166ms apiece.
+  --
+  -- Ordering by the inbox completion's MessageId is what matters because that is the column
+  -- process_inbox_completions locks wh_inbox by. handler_id is the tiebreaker for elements carrying
+  -- no inbox_completion. NULLS FIRST is stated explicitly rather than left to the default so the
+  -- order is pinned by this text and cannot drift with a server setting.
+  --
+  -- This changes ONLY the order of operations within one batch: the same set of handler results is
+  -- applied, with the same effects. Tier 2 below MUST sort identically — a fallback that used a
+  -- different order would reintroduce exactly the cycle this prevents.
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
+    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+             (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     -- NO BEGIN..EXCEPTION wrapper: any error from commit_handler_result raises
     -- straight out of the function, aborting the whole batch atomically. The
@@ -925,6 +942,7 @@ COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch_bulk IS
 -- both tiers preserve transactional isolation against the outer transaction.
 -- ============================================================================
 
+
 SELECT __SCHEMA__.drop_all_overloads('commit_handler_batch');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_batch(
@@ -932,11 +950,16 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_batch(
 ) RETURNS TABLE(
   handler_id UUID,
   success BOOLEAN,
-  error_message TEXT
+  error_message TEXT,
+  tier INTEGER,
+  bulk_error TEXT
 ) AS $$
 DECLARE
   r RECORD;
   v_handler_id UUID;
+  v_bulk_state TEXT;
+  v_bulk_msg TEXT;
+  v_bulk_error TEXT;
 BEGIN
   IF jsonb_array_length(p_results) = 0 THEN
     RETURN;
@@ -950,22 +973,38 @@ BEGIN
     RETURN QUERY
     SELECT (elem ->> 'handler_id')::UUID AS handler_id,
            TRUE                          AS success,
-           NULL::TEXT                    AS error_message
+           NULL::TEXT                    AS error_message,
+           1                             AS tier,
+           NULL::TEXT                    AS bulk_error
     FROM jsonb_array_elements(p_results) AS elem;
     RETURN;
   EXCEPTION WHEN OTHERS THEN
-    -- Bulk attempt failed; fall through to Tier 2 (savepoint loop). The
-    -- subtransaction has already rolled back any partial writes from the bulk
-    -- attempt, so the loop starts from a clean state.
-    NULL;
+    -- #573: the fallback is legitimate, the silence was not. Capture WHY Tier 1 failed —
+    -- a deployment running permanently on the slow per-handler path was indistinguishable
+    -- from a healthy one, and the diagnosis (the SQLSTATE) was discarded on every call.
+    -- The reason rides on every Tier-2 row (the C# caller logs and counts it) and lands
+    -- durably in wh_log for after-the-fact forensics.
+    GET STACKED DIAGNOSTICS v_bulk_state = RETURNED_SQLSTATE, v_bulk_msg = MESSAGE_TEXT;
+    v_bulk_error := v_bulk_state || ': ' || v_bulk_msg;
+    PERFORM __SCHEMA__.log_event(2, 'commit_handler_batch',
+      'bulk tier failed; falling back to per-handler savepoints: ' || v_bulk_error);
   END;
 
   -- Tier 2: per-handler SAVEPOINT loop (rare path). Identical to the
   -- pre-Option-D body — preserves the per-handler success/failure isolation
   -- contract for the C# flusher.
+  -- Same deterministic lock order as Tier 1 (see commit_handler_batch_bulk). The fallback loop takes
+  -- the same row locks, so it must take them in the same sequence; sorting only the fast path would
+  -- leave the rare path free to deadlock against a concurrent bulk batch.
+  --
+  -- Reordering is safe for the caller: the flusher maps results by the handler_id carried in each
+  -- returned row (`rows.Select(r => new HandlerBatchResult(r.HandlerId, ...))`), never positionally,
+  -- so per-handler success/failure reporting is unaffected by emission order.
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
+    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+             (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     v_handler_id := (r.elem ->> 'handler_id')::UUID;
 
@@ -974,9 +1013,11 @@ BEGIN
       -- rolls back ONLY this iteration's writes, then control jumps to the EXCEPTION
       -- branch and the loop continues with the next handler.
       PERFORM __SCHEMA__.commit_handler_result(r.elem);
-      RETURN QUERY SELECT v_handler_id AS handler_id, TRUE AS success, NULL::TEXT AS error_message;
+      RETURN QUERY SELECT v_handler_id AS handler_id, TRUE AS success, NULL::TEXT AS error_message,
+                          2 AS tier, v_bulk_error AS bulk_error;
     EXCEPTION WHEN OTHERS THEN
-      RETURN QUERY SELECT v_handler_id AS handler_id, FALSE AS success, SQLERRM::TEXT AS error_message;
+      RETURN QUERY SELECT v_handler_id AS handler_id, FALSE AS success, SQLERRM::TEXT AS error_message,
+                          2 AS tier, v_bulk_error AS bulk_error;
     END;
   END LOOP;
 END;

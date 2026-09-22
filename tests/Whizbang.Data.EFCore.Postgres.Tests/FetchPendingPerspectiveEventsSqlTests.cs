@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cache and the conditional body fetch.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard1")]
 public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
 
   [Test]
@@ -652,7 +653,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", workId);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return reader.GetFieldValue<DateTimeOffset>(0);
+    return await reader.GetFieldValueAsync<DateTimeOffset>(0);
   }
 
   private static async Task<int> _readAttemptsAsync(NpgsqlConnection conn, Guid workId) {

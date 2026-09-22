@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <docs>operations/observability/tracing#perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="PerspectiveSyncAwaiter"/>.
 /// </remarks>
@@ -45,20 +45,20 @@ public sealed partial class PerspectiveSyncAwaiter(
     IDebuggerAwareClock clock,
     ILogger<PerspectiveSyncAwaiter> logger,
     ISyncEventTracker syncEventTracker,
-    IScopedEventTracker? tracker = null,
-    ILifecycleContextAccessor? lifecycleContextAccessor = null) : IPerspectiveSyncAwaiter {
+    IScopedEventTracker tracker,
+    ILifecycleContextAccessor lifecycleContextAccessor) : IPerspectiveSyncAwaiter {
   private const string TAG_SYNC_OUTCOME = "whizbang.sync.outcome";
   private const string TAG_SYNC_EVENT_COUNT = "whizbang.sync.event_count";
 
   /// <inheritdoc />
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly IScopedEventTracker? _tracker = tracker;
+  private readonly IScopedEventTracker _tracker = tracker;
   private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
   private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly ILifecycleContextAccessor? _lifecycleContextAccessor = lifecycleContextAccessor;
+  private readonly ILifecycleContextAccessor _lifecycleContextAccessor = lifecycleContextAccessor;
 
 
   /// <inheritdoc />
@@ -69,7 +69,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     ArgumentNullException.ThrowIfNull(perspectiveType);
     ArgumentNullException.ThrowIfNull(options);
 
-    if (_tracker is null) {
+    if (!_tracker.IsAvailable) {
       throw new InvalidOperationException(
           "IsCaughtUpAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
@@ -81,7 +81,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       Type perspectiveType,
       PerspectiveSyncOptions options,
       CancellationToken ct) {
-    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
+    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
 
     // If no events match the filter, we're caught up
     if (pendingEvents.Count == 0) {
@@ -122,7 +122,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     ArgumentNullException.ThrowIfNull(options);
     _throwIfInsideInlineStage();
 
-    if (_tracker is null) {
+    if (!_tracker.IsAvailable) {
       throw new InvalidOperationException(
           "WaitAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
@@ -138,11 +138,11 @@ public sealed partial class PerspectiveSyncAwaiter(
     using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"PerspectiveSync {perspectiveType.Name}",
       ActivityKind.Internal);
-    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
 
     var stopwatch = _clock.StartNew();
-    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
+    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
 
     var perspectiveName = _getPerspectiveName(perspectiveType);
 
@@ -247,7 +247,7 @@ public sealed partial class PerspectiveSyncAwaiter(
 
   private static void _setStreamSyncActivityTags(
       Activity? syncActivity, Type perspectiveType, Guid streamId, TimeSpan timeout, Guid? eventIdToAwait) {
-    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.stream_id", streamId.ToString());
     syncActivity?.SetTag("whizbang.sync.timeout_ms", timeout.TotalMilliseconds);
     if (eventIdToAwait.HasValue) {
@@ -424,7 +424,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   /// Detached stages are safe because they run in their own scope on the thread pool.
   /// </summary>
   private void _throwIfInsideInlineStage() {
-    if (_lifecycleContextAccessor?.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
+    if (_lifecycleContextAccessor.Current is { } ctx && !ctx.CurrentStage.IsDetached()) {
       throw new InvalidOperationException(
         "WaitForStreamAsync/WaitAsync cannot be called inside an Inline lifecycle " +
         $"receptor (current stage: {ctx.CurrentStage}). This would deadlock the work " +

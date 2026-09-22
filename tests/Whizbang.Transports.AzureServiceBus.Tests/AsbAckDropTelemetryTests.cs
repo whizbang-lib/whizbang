@@ -1,7 +1,9 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 
@@ -40,14 +42,13 @@ public class AsbAckDropTelemetryTests {
     var policyLogger = new RecordingLogger();
     var transportLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.AsbAckDropTelemetryTests.A");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
 
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var decision = new AsbReceiveDecision {
@@ -70,6 +71,7 @@ public class AsbAckDropTelemetryTests {
     await Assert.That(transportLogger.Entries.Count).IsEqualTo(0);
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(1);
     await Assert.That(policyLogger.Entries[0].Level).IsEqualTo(LogLevel.Debug);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(1L);
   }
 
@@ -79,14 +81,13 @@ public class AsbAckDropTelemetryTests {
     var policyLogger = new RecordingLogger();
     var transportLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.AsbAckDropTelemetryTests.B");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
 
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var decision = new AsbReceiveDecision {
@@ -108,6 +109,7 @@ public class AsbAckDropTelemetryTests {
     await Assert.That(transportLogger.Entries.Count).IsEqualTo(1);
     await Assert.That(transportLogger.Entries[0].Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(0);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(0L);
   }
 

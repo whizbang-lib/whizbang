@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the returned data AND the resulting table state.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+[Category("Shard4")]
 public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
   private static readonly string[] _twoPerspectives = ["P.One", "P.Two"];
   private static readonly string[] _onePerspective = ["P.One"];
@@ -55,7 +56,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     var pendingOutbox = await _countAsync(connection,
       "SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
     var pendingInbox = await _countAsync(connection,
-      "SELECT COUNT(*) FROM wh_inbox WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
+      "SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NULL AND scheduled_for IS NOT NULL");
     await Assert.That(pendingOutbox).IsEqualTo(3L);
     await Assert.That(pendingInbox).IsEqualTo(1L);
   }
@@ -264,13 +265,13 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
 
     // Branch 1: empty dictionary short-circuits before any SQL.
     var noTypes = await coordinator.GetOrphanedLifecycleEventsAsync(
-      new Dictionary<string, IReadOnlyList<string>>(), TimeSpan.FromHours(1));
+      [], TimeSpan.FromHours(1));
     await Assert.That(noTypes).IsEmpty();
 
     // Branch 2: event type registered with zero expected perspectives is skipped.
     var noPerspectives = await coordinator.GetOrphanedLifecycleEventsAsync(
       new Dictionary<string, IReadOnlyList<string>> {
-        ["Whizbang.Tests.OrphanEvent"] = Array.Empty<string>()
+        ["Whizbang.Tests.OrphanEvent"] = []
       },
       TimeSpan.FromHours(1));
     await Assert.That(noPerspectives).IsEmpty();
@@ -503,12 +504,14 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid? streamId,
       DateTimeOffset? scheduledFor = null, DateTimeOffset? processedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, scheduled_for, processed_at)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
-              NOW(), @stream, 0, @scheduled, @processed)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
+              NOW(), @stream, 0, @scheduled, @processed)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);
     ins.Parameters.Add(new NpgsqlParameter("scheduled", NpgsqlDbType.TimestampTz) { Value = (object?)scheduledFor ?? DBNull.Value });
@@ -520,12 +523,20 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, string messageType, Guid? streamId,
       Guid? instanceId = null, DateTimeOffset? scheduledFor = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number, scheduled_for)
-      VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
-              @inst, @lease, @stream, 0, @scheduled)";
+    ins.CommandText = """
+
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', @type, '{"payload":1}', '{"hop":1}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number, scheduled_for)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @inst::uuid, @lease, 0, @scheduled FROM m
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);
@@ -560,7 +571,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("type", eventType);
     ins.Parameters.AddWithValue("data", eventData);
-    ins.Parameters.AddWithValue("scope", scope);
+    ins.Parameters.AddWithValue(nameof(scope), scope);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -575,7 +586,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("name", perspectiveName);
     ins.Parameters.AddWithValue("last_event", (object?)lastEventId ?? DBNull.Value);
-    ins.Parameters.AddWithValue("status", status);
+    ins.Parameters.AddWithValue(nameof(status), status);
     ins.Parameters.AddWithValue("trigger", (object?)rewindTriggerEventId ?? DBNull.Value);
     await ins.ExecuteNonQueryAsync();
   }

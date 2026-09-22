@@ -29,7 +29,6 @@ public class VectorFieldAttributeTests {
   public async Task VectorFieldAttribute_Constructor_HasDefaultValuesAsync() {
     var attribute = new VectorFieldAttribute(768);
     await Assert.That(attribute.DistanceMetric).IsEqualTo(VectorDistanceMetric.Cosine);
-    await Assert.That(attribute.Indexed).IsTrue();
     await Assert.That(attribute.IndexType).IsEqualTo(VectorIndexType.IVFFlat);
     await Assert.That(attribute.IndexLists).IsEqualTo(100);
     await Assert.That(attribute.ColumnName).IsNull();
@@ -45,14 +44,12 @@ public class VectorFieldAttributeTests {
   public async Task VectorFieldAttribute_Properties_CanBeSetAsync() {
     var attribute = new VectorFieldAttribute(1536) {
       DistanceMetric = VectorDistanceMetric.L2,
-      Indexed = false,
       IndexType = VectorIndexType.HNSW,
       IndexLists = 200,
       ColumnName = "embedding_vec"
     };
 
     await Assert.That(attribute.DistanceMetric).IsEqualTo(VectorDistanceMetric.L2);
-    await Assert.That(attribute.Indexed).IsFalse();
     await Assert.That(attribute.IndexType).IsEqualTo(VectorIndexType.HNSW);
     await Assert.That(attribute.IndexLists).IsEqualTo(200);
     await Assert.That(attribute.ColumnName).IsEqualTo("embedding_vec");

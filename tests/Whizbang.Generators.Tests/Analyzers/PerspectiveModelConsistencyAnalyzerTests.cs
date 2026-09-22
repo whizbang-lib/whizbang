@@ -252,15 +252,15 @@ public class PerspectiveModelConsistencyAnalyzerTests {
 
             public class OrderCreated : IEvent { }
             public class OrderUpdated : IEvent { }
-            public class OrderCancelled : IEvent { }
+            public class OrderCanceled : IEvent { }
 
             public class OrderPerspective :
                 IPerspectiveFor<OrderView, OrderCreated>,
                 IPerspectiveFor<OrderView, OrderUpdated>,
-                IPerspectiveFor<OrderView, OrderCancelled> {
+                IPerspectiveFor<OrderView, OrderCanceled> {
               public OrderView Apply(OrderView current, OrderCreated @event) => current;
               public OrderView Apply(OrderView current, OrderUpdated @event) => current;
-              public OrderView Apply(OrderView current, OrderCancelled @event) => current;
+              public OrderView Apply(OrderView current, OrderCanceled @event) => current;
             }
             """;
 

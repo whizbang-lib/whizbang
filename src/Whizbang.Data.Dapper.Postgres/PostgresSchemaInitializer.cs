@@ -389,26 +389,43 @@ public sealed class PostgresSchemaInitializer {
       }
 
       var isUpdate = existingHash != null;
+      // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
+      // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
+      // unavailable to them. The EFCore runner has always honored it, because EF's
+      // ExecuteSqlRawAsync runs inside a transaction. This runner did not, and the divergence stayed
+      // invisible until a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a
+      // transaction block with 25P01, so a cutover that moves rows between tables and then drops the
+      // columns they came from failed here while passing there. Nothing in these migrations is
+      // transaction-hostile (no CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
+      //
+      // The ledger write joins the transaction too, so a migration and the record saying it applied
+      // commit together or not at all. The FAILURE record is deliberately written outside it, after
+      // the rollback, because a row recorded inside the doomed transaction would roll back with it
+      // and leave the failure invisible.
+      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
       try {
         await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = migration.Sql;
         cmd.CommandTimeout = 30;
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
         var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = existingHash == hash
-          ? "Re-applied (redefinition closure)"
-          : isUpdate
-            ? $"Updated from hash {existingHash![..8]}..."
-            : "First apply";
+        var desc = (existingHash == hash, isUpdate) switch {
+          (true, _) => "Re-applied (redefinition closure)",
+          (false, true) => $"Updated from hash {existingHash![..8]}...",
+          _ => "First apply",
+        };
 
         // Store previous SQL content for rollback support (functions can be re-applied)
         var previousContent = isUpdate ? migration.Sql : null;
         await _upsertMigrationAsync(connection,
             new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
-            cancellationToken);
+            cancellationToken, transaction);
+        await transaction.CommitAsync(cancellationToken);
       } catch (Exception ex) {
-        // Record failure
+        await transaction.RollbackAsync(cancellationToken);
+        // Record failure on the connection with no ambient transaction, so it survives the rollback.
         await _upsertMigrationAsync(connection,
             new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
             cancellationToken);

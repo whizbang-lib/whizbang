@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -83,7 +85,7 @@ public class DispatcherCoverageSweepOutboxTests {
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     Type? handleMessageType = null,
     bool publisherThrows = false
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
@@ -388,7 +390,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // ILogger<Dispatcher> warning; the publisher failure must still surface
     var logs = new List<string>();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics()), logs: logs),
+      _buildProvider(metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())), logs: logs),
       publisherThrows: true);
 
     // Act & Assert
@@ -404,7 +406,7 @@ public class DispatcherCoverageSweepOutboxTests {
     // Arrange - full success path with metrics registered
     var strategy = new SweepWorkStrategy();
     var dispatcher = new SweepOutboxDispatcher(
-      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics())),
+      _buildProvider(strategy: strategy, metrics: new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()))),
       envelopeSerializer: new SweepEnvelopeSerializer());
 
     // Act
@@ -625,7 +627,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());
     await Assert.That(strategy.Queued).Count().IsEqualTo(1);
 
-    provider.Dispose();
+    await provider.DisposeAsync();
 
     // Act - dropping the event during shutdown must NOT throw
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());
@@ -960,7 +962,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);
@@ -994,7 +996,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);
@@ -1162,4 +1164,45 @@ public class DispatcherCoverageSweepOutboxTests {
       .ThrowsExactly<InvalidOperationException>()
       .WithMessageContaining("FINAL CHECK FAILED");
   }
+
+  [Test]
+  public async Task PublishAsync_WithAnAmbientCollector_DivertsInsteadOfQueueingAsync() {
+    // Composite dispatch opens an ambient collector so a whole fan-out lands as one unit. The
+    // publish path checks for it before touching the strategy: with one open the message goes to
+    // the collector and the method returns, so nothing reaches the outbox individually.
+    //
+    // Asserting only that the collector received it would miss the failure that matters. If the
+    // early return were lost the message would be collected AND queued -- the composite would
+    // publish it once as part of its batch and once on its own, and the duplicate would look
+    // like an ordinary retry rather than a dispatch bug.
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer());
+
+    using var collecting = DispatchOutboxCollector.BeginCollecting();
+    _ = await dispatcher.PublishAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), new DispatchOptions());
+
+    await Assert.That(collecting.Collector.Collected).Count().IsEqualTo(1)
+      .Because("an open collector is what composite dispatch uses to gather the fan-out");
+    await Assert.That(strategy.Queued).IsEmpty()
+      .Because("diverting means instead of, not as well as: queueing here too would publish the "
+             + "message twice and the duplicate would read as a retry");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithNoCollector_QueuesToTheStrategyAsync() {
+    // The other side of the same branch, so the assertion above cannot pass merely because this
+    // fixture never queues anything.
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer());
+
+    _ = await dispatcher.PublishAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), new DispatchOptions());
+
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1)
+      .Because("with no collector open the ordinary outbox path has to run");
+  }
+
 }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -63,7 +64,7 @@ public class DispatcherCoverageSweepSyncRpcTests {
     VoidSyncReceptorInvoker? voidSyncInvoker = null,
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       streamIdExtractor: streamIdExtractor,
       receptorRegistry: receptorRegistry) {

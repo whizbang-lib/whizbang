@@ -38,6 +38,11 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
+    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
+    // generated, which reads exactly like a generator that declined to emit.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
     // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
@@ -119,7 +124,83 @@ public static class GeneratorTestHelper {
             additionalTexts: additionalFiles
                 .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
                 .ToImmutableArray())
-        : CSharpGeneratorDriver.Create(generator);
+        : CSharpGeneratorDriver.Create([generator.AsSourceGenerator()], additionalTexts: null, parseOptions: null, optionsProvider: null);
+
+    // Run the generator
+    driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
+
+    // Get the results
+    return driver.GetRunResult();
+  }
+
+  /// <summary>
+  /// Runs a source generator against the provided source code with custom analyzer options.
+  /// </summary>
+  /// <typeparam name="TGenerator">The type of generator to run</typeparam>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="globalOptions">Global analyzer options (e.g., MSBuild properties)</param>
+  /// <returns>The generator driver result containing generated sources and diagnostics</returns>
+  [RequiresAssemblyFiles()]
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      string source,
+      Dictionary<string, string> globalOptions)
+      where TGenerator : IIncrementalGenerator, new() {
+
+    // Parse the source code
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+
+    // Get references to assemblies we need
+    var references = new List<MetadataReference>();
+
+    // Add reference to System.Runtime and other basic assemblies
+    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
+    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
+    // generated, which reads exactly like a generator that declined to emit.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
+
+    // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
+    references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
+
+    // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+    } catch {
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+      }
+    }
+
+    // Create compilation
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "TestAssembly",
+        syntaxTrees: [syntaxTree],
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+
+    // Create generator instance
+    var generator = new TGenerator();
+
+    // Create options provider
+    var optionsProvider = new TestAnalyzerConfigOptionsProvider(globalOptions);
+
+    // Create generator driver with options provider
+    var driver = CSharpGeneratorDriver.Create(
+        generators: [generator.AsSourceGenerator()],
+        optionsProvider: optionsProvider
+    );
 
     // Run the generator
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
@@ -178,6 +259,10 @@ public static class GeneratorTestHelper {
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    // Whizbang.Core too, so a source can carry the framework's own attributes rather than a
+    // look-alike declared beside it. Discovery matches an attribute by its display name, so a
+    // hand-rolled copy passes while proving nothing about the real one.
+    _addWhizbangCore(references);
 
     // Create compilation
     return CSharpCompilation.Create(
@@ -188,41 +273,12 @@ public static class GeneratorTestHelper {
     );
   }
 
-  /// <summary>
-  /// Runs a source generator against the provided source code with custom analyzer options.
-  /// </summary>
-  /// <typeparam name="TGenerator">The type of generator to run</typeparam>
-  /// <param name="source">The C# source code to compile</param>
-  /// <param name="globalOptions">Global analyzer options (e.g., MSBuild properties)</param>
-  /// <returns>The generator driver result containing generated sources and diagnostics</returns>
-  [RequiresAssemblyFiles()]
-  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
-      string source,
-      Dictionary<string, string> globalOptions)
-      where TGenerator : IIncrementalGenerator, new() {
-
-    // Parse the source code
-    var syntaxTree = CSharpSyntaxTree.ParseText(source);
-
-    // Get references to assemblies we need
-    var references = new List<MetadataReference>();
-
-    // Add reference to System.Runtime and other basic assemblies
-    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
-
-    // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
-    references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
-
-    // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
+  /// <summary>Adds a reference to Whizbang.Core, by name first and then from beside the tests.</summary>
+  private static void _addWhizbangCore(List<MetadataReference> references) {
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
       references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
-    } catch {
+    } catch (FileNotFoundException) {
       var coreAssemblyPath = Path.Combine(
           Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
           "Whizbang.Core.dll"
@@ -231,32 +287,6 @@ public static class GeneratorTestHelper {
         references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
       }
     }
-
-    // Create compilation
-    var compilation = CSharpCompilation.Create(
-        assemblyName: "TestAssembly",
-        syntaxTrees: [syntaxTree],
-        references: references,
-        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-    );
-
-    // Create generator instance
-    var generator = new TGenerator();
-
-    // Create options provider
-    var optionsProvider = new TestAnalyzerConfigOptionsProvider(globalOptions);
-
-    // Create generator driver with options provider
-    var driver = CSharpGeneratorDriver.Create(
-        generators: [generator.AsSourceGenerator()],
-        optionsProvider: optionsProvider
-    );
-
-    // Run the generator
-    driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
-
-    // Get the results
-    return driver.GetRunResult();
   }
 
   /// <summary>
@@ -270,7 +300,24 @@ public static class GeneratorTestHelper {
   [RequiresAssemblyFiles()]
   public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(
       string source, (string path, string content)[]? additionalFiles = null)
-      where TGenerator : IIncrementalGenerator, new() {
+      where TGenerator : IIncrementalGenerator, new() =>
+    GetGeneratedCompilationErrors([new TGenerator()], source, additionalFiles);
+
+  /// <summary>
+  /// The same, for several generators at once.
+  /// </summary>
+  /// <remarks>
+  /// A generator whose output references a sibling generator's output does not compile on its own: the
+  /// harness has to run the siblings too, or the caller is left comparing one broken compile against
+  /// another and calling the absence of a difference a pass. Running the real set instead lets a test
+  /// assert the thing it means, which is that the generated code compiles.
+  /// </remarks>
+  [RequiresAssemblyFiles()]
+  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors(
+      IReadOnlyList<IIncrementalGenerator> generators,
+      string source,
+      (string path, string content)[]? additionalFiles = null) {
+    ArgumentNullException.ThrowIfNull(generators);
 
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create(
@@ -280,19 +327,39 @@ public static class GeneratorTestHelper {
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
 
-    var generator = new TGenerator();
-    var driver = additionalFiles is { Length: > 0 }
-        ? CSharpGeneratorDriver.Create(
-            generators: [generator.AsSourceGenerator()],
-            additionalTexts: additionalFiles
-                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
-                .ToImmutableArray())
-        : CSharpGeneratorDriver.Create(generator);
-    _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
+    var driver = CSharpGeneratorDriver.Create(
+        generators: [.. generators.Select(static g => g.AsSourceGenerator())],
+        additionalTexts: [.. (additionalFiles ?? [])
+            .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))]);
+    var ran = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
 
-    return outputCompilation.GetDiagnostics()
-        .Where(d => d.Severity == DiagnosticSeverity.Error)
-        .ToImmutableArray();
+    _throwIfAnyGeneratorFailed(ran.GetRunResult());
+
+    return [.. outputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error)];
+  }
+
+  /// <summary>
+  /// Turns a generator that threw into a loud failure instead of a clean compile.
+  /// </summary>
+  /// <remarks>
+  /// A generator that throws emits nothing, and the driver keeps the exception in its own run result
+  /// rather than in the compilation, so the compilation handed back is the one the caller started with
+  /// and its error list is empty. Every caller of this helper reads an empty error list as "the
+  /// generated code is valid", so without this the two states -- nothing was wrong, and nothing ran --
+  /// are the same answer. A develop run failed with one half of a comparison reporting zero errors
+  /// against the other's three, and the harness had discarded the only record of why.
+  /// </remarks>
+  private static void _throwIfAnyGeneratorFailed(GeneratorDriverRunResult result) {
+    foreach (var generatorResult in result.Results) {
+      if (generatorResult.Exception is null) {
+        continue;
+      }
+      var name = generatorResult.Generator.GetGeneratorType().Name;
+      throw new InvalidOperationException(
+        $"The generator {name} threw instead of generating. It emitted no source, so the compilation "
+        + "carries no errors and would otherwise have been reported as a clean compile.",
+        generatorResult.Exception);
+    }
   }
 
   /// <summary>
@@ -303,11 +370,9 @@ public static class GeneratorTestHelper {
     var references = new List<MetadataReference>();
 
     var trustedAssemblies = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
-    foreach (var path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) {
-      if (File.Exists(path)) {
-        references.Add(MetadataReference.CreateFromFile(path));
-      }
-    }
+    references.AddRange(trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+      .Where(File.Exists)
+      .Select(path => MetadataReference.CreateFromFile(path)));
 
     // Whizbang.Core is a project reference (not a platform assembly) — add it explicitly for the
     // message/attribute types the generated populator and registry reference.

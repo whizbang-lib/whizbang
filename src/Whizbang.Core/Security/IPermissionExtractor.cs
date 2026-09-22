@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Interface for extracting security information from claims or other sources.
 /// </summary>
 /// <docs>fundamentals/security/security#extractors</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityOptionsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/PermissionExtractorTests.cs:ClaimPermissionExtractor_WithMatchingClaim_ExtractsPermissionsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/PermissionExtractorTests.cs:ClaimPermissionExtractor_WithMissingClaim_ReturnsEmptyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/PermissionExtractorTests.cs:ClaimPermissionExtractor_WithSpacesAroundValues_TrimsCorrectlyAsync</tests>

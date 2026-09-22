@@ -38,8 +38,22 @@ public class PolicyContextPoolTests {
 
   [Test]
   public async Task Return_WithNullContext_ShouldNotThrowAsync() {
-    // Act & Assert - Should not throw
+    // Act - a null return must be ignored, not pooled
     PolicyContextPool.Return(null);
+
+    // Assert - the pool is still handing out usable contexts. Ignoring a null is only half the
+    // guarantee: a guard that pooled the null instead would poison the bag, and because
+    // ConcurrentBag hands back the entry this thread added most recently, the very next Rent
+    // would be the one to fail.
+    var message = new TestMessage();
+    var envelope = _createTestEnvelope();
+    var context = PolicyContextPool.Rent(message, envelope, null, "after-null-return");
+
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context.Message).IsEqualTo(message);
+    await Assert.That(context.Environment).IsEqualTo("after-null-return");
+
+    PolicyContextPool.Return(context);
   }
 
   [Test]
@@ -101,12 +115,7 @@ public class PolicyContextPoolTests {
     // Use a tolerance range because:
     // 1. ConcurrentBag may have slight timing variations
     // 2. Static pool state may have residual items from test infrastructure
-    var reusedCount = 0;
-    foreach (var rented in rentedAfterReturn) {
-      if (contexts.Contains(rented)) {
-        reusedCount++;
-      }
-    }
+    var reusedCount = rentedAfterReturn.Count(contexts.Contains);
 
     // Pool max size is 1024, so we expect close to that many reused (allowing ±5% tolerance)
     await Assert.That(reusedCount).IsGreaterThanOrEqualTo(970)

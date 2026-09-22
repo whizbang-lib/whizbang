@@ -17,7 +17,7 @@ namespace Whizbang.Core.Lenses;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs:CreateScoped_ReturnsDisposableScopedQueryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs:ScopedQuery_SharesSameDbContext_WithinScopeAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedLensQueryIntegrationTests.cs:ILensQueryFactory_BatchQueries_ShareSameScopeAsync</tests>
@@ -37,7 +37,7 @@ public interface ILensQueryFactory : IAsyncDisposable, IDisposable {
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>fundamentals/lenses/scoped-queries</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs</tests>
 public interface ILensQueryFactory<TModel> where TModel : class {
   /// <summary>
   /// Creates a scoped ILensQuery instance.

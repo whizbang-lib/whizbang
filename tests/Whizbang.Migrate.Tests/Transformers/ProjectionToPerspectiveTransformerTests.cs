@@ -42,20 +42,20 @@ public class ProjectionToPerspectiveTransformerTests {
       public class OrderProjection : SingleStreamProjection<Order> {
         public void Apply(OrderCreated @event, Order state) { }
         public void Apply(OrderUpdated @event, Order state) { }
-        public void Apply(OrderCancelled @event, Order state) { }
+        public void Apply(OrderCanceled @event, Order state) { }
       }
 
       public class Order { }
       public record OrderCreated(string Id);
       public record OrderUpdated(string Id);
-      public record OrderCancelled(string Id);
+      public record OrderCanceled(string Id);
       """;
 
     // Act
     var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated, OrderUpdated, OrderCancelled>");
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated, OrderUpdated, OrderCanceled>");
   }
 
   [Test]
@@ -434,15 +434,15 @@ public class ProjectionToPerspectiveTransformerTests {
           state.Status = "Created";
         }
 
-        public void Apply(OrderCancelled @event, OrderModel state) {
-          state.Status = "Cancelled";
+        public void Apply(OrderCanceled @event, OrderModel state) {
+          state.Status = "Canceled";
         }
 
         public bool ShouldDelete(OrderPurged @event) => true;
       }
 
       public record OrderCreated(Guid StreamId);
-      public record OrderCancelled(Guid StreamId);
+      public record OrderCanceled(Guid StreamId);
       public record OrderPurged(Guid StreamId);
       """;
 
@@ -492,5 +492,483 @@ public class ProjectionToPerspectiveTransformerTests {
         w.Contains("Duplicate") ||
         w.Contains("cross-service") ||
         w.Contains("single source"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteWithConditionalLogic_LeavesAReviewMarkerAsync() {
+    // Marten's ShouldDelete returns a bool per event; Whizbang's Apply returns a ModelAction.
+    // A conditional body cannot be translated mechanically, so the transformer picks
+    // ModelAction.Delete and flags it. Dropping that marker is the dangerous outcome: a rule
+    // that deleted a row only under a condition becomes one that always deletes, the code
+    // compiles, and the loss shows up as missing rows in production.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+        public string Status { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) => @event.Force;
+      }
+
+      public record OrderPurged(Guid StreamId, bool Force);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction");
+    await Assert.That(result.TransformedCode).Contains("TODO")
+      .Because("a condition that could not be carried across has to be visible in the code, "
+             + "not only in a report the operator may never read");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteWithABlockBody_LeavesAReviewMarkerAsync() {
+    // Same contract through the statement-bodied form, which is how most non-trivial rules are
+    // written.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+        public string Status { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) {
+          if (@event.Force) {
+            return true;
+          }
+          return false;
+        }
+      }
+
+      public record OrderPurged(Guid StreamId, bool Force);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("TODO");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteThatAlwaysDeletes_NeedsNoReviewMarkerAsync() {
+    // The control for the two above. An unconditional rule translates exactly, so marking it
+    // for review would train an operator to skim past the markers that do matter.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) {
+          return true;
+        }
+      }
+
+      public record OrderPurged(Guid StreamId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction");
+    await Assert.That(result.TransformedCode).DoesNotContain("TODO: Review")
+      .Because("an exact translation must not carry a review marker, or the markers stop meaning anything");
+  }
+
+
+  [Test]
+  public async Task TransformAsync_RunTwice_LeavesTheAlreadyMigratedFileAloneAsync() {
+    // Operators re-run migrations: over a subset, after fixing a compile error, after pulling
+    // more code in. The second pass sees a file whose base is already IPerspectiveFor<...>, and
+    // it has to recognise that rather than migrate the migration -- a doubly-wrapped perspective
+    // is not something the operator can unpick from the diff.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var first = await transformer.TransformAsync(sourceCode, "Projection.cs");
+    var second = await transformer.TransformAsync(first.TransformedCode, "Projection.cs");
+
+    await Assert.That(second.TransformedCode).IsEqualTo(first.TransformedCode)
+      .Because("a second pass over migrated source is a no-op, not another migration");
+
+    var wrappers = first.TransformedCode.Split("IPerspectiveFor<").Length - 1;
+    await Assert.That(wrappers).IsEqualTo(1)
+      .Because("one projection yields one perspective, however many times the tool is run");
+  }
+
+  [Test]
+  public async Task TransformAsync_FileWithoutTheMartenUsing_IsLeftUntouchedAsync() {
+    // The transformer walks every .cs file in the tree, and most of them have nothing to do with
+    // Marten. Rewriting usings on a file that never imported the aggregation namespace would
+    // edit code the migration has no business touching.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using System;
+
+      public class OrderService {
+        public string Describe() => "orders";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).IsEqualTo(sourceCode)
+      .Because("a file with no Marten aggregation using is not this transformer's business");
+    await Assert.That(result.Changes).IsEmpty()
+      .Because("reporting a change that was not made misleads the operator reading the summary");
+  }
+
+  [Test]
+  public async Task TransformAsync_ClassOnAnUnrelatedBase_IsNotTreatedAsAProjectionAsync() {
+    // Base-class detection matches on the Marten projection types by name. A class that merely
+    // has some other base sits in the same file and must come through unchanged -- converting it
+    // would produce a perspective for a type that was never a projection.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderReportBuilder : ReportBuilderBase {
+        public void Build() { }
+      }
+
+      public class ReportBuilderBase { }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderReportBuilder.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("IPerspectiveFor<")
+      .Because("only a Marten projection base makes a class a projection");
+    await Assert.That(result.TransformedCode).Contains("ReportBuilderBase")
+      .Because("the unrelated base class survives untouched");
+  }
+
+
+  [Test]
+  public async Task TransformAsync_ApplyAlongsideCreate_SuggestsMustExistAsync() {
+    // With a Create method present, Apply handles updates only -- so it runs against a model that
+    // is assumed to exist. [MustExist] generates the null check that assumption needs. Migrating
+    // silently leaves an Apply that dereferences whatever Create did not make, and the failure
+    // surfaces as a null reference inside the perspective rather than as a migration gap.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public Order Create(OrderCreated @event) => new Order { Id = @event.OrderId };
+
+        public void Apply(OrderShipped @event, Order state) {
+          state.Shipped = true;
+        }
+      }
+
+      public class Order { public string Id { get; set; } public bool Shipped { get; set; } }
+      public record OrderCreated(string OrderId);
+      public record OrderShipped(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderProjection.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("MustExist", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("Apply beside Create assumes the model exists; without the attribute nothing "
+             + "generates that check and the assumption fails at runtime instead");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDelete_WarnsItBecomesModelActionAsync() {
+    // Marten signals deletion with a bool from ShouldDelete. Whizbang returns a ModelAction, so
+    // the signature changes shape rather than name -- a rename alone would leave a method whose
+    // return value the framework ignores, and the row would silently never be deleted.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public bool ShouldDelete(OrderCancelled @event, Order state) => true;
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCancelled(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderProjection.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("ModelAction", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the return type changes shape, not just the name; a silent rename leaves the "
+             + "framework ignoring the result and the row never being deleted");
+  }
+
+
+  [Test]
+  public async Task TransformAsync_UsingsThatAreNotMartens_SurviveTheSwapAsync() {
+    // The migrator replaces one import. Every other using in the file belongs to the author, and
+    // dropping one produces a file that no longer compiles for a reason unrelated to the
+    // migration — the kind of breakage that gets blamed on the framework rather than the tool.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using System;
+      using System.Collections.Generic;
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Tags = new List<string>();
+        }
+      }
+
+      public class Order { public List<string> Tags { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("using System;")
+      .Because("the file used System before the migration and still does after it");
+    await Assert.That(result.TransformedCode).Contains("using System.Collections.Generic;")
+      .Because("List<string> in the body needs its import kept, or the migrated file stops "
+             + "compiling for a reason that has nothing to do with the migration");
+    await Assert.That(result.TransformedCode).Contains("using Whizbang.Core.Perspectives;")
+      .Because("the Marten import is the one being swapped, and the replacement has to arrive");
+  }
+
+  [Test]
+  public async Task TransformAsync_ABaseTypeThatIsNotTheProjection_IsKeptAsync() {
+    // A projection can carry other bases — a marker interface, a shared abstract class. Only the
+    // Marten base is being replaced, and silently dropping the rest changes what the type is: the
+    // class stops satisfying whatever the codebase resolved it by, which surfaces far from here
+    // as a registration that no longer finds it.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order>, IAuditable {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public interface IAuditable { }
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IAuditable")
+      .Because("the interface was not Marten's to take away; a class that quietly stops "
+             + "implementing it fails wherever the codebase resolved it by that interface");
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the Marten base is still the one that gets replaced");
+  }
+
+  [Test]
+  public async Task TransformAsync_FullyQualifiedIEventParameter_IsNotMistakenForAnEventTypeAsync() {
+    // Marten's IEvent<T> wrapper carries metadata, not the event. It is already skipped when
+    // written plainly; written fully qualified it must be skipped too, or the perspective is
+    // generated as handling `Marten.Events.IEvent<OrderCreated>` — a type that does not exist
+    // after the migration, in the very declaration the migration exists to produce.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Marten.Events.IEvent<OrderCreated> metadata, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the event type is the one the handler is really about");
+    await Assert.That(result.TransformedCode).DoesNotContain("IPerspectiveFor<Order, Marten.Events.IEvent")
+      .Because("naming the metadata wrapper as the handled event puts a type that no longer "
+             + "exists into the declaration the migration just wrote");
+  }
+
+  [Test]
+  public async Task TransformAsync_ClassesThatAreNotProjections_AreLeftAloneAsync() {
+    // A file rarely holds only the projection. Every other class in it has a base list the
+    // rewriter also visits, and rewriting one of those would be an edit nobody asked for in a
+    // file the author opened to review a projection change.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class AuditLog : IAuditable {
+        public string Entry { get; set; }
+      }
+
+      public interface IAuditable { }
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("public class AuditLog : IAuditable")
+      .Because("AuditLog is not a projection and its declaration is not the migration's to touch");
+    await Assert.That(result.Changes.Count(c => c.ChangeType == ChangeType.BaseClassReplacement))
+      .IsEqualTo(1)
+      .Because("exactly one base was Marten's; reporting more would mean the rewriter walked into "
+             + "a class it had no business changing");
+  }
+
+  [Test]
+  public async Task TransformAsync_ProjectionWithoutAFileLevelMartenUsing_AddsNoImportAsync() {
+    // A SingleStreamProjection base can reach a file without `using Marten.Events.Aggregation;` on
+    // it -- through a global using, for instance. The base type still has to be rewritten, but the
+    // using swap keys off a directive that is not there, and inventing one would add an import to
+    // a file whose imports were already correct, overstating what the migration touched.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the base type is what the migration is for, regardless of how the projection base "
+             + "reached this file");
+    await Assert.That(result.TransformedCode).DoesNotContain("using Whizbang.Core.Perspectives;")
+      .Because("this file never imported the Marten namespace, so there is no using to swap");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.UsingRemoved)).IsFalse()
+      .Because("reporting a using change that was not made overstates the migration's footprint");
+  }
+
+  [Test]
+  public async Task TransformAsync_ParameterlessShouldDelete_IsLeftUnmigratedWithAWarningAsync() {
+    // A ShouldDelete with no parameters has no event to extract, so it contributes nothing to the
+    // perspective's event list, and there is nothing to build the new Apply(TModel, TEvent)
+    // signature from either. Migrating it anyway would have to invent an event type out of thin
+    // air; instead the method is left as ShouldDelete and the report says why, rather than
+    // silently emitting a signature that does not match anything the model actually receives.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderSummaryProjection : SingleStreamProjection<OrderSummary> {
+        public bool ShouldDelete() => true;
+      }
+
+      public class OrderSummary { }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<OrderSummary>")
+      .Because("no event type could be extracted from a parameterless method, so the perspective "
+             + "carries only the model");
+    await Assert.That(result.TransformedCode).Contains("public bool ShouldDelete() => true;")
+      .Because("with no event type to build an Apply(TModel, TEvent) signature from, the method "
+             + "must be left as-is rather than guessed at");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Could not determine event type or model type")))
+      .IsTrue()
+      .Because("silence here would read as a successful migration of a method nothing was actually done to");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteOnAGlobalPerspective_CannotInferAModelTypeAsync() {
+    // IGlobalPerspectiveFor<T> carries only the aggregate type -- there is no second parameter and
+    // no comma-separated event list to fall back on the way IPerspectiveFor<TModel, TEvents...>
+    // has. A ShouldDelete with fewer than two parameters on a multi-stream projection therefore has
+    // no source to infer the model type from, and the method must be left alone with a warning
+    // rather than built with a made-up or missing model type.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderTotalsByRegionProjection : MultiStreamProjection<OrderTotals, string> {
+        public bool ShouldDelete(OrderCancelled @event) => true;
+      }
+
+      public class OrderTotals { }
+      public record OrderCancelled();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IGlobalPerspectiveFor<OrderTotals>");
+    await Assert.That(result.TransformedCode).Contains("public bool ShouldDelete(OrderCancelled @event) => true;")
+      .Because("with no model type to infer, the method is left as ShouldDelete instead of being "
+             + "guessed at");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Could not determine event type or model type")))
+      .IsTrue()
+      .Because("an operator needs to know this ShouldDelete was skipped, not discover it later as a "
+             + "row that is never deleted");
+  }
+
+  [Test]
+  public async Task TransformAsync_AbstractShouldDelete_IsStillGivenAConcreteModelActionBodyAsync() {
+    // An abstract ShouldDelete has neither an expression body nor a block body to inspect, so the
+    // body analysis falls back to ModelAction.Delete with a review marker -- the same default used
+    // for logic it cannot follow. What is worth watching here is that the replacement method is
+    // built with only the `public` modifier: the transform does not special-case `abstract`, so a
+    // method a subclass was required to implement becomes a concrete one on the base class. That
+    // changes the class's contract, and nothing about the transform result calls it out.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public abstract class BaseOrderProjection : SingleStreamProjection<OrderSummary> {
+        public abstract bool ShouldDelete(OrderCancelled @event);
+      }
+
+      public class OrderSummary { }
+      public record OrderCancelled();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "BaseOrderProjection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction.Delete")
+      .Because("with no body to analyze, the fallback action is Delete, flagged for review");
+    await Assert.That(result.TransformedCode).Contains("TODO: Review")
+      .Because("a guessed action on a method the tool could not analyze must be visible in the code");
+    // Not DoesNotContain("ShouldDelete") -- the review comment the transform emits names the
+    // original method on purpose, which is the point of the marker. What must be gone is the
+    // declaration.
+    await Assert.That(result.TransformedCode).DoesNotContain("bool ShouldDelete(")
+      .Because("the method is replaced, and a surviving ShouldDelete declaration would mean the "
+             + "rewrite did not take");
+    await Assert.That(result.TransformedCode).DoesNotContain("abstract bool")
+      .Because("pins the current behavior: the replacement carries only 'public', so an abstract "
+             + "method a subclass was required to implement quietly becomes concrete here");
   }
 }

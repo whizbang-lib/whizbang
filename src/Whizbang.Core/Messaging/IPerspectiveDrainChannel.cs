@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="Guid"/>, not a <see cref="PerspectiveWork"/> item. Singleton so producer and
 /// consumer share the same underlying channel.
 /// </remarks>
-/// <docs>fundamentals/perspectives/drain-mode</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 public interface IPerspectiveDrainChannel {
   /// <summary>Reader for the worker.</summary>
   ChannelReader<Guid> Reader { get; }

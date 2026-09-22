@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for EFCorePostgresLensQuery implementation of ILensQuery.
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
+[Category("Shard4")]
 public class EFCorePostgresLensQueryTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
@@ -403,6 +404,7 @@ public class EFCorePostgresLensQueryTests {
 /// <summary>
 /// Test model for lens query tests.
 /// </summary>
+[SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
 public class TestModel {
   public required string Name { get; init; }
   public required int Value { get; init; }

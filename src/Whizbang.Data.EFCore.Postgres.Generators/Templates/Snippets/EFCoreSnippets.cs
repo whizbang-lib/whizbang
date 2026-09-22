@@ -49,7 +49,14 @@ public class EFCoreSnippets {
       //   2. PerspectiveScope.Extensions uses List<ScopeExtension> instead of Dictionary
       //   3. Custom principal filtering translators for AllowedPrincipals queries
       //
-      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      // Dates, times and durations inside the document store as numbers rather than renderings, so
+      // their extraction reaches an immutable cast and can carry an index. Nothing is configured
+      // for that here: the convention every generated context carries converts every temporal
+      // Entity Framework maps, inherited, nested and collection-element ones included. See
+      // CanonicalTemporalConvention.
+      entity.ComplexProperty(e => e.Data, d => {
+        d.ToJson("data");
+      });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
         s.ToJson("scope");
@@ -68,10 +75,20 @@ public class EFCoreSnippets {
       entity.HasIndex(e => e.CreatedAt);
 
       // GIN indexes for JSONB columns are automatically created by EFCoreServiceRegistrationGenerator
-      // in the generated _generatePerspectiveTablesSchema() method. GIN indexes enable:
-      //   - Efficient containment queries (@>, <@)
-      //   - Key/value lookups on JSONB data
-      //   - Path expression queries (->, ->>)
+      // in the generated _generatePerspectiveTablesSchema() method.
+      //
+      // CAUTION (see issue #753): a GIN index with the default jsonb_ops answers the containment and
+      // existence operators (@>, <@, ?, ?|, ?&, @?, @@) and NOTHING ELSE. In particular it does NOT
+      // serve path extraction (-> and ->>), which is what every query this stack generates compiles
+      // to, because ComplexProperty().ToJson() makes a property comparison a text extraction with a
+      // cast. So these indexes are currently unreachable from the lens: they are maintained on every
+      // upsert and never scanned. PerspectiveSqlShapeTests pins both halves of that statement.
+      //
+      // The index that DOES serve a filtered field is an expression index on the extraction itself,
+      // for example (((data ->> 'TenantId')::uuid)), or promotion to a real column with
+      // [PhysicalField] plus [Indexed]. Note that text-to-timestamp casts are STABLE rather than
+      // IMMUTABLE, so date and time fields cannot be expression-indexed and need the column.
+      //
       // EF Core doesn't support HasIndex on ComplexProperty directly (GitHub #28605),
       // so we generate the indexes via SQL in the schema creation script.
 
@@ -114,9 +131,17 @@ __PHYSICAL_FIELD_CONFIGS__
       // For type-based queries, use physical discriminator columns marked with
       // [PolymorphicDiscriminator] for efficient indexed queries.
       //
-      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      // Bound to the persistence profile explicitly, through the same options the upsert writes
+      // with. Left to the data source's JSON options the document would be read under the default
+      // profile, whose date reader takes a rendering, and every row holding a canonical number
+      // would be unreadable. The data source cannot change profile: the outbox, inbox and event
+      // store metadata read through it in the wire's form. See PerspectiveDocumentSerialization.
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<__MODEL_TYPE__>());
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveMetadata>());
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveScope>());
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -190,8 +215,8 @@ __PHYSICAL_FIELD_CONFIGS__
     // Register singleton timer-based strategies (shared across scopes)
     // Interval and Batch strategies use background timers and must be singletons.
     // They resolve IWorkCoordinator per-flush via IServiceScopeFactory (singleton-safe).
-    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
-    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
     // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_MetricsAreNull_FlushRecordsNothingAsync</tests>
     // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
     // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
@@ -199,36 +224,37 @@ __PHYSICAL_FIELD_CONFIGS__
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
+      var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
       return new global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy(
         coordinator: null,
         instanceProvider,
         options,
         logger,
         scopeFactory,
-        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
+        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
+      var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
       return new global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy(
         coordinator: null,
         instanceProvider,
         options,
         logger,
         scopeFactory,
-        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
       );
     });
 

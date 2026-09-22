@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// When the caller lacks the required permission, the field value is masked.
 /// </summary>
 /// <docs>fundamentals/security/security#column-level-security</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <example>
 /// public class Customer {
 ///   public string Name { get; init; }
@@ -34,7 +34,7 @@ public sealed class FieldPermissionAttribute(string permission, MaskingStrategy 
 /// Strategy for masking restricted fields when permission is not granted.
 /// </summary>
 /// <docs>fundamentals/security/security#masking-strategies</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:MaskingStrategy_AllValues_AreDistinctAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_WithMaskingStrategy_SetsMaskingAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs:FieldPermissionAttribute_Constructor_DefaultMaskingIsHideAsync</tests>

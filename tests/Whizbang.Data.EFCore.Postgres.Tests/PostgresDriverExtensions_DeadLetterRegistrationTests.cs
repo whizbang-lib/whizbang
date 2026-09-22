@@ -4,13 +4,13 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Locks the turnkey EFCore Postgres path's DLQ wiring. v0.502 added
@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// commit forgot to register the EFCore implementations — production symptom
 /// observed by a consumer: <c>wh_dead_letters</c> empty even with WRN logs firing.
 /// </summary>
+[Category("Shard2")]
 public class PostgresDriverExtensions_DeadLetterRegistrationTests {
 
   [Test]
@@ -27,6 +28,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     // implementation. The dispatch worker is a singleton that injects
     // IDeadLetterStore? — registration must satisfy a singleton consumer.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddDbContext<PostgresTestDbContext>(options =>
         options.UseInMemoryDatabase("DlqRegistrationDb"));
 
@@ -34,7 +36,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     var selector = builder.WithEFCore<PostgresTestDbContext>();
     _ = selector.WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var store = sp.GetService<IDeadLetterStore>();
 
     await Assert.That(store).IsNotNull()
@@ -49,6 +51,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     // fresh scope per scan (the worker explicitly uses GetService — null = no-op).
     // Register as Scoped so it composes with the consumer's scoped DbContext.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddDbContext<PostgresTestDbContext>(options =>
         options.UseInMemoryDatabase("DlqRegistrationDb"));
 
@@ -56,7 +59,7 @@ public class PostgresDriverExtensions_DeadLetterRegistrationTests {
     var selector = builder.WithEFCore<PostgresTestDbContext>();
     _ = selector.WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var recovery = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
 

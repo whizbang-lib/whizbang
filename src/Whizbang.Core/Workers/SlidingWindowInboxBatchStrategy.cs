@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -49,7 +50,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   private readonly InboxBulkFlushCallback _flush;
   private readonly SlidingWindowInboxOptions _options;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamBuffer> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -60,14 +61,14 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   /// Creates the strategy with the given flush callback and (optionally) tuned options + clock.
   /// </summary>
   /// <param name="flush">Called with each per-stream batch. Typically resolves <see cref="IWorkCoordinator"/> from a DI scope and calls <see cref="IWorkCoordinator.StoreInboxMessagesAsync"/>.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses the 300 ms / 3 s / 1000 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowInboxBatchStrategy(
       InboxBulkFlushCallback flush,
+      ILogger<SlidingWindowInboxBatchStrategy> logger,
       SlidingWindowInboxOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ILogger<SlidingWindowInboxBatchStrategy>? logger = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     _options = options ?? new SlidingWindowInboxOptions();
@@ -106,7 +107,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }

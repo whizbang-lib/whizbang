@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// emit chain.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard3")]
 public class EphemeralEventStoreReadTests : EFCoreTestBase {
   private static string _commitRequest(Guid eventId, Guid streamId, string eventType, int flags, string payloadJson) => $$"""
     {

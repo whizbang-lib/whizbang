@@ -38,7 +38,7 @@ public sealed partial class RepairDrainWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.RepairDrainEnabled || _options.RepairDrainRatePerSecond <= 0) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.InfiniteTimeSpan, _time, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.InfiniteTimeSpan, _time, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     try {
@@ -111,7 +111,7 @@ public sealed partial class RepairDrainWorker(
 
     var budget = (int)Math.Min(Math.Floor(_tokens), _options.RepairDrainBatchSize);
     var claimed = await coordinator.IntegrityClaimRepairDrainAsync(
-      origins.Select(o => o.OriginServiceId).ToList(), now,
+      [.. origins.Select(o => o.OriginServiceId)], now,
       TimeSpan.FromSeconds(_options.RepairRequestBackoffSeconds), _options.MaxRepairAttemptsPerBucket,
       budget, cancellationToken).ConfigureAwait(false);
     if (claimed.Count == 0) {
@@ -138,6 +138,7 @@ public sealed partial class RepairDrainWorker(
         toSeq = until - 1;
       }
       var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestRedeliveryCommand {
           TenantScope = string.IsNullOrEmpty(group.Key.TenantScope) ? null : group.Key.TenantScope,
@@ -149,11 +150,7 @@ public sealed partial class RepairDrainWorker(
           ToCommitSequence = toSeq,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = now,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-          }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, now)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = origin.OriginServiceName,

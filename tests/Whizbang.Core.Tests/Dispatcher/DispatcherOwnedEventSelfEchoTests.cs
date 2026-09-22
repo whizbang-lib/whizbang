@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -48,14 +49,14 @@ public class DispatcherOwnedEventSelfEchoTests {
 
   /// <summary>Command → Event receptor (produces the event that cascades).</summary>
   public class SelfEchoCommandHandler : IReceptor<SelfEchoCommand, SelfEchoEvent> {
-    public ValueTask<SelfEchoEvent> HandleAsync(SelfEchoCommand message, CancellationToken cancellationToken) {
+    public ValueTask<SelfEchoEvent> HandleAsync(SelfEchoCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new SelfEchoEvent(message.EntityId));
     }
   }
 
   /// <summary>Default-stage void handler for the event.</summary>
   public class SelfEchoEventReceptor : IReceptor<SelfEchoEvent> {
-    public ValueTask HandleAsync(SelfEchoEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(SelfEchoEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _handlerCount);
       return ValueTask.CompletedTask;
     }
@@ -96,7 +97,7 @@ public class DispatcherOwnedEventSelfEchoTests {
         typeof(TMessage).AssemblyQualifiedName!);
     }
 
-    public object DeserializeMessage(MessageEnvelope<JsonElement> e, string t) => throw new NotImplementedException();
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotImplementedException();
   }
 
   // ========================================
@@ -108,12 +109,10 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — configure owned domains to include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
-    services.Configure<RoutingOptions>(opts => {
-      opts.OwnDomains("Whizbang.Core.Tests.Dispatcher");
-    });
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var sp = services.BuildServiceProvider();
@@ -137,7 +136,7 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — owned domains do NOT include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.Configure<RoutingOptions>(opts => {
@@ -166,12 +165,10 @@ public class DispatcherOwnedEventSelfEchoTests {
     // Arrange — owned domains include this test's namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
-    services.Configure<RoutingOptions>(opts => {
-      opts.OwnDomains("Whizbang.Core.Tests.Dispatcher");
-    });
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains("Whizbang.Core.Tests.Dispatcher"));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var sp = services.BuildServiceProvider();

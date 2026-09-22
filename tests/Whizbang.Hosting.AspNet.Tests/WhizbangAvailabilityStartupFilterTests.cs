@@ -20,7 +20,7 @@ public class WhizbangAvailabilityStartupFilterTests {
   private sealed class FakeGate : ISchemaReadyGate {
     public bool IsReady => false; // never ready, so the gate is active
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) =>
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
       Task.Delay(Timeout.Infinite, cancellationToken);
   }
 
@@ -30,7 +30,7 @@ public class WhizbangAvailabilityStartupFilterTests {
     if (gateRegistered) {
       services.AddSingleton<ISchemaReadyGate>(new FakeGate());
     }
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var app = new ApplicationBuilder(provider);
     var configure = new WhizbangAvailabilityStartupFilter().Configure(

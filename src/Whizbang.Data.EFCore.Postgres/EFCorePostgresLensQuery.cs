@@ -6,8 +6,6 @@ using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 
-// WHIZ400: Suppress for internal implementation - the runtime checks verify T is valid
-#pragma warning disable WHIZ400
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -31,7 +29,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
     where TModel : class {
 
-  private readonly DbContext _context;
+  /// <summary>The context this query reads through; the registration tests assert each query gets its own.</summary>
+  internal DbContext Context { get; }
   private readonly IScopeContextAccessor _scopeContextAccessor;
   private readonly QueryScope _defaultQueryScope;
 
@@ -47,7 +46,7 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
       string tableName,
       IScopeContextAccessor scopeContextAccessor,
       IOptions<WhizbangCoreOptions> options) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
+    Context = context ?? throw new ArgumentNullException(nameof(context));
     ArgumentNullException.ThrowIfNull(tableName);
     _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
     _defaultQueryScope = options?.Value.DefaultQueryScope ?? QueryScope.Tenant;
@@ -61,15 +60,15 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
 
   /// <inheritdoc/>
   public IScopedLensAccess<TModel> Scope(QueryScope scope) =>
-      ScopedAccessHelper.CreateScopedAccess<TModel>(_context, scope, _scopeContextAccessor, null);
+      ScopedAccessHelper.CreateScopedAccess<TModel>(Context, scope, _scopeContextAccessor, null);
 
   /// <inheritdoc/>
   public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) =>
-      ScopedAccessHelper.CreateScopedAccess<TModel>(_context, scope, _scopeContextAccessor, overrideValues);
+      ScopedAccessHelper.CreateScopedAccess<TModel>(Context, scope, _scopeContextAccessor, overrideValues);
 
   /// <inheritdoc/>
   public IScopedLensAccess<TModel> DefaultScope =>
-      ScopedAccessHelper.CreateScopedAccess<TModel>(_context, _defaultQueryScope, _scopeContextAccessor, null);
+      ScopedAccessHelper.CreateScopedAccess<TModel>(Context, _defaultQueryScope, _scopeContextAccessor, null);
 
   /// <inheritdoc/>
   public IQueryable<PerspectiveRow<TModel>> Query => DefaultScope.Query;
@@ -230,7 +229,8 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
     where T1 : class
     where T2 : class {
 
-  private readonly DbContext _context;
+  /// <summary>The context this query reads through; the registration tests assert each query gets its own.</summary>
+  internal DbContext Context { get; }
   private readonly IScopeContextAccessor _scopeContextAccessor;
   private readonly QueryScope _defaultQueryScope;
   private bool _disposed;
@@ -242,7 +242,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
       IOptions<WhizbangCoreOptions> options) {
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
+    Context = dbContext;
     _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
     _defaultQueryScope = options?.Value.DefaultQueryScope ?? QueryScope.Tenant;
   }
@@ -251,13 +251,13 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
       : this(dbContext, tableNames, NullScopeContextAccessor.Instance, GlobalScopeOptions.Instance) { }
 
   public IScopedMultiLensAccess<T1, T2> Scope(QueryScope scope) =>
-      new MultiModelScopedAccess<T1, T2>(_context, scope, _scopeContextAccessor, null);
+      new MultiModelScopedAccess<T1, T2>(Context, scope, _scopeContextAccessor, null);
 
   public IScopedMultiLensAccess<T1, T2> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) =>
-      new MultiModelScopedAccess<T1, T2>(_context, scope, _scopeContextAccessor, overrideValues);
+      new MultiModelScopedAccess<T1, T2>(Context, scope, _scopeContextAccessor, overrideValues);
 
   public IScopedMultiLensAccess<T1, T2> DefaultScope =>
-      new MultiModelScopedAccess<T1, T2>(_context, _defaultQueryScope, _scopeContextAccessor, null);
+      new MultiModelScopedAccess<T1, T2>(Context, _defaultQueryScope, _scopeContextAccessor, null);
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class => DefaultScope.Query<T>();
 
@@ -266,14 +266,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
 
   public void Dispose() {
     if (!_disposed) {
-      _context.Dispose();
+      Context.Dispose();
       _disposed = true;
     }
   }
 
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
-      await _context.DisposeAsync();
+      await Context.DisposeAsync();
       _disposed = true;
     }
   }

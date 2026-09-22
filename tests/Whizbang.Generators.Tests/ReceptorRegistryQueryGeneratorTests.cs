@@ -7,15 +7,18 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
+/// <para>
 /// Tests for ReceptorRegistryQueryGenerator — emits a static class that the receive boundary
 /// uses to decide whether a message has any consumer (handler / perspective / lifecycle
 /// receptor / tagged-notification attribute) without runtime reflection. See
 /// plans/pump-then-process.md slice 1.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 /// - HasReceptors(stage, type) → true iff a receptor with [FireAt(stage)] for that type is registered
 /// - HasInboxHandler(type)     → true iff any IReceptor&lt;T,...&gt; or IReceptor&lt;T&gt; is registered
 /// - HasAnyConsumer(type)      → true iff handler / perspective / lifecycle receptor / tag-attribute exists
+/// </para>
 /// </summary>
 [Category("SourceGenerators")]
 [Category("ReceptorRegistryQuery")]
@@ -51,7 +54,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     var inboxHandlersRegion = _extractRegion(generated!, "InboxHandlerTypes");
     await Assert.That(inboxHandlersRegion).Contains("MyApp.CreateOrder");
     // The registration class is the new shape (post-2026-05-06 redesign)
-    await Assert.That(generated!).Contains("WhizbangReceptorRegistryQueryRegistration");
+    await Assert.That(generated).Contains("WhizbangReceptorRegistryQueryRegistration");
     await Assert.That(generated).Contains("AssemblyRegistry<ReceptorRegistryContribution>.Register");
   }
 
@@ -72,7 +75,7 @@ public record OrphanCommand : ICommand { public string Id { get; init; } = strin
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
     // The orphan type must NOT appear in any of the contribution's lists.
-    await Assert.That(generated!).DoesNotContain("OrphanCommand");
+    await Assert.That(generated).DoesNotContain("OrphanCommand");
   }
 
   // ===== HasReceptors (lifecycle stages) =====
@@ -101,7 +104,7 @@ public class PreInboxAuditReceptor : IReceptor<CreateOrder> {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
     // Per-stage StageTypes dictionary populated for PreInboxInline with CreateOrder.
-    await Assert.That(generated!).Contains("LifecycleStage.PreInboxInline");
+    await Assert.That(generated).Contains("LifecycleStage.PreInboxInline");
     await Assert.That(generated).Contains("MyApp.CreateOrder");
   }
 
@@ -256,7 +259,7 @@ public abstract class AbstractComposite : ICompositeEvent {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("AbstractComposite")
+    await Assert.That(generated).DoesNotContain("AbstractComposite")
       .Because("The abstract composite base is never dispatched and must not be registered as a consumer.");
   }
 
@@ -302,7 +305,7 @@ public abstract record AbstractCollective : CollectiveEventBase { }";
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("AbstractCollective")
+    await Assert.That(generated).DoesNotContain("AbstractCollective")
       .Because("The abstract collective base is never dispatched and must not be registered as a consumer.");
   }
 
@@ -322,7 +325,7 @@ public record OrphanEvent : IEvent { public string Id { get; init; } = string.Em
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
     // No handler, no perspective, no tag attribute → must not appear anywhere.
-    await Assert.That(generated!).DoesNotContain("OrphanEvent");
+    await Assert.That(generated).DoesNotContain("OrphanEvent");
   }
 
   // ===== HandledMessages enumeration (topology arc phase 3) =====
@@ -496,7 +499,7 @@ public class Empty {}
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("HandledMessages")
+    await Assert.That(generated).Contains("HandledMessages")
       .Because("The property is always emitted (empty when no receptors) so the contribution shape is uniform.");
   }
 
@@ -545,7 +548,7 @@ public class Empty {}
     // contribute (even an empty contribution) to the AssemblyRegistry. Without this, an
     // assembly with no receptors would skip its module-init step and miss any future
     // contribution registration symmetry.
-    await Assert.That(generated!).Contains("WhizbangReceptorRegistryQueryRegistration");
+    await Assert.That(generated).Contains("WhizbangReceptorRegistryQueryRegistration");
     await Assert.That(generated).Contains("[ModuleInitializer]");
     await Assert.That(generated).Contains("AssemblyRegistry<ReceptorRegistryContribution>.Register");
   }
@@ -582,7 +585,7 @@ public class Empty {}
   /// <summary>
   /// Extracts the array literal between <c>stageTypes[LifecycleStage.&lt;name&gt;]</c> and
   /// the next <c>}</c>. The generator emits per-stage entries like:
-  /// <code>stageTypes[LifecycleStage.PreInboxInline] = new string[] { "...", };</code>
+  /// <c>stageTypes[LifecycleStage.PreInboxInline] = new string[] { "...", };</c>
   /// </summary>
   private static string _extractStageArrayLiteral(string source, string stageName) {
     var marker = $"LifecycleStage.{stageName}";

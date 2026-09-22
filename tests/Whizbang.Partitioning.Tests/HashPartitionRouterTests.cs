@@ -61,6 +61,7 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
 
   [Test]
   [MethodDataSource(nameof(GetHashAlgorithmUnicodeKeys))]
+  [MethodDataSource(nameof(GetUnicodeTestKeys))]
   public async Task HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync(string key, string description) {
     // Arrange
     var router = new HashPartitionRouter();
@@ -85,7 +86,7 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     yield return ("stream-混合-مفتاح-😀", "Mixed Unicode");
     yield return ("Привет-мир", "Cyrillic");
     yield return ("สวัสดี", "Thai");
-    yield return ("🏳️‍🌈🏴‍☠️", "Complex emoji sequences");
+    yield return ("🏳️\u200D🌈🏴\u200D☠️", "Complex emoji sequences");
   }
 
   [Test]
@@ -128,8 +129,8 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     }
 
     // Assert - Each partition should get roughly equal share (±20%)
-    var expectedPerPartition = streamCount / partitionCount; // 1000
-    var tolerance = expectedPerPartition * 0.20; // ±200
+    const int expectedPerPartition = streamCount / partitionCount; // 1000
+    const double tolerance = expectedPerPartition * 0.20; // ±200
 
     for (int i = 0; i < partitionCount; i++) {
       var count = partitionCounts[i];
@@ -260,25 +261,6 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
 
     // Should be deterministic
     var partition2 = router.SelectPartition(testKey, partitionCount, context);
-    await Assert.That(partition2).IsEqualTo(partition);
-  }
-
-  [Test]
-  [MethodDataSource(nameof(GetUnicodeTestKeys))]
-  public async Task EdgeCase_UnicodeKeys_HandlesCorrectlyAsync(string key, string description) {
-    // Arrange
-    var router = new HashPartitionRouter();
-    var context = CreateTestContext();
-    const int partitionCount = 10;
-
-    // Act
-    var partition = router.SelectPartition(key, partitionCount, context);
-
-    // Assert - Should handle without error
-    await Assert.That(partition).IsGreaterThanOrEqualTo(0).And.IsLessThan(partitionCount);
-
-    // Should be deterministic
-    var partition2 = router.SelectPartition(key, partitionCount, context);
     await Assert.That(partition2).IsEqualTo(partition);
   }
 

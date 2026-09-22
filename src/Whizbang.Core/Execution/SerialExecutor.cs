@@ -22,8 +22,9 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCancelledWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_WorkerCanceledWhileTheDrainAwaitsIt_CompletesAndRecordsItAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
@@ -98,6 +99,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
 
     var workItem = new WorkItem(
       executeAsync: _executeWithPooledStateAsync<TResult>,
+      cancelAsync: _cancelPooledStateAsync<TResult>,
       state: state,
       cancellationToken: ct
     );
@@ -179,11 +181,15 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       try {
         await _workerTask;
       } catch (OperationCanceledException) {
-        // DEFENSIVE: Should never happen - channel completes before worker cancellation
-        // Kept as safety net for unexpected cancellation timing edge cases
+        // A stop that lands while this drain is already awaiting the worker. Everything above the
+        // await is synchronous, so a caller can have the channel completed and this task suspended
+        // here when StopAsync cancels the worker token; the worker's next read observes the canceled
+        // token ahead of "done writing" and its task ends canceled. Swallowed for the caller, who
+        // asked only to drain, and recorded so an operator can see it happened.
+        // SerialExecutorDrainAfterStopTests reaches this deterministically.
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
-          "Worker cancelled during DrainAsync after channel completion"
+          "Worker canceled during DrainAsync after channel completion"
         );
         // Note: We still swallow the exception but now it's observable via OpenTelemetry
       }
@@ -194,21 +200,40 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
 
     await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
-      // DEFENSIVE: Should never happen - WriteAsync throws before queueing cancelled work
-      // Kept as safety net if cancellation happens between WriteAsync and processing
+      // Cancellation arriving AFTER the item was queued and before the worker reached it.
+      // WriteAsync rejects an already-canceled token, so this is the only way to get here --
+      // and it is ordinary, not defensive: a timeout or a shutdown firing while the worker is
+      // busy with earlier work. The caller must be finished rather than skipped, because only
+      // the execute path completes its value-task source.
       if (workItem.CancellationToken.IsCancellationRequested) {
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
-          "Work item cancelled after queueing but before execution"
+          "Work item canceled after queueing but before execution"
         );
-        continue; // Skip cancelled work
+        await workItem.CancelAsync(workItem.State, workItem.CancellationToken);
+        continue; // Handler is not run; the caller observes OperationCanceledException.
       }
 
       try {
         await workItem.ExecuteAsync(workItem.State);
       } catch (Exception ex) {
-        // DEFENSIVE: Should never happen - exceptions captured in PooledValueTaskSource
-        // Kept as safety net for unexpected exception paths
+        // UNREACHABLE from outside this type, and deliberately kept. The invariant: the only
+        // delegate ever assigned to WorkItem.ExecuteAsync is _executeWithPooledStateAsync, at the
+        // single construction site above; it is an async method, and its own try, catch and finally
+        // cover its whole body including the handler invocation itself -- so a handler that throws
+        // synchronously before its first await is caught there exactly as one that throws after it,
+        // is recorded on the pooled source, and leaves this await successfully completed. The
+        // caller observes the exception; the worker never does. WorkItem and _channel are private,
+        // so no test can enqueue a work item whose delegate faults, and the repository bans
+        // reflection.
+        //
+        // Not excluded from coverage: this catch shares a member with the FIFO loop and the
+        // canceled-while-queued branch, both of which are tested, and
+        // [ExcludeFromCodeCoverage] is member-level -- annotating here would hide their coverage
+        // too (see ai-docs/coverage-exclusions.md). Left uncovered on purpose, with the invariant
+        // written down so a reader can tell whether it still holds. If PooledValueTaskSource ever
+        // stops capturing, or a second enqueue site appears, this becomes reachable and should get
+        // a test rather than this comment.
         WhizbangActivitySource.RecordDefensiveException(
           activity,
           ex,
@@ -223,6 +248,26 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// Static delegate method that executes handler with pooled state.
   /// Eliminates lambda closure allocations.
   /// </summary>
+  /// <summary>
+  /// Finishes a work item the worker is going to skip because its token was canceled while it
+  /// sat in the channel.
+  /// </summary>
+  /// <remarks>
+  /// Without this the caller's <c>await</c> never returns. Only the execute path completes the
+  /// value-task source, so skipping the item left the source permanently incomplete -- a hang
+  /// with no exception and nothing logged -- and leaked the pooled state as well.
+  /// </remarks>
+  private static ValueTask _cancelPooledStateAsync<TResult>(object? stateObj, CancellationToken ct) {
+    var state = (ExecutionState<TResult>)stateObj!;
+    try {
+      state.Source.SetException(new OperationCanceledException(ct));
+    } finally {
+      state.Reset();
+      ExecutionStatePool<TResult>.Return(state);
+    }
+    return ValueTask.CompletedTask;
+  }
+
   private static async ValueTask _executeWithPooledStateAsync<TResult>(object? stateObj) {
     var state = (ExecutionState<TResult>)stateObj!;
     try {
@@ -243,11 +288,18 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// </summary>
   private readonly struct WorkItem(
     Func<object?, ValueTask> executeAsync,
+    Func<object?, CancellationToken, ValueTask> cancelAsync,
     object? state,
     CancellationToken cancellationToken
     ) {
     /// <summary>The delegate that executes the handler with pooled state.</summary>
     public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
+    /// <summary>
+    /// Completes the caller's value-task source as canceled and returns the pooled state.
+    /// Typed the same way as <see cref="ExecuteAsync"/> so the worker, which has no TResult,
+    /// can still finish a caller it is not going to run.
+    /// </summary>
+    public readonly Func<object?, CancellationToken, ValueTask> CancelAsync = cancelAsync;
     /// <summary>The pooled execution state containing the handler, envelope, and context.</summary>
     public readonly object? State = state;
     /// <summary>The cancellation token associated with this work item.</summary>

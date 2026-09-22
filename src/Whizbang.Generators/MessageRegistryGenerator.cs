@@ -42,7 +42,6 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_ReceptorWithoutHandleAsync_DiscoversWithFallbackLineAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_PublishAsyncWithDefaultExpression_InfersFromGenericAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_NonMethodInvocation_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_SendAsyncWithStringArgument_DiscoversDispatcherAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_ReceptorWithoutHandleAsyncMethod_UsesClassLineNumberAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_MessageOnlyDispatchedNoDefinition_InfersTypeAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_PerspectiveOnly_InfersEventTypeAsync</tests>

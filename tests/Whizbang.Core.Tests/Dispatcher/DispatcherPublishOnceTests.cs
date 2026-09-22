@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -39,11 +40,12 @@ public class DispatcherPublishOnceTests {
   /// <see cref="PublishOnceTestEvent"/>. Tests assert against this counter
   /// to prove the dispatcher proceeded past the claim and through PublishAsync.
   /// </summary>
-  internal static int FireCount;
+  private static int _fireCount;
+  internal static int FireCount => _fireCount;
 
   public class PublishOnceTestEventReceptor : IReceptor<PublishOnceTestEvent> {
-    public ValueTask HandleAsync(PublishOnceTestEvent message, CancellationToken cancellationToken) {
-      Interlocked.Increment(ref FireCount);
+    public ValueTask HandleAsync(PublishOnceTestEvent message, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _fireCount);
       return ValueTask.CompletedTask;
     }
   }
@@ -68,7 +70,7 @@ public class DispatcherPublishOnceTests {
 
   [Before(Test)]
   public Task ResetCounterAsync() {
-    Interlocked.Exchange(ref FireCount, 0);
+    Interlocked.Exchange(ref _fireCount, 0);
     return Task.CompletedTask;
   }
 
@@ -165,10 +167,10 @@ public class DispatcherPublishOnceTests {
   // ── Cancellation honored up front ────────────────────────────────────
 
   [Test]
-  public async Task PublishOnceAsync_CancelledToken_ThrowsAsync() {
+  public async Task PublishOnceAsync_CanceledToken_ThrowsAsync() {
     var dispatcher = _createDispatcher(new InMemoryClaimedEmissionStore());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(() => dispatcher.PublishOnceAsync("k", new PublishOnceTestEvent(Guid.NewGuid()), cts.Token))
       .ThrowsExactly<OperationCanceledException>();
@@ -185,8 +187,10 @@ public class DispatcherPublishOnceTests {
     var won = await dispatcher.PublishOnceAsync("once:metric-win", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
     await Assert.That(won).IsTrue();
 
-    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
-    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+    // Passive counters: the untagged series of each always reports (at zero); only a series that
+    // counted a claim outcome is a measurement of it.
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won").Where(m => m.Value > 0).ToList();
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost").Where(m => m.Value > 0).ToList();
 
     await Assert.That(winMeasurements).Count().IsEqualTo(1)
       .Because("Winning the claim records exactly one win measurement; ops dashboards count this to compute the won-vs-lost race rate.");
@@ -205,8 +209,10 @@ public class DispatcherPublishOnceTests {
     var second = await dispatcher.PublishOnceAsync("once:metric-loss", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
     await Assert.That(second).IsFalse();
 
-    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
-    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+    // Passive counters: the untagged series of each always reports (at zero); only a series that
+    // counted a claim outcome is a measurement of it.
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won").Where(m => m.Value > 0).ToList();
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost").Where(m => m.Value > 0).ToList();
 
     await Assert.That(winMeasurements).Count().IsEqualTo(1)
       .Because("First call wins; only one win recorded.");
@@ -219,7 +225,7 @@ public class DispatcherPublishOnceTests {
 
   private static IDispatcher _createDispatcher(IClaimedEmissionStore? claimStore) {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     if (claimStore is not null) {
@@ -232,7 +238,7 @@ public class DispatcherPublishOnceTests {
       IClaimedEmissionStore claimStore,
       TestMeterFactory factory) {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     services.AddSingleton(claimStore);

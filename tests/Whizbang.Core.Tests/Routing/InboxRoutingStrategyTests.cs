@@ -93,7 +93,7 @@ public class InboxRoutingStrategyTests {
     var subscription = strategy.GetSubscription(
       new HashSet<string> { "orders" }, "svc", MessageKind.Command);
 
-    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.messaging.#")
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.messaging.#")
       .Because("directed integrity traffic must be broker-admissible on EVERY service's inbox " +
                "subscription — it is directed, so non-targets still discard locally.");
   }
@@ -110,10 +110,10 @@ public class InboxRoutingStrategyTests {
     var subscription = strategy.GetSubscription(
       new HashSet<string> { "orders" }, "svc", MessageKind.Command);
 
-    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.minting.#")
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.minting.#")
       .Because("minted composites publish under whizbang.core.minting.* subjects after the "
              + "namespace move — the shared-inbox filter must admit them");
-    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.messaging.#")
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.messaging.#")
       .Because("the OLD control-plane pattern stays through the transition (mixed-fleet window: "
              + "in-flight envelopes published by pre-move builds still carry old subjects); it "
              + "retires with the shared inbox in phase 7");
@@ -140,7 +140,7 @@ public class InboxRoutingStrategyTests {
     foreach (var family in mintedFamilies) {
       var destination = Whizbang.Core.Transports.ControlPlaneDestination.For("inbox", Guid.NewGuid(), family);
 
-      await Assert.That(destination.RoutingKey!).IsEqualTo(
+      await Assert.That(destination.RoutingKey).IsEqualTo(
           $"whizbang.core.minting.{family.Name.ToLowerInvariant()}")
         .Because("the subject is synthesized from the CLR namespace — the move changes it");
       var admitted = patterns.Any(p =>

@@ -9,7 +9,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// Emitted when a user's permissions or roles change.
 /// </summary>
 /// <docs>fundamentals/events/system-events#permission-changed</docs>
-/// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:PermissionChanged_IsSystemEvent_ReturnsTrueAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:PermissionChanged_RolesAdded_HasCorrectTypeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:PermissionChanged_PermissionsRemoved_HasCorrectTypeAsync</tests>

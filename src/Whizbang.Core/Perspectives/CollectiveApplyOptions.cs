@@ -25,7 +25,7 @@ public sealed record CollectiveApplyOptions {
 
   /// <summary>
   /// Server-side <c>statement_timeout</c> (via <c>SET LOCAL</c>) applied to each batch transaction, in
-  /// seconds. Null leaves the server/role default in place. When set, a runaway batch is cancelled by
+  /// seconds. Null leaves the server/role default in place. When set, a runaway batch is canceled by
   /// Postgres itself — so a client timeout can never leave a zombie query running through PgBouncer.
   /// </summary>
   public int? StatementTimeoutSeconds { get; init; }

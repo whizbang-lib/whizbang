@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -18,11 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/ReadModelsReadyGate.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class LensReadModelBarrierTests : EFCoreTestBase {
 
-  private sealed class ProbeModel {
-    public Guid Id { get; set; }
-  }
+  private sealed class ProbeModel;
 
   private ServiceProvider _buildHost(IReadModelsReadyGate? gate) {
     var services = new ServiceCollection();
@@ -41,6 +41,10 @@ public class LensReadModelBarrierTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LensResolution_WhileTheBarrierIsClosed_RefusesAsync(CancellationToken cancellationToken) {
     var gate = new ReadModelsReadyGate();   // closed: Migrate or the perspective scan still running
     await using var provider = _buildHost(gate);
@@ -62,6 +66,10 @@ public class LensReadModelBarrierTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LensResolution_WithNoBarrierRegistered_StaysUngatedAsync(CancellationToken cancellationToken) {
     await using var provider = _buildHost(gate: null);
     using var scope = provider.CreateScope();

@@ -237,7 +237,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var baseType = symbol.BaseType;
     bool inheritsDbContext = false;
     while (baseType != null) {
-      if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
         inheritsDbContext = true;
         break;
       }
@@ -250,7 +250,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangDbContext] attribute
     var attribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute"));
 
     if (attribute is null) {
       return null;  // No attribute = not discovered
@@ -265,7 +265,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // No Schema property set, derive from namespace
-    var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+    // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+    // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+    var namespaceName = TypeNameUtilities.NamespaceName(symbol.ContainingNamespace);
     return _deriveSchemaFromNamespace(namespaceName);
   }
 
@@ -330,7 +332,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // - IPerspectiveFor<TModel, TEvent1, TEvent2>
     // ... up to IPerspectiveFor<TModel, TEvent1, ..., TEvent5>
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
@@ -358,7 +360,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var isSplitMode = _isSplitStorageMode(modelType as INamedTypeSymbol);
 
     return new PerspectiveCandidate(
-        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
@@ -389,7 +391,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
-  private const string JSON_POLYMORPHIC_ATTRIBUTE = "System.Text.Json.Serialization.JsonPolymorphicAttribute";
 
   /// <summary>
   /// Extracts physical field information from a model type.
@@ -406,13 +407,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       var physicalFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PHYSICAL_FIELD_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD_ATTRIBUTE));
 
       var vectorFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD_ATTRIBUTE));
 
       var polymorphicDiscriminatorAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE));
 
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
@@ -440,19 +441,22 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
-    bool isIndexed = false;
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+    // [Indexed] is the universal way to ask for an index, so a promoted field uses the same attribute
+    // a document field does: [PhysicalField] says promote, [Indexed] says index, and together they
+    // say promote and index. PhysicalField's own Indexed flag still works for code written before
+    // that, so either spelling is honored and neither turns the other off.
+
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
+    string? columnType = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -467,6 +471,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
+          break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
           break;
       }
     }
@@ -485,7 +494,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -494,7 +504,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;
@@ -505,7 +515,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Extract named arguments
     var distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     var indexType = GeneratorVectorIndexType.IVFFlat; // Default
-    var isIndexed = true; // Vectors are indexed by default
+    var isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     string? columnName = null;
     int? indexLists = null;
 
@@ -520,9 +530,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
           if (namedArg.Value.Value is int indexTypeValue) {
             indexType = (GeneratorVectorIndexType)indexTypeValue;
           }
-          break;
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
@@ -609,183 +616,29 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     var storageAttr = modelType.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PERSPECTIVE_STORAGE_ATTRIBUTE);
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_STORAGE_ATTRIBUTE));
     if (storageAttr is null) {
       return false;
     }
 
     // FieldStorageMode.Split == 2
-    if (storageAttr.ConstructorArguments.Length > 0 &&
+    return storageAttr.ConstructorArguments.Length > 0 &&
         storageAttr.ConstructorArguments[0].Value is int mode &&
-        mode == 2) {
-      return true;
-    }
-
-    return false;
-  }
-
-  private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) {
-    if (modelType is null) {
-      return false;
-    }
-
-    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-    return _checkForPolymorphicTypes(modelType, visited);
+        mode == 2;
   }
 
   /// <summary>
-  /// Recursively checks if a type or its nested types contain polymorphic properties.
+  /// Whether the model has to be stored as one opaque value rather than as a mapped complex
+  /// property.
   /// </summary>
-  private static bool _checkForPolymorphicTypes(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    if (!visited.Add(type)) {
-      return false;
-    }
-
-    if (_isNonCollectionSystemType(type)) {
-      return false;
-    }
-
-    return type.GetMembers().OfType<IPropertySymbol>()
-        .Where(_isAnalyzableProperty)
-        .Select(p => p.Type)
-        .OfType<INamedTypeSymbol>()
-        .Any(propType => _isPropertyTypePolymorphic(propType, visited));
-  }
-
-  /// <summary>
-  /// Checks if a type is a System namespace type that is NOT a collections type.
-  /// </summary>
-  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
-    return ns?.StartsWith("System", StringComparison.Ordinal) == true &&
-           !ns.StartsWith("System.Collections", StringComparison.Ordinal);
-  }
-
-  /// <summary>
-  /// Checks if a property should be analyzed (not static, not indexer, not write-only, not ignored).
-  /// </summary>
-  private static bool _isAnalyzableProperty(IPropertySymbol property) {
-    return !property.IsStatic && !property.IsIndexer && !property.IsWriteOnly && !_isPropertyIgnored(property);
-  }
-
-  /// <summary>
-  /// Checks if a property type (or its element/argument types) contains polymorphic types.
-  /// </summary>
-  private static bool _isPropertyTypePolymorphic(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
-    var elementType = _getCollectionElementType(propType);
-    var typeToCheck = elementType ?? propType;
-
-    if (_isPolymorphicType(typeToCheck)) {
-      return true;
-    }
-
-    if (_isRecursivelyPolymorphic(typeToCheck, visited)) {
-      return true;
-    }
-
-    return _hasPolymorphicTypeArguments(propType, visited);
-  }
-
-  /// <summary>
-  /// Checks if a class/struct type recursively contains polymorphic properties.
-  /// </summary>
-  private static bool _isRecursivelyPolymorphic(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    return (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct) &&
-           !_isSystemPrimitiveType(type) &&
-           _checkForPolymorphicTypes(type, visited);
-  }
-
-  /// <summary>
-  /// Checks if any generic type arguments of a type are polymorphic or contain polymorphic properties.
-  /// </summary>
-  private static bool _hasPolymorphicTypeArguments(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
-    // S3267: Loop has side effects (mutating visited set via _checkForPolymorphicTypes) — LINQ not appropriate
-#pragma warning disable S3267
-    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-      if (_isPolymorphicType(typeArg)) {
-        return true;
-      }
-      if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
-        return true;
-      }
-    }
-#pragma warning restore S3267
-
-    return false;
-  }
-
-  /// <summary>
-  /// Checks if a type is polymorphic (abstract class or has [JsonPolymorphic] attribute).
-  /// </summary>
-  private static bool _isPolymorphicType(INamedTypeSymbol type) {
-    // Check if type is an abstract class
-    if (type.IsAbstract && type.TypeKind == TypeKind.Class) {
-      return true;
-    }
-
-    // Check for [JsonPolymorphic] attribute
-    foreach (var attr in type.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() == JSON_POLYMORPHIC_ATTRIBUTE) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /// <summary>
-  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
-  /// </summary>
-  private static bool _isPropertyIgnored(IPropertySymbol property) {
-    foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute" ||
-          attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute" ||
-          attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// <summary>
-  /// Gets the element type if the type is a collection (List, IEnumerable, array, etc.).
-  /// </summary>
-  private static INamedTypeSymbol? _getCollectionElementType(INamedTypeSymbol type) {
-    // Check for generic collection types
-    if (!type.IsGenericType || type.TypeArguments.Length == 0) {
-      return null;
-    }
-
-    var originalDef = type.ConstructedFrom.ToDisplayString();
-
-    // Common collection interfaces and types
-    if (originalDef.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Immutable.ImmutableList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Immutable.ImmutableArray<", StringComparison.Ordinal)) {
-      return type.TypeArguments[0] as INamedTypeSymbol;
-    }
-
-    return null;
-  }
-
-  /// <summary>
-  /// Checks if a type is a system primitive type that won't contain polymorphic properties.
-  /// </summary>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
-    if (ns == "System") {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-    return false;
-  }
+  /// <remarks>
+  /// Asked of the shared discovery, because the analyzer that warns about an index declared on such
+  /// a model has to reach the same answer. Two copies of this question are two answers waiting to
+  /// disagree, and the disagreement would be silent: a model would be told its index is unservable
+  /// while the generator emitted it, or the reverse.
+  /// </remarks>
+  private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType);
 
   /// <summary>
   /// Generates EF Core shadow property configurations for physical fields.
@@ -846,6 +699,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static string _getEFCoreColumnType(PhysicalFieldInfo field) {
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // The author's own type wins over the derived one. Checked before the switch rather than as its
+    // default arm, because the switch's fallback is text: a type it does not recognize would
+    // otherwise silently become text, which is how an array column becomes a delimited string.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
     }
 
     // Normalize the type name
@@ -985,7 +845,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(
         template,
         "HEADER",
-        $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCorePerspectiveConfigurationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
+        $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCorePerspectiveConfigurationGenerator by {TemplateUtilities.GetDeterministicBuildStamp(typeof(EFCorePerspectiveConfigurationGenerator).Assembly)}\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
     );
 
     template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString(CultureInfo.InvariantCulture));
@@ -1034,6 +894,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
 
+    // No temporal conversion is emitted. The canonical temporal form is applied by a convention
+    // every generated context carries, which walks the model Entity Framework built and so reaches
+    // inherited, nested and collection-element temporals a discovery here never saw.
     return snippet
         .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
         .Replace("__TABLE_NAME__", perspective.TableName)
@@ -1065,7 +928,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var diagnosticList = _generateDiagnosticPerspectiveList(uniquePerspectives, totalPerspectiveCount);
     template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList);
 
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+    // Deterministic: wall-clock here would change the compiled output hash every build.
+    var timestamp = TemplateUtilities.GetDeterministicBuildStamp(typeof(EFCorePerspectiveConfigurationGenerator).Assembly);
     template = template.Replace("__TIMESTAMP__", timestamp);
 
     var totalEntityCount = uniquePerspectives.Length + 4; // perspectives + inbox + outbox + eventstore + serviceinstance

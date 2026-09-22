@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// production at the projection level, with a handful of line numbers missing.</para>
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind-invariants</docs>
+[Category("Shard3")]
 public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
 
   [Test]

@@ -8,10 +8,12 @@ namespace Whizbang.Generators.Tests;
 /// Coverage tests for <see cref="ReceptorDiscoveryGenerator"/> targeting branches not
 /// exercised by the main test suite: open-generic receptor skip, [FireAt] stage enum
 /// resolution (multi-stage and unknown values), the full [AwaitPerspectiveSync] pipeline
-/// (event types, timeouts, fire behaviors, non-event messages), replay/idempotency
-/// attribute flags, traced void registry snippets, sync-receptor default routing,
-/// unresolvable polymorphic metadata names, tuple-with-array cascade extraction, and the
-/// non-test-assembly early exit when no handlers exist.
+/// (event types, timeouts, fire behaviors, non-event messages, a malformed non-Type
+/// argument), replay/idempotency attribute flags (including an explicit AlwaysFire = false),
+/// traced void registry snippets, sync-receptor default routing (including a cast to an
+/// undefined enum value), unresolvable polymorphic metadata names, tuple cascade extraction
+/// (array elements and a RoutedNone slot alongside a real event), and the non-test-assembly
+/// early exit when no handlers exist.
 /// </summary>
 /// <tests>src/Whizbang.Generators/ReceptorDiscoveryGenerator.cs</tests>
 [Category("SourceGenerators")]
@@ -550,6 +552,177 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(dispatcher).DoesNotContain("typeof(global::MyApp.Receptors.ItemRemoved[])");
   }
 
+  // ==================== [AwaitPerspectiveSync] with a non-Type constructor value ====================
+
+  /// <summary>
+  /// [AwaitPerspectiveSync(typeof(int[]))] passes a real System.Type argument, but the
+  /// resulting TypedConstant wraps an array type symbol rather than a named one. The parser
+  /// must decline it instead of crashing, and the whole attribute must be treated as absent —
+  /// otherwise a receptor with a malformed sync argument could silently compile clean while
+  /// waiting on perspective sync that was never actually configured.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithAwaitPerspectiveSyncArrayTypeArgument_TreatsAttributeAsAbsentAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives.Sync;
+
+      namespace MyApp.Receptors;
+
+      public sealed class OrderPlaced : IEvent { }
+
+      [AwaitPerspectiveSync(typeof(int[]))]
+      public class NotifyReceptor : IReceptor<OrderPlaced> {
+        public ValueTask HandleAsync(OrderPlaced message, CancellationToken ct = default) => ValueTask.CompletedTask;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).DoesNotContain("ReceptorSyncAttributeInfo");
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher).Contains("No [AwaitPerspectiveSync] attributes - skip sync checking");
+    await Assert.That(dispatcher).DoesNotContain("WaitForStreamAsync");
+  }
+
+  // ==================== [DefaultRouting] with an undefined enum value ====================
+
+  /// <summary>
+  /// [DefaultRouting((DispatchModes)999)] casts a raw int to the enum, so the argument is a
+  /// legitimate int-typed constant that simply does not correspond to any DispatchModes
+  /// member. The resolver must decline to emit a routing override rather than hard-code the
+  /// numeral 999 into generated code — the receptor falls back to the framework's normal
+  /// routing instead of being wired to a value nothing at runtime recognizes.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDefaultRoutingCastToUndefinedValue_SkipsRoutingOverrideAsync() {
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp.Receptors;
+
+      public sealed class CacheInvalidated : ICommand { }
+
+      [DefaultRouting((DispatchModes)999)]
+      public class CacheSyncReceptor : ISyncReceptor<CacheInvalidated> {
+        public void Handle(CacheInvalidated message) { }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher).DoesNotContain("999");
+
+    // Scope to GetReceptorDefaultRouting: the generic message-routing sections elsewhere in the
+    // file legitimately contains the dispatch type check for CacheInvalidated —
+    // only the default-routing lookup itself must have no entry for this message type.
+    var routingMethodStart = dispatcher!.IndexOf("GetReceptorDefaultRouting(Type messageType)", StringComparison.Ordinal);
+    var routingMethodEnd = dispatcher.IndexOf("LookupReceptorInvoker<TResult>", routingMethodStart, StringComparison.Ordinal);
+    var routingMethodSection = dispatcher[routingMethodStart..routingMethodEnd];
+
+    await Assert.That(routingMethodSection).DoesNotContain("global::MyApp.Receptors.CacheInvalidated");
+  }
+
+  // ==================== [ReceptorIdempotent] with an explicit AlwaysFire = false ====================
+
+  /// <summary>
+  /// [ReceptorIdempotent(AlwaysFire = false)] explicitly writes the value Roslyn already
+  /// defaults to. The named-argument scan must walk past this non-matching entry to the end
+  /// of the loop rather than only ever being exercised by an early-return match — otherwise a
+  /// scan that only ever sees "found it on the first try" in tests could regress into
+  /// mis-reading an explicit "= false" as "= true" without any test noticing.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithReceptorIdempotentExplicitAlwaysFireFalse_SetsIdempotentOnlyAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp.Receptors;
+
+      public sealed class CacheRefreshed : IEvent { }
+
+      [ReceptorIdempotent(AlwaysFire = false)]
+      public class IdempotentReceptor : IReceptor<CacheRefreshed> {
+        public ValueTask HandleAsync(CacheRefreshed message, CancellationToken ct = default) => ValueTask.CompletedTask;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry).Contains("FireDuringReplay: false");
+    await Assert.That(registry).Contains("IsIdempotent: true");
+  }
+
+  // ==================== Tuple with a RoutedNone element ====================
+
+  /// <summary>
+  /// A tuple response where one slot is RoutedNone (the discriminated-union "no value for
+  /// this path" marker) must skip only that slot during cascade extraction — the sibling
+  /// event in the same tuple must still reach the outbox cascade type-switch. Dropping the
+  /// whole tuple here would silently stop a real event from ever cascading whenever an
+  /// author pairs it with an explicit Route.None().
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTupleContainingRoutedNoneElement_CascadesOnlyTheOtherElementAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp.Receptors;
+
+      public sealed class ArchiveItem : ICommand { }
+      public sealed class ItemArchived : IEvent { }
+
+      public class ArchiveReceptor : IReceptor<ArchiveItem, (RoutedNone, ItemArchived)> {
+        public ValueTask<(RoutedNone, ItemArchived)> HandleAsync(ArchiveItem message, CancellationToken ct = default)
+          => ValueTask.FromResult((Route.None(), new ItemArchived()));
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Scope to the cascade section: the tuple's raw text also appears in the receptor's own
+    // interface/HandleAsync signature elsewhere in the file, which legitimately says RoutedNone.
+    var cascadeStart = dispatcher!.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
+
+    await Assert.That(cascadeSection).Contains("typeof(global::MyApp.Receptors.ItemArchived)");
+    await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
+  }
+
   // ==================== Non-test assembly early exit ====================
 
   /// <summary>
@@ -602,4 +775,159 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
     return driver.GetRunResult();
   }
+
+  // ==================== Attribute shapes the enum resolvers cannot read ====================
+
+  /// <summary>
+  /// Both stage resolution (<c>[FireAt]</c>) and routing resolution (<c>[DefaultRouting]</c>) recover
+  /// the enum TYPE from the attribute class's first constructor parameter. When the first constructor
+  /// declared on the attribute takes no parameters at all there is no such type, and the resolver has
+  /// to decline.
+  /// </summary>
+  /// <remarks>
+  /// <para>The consuming assembly's own declaration of the attribute is what the generator binds to —
+  /// it matches purely on the fully-qualified name — so the shape it reads is not under the
+  /// framework's control. These two tests declare that shape directly.</para>
+  /// <para>What the guard buys is not a nicer message: without it the resolver casts a null parameter
+  /// type, the transform throws inside the incremental pipeline, and the ENTIRE receptor registry for
+  /// the assembly disappears — every receptor, not just the one carrying the odd attribute. So the
+  /// assertion that matters is that the registry still exists and still routes the receptor, at its
+  /// default stages, with nothing from the unreadable attribute leaking into the generated code.</para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithFireAtAttributeWhoseFirstConstructorTakesNoParameters_KeepsDefaultStagesAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+
+      namespace Whizbang.Core.Messaging {
+        // First-declared constructor is parameterless, so there is no first-parameter type for the
+        // stage resolver to read the enum off.
+        [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true)]
+        public sealed class FireAtAttribute : System.Attribute {
+          public FireAtAttribute() { }
+          public FireAtAttribute(int stage) { }
+        }
+      }
+
+      namespace MyApp.Receptors {
+        public sealed class ItemArchived : IEvent { }
+
+        [global::Whizbang.Core.Messaging.FireAt(3)]
+        public class AuditReceptor : IReceptor<ItemArchived> {
+          public ValueTask HandleAsync(ItemArchived message, CancellationToken ct = default) => ValueTask.CompletedTask;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error)
+      .Because("an attribute shape the stage resolver cannot read must be declined, not thrown on");
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull()
+      .Because("a throw inside the transform would take the whole assembly's receptor registry with it");
+    await Assert.That(registry).Contains("global::MyApp.Receptors.AuditReceptor")
+      .Because("the receptor is still discovered — only its unreadable stage declaration is dropped");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
+      .Because("with no resolvable stage the receptor falls back to the default stages");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
+    await Assert.That(registry).DoesNotContain("LifecycleStage.3")
+      .Because("the raw constructor argument must never be pasted into generated code as a stage name");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDefaultRoutingAttributeWhoseFirstConstructorTakesNoParameters_SkipsRoutingOverrideAsync() {
+    const string source = """
+      using Whizbang.Core;
+
+      namespace Whizbang.Core.Dispatch {
+        [System.AttributeUsage(System.AttributeTargets.Class)]
+        public sealed class DefaultRoutingAttribute : System.Attribute {
+          public DefaultRoutingAttribute() { }
+          public DefaultRoutingAttribute(int mode) { }
+        }
+      }
+
+      namespace MyApp.Receptors {
+        public sealed class CacheInvalidated : ICommand { }
+
+        [global::Whizbang.Core.Dispatch.DefaultRouting(0)]
+        public class CacheSyncReceptor : ISyncReceptor<CacheInvalidated> {
+          public void Handle(CacheInvalidated message) { }
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Scope to GetReceptorDefaultRouting for the same reason the undefined-enum-value test does:
+    // the generic dispatch sections legitimately name the message type elsewhere in the file.
+    var routingMethodStart = dispatcher!.IndexOf("GetReceptorDefaultRouting(Type messageType)", StringComparison.Ordinal);
+    var routingMethodEnd = dispatcher.IndexOf("LookupReceptorInvoker<TResult>", routingMethodStart, StringComparison.Ordinal);
+    var routingMethodSection = dispatcher[routingMethodStart..routingMethodEnd];
+
+    await Assert.That(routingMethodSection).DoesNotContain("global::MyApp.Receptors.CacheInvalidated")
+      .Because("an attribute whose enum type cannot be recovered must produce no routing override at all");
+  }
+}
+
+/// <summary>
+/// Coverage tests for <see cref="RawReceptorDiscoveryGenerator"/> targeting the interface-match
+/// filter not exercised by the main test suite.
+/// </summary>
+/// <tests>src/Whizbang.Generators/RawReceptorDiscoveryGenerator.cs</tests>
+[Category("SourceGenerators")]
+[Category("RawReceptorDiscovery")]
+public class RawReceptorDiscoveryGeneratorCoverageTests {
+
+  // ==================== Non-matching interface implementer ====================
+
+  /// <summary>
+  /// A public, concrete class with a base list that does NOT include IRawReceptor must be
+  /// skipped by the raw-receptor pipeline, while a sibling class that DOES implement it is
+  /// still registered. Without this filter, any interface-implementing class sharing an
+  /// assembly with a real raw receptor risks being miscounted (or a real receptor risks
+  /// being masked by an early return that fires for any base-listed type).
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNonRawReceptorInterfaceImplementer_SkipsRegistrationAsync() {
+    const string source = """
+
+      using System;
+      using System.Text.Json;
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp;
+
+      public class NotARawReceptor : IDisposable {
+        public void Dispose() { }
+      }
+
+      public class FooRawReceptor : IRawReceptor {
+        public string TargetMessageTypeName => "MyApp.Events.Foo, MyApp.Contracts";
+        public Task HandleAsync(JsonElement payload, CancellationToken ct) => Task.CompletedTask;
+      }
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<RawReceptorDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "RawReceptors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
+    await Assert.That(code).DoesNotContain("NotARawReceptor");
+  }
+
 }

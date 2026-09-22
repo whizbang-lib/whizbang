@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (handler_name instead of destination, received_at instead of created_at, no published_at column).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard2")]
 public class FetchInboxBatchSqlTests : EFCoreTestBase {
 
   [Test]
@@ -185,12 +186,21 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
   private static async Task _insertInboxRowWithNullStreamAsync(
       NpgsqlConnection connection, Guid messageId, Guid instanceId) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
-              @inst, NOW() + INTERVAL '5 minutes', NULL, NULL)";
+    ins.CommandText = """
+
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{"payload":1}', '{"hop":1}', NOW(), NULL)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @inst, NOW() + INTERVAL '5 minutes', NULL
+      FROM m
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("inst", instanceId);
     await ins.ExecuteNonQueryAsync();
@@ -209,7 +219,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     while (await reader.ReadAsync()) {
       rows.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
-        StreamId = reader.IsDBNull(1) ? null : reader.GetGuid(1),
+        StreamId = await reader.IsDBNullAsync(1) ? null : reader.GetGuid(1),
         HandlerName = reader.GetString(2),
         MessageType = reader.GetString(3)
       });
@@ -228,12 +238,21 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid streamId, Guid instanceId,
       DateTimeOffset? receivedAt = null, DateTimeOffset? processedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number, processed_at)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""payload"":1}', '{""hop"":1}', 1, 0, @received,
-              @inst, NOW() + INTERVAL '5 minutes', @stream, 0, @processed)";
+    ins.CommandText = """
+
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{"payload":1}', '{"hop":1}', @received, @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @inst, NOW() + INTERVAL '5 minutes', 0, @processed
+      FROM m
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

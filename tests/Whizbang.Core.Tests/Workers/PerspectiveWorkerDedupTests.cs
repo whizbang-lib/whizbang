@@ -1,16 +1,24 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -25,6 +33,34 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 [NotInParallel("PerspectiveWorkerDedup")]
 public class PerspectiveWorkerDedupTests {
+
+  /// <summary>
+  /// Liveness backstop for the completion signals in this file — NOT a pace assertion.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every wait here is gated on a <c>TaskCompletionSource</c> that the runner/coordinator
+  /// completes, so a healthy worker satisfies it immediately regardless of this value. The bound
+  /// exists only so a genuinely broken worker fails instead of hanging the suite forever.
+  /// </para>
+  /// <para>
+  /// It was 5 seconds, which is long enough in isolation and not long enough under a full-suite
+  /// run: <c>Worker_DifferentWorkIds_BothProcessedAsync</c> failed at 5s 003ms in CI while the
+  /// invariant it asserts held perfectly. A backstop that trips on scheduler pressure reports
+  /// "the worker did not process the work" for what was really "the machine was busy", which is
+  /// worse than useless — it trains people to re-run red builds.
+  /// </para>
+  /// </remarks>
+  private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(60);
+
+  /// <summary>Upper bound on how long a cancelled worker body may take to unwind.</summary>
+  /// <remarks>
+  /// Not a pace assertion either: a healthy worker's <c>ExecuteTask</c> settles as soon as the
+  /// token trips. The bound only stops a worker that never observes cancellation from hanging
+  /// the suite.
+  /// </remarks>
+  private static readonly TimeSpan _bodyStopTimeout = TimeSpan.FromSeconds(30);
+
   // ==================== Core Dedup Tests ====================
 
   [Test]
@@ -54,14 +90,20 @@ public class PerspectiveWorkerDedupTests {
     // never invoked again for that WorkId. Asserting "==1" raced that deferral (the prior flake).
     // Wait on deterministic completion signals (not pump-cycle-count proxies).
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, TimeSpan.FromSeconds(5)); // further redeliveries keep deduping
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
+    await cts.CancelAsync();
+    // Await the worker BODY. StartAsync's task is NOT the body -- .NET 10 hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it settled nothing and
+    // the assertions below read state the worker's finally blocks had not necessarily written.
+    // SuppressThrowing because a body leaving through a cancellation catch settles
+    // RanToCompletion OR Canceled depending on thread-pool timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — once the WorkId is cached the runner stops being called (dedup reaches steady state),
     // and the observer recorded the dedup decisions. This is the real, timing-independent invariant.
@@ -98,13 +140,25 @@ public class PerspectiveWorkerDedupTests {
 
     var (worker, harness) = _createWorker(coordinator, registry);
 
-    // Act — wait for runner to be called twice (once per cycle)
+    // Act — drive the two cycles from the test rather than from a fire-and-forget pump loop.
+    //
+    // This test needs exactly two cycles, and a background loop adds a thread-pool task that has to
+    // be scheduled repeatedly, plus a 20ms delay between cycles, under whatever load the rest of the
+    // suite is generating. That is what the signal backstop in this file was raised from 5s to 60s
+    // for, and it tripped again at 60s in CI while the invariant below held: a starved pump reports
+    // "the worker did not process the work" for what was really "nothing ran the pump". Pumping each
+    // cycle here removes the dependency instead of postponing it, and the wait after each cycle is
+    // still a completion signal the worker satisfies immediately when healthy.
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.StartAsync(cts.Token);
+    await coordinator.PumpCycleAsync(harness, cts.Token);
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.PumpCycleAsync(harness, cts.Token);
+    await runner.WaitForRunCallsAsync(2, _signalTimeout);
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — both should be processed (different WorkIds)
     await Assert.That(runner.RunAsyncCallCount).IsEqualTo(2)
@@ -152,11 +206,13 @@ public class PerspectiveWorkerDedupTests {
 
     // Act — wait for runner to be called twice (once per stream)
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await runner.WaitForRunCallsAsync(2, _signalTimeout);
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — both streams processed (different WorkIds = no dedup)
     await Assert.That(runner.RunAsyncCallCount).IsEqualTo(2)
@@ -188,12 +244,14 @@ public class PerspectiveWorkerDedupTests {
 
     // Act — wait for runner to process first cycle, then wait for second cycle to dedup
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5)); // deterministic dedup signal, not a cycle-count proxy
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout); // deterministic dedup signal, not a cycle-count proxy
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(observer.DedupCalls.Count).IsGreaterThanOrEqualTo(1)
@@ -224,13 +282,15 @@ public class PerspectiveWorkerDedupTests {
 
     // Act — wait for runner to actually process the work
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
     // Wait for next cycle to ensure in-flight marking is complete
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(observer.InFlightCalls.Count).IsGreaterThanOrEqualTo(1)
@@ -261,11 +321,13 @@ public class PerspectiveWorkerDedupTests {
 
     // Act — run through all 3 cycles
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForClaimCallsAsync(3, TimeSpan.FromSeconds(5));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await coordinator.WaitForClaimCallsAsync(3, _signalTimeout);
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — runner should only be called once despite work being returned twice
     await Assert.That(runner.RunAsyncCallCount).IsEqualTo(1)
@@ -295,14 +357,16 @@ public class PerspectiveWorkerDedupTests {
     // window between cycle-2's dispatch and cycle-1's cooldown mark (the prior rotating flake).
     // The real invariant: once dedup begins, the runner is never invoked again for that WorkId.
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, TimeSpan.FromSeconds(5)); // further redeliveries keep deduping
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(runner.RunAsyncCallCount).IsEqualTo(runCountWhenDedupBegan)
@@ -321,7 +385,7 @@ public class PerspectiveWorkerDedupTests {
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
     var registry = new SingleRunnerRegistry(runner);
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleInlineSpyInvoker();
     var streamId = Guid.CreateVersion7();
 
@@ -339,6 +403,7 @@ public class PerspectiveWorkerDedupTests {
     IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -352,26 +417,46 @@ public class PerspectiveWorkerDedupTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      strategy,
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: strategy,
+      eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
 
     // Act — run one cycle + wait for processing to complete
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
     await Task.Delay(200);
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — Without IEventStore, processedEvents is empty, so PostLifecycle correctly doesn't fire
     await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(0)
@@ -385,7 +470,7 @@ public class PerspectiveWorkerDedupTests {
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
     var registry = new SingleRunnerRegistry(runner);
-    var lifecycleCoordinator = new LifecycleCoordinator();
+    var lifecycleCoordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance);
     var postLifecycleSpy = new PostLifecycleInlineSpyInvoker();
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
@@ -405,13 +490,17 @@ public class PerspectiveWorkerDedupTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
-    await Task.Delay(200);
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
+    // The spy's own signal, not a grace delay: under CI load the inline stage can land after
+    // any fixed pause, and asserting on a count that a delay races is exactly the flake.
+    await postLifecycleSpy.WaitForPostLifecycleInlineAsync(1, _signalTimeout);
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsGreaterThanOrEqualTo(1)
@@ -432,6 +521,7 @@ public class PerspectiveWorkerDedupTests {
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -445,17 +535,34 @@ public class PerspectiveWorkerDedupTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      strategy,
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
     return (worker, harness);
   }
 
@@ -468,10 +575,11 @@ public class PerspectiveWorkerDedupTests {
     var instanceProvider = new DedupFakeServiceInstanceProvider();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
-      : new InstantCompletionStrategy();
+      : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
@@ -484,18 +592,35 @@ public class PerspectiveWorkerDedupTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      tracingOptions: null,
-      strategy,
-      processedEventCacheObserver: observer,
-      timeProvider: timeProvider,
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: strategy,
+      eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: observer ?? NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value),
+      timeProvider: timeProvider);
     return (worker, harness);
   }
 
@@ -567,7 +692,7 @@ public class PerspectiveWorkerDedupTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _callCount);
       for (var i = 0; i < _runWaiters.Length && i < current; i++) {
         _runWaiters[i].TrySetResult(current);
@@ -592,7 +717,7 @@ public class PerspectiveWorkerDedupTests {
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => _runner;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["Whizbang.Core.Tests.Workers.PerspectiveWorkerDedupTests+_fakeEvent, Whizbang.Core.Tests"])];
+      [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["Whizbang.Core.Tests.Workers.PerspectiveWorkerDedupTests+FakeEvent, Whizbang.Core.Tests"])];
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
@@ -700,7 +825,7 @@ public class PerspectiveWorkerDedupTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -722,8 +847,21 @@ public class PerspectiveWorkerDedupTests {
   /// Detects whether PostLifecycle actually fires (not just whether tracking was abandoned).
   /// </summary>
   private sealed class PostLifecycleInlineSpyInvoker : IReceptorInvoker {
+    private readonly TaskCompletionSource<int>[] _fireWaiters = new TaskCompletionSource<int>[10];
     private int _postLifecycleInlineCount;
     public int PostLifecycleInlineCount => _postLifecycleInlineCount;
+
+    public PostLifecycleInlineSpyInvoker() {
+      for (var i = 0; i < _fireWaiters.Length; i++) {
+        _fireWaiters[i] = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+      }
+    }
+
+    public async Task WaitForPostLifecycleInlineAsync(int count, TimeSpan timeout) {
+      ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _fireWaiters.Length);
+      using var cts = new CancellationTokenSource(timeout);
+      await _fireWaiters[count - 1].Task.WaitAsync(cts.Token);
+    }
 
     public ValueTask InvokeAsync(
       IMessageEnvelope envelope,
@@ -731,13 +869,16 @@ public class PerspectiveWorkerDedupTests {
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
       if (stage == LifecycleStage.PostLifecycleInline) {
-        Interlocked.Increment(ref _postLifecycleInlineCount);
+        var current = Interlocked.Increment(ref _postLifecycleInlineCount);
+        for (var i = 0; i < _fireWaiters.Length && i < current; i++) {
+          _fireWaiters[i].TrySetResult(current);
+        }
       }
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed record _fakeEvent(Guid Id) : IEvent;
+  private sealed record FakeEvent(Guid Id) : IEvent;
 
   /// <summary>
   /// Minimal fake event store that returns a single event for GetEventsBetweenPolymorphicAsync.
@@ -756,26 +897,26 @@ public class PerspectiveWorkerDedupTests {
 
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = MessageId.From(TrackedGuid.FromExternal(_eventId)),
-        Payload = new _fakeEvent(_eventId),
+        Payload = new FakeEvent(_eventId),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       };
       return Task.FromResult(new List<MessageEnvelope<IEvent>> { envelope });
     }
 
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
       throw new NotImplementedException();
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
-    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
       throw new NotImplementedException();
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
@@ -785,6 +926,6 @@ public class PerspectiveWorkerDedupTests {
   /// Minimal fake event type provider that returns a single event type.
   /// </summary>
   private sealed class MinimalFakeEventTypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(FakeEvent)];
   }
 }

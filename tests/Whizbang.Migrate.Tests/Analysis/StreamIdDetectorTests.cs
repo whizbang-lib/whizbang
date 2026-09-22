@@ -13,7 +13,7 @@ public class StreamIdDetectorTests {
     const string sourceCode = """
       public record OrderCreated(Guid StreamId, string CustomerId);
       public record OrderUpdated(Guid StreamId, string Description);
-      public record OrderCancelled(Guid StreamId, string Reason);
+      public record OrderCanceled(Guid StreamId, string Reason);
       """;
 
     // Act
@@ -70,7 +70,7 @@ public class StreamIdDetectorTests {
       public record OrderCreated(Guid OrderId, string CustomerId);
       public record OrderUpdated(Guid OrderId, string Description);
       public record OrderShipped(Guid OrderId, string Carrier);
-      public record OrderCancelled(Guid StreamId, string Reason);
+      public record OrderCanceled(Guid StreamId, string Reason);
       """;
 
     // Act

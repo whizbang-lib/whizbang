@@ -55,19 +55,13 @@ public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? json
   /// and returns "MyApp.CreateProductCommand, MyApp".
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    // Find the opening [[ and closing ]]
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException(
+    // The one parser of envelope type names (issue #698): depth-aware, so nested generics inside
+    // the payload type do not fool a first-"]]" scan.
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
         "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'"
       );
-    }
-
-    // Extract the substring between [[ and ]]
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException(

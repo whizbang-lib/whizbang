@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -181,7 +182,7 @@ public class DispatcherSecurityPropagationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Act - Only call AddWhizbangDispatcher (no explicit IScopeContextAccessor registration)
     services.AddReceptors();
@@ -204,7 +205,7 @@ public class DispatcherSecurityPropagationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // User registers their own implementation BEFORE AddWhizbangDispatcher
     var customAccessor = new ScopeContextAccessor();
@@ -293,7 +294,7 @@ public class DispatcherSecurityPropagationTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register security context accessor
     services.AddSingleton(scopeContextAccessor);
@@ -322,7 +323,7 @@ public class DispatcherSecurityPropagationTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Do NOT register IScopeContextAccessor - this is intentional
 

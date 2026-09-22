@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -29,11 +30,11 @@ public class DispatcherLocalInvokeSecurityTests {
   [Test]
   public async Task LocalInvokeAsync_WithScopeContext_SetsMessageContextAccessorAsync() {
     // Arrange
-    _globalCapturedContext = null; // Clear before test
+    GlobalCapturedContext = null; // Clear before test
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -65,13 +66,13 @@ public class DispatcherLocalInvokeSecurityTests {
       await dispatcher.LocalInvokeAsync(command);
 
       // Assert - Receptor should have captured the message context with security
-      await Assert.That(_globalCapturedContext).IsNotNull();
-      await Assert.That(_globalCapturedContext!.UserId).IsEqualTo(testUserId);
-      await Assert.That(_globalCapturedContext!.TenantId).IsEqualTo(testTenantId);
+      await Assert.That(GlobalCapturedContext).IsNotNull();
+      await Assert.That(GlobalCapturedContext!.UserId).IsEqualTo(testUserId);
+      await Assert.That(GlobalCapturedContext!.TenantId).IsEqualTo(testTenantId);
     } finally {
       // Cleanup
       ScopeContextAccessor.CurrentContext = null;
-      _globalCapturedContext = null;
+      GlobalCapturedContext = null;
     }
   }
 
@@ -82,11 +83,11 @@ public class DispatcherLocalInvokeSecurityTests {
   [Test]
   public async Task LocalInvokeAsync_WithNoScopeContext_SetsMessageContextWithoutSecurityAsync() {
     // Arrange
-    _globalCapturedContext = null; // Clear before test
+    GlobalCapturedContext = null; // Clear before test
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -102,12 +103,12 @@ public class DispatcherLocalInvokeSecurityTests {
       await dispatcher.LocalInvokeAsync(command);
 
       // Assert - Receptor should have captured message context without security
-      await Assert.That(_globalCapturedContext).IsNotNull();
-      await Assert.That(_globalCapturedContext!.UserId).IsNull();
-      await Assert.That(_globalCapturedContext!.TenantId).IsNull();
-      await Assert.That(_globalCapturedContext!.MessageId.Value).IsNotEqualTo(Guid.Empty);
+      await Assert.That(GlobalCapturedContext).IsNotNull();
+      await Assert.That(GlobalCapturedContext!.UserId).IsNull();
+      await Assert.That(GlobalCapturedContext!.TenantId).IsNull();
+      await Assert.That(GlobalCapturedContext!.MessageId.Value).IsNotEqualTo(Guid.Empty);
     } finally {
-      _globalCapturedContext = null;
+      GlobalCapturedContext = null;
     }
   }
 
@@ -118,11 +119,11 @@ public class DispatcherLocalInvokeSecurityTests {
   [Test]
   public async Task LocalInvokeAsync_SecurityContextChain_PropagatesThroughCascadeAsync() {
     // Arrange
-    _globalCapturedContext = null; // Clear before test
+    GlobalCapturedContext = null; // Clear before test
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -153,13 +154,13 @@ public class DispatcherLocalInvokeSecurityTests {
       await dispatcher.LocalInvokeAsync(command);
 
       // Assert - The cascaded receptor should see the security context
-      await Assert.That(_globalCapturedContext).IsNotNull();
-      await Assert.That(_globalCapturedContext!.UserId).IsEqualTo(testUserId);
-      await Assert.That(_globalCapturedContext!.TenantId).IsEqualTo(testTenantId);
+      await Assert.That(GlobalCapturedContext).IsNotNull();
+      await Assert.That(GlobalCapturedContext!.UserId).IsEqualTo(testUserId);
+      await Assert.That(GlobalCapturedContext!.TenantId).IsEqualTo(testTenantId);
     } finally {
       // Cleanup
       ScopeContextAccessor.CurrentContext = null;
-      _globalCapturedContext = null;
+      GlobalCapturedContext = null;
     }
   }
 
@@ -173,7 +174,7 @@ public class DispatcherLocalInvokeSecurityTests {
   /// <summary>
   /// Shared static field to capture message context from any receptor invocation.
   /// </summary>
-  private static IMessageContext? _globalCapturedContext;
+  internal static IMessageContext? GlobalCapturedContext { get; set; }
 
   /// <summary>
   /// Test command that triggers cascading behavior.
@@ -186,9 +187,9 @@ public class DispatcherLocalInvokeSecurityTests {
   /// Test receptor that captures MessageContextAccessor.CurrentContext for verification.
   /// </summary>
   public sealed class TestLocalInvokeReceptor : IReceptor<TestLocalInvokeCommand> {
-    public ValueTask HandleAsync(TestLocalInvokeCommand message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(TestLocalInvokeCommand message, CancellationToken cancellationToken = default) {
       // Capture the current message context to static field for verification
-      _globalCapturedContext = MessageContextAccessor.CurrentContext;
+      GlobalCapturedContext = MessageContextAccessor.CurrentContext;
       return ValueTask.CompletedTask;
     }
   }
@@ -199,7 +200,7 @@ public class DispatcherLocalInvokeSecurityTests {
   public sealed class TestCascadingReceptor(IDispatcher dispatcher) : IReceptor<TestCascadingCommand> {
     private readonly IDispatcher _dispatcher = dispatcher;
 
-    public async ValueTask HandleAsync(TestCascadingCommand message, CancellationToken cancellationToken) {
+    public async ValueTask HandleAsync(TestCascadingCommand message, CancellationToken cancellationToken = default) {
       // Cascade to another command
       if (message.ShouldCascade) {
         await _dispatcher.LocalInvokeAsync(new TestLocalInvokeCommand { Data = "cascaded" });

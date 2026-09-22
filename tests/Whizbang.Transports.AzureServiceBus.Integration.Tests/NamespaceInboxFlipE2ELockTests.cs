@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -39,7 +40,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   private const string ORDERS_ENTITY = "inbox.wbtopo.orders.commands";
   private const string BILLING_ENTITY = "inbox.wbtopo.billing.commands";
@@ -64,8 +65,12 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
   private static TransportPublishStrategy _flipPublishStrategy(AzureServiceBusTransport transport) {
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox();
     return new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      jsonOptions: null, namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      jsonOptions: null);
   }
 
   /// <summary>Builds the outbox-shaped work item for a command payload (envelope stored as
@@ -253,7 +258,7 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     var transport = _createTransport();
     await transport.InitializeAsync(ct);
 
-    var unroutedEntity = "inbox.wbtopo.unrouted.commands";
+    const string unroutedEntity = "inbox.wbtopo.unrouted.commands";
     var marked = new TransportDestination(
       unroutedEntity,
       "wbtopo.unrouted.commands.lostcommand",
@@ -463,8 +468,12 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     await transport.InitializeAsync(ct);
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
     var publish = new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
-      jsonOptions: null, namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
+      jsonOptions: null);
 
     var commandWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"retire-{Guid.CreateVersion7():N}"));
     var systemWork = _commandWork(new Whizbang.Core.Commands.System.RebuildPerspectiveCommand(

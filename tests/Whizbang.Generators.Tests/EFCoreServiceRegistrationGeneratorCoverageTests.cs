@@ -371,7 +371,8 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         [StreamId]
         public Guid Id { get; set; }
 
-        [PhysicalField(Indexed = true, Unique = true, ColumnName = "ext_id")]
+        [PhysicalField(Unique = true, ColumnName = "ext_id")]
+        [Indexed]
         public string? ExternalId { get; set; }
       }
 
@@ -405,7 +406,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   /// <summary>
   /// All [VectorField] named arguments (ColumnName, DistanceMetric, IndexType, IndexLists,
   /// Indexed) are extracted: the custom column name carries the dimensions, and a field with
-  /// Indexed = false gets a column but no vector index.
+  /// gets a column but no vector index.
   /// </summary>
   [Test]
   public async Task Generator_WithVectorFieldNamedArguments_AppliesCustomColumnAndIndexSettingsAsync() {
@@ -426,10 +427,11 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         [StreamId]
         public Guid Id { get; set; }
 
-        [VectorField(768, Indexed = true, ColumnName = "title_vec", DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, IndexLists = 200)]
+        [VectorField(768, ColumnName = "title_vec", DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, IndexLists = 200)]
+        [Indexed]
         public float[]? TitleEmbedding { get; set; }
 
-        [VectorField(512, Indexed = false)]
+        [VectorField(512)]
         public float[]? BodyEmbedding { get; set; }
       }
 
@@ -459,7 +461,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(sourceText).Contains("body_embedding vector(512)")
       .Because("Second vector field should use default snake_case column name");
     await Assert.That(sourceText).DoesNotContain("idx_search_body_embedding_vec")
-      .Because("Indexed = false must suppress the vector index");
+      .Because(" must suppress the vector index");
   }
 
   /// <summary>
@@ -486,6 +488,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         public Guid Id { get; set; }
 
         [VectorField(3072)]
+        [Indexed]
         public float[]? Embeddings { get; set; }
       }
 
@@ -699,6 +702,379 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     var partialClass = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext.Generated"));
     await Assert.That(partialClass).IsNotNull();
     await Assert.That(partialClass!.SourceText.ToString()).Contains("protected override void OnModelCreating(ModelBuilder modelBuilder)");
+  }
+
+  #endregion
+
+  #region Perspective data coalescing (dotnet/efcore#38625 workaround)
+
+  // EF Core 10 materializes a JSON-absent complex collection as null rather than empty. That
+  // happens on every row written before a collection property was added, so a schema evolution
+  // turns yesterday's rows into NullReferenceExceptions on read and PrepareToSave failures on
+  // write. The generator walks each perspective model's collection graph at compile time and
+  // emits `??=` statements to repair the shape on materialization.
+  //
+  // The walk is the interesting part: it has to reach collections nested inside complex
+  // references and inside other collections' elements, skip the properties where null is a
+  // legitimate value, and terminate on a model graph that refers back to itself.
+
+  private static string _coalescerFor(string modelBody, string extraTypes = "") => $$"""
+    using System.Collections.Generic;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public record CoalesceEvent : IEvent;
+
+    {{extraTypes}}
+
+    public class CoalesceModel {
+      public string Id { get; set; } = "";
+    {{modelBody}}
+    }
+
+    public class CoalescePerspective : IPerspectiveFor<CoalesceModel, CoalesceEvent> {
+      public CoalesceModel Apply(CoalesceModel currentData, CoalesceEvent eventData) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
+  private static async Task<string> _generatedCoalescerAsync(string modelBody, string extraTypes = "") {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(
+      _coalescerFor(modelBody, extraTypes));
+    return string.Join("\n", result.GeneratedSources.Select(g => g.SourceText.ToString()));
+  }
+
+  /// <summary>A settable, non-nullable collection is coalesced to empty.</summary>
+  [Test]
+  public async Task Coalescer_SettableNonNullableCollection_IsCoalescedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; set; } = new();
+    """);
+
+    await Assert.That(generated).Contains("Tags ??=")
+      .Because("an old-shape row materializes this as null, and every read of it then throws");
+  }
+
+  /// <summary>A nullable-annotated collection is left alone.</summary>
+  [Test]
+  public async Task Coalescer_NullableAnnotatedCollection_IsLeftAloneAsync() {
+    // The annotation is the author saying null is a real state here — "no tags recorded" is
+    // different from "tags recorded, and there were none". Coalescing would erase that.
+    var generated = await _generatedCoalescerAsync("""
+      public List<string>? Tags { get; set; }
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=")
+      .Because("null is a legitimate value on a nullable-annotated collection");
+  }
+
+  /// <summary>An init-only collection is not assigned post-construction.</summary>
+  [Test]
+  public async Task Coalescer_InitOnlyCollection_IsNotAssignedAsync() {
+    // `??=` against an init-only setter is CS8852, so emitting it would break the consumer's
+    // build in generated code they cannot edit.
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; init; } = new();
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=")
+      .Because("assigning an init-only property post-construction is CS8852 — in generated code");
+  }
+
+  /// <summary>A get-only collection is not assigned either.</summary>
+  [Test]
+  public async Task Coalescer_GetOnlyCollection_IsNotAssignedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; } = new();
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=");
+  }
+
+  /// <summary>The walk descends through a complex reference to reach its collections.</summary>
+  [Test]
+  public async Task Coalescer_CollectionBehindAComplexReference_IsReachedAsync() {
+    // Stopping at the top level would leave every nested collection unrepaired, which is the
+    // common shape — a model with an owned address or settings object that holds a list.
+    var generated = await _generatedCoalescerAsync("""
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Flags ??=");
+  }
+
+  /// <summary>The complex reference itself is null-guarded rather than constructed.</summary>
+  [Test]
+  public async Task Coalescer_ComplexReference_IsGuardedNotConstructedAsync() {
+    // A null complex reference may be legitimate — only collections are repaired. Constructing
+    // one would invent state the row never had.
+    var generated = await _generatedCoalescerAsync("""
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Config is");
+    await Assert.That(generated).DoesNotContain("Config ??=")
+      .Because("only collections are coalesced; a null reference may be the row's real state");
+  }
+
+  /// <summary>The walk descends into a collection's complex element type.</summary>
+  [Test]
+  public async Task Coalescer_CollectionOfComplexElements_IsWalkedPerElementAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<Line> Lines { get; set; } = new();
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Lines ??=");
+    await Assert.That(generated).Contains("foreach")
+      .Because("each element carries its own collections, so the repair has to run per element");
+    await Assert.That(generated).Contains("Notes ??=");
+  }
+
+  /// <summary>
+  /// A collection that was itself left un-coalesced still has its elements walked, under a null
+  /// guard.
+  /// </summary>
+  [Test]
+  public async Task Coalescer_NullableCollectionOfComplexElements_IsWalkedUnderAGuardAsync() {
+    // The collection stays possibly-null by the author's choice, so the foreach that repairs
+    // its elements must be guarded or the repair itself throws.
+    var generated = await _generatedCoalescerAsync("""
+      public List<Line>? Lines { get; set; }
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).DoesNotContain("Lines ??=");
+    await Assert.That(generated).Contains("Notes ??=");
+    await Assert.That(generated).Contains("is not null")
+      .Because("walking a collection left possibly-null must be guarded, or the repair NREs");
+  }
+
+  /// <summary>A self-referencing model does not send the walker into infinite recursion.</summary>
+  [Test]
+  public async Task Coalescer_SelfReferencingModel_TerminatesAsync() {
+    // A tree-shaped model is ordinary. Without the cycle guard the generator would recurse
+    // until it died — and a generator crash takes the consumer's whole build with it.
+    var generated = await _generatedCoalescerAsync("""
+      public Node Root { get; set; } = new();
+    """, """
+    public class Node {
+      public List<string> Labels { get; set; } = new();
+      public Node Child { get; set; } = null!;
+    }
+    """);
+
+    await Assert.That(generated).Contains("Labels ??=")
+      .Because("the guard must stop the recursion without abandoning the work already found");
+  }
+
+  /// <summary>Mutually recursive models terminate too.</summary>
+  [Test]
+  public async Task Coalescer_MutuallyRecursiveModels_TerminateAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public Parent Top { get; set; } = new();
+    """, """
+    public class Parent {
+      public List<string> ParentTags { get; set; } = new();
+      public Child Kid { get; set; } = null!;
+    }
+
+    public class Child {
+      public List<string> ChildTags { get; set; } = new();
+      public Parent Owner { get; set; } = null!;
+    }
+    """);
+
+    await Assert.That(generated).Contains("ParentTags ??=");
+    await Assert.That(generated).Contains("ChildTags ??=");
+  }
+
+  /// <summary>A model with no collections emits no coalesce body at all.</summary>
+  [Test]
+  public async Task Coalescer_ModelWithNoCollections_EmitsNoDataBlockAsync() {
+    // The registration is emitted for every model, so a model with nothing to repair must not
+    // carry a dead `var data = row.Data;` block into generated output.
+    var generated = await _generatedCoalescerAsync("""
+      public int Count { get; set; }
+    """);
+
+    await Assert.That(generated).DoesNotContain("var data = row.Data;")
+      .Because("nothing to coalesce means nothing to emit");
+  }
+
+  /// <summary>The scope extensions collection is coalesced for every model regardless.</summary>
+  [Test]
+  public async Task Coalescer_ScopeExtensions_AreAlwaysCoalescedAsync() {
+    // Scope lives on the row rather than the model, so it needs the same repair on every
+    // perspective — including the ones whose own model has no collections at all.
+    var generated = await _generatedCoalescerAsync("""
+      public int Count { get; set; }
+    """);
+
+    await Assert.That(generated).Contains("row.Scope.Extensions ??=");
+  }
+
+  /// <summary>Arrays are coalesced the same way lists are.</summary>
+  [Test]
+  public async Task Coalescer_ArrayProperty_IsCoalescedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public string[] Codes { get; set; } = [];
+    """);
+
+    await Assert.That(generated).Contains("Codes ??=");
+  }
+
+  /// <summary>The generated coalescer compiles — it is emitted into the consumer's build.</summary>
+  [Test]
+  public async Task Coalescer_GeneratedCodeHasNoCompilationErrorsAsync() {
+    // The whole risk of emitting statements from a symbol walk is producing code that does not
+    // build, in a file the consumer cannot edit.
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_coalescerFor("""
+      public List<Line> Lines { get; set; } = new();
+      public List<string>? Optional { get; set; }
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """));
+
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse();
+  }
+
+  /// <summary>The walk stops descending once the model graph is nested past the depth cap.</summary>
+  [Test]
+  public async Task Coalescer_ModelNestedPastTheDepthCap_StopsDescendingAsync() {
+    // The cycle guard only stops a type that repeats on the path. A long chain of DISTINCT
+    // types has no repeat to catch, so without the depth cap the walk would keep emitting an
+    // ever-deeper nest of foreach/if statements into a file the consumer cannot edit. The cap
+    // is eight levels below the model root: the eighth level is still repaired, the ninth is
+    // not — and the first half of that is what proves the walk really descended that far.
+    var generated = await _generatedCoalescerAsync("""
+      public Level1 Chain { get; set; } = new();
+    """, """
+    public class Level1 { public Level2 Next { get; set; } = new(); }
+    public class Level2 { public Level3 Next { get; set; } = new(); }
+    public class Level3 { public Level4 Next { get; set; } = new(); }
+    public class Level4 { public Level5 Next { get; set; } = new(); }
+    public class Level5 { public Level6 Next { get; set; } = new(); }
+    public class Level6 { public Level7 Next { get; set; } = new(); }
+    public class Level7 { public Level8 Next { get; set; } = new(); }
+
+    public class Level8 {
+      public List<string> InsideCap { get; set; } = new();
+      public Level9 Next { get; set; } = new();
+    }
+
+    public class Level9 {
+      public List<string> PastCap { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("InsideCap ??=")
+      .Because("the walk must reach the deepest level still inside the cap, or the cap is not what stopped it");
+    await Assert.That(generated).DoesNotContain("PastCap ??=")
+      .Because("past the cap the walk must stop, or a deep model graph emits unbounded generated code");
+  }
+
+  #endregion
+
+  #region Open generic perspective (model type is an unbound type parameter)
+
+  /// <summary>
+  /// A perspective that declares its model as an open type parameter - the generic base class
+  /// pattern - has no named model symbol to read [PhysicalField] properties from. Physical-field
+  /// extraction must yield nothing for it rather than dereferencing the type parameter, and the
+  /// closed perspective sharing that base must still get its own physical column.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithOpenGenericPerspectiveBase_ExtractsNoPhysicalFieldsForItAsync() {
+    // Arrange - a generic base perspective plus a closed subclass over a model with a physical field
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record CoverageEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public class ClosedModel {
+        [StreamId]
+        public Guid Id { get; set; }
+
+        [PhysicalField(ColumnName = "ext_id")]
+        public string? ExternalId { get; set; }
+      }
+
+      public abstract class SharedPerspectiveBase<TModel> : IPerspectiveFor<TModel, CoverageEvent>
+          where TModel : class {
+        public abstract TModel Apply(TModel currentData, CoverageEvent eventData);
+      }
+
+      public class ClosedPerspective : SharedPerspectiveBase<ClosedModel> {
+        public override ClosedModel Apply(ClosedModel currentData, CoverageEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - the generator survived the open type parameter
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse()
+      .Because("an unbound model type parameter must not fault the generator");
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var ddl = schemaExtensions!.SourceText.ToString();
+
+    // The closed model's physical field still becomes a column - proves the extraction ran at all
+    await Assert.That(ddl).Contains("ext_id TEXT")
+      .Because("the closed sibling's physical field must still reach the DDL");
+
+    // The open perspective was discovered too, so its model went through the same extraction
+    var openHeader = ddl.IndexOf("(model: TModel)", StringComparison.Ordinal);
+    await Assert.That(openHeader).IsGreaterThan(-1)
+      .Because("the open base must be discovered, or nothing proves its model reached field extraction");
+
+    // ...and contributed no physical columns of its own
+    var openTable = ddl[openHeader..ddl.IndexOf(");", openHeader, StringComparison.Ordinal)];
+    await Assert.That(openTable).DoesNotContain("ext_id")
+      .Because("a type parameter has no properties, so it must contribute no physical columns");
   }
 
   #endregion

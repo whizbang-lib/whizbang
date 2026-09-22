@@ -116,7 +116,7 @@ public class InboxDrainWorkerGapTests {
 
     public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
       IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
-      FetchCalls.Enqueue(streamIds.ToArray());
+      FetchCalls.Enqueue([.. streamIds]);
       OnFetch?.Invoke();
       if (ThrowOnFetch is not null) {
         throw ThrowOnFetch;
@@ -134,14 +134,14 @@ public class InboxDrainWorkerGapTests {
       return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -151,11 +151,9 @@ public class InboxDrainWorkerGapTests {
   /// <c>_logPerfIfInteresting</c> is reachable. Optionally signals a TCS when a specific
   /// EventId is logged (used to synchronize on the disabled-path log without polling).
   /// </summary>
-  private sealed class RecordingLogger : ILogger<InboxDrainWorker> {
-    private readonly LogLevel _minLevel;
-    public RecordingLogger(LogLevel minLevel) {
-      _minLevel = minLevel;
-    }
+  private sealed class RecordingLogger(LogLevel minLevel) : ILogger<InboxDrainWorker> {
+    private readonly LogLevel _minLevel = minLevel;
+
     public int? SignalOnEventId { get; init; }
     public TaskCompletionSource<bool> EventSignaled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentQueue<(int EventId, LogLevel Level, string Message)> Entries { get; } = new();
@@ -357,7 +355,7 @@ public class InboxDrainWorkerGapTests {
   /// early return skips line 133 entirely.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_CancelledWhileWaitingForSchemaGate_ReturnsWithoutBatchingAsync() {
+  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutBatchingAsync() {
     var coord = new ScriptedCoordinator();
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
@@ -429,8 +427,8 @@ public class InboxDrainWorkerGapTests {
     await Assert.That(logger.Entries.Count(e => e.EventId == 6)).IsEqualTo(1)
       .Because("the failure is loud (LogBatchDrainFailed), never silent.");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   /// <summary>
@@ -468,8 +466,8 @@ public class InboxDrainWorkerGapTests {
     await worker.StartAsync(cts.Token);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(1)
       .Because("stream B's row must still be enqueued after stream A's write failed");
@@ -511,8 +509,8 @@ public class InboxDrainWorkerGapTests {
     await worker.StartAsync(cts.Token);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(coord.FetchCalls.Count).IsEqualTo(1)
       .Because("one deduped multi-stream fetch drains the whole window");
@@ -551,8 +549,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(msgId);
 
     await writer.ReachedTarget.Task.WaitAsync(_timeout);
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(1)
       .Because("the null-stream row must be found under its message_id fallback key");
@@ -588,8 +586,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(streamId);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(1)
       .Because("the second row with the same MessageId must be skipped by the seen-set");
@@ -627,8 +625,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(streamId);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Batch path writes 2, inner loop's independent seen-set writes the same 2 again
     // (dedupped downstream by wh_message_deduplication), then terminates on newRows==0.
@@ -667,8 +665,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(streamId);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(4)
       .Because("2 rows from the batched fetch + 2 from the inner cap-fill fallback");
@@ -706,8 +704,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(streamId);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(9);
     // Inner loop enqueued 6 rows (batch took the first 3) — >= 5 triggers the PERF line.
@@ -752,8 +750,8 @@ public class InboxDrainWorkerGapTests {
     await drain.WriteAsync(streamId);
     await idleTcs.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(3)
       .Because("the malformed inner-loop row is skipped; good1/good2 (batch) + good3 (inner) flow through");
@@ -767,12 +765,12 @@ public class InboxDrainWorkerGapTests {
 
   /// <summary>
   /// Covers the cancellation short-circuit in the batch dispatch loop (lines 191-193): the
-  /// stopping token is cancelled DURING the fetch, so even though rows came back, the per-sid
+  /// stopping token is canceled DURING the fetch, so even though rows came back, the per-sid
   /// loop breaks before any write. The stream is still marked drained and the worker exits its
   /// loop via the outer OCE catch, logging LogStopped (EventId 2).
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_CancelledDuringBatchFetch_BreaksBeforeDispatch_StopsCleanlyAsync() {
+  public async Task ExecuteAsync_CanceledDuringBatchFetch_BreaksBeforeDispatch_StopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     using var cts = new CancellationTokenSource();
 
@@ -795,7 +793,7 @@ public class InboxDrainWorkerGapTests {
 
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
     await executeTask.WaitAsync(_timeout);
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(0)
       .Because("cancellation observed after the fetch must break before any dispatch");
@@ -811,12 +809,12 @@ public class InboxDrainWorkerGapTests {
 
   /// <summary>
   /// Covers the OperationCanceledException rethrow filter in the batch dispatch loop
-  /// (lines 229-230): a write that throws OCE while the stopping token IS cancelled must be
+  /// (lines 229-230): a write that throws OCE while the stopping token IS canceled must be
   /// rethrown (not swallowed as a per-stream error), unwinding through the marker-release
   /// finally into the outer OCE catch — clean stop, LogStopped, no LogDrainError.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_WriterThrowsOceWhileCancelled_RethrowsAndStopsCleanlyAsync() {
+  public async Task ExecuteAsync_WriterThrowsOceWhileCanceled_RethrowsAndStopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     using var cts = new CancellationTokenSource();
 
@@ -844,7 +842,7 @@ public class InboxDrainWorkerGapTests {
 
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
     await executeTask.WaitAsync(_timeout);
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(writer.Written.Count).IsEqualTo(0)
       .Because("the injected OCE prevented the write from being recorded");

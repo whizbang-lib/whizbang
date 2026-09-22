@@ -45,9 +45,15 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
       """;
 
   /// <summary>
-  /// Test that a [WhizbangId] struct produces an object-mode JsonTypeInfo factory
-  /// with the {"Value":"guid"} shape (parameterized constructor + Value property, no setter).
+  /// Test that a [WhizbangId] struct produces an object-mode type info: written as
+  /// {"Value":"guid"}, read from that shape or from the scalar string an older row may hold.
   /// </summary>
+  /// <remarks>
+  /// A document stored as one value once took its identifiers in the scalar form when the atomic
+  /// path was unavailable and Entity Framework wrote it under the default profile. A converter can
+  /// read both; object metadata could read only the object. The scalar read is counted, so the
+  /// tolerance can be removed once nothing needs it.
+  /// </remarks>
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangIdStruct_EmitsObjectModeTypeInfoAsync() {
@@ -63,16 +69,17 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("if (type == typeof(global::MyApp.Domain.ProductId)) {");
     await Assert.That(generated).Contains("return _createProductIdTypeInfo(options);");
 
-    // Object-mode metadata: parameterized constructor over a Guid "Value" parameter
-    await Assert.That(generated).Contains("JsonObjectInfoValues<global::MyApp.Domain.ProductId>");
-    await Assert.That(generated).Contains("ObjectWithParameterizedConstructorCreator = static args => new global::MyApp.Domain.ProductId((global::System.Guid)args[0]!)");
-    await Assert.That(generated).Contains("ConstructorParameterMetadataInitializer");
-    await Assert.That(generated).Contains("ParameterType = typeof(global::System.Guid)");
-
-    // Property metadata: read-only "Value" property (Setter = null, getter reads .Value)
-    await Assert.That(generated).Contains("Getter = static obj => ((global::MyApp.Domain.ProductId)obj!).Value");
-    await Assert.That(generated).Contains("Setter = null");
-    await Assert.That(generated).Contains("JsonPropertyName = \"Value\"");
+    // A converter, not object metadata: the object form on write, either form on read
+    await Assert.That(generated).Contains("private sealed class _ProductIdDocumentConverter : JsonConverter<global::MyApp.Domain.ProductId>");
+    await Assert.That(generated).Contains("return JsonMetadataServices.CreateValueInfo<global::MyApp.Domain.ProductId>(options, new _ProductIdDocumentConverter());");
+    await Assert.That(generated).Contains("writer.WriteString(\"Value\", value.Value);")
+      .Because("the object form is what Entity Framework writes for the same property, and the two writers must agree");
+    await Assert.That(generated).Contains("if (reader.TokenType == JsonTokenType.String) {");
+    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"ProductId\");")
+      .Because("a scalar read is a row the atomic path did not write, and the count decides when the tolerance goes");
+    await Assert.That(generated).Contains("return new global::MyApp.Domain.ProductId(reader.GetGuid());");
+    await Assert.That(generated).DoesNotContain("JsonObjectInfoValues<global::MyApp.Domain.ProductId>")
+      .Because("object metadata reads the object form and nothing else");
   }
 
   /// <summary>
@@ -114,6 +121,11 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("resolvers[0] = Default;");
     await Assert.That(generated).Contains("TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers)");
     await Assert.That(generated).Contains("DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
+    await Assert.That(generated).Contains(
+      "new JsonSerializerOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions("
+      + "global::Whizbang.Core.Serialization.SerializationProfile.Persistence))")
+      .Because("the factory's options are persistence options in every respect, the profile's "
+        + "converters included, or a document serialized with them directly takes the wire's form");
   }
 
   /// <summary>
@@ -447,4 +459,87 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     // Assert
     await Assert.That(errors).IsEmpty();
   }
+
+  /// <summary>
+  /// A perspective still open in its model type is skipped, because there is no model to read.
+  /// </summary>
+  /// <remarks>
+  /// A generic base such as <c>class Base&lt;T&gt; : IPerspectiveFor&lt;T, …&gt;</c> is a reasonable
+  /// thing to write, and its type argument is a type parameter rather than a type. Nothing can be
+  /// discovered from it: the temporal properties of <c>T</c> are whatever the closing type decides,
+  /// and that type is where the discovery belongs. Skipping is what makes the open base harmless
+  /// rather than a build failure or, worse, a converter registered for a type parameter.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithAnOpenPerspective_IsSkippedAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public record OpenCreated : IEvent;
+
+        public class OpenBasePerspective<TModel>
+          : IPerspectiveFor<TModel, OpenCreated> {
+          public TModel Apply(TModel currentData, OpenCreated @event) => currentData;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectivePersistenceJsonContextGenerator>(source);
+
+    var callback = GeneratorTestHelper.GetGeneratedSource(result, "PerspectivePersistenceCallbackInitializer.g.cs");
+    await Assert.That(callback).IsNull()
+      .Because("the model is a type parameter, so there is nothing to discover and nothing to register");
+  }
+
+  /// <summary>
+  /// A perspective whose model holds dates is wired like any other, and nothing about its dates is
+  /// named in the generated code.
+  /// </summary>
+  /// <remarks>
+  /// The writer half of the stored format used to be emitted here as a per-model list of temporal
+  /// property names, ordered so the output was stable. The list was the partial discovery that
+  /// missed inherited, nested and collection-element temporals, and it is gone: the persistence
+  /// profile's own converters reach every temporal in every document. This pins that the generator
+  /// names no model and no property for it, so the list cannot quietly come back.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithTemporalModels_NamesNothingPerModelAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public record ZebraDto(DateTime OccurredAt);
+
+        public record AlpacaDto(DateTime OccurredAt);
+
+        public record TemporalCreated : IEvent;
+
+        public class ZebraPerspective : IPerspectiveFor<ZebraDto, TemporalCreated> {
+          public ZebraDto Apply(ZebraDto currentData, TemporalCreated @event) => currentData;
+        }
+
+        public class AlpacaPerspective : IPerspectiveFor<AlpacaDto, TemporalCreated> {
+          public AlpacaDto Apply(AlpacaDto currentData, TemporalCreated @event) => currentData;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectivePersistenceJsonContextGenerator>(source);
+
+    var callback = GeneratorTestHelper.GetGeneratedSource(result, "PerspectivePersistenceCallbackInitializer.g.cs");
+    await Assert.That(callback).IsNotNull()
+      .Because("a perspective is a perspective; its atomic-upsert options are wired whatever it holds");
+
+    await Assert.That(callback).DoesNotContain("OccurredAt", StringComparison.Ordinal)
+      .Because("a property named here is a list the reader no longer shares");
+    await Assert.That(callback).DoesNotContain("AlpacaDto", StringComparison.Ordinal);
+    await Assert.That(callback).DoesNotContain("ZebraDto", StringComparison.Ordinal);
+    await Assert.That(callback).DoesNotContain("RegisterTypeInfoModifier", StringComparison.Ordinal);
+  }
+
 }

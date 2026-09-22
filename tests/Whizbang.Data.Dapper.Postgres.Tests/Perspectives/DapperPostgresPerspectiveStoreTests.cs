@@ -24,7 +24,7 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
+    const string createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
         "id UUID PRIMARY KEY, " +
         "data JSONB NOT NULL, " +
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb, " +
@@ -72,9 +72,9 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
   // The custom hook is gated on this class's private TestModel and keeps the framework defaults, so the
   // process-wide registry swap can't affect any other test class's model (they still get default stamping).
 
-  private sealed class _perEventHook(Action<IApplyHookBuilder<TestModel>, ApplyHookContext> body)
+  private sealed class PerEventHook(Action<IApplyHookBuilder<TestModel>, ApplyHookContext> body)
       : IApplyHook<TestModel> {
-    public void Configure(IApplyHookBuilder<TestModel> b, ApplyHookContext c) => body(b, c);
+    public void Configure(IApplyHookBuilder<TestModel> b, ApplyHookContext context) => body(b, context);
   }
 
   [Test]
@@ -82,7 +82,7 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
     var sentinel = new DateTimeOffset(2099, 3, 4, 5, 6, 7, TimeSpan.Zero);
     var original = PerEventApplyHooks.Registry;
     PerEventApplyHooks.Registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<TestModel>(new _perEventHook((b, _) => {
+      .Register<TestModel>(new PerEventHook((b, _) => {
         b.SetProperty(m => m.Name, "HookName");
         b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel); // last-wins over the default stamp
       }));
@@ -102,7 +102,7 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
 
       await Assert.That(reader.GetString(0)).IsEqualTo("HookName")
         .Because("A per-event SetProperty hook mutates the row data object before it is serialized and written.");
-      await Assert.That(reader.GetFieldValue<DateTime>(1).Year).IsEqualTo(2099)
+      await Assert.That((await reader.GetFieldValueAsync<DateTime>(1)).Year).IsEqualTo(2099)
         .Because("A per-event SetColumn(updated_at) hook overrides the default stamp (last-wins).");
     } finally {
       PerEventApplyHooks.Registry = original;

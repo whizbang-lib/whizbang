@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// dispatch through <c>TickForTestsAsync</c>.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard3")]
 public class PgWorkAvailablePollSourceIntegrationTests : EFCoreTestBase {
   private sealed class CountingSink : ISignalSink {
     public int Received { get; private set; }
@@ -87,8 +88,13 @@ public class PgWorkAvailablePollSourceIntegrationTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, received_at, stream_id, partition_number, failure_reason)
-      VALUES (gen_random_uuid(), 'utest-handler', 'utest-msg', '{}'::jsonb, '{}'::jsonb, 0, NOW(), @stream_id, 0, 0);", conn);
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (gen_random_uuid(), 'utest-handler', 'utest-msg', '{}'::jsonb, '{}'::jsonb, NOW(), @stream_id)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, partition_number, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 0, 0, 0 FROM m;", conn);
     cmd.Parameters.AddWithValue("stream_id", streamId);
     await cmd.ExecuteNonQueryAsync();
   }

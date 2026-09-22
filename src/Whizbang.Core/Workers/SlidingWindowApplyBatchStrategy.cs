@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -34,7 +35,7 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   private readonly ApplyBulkFlushCallback _flush;
   private readonly SlidingWindowApplyOptions _options;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamBuffer> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -45,14 +46,14 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   /// Creates the strategy with the given flush callback.
   /// </summary>
   /// <param name="flush">Called once per per-stream sliding-window flush. The signal count is informational; the downstream apply pipeline fetches actual pending events for the stream.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses 300 ms / 3 s / 1000 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowApplyBatchStrategy(
       ApplyBulkFlushCallback flush,
+      ILogger<SlidingWindowApplyBatchStrategy> logger,
       SlidingWindowApplyOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ILogger<SlidingWindowApplyBatchStrategy>? logger = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     _options = options ?? new SlidingWindowApplyOptions();
@@ -97,7 +98,8 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     // Bounded: a freshly created buffer carries a fresh LastActivity, so it cannot be evicted
     // for idleness before the retry writes to it. The cap is a backstop, not the mechanism.
     const int maxAttempts = 3;
-    for (var attempt = 1; ; attempt++) {
+    var attempt = 1;
+    while (true) {
       var buffer = _streams.GetOrAdd(streamId, k => _createStreamBuffer(k));
       buffer.LastActivity = _timeProvider.GetUtcNow();
       try {
@@ -106,6 +108,7 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
       } catch (ChannelClosedException) when (attempt < maxAttempts) {
         _ = _streams.TryRemove(KeyValuePair.Create(streamId, buffer));
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        attempt++;
       }
     }
   }
@@ -127,6 +130,14 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     }
     _stopCts.Dispose();
   }
+
+  /// <summary>
+  /// Test seam: runs one idle-sweep pass synchronously and awaits it. Production relies on the
+  /// periodic timer, whose callback is fire-and-forget — so the only way to observe what a sweep
+  /// did (or refused to do after shutdown) is to drive one directly. Mirrors
+  /// <see cref="PerStreamSerializer{T}.RunIdleSweepNowAsync"/>.
+  /// </summary>
+  internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
   private void _fireAndForgetIdleSweep() {

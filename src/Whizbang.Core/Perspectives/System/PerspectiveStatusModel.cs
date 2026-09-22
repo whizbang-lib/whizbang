@@ -19,7 +19,8 @@ public sealed record PerspectiveStatusModel {
   /// <summary>
   /// Name of the perspective class.
   /// </summary>
-  [PhysicalField(Indexed = true)]
+  [PhysicalField]
+  [Indexed]
   public string PerspectiveName { get; init; } = "";
 
   /// <summary>

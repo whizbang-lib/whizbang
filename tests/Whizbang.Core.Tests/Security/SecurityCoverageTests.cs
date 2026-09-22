@@ -24,7 +24,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithClaimsInScopeDelta_ExtractsClaimsAsync() {
     // Arrange: ScopeDelta with claims collection
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(
@@ -66,7 +66,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithSecurityPrincipalsInScopeDelta_ExtractsPrincipalsAsync() {
     // Arrange: ScopeDelta with security principals collection
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(
@@ -218,9 +218,11 @@ public class SecurityCoverageTests {
   }
 
   [Test]
-  public async Task Extractor_WithNullLogger_AllBranches_DoesNotThrowAsync() {
-    // Arrange: No logger (null) - covers all the "if (logger != null)" false branches in Log wrappers
-    var extractor = new MessageHopSecurityExtractor(null);
+  public async Task Extractor_WithANoOpLogger_AllBranches_DoesNotThrowAsync() {
+    // A no-op logger rather than null: the constructor takes a required ILogger now, and
+    // the extractor never saw a null one anyway because it coalesced to NullLogger. What
+    // this covers is every branch running with logging that discards.
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     // Test null hops path
@@ -277,7 +279,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithOnlyEmptyStringsScope_ReturnsNullAsync() {
     // Arrange: Scope where TenantId and UserId are empty strings (not null)
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var securityContext = new SecurityContext {
@@ -299,7 +301,7 @@ public class SecurityCoverageTests {
 
   [Test]
   public async Task Helper_EstablishFullContextAsync_CallbackCancellation_ThrowsAsync() {
-    // Arrange: Callback that gets cancelled - covers cancellationToken.ThrowIfCancellationRequested() in callback loop
+    // Arrange: Callback that gets canceled - covers cancellationToken.ThrowIfCancellationRequested() in callback loop
     var envelope = _createHelperEnvelopeWithScope("user-cancel", "tenant-cancel");
 
     var services = new ServiceCollection();
@@ -316,7 +318,7 @@ public class SecurityCoverageTests {
     using var cts = new CancellationTokenSource();
     var callbackCount = 0;
     services.AddSingleton<ISecurityContextCallback>(
-      new TestSecurityCallback(async (_, _, _, ct) => {
+      new TestSecurityCallback(async (_, _, _, _) => {
         callbackCount++;
         // Cancel after first callback executes
         await cts.CancelAsync();
@@ -424,12 +426,23 @@ public class SecurityCoverageTests {
       options: new MessageSecurityOptions { AllowAnonymous = true }
     );
     services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    // Capturing accessor rather than the real one: the real accessor stores through an AsyncLocal,
+    // which does not flow back out of the async establishment call, so what it holds afterwards
+    // says nothing about what was established.
+    var capturingMessageAccessor = new CapturingMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
     // intentionally no IScopeContextAccessor
     var sp = services.BuildServiceProvider();
 
     // Act - should not throw (covers null scopeContextAccessor in _setMessageContextFromEnvelopeWithScope)
     await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert - the missing IScopeContextAccessor is optional plumbing, not a precondition: the
+    // extracted identity must still land on IMessageContextAccessor. If establishment bailed out
+    // when the scope accessor was absent, every receptor in such a host would run anonymous.
+    await Assert.That(capturingMessageAccessor.CapturedContext).IsNotNull();
+    await Assert.That(capturingMessageAccessor.CapturedContext!.TenantId).IsEqualTo("t");
+    await Assert.That(capturingMessageAccessor.CapturedContext.UserId).IsEqualTo("u");
   }
 
   // ========================================

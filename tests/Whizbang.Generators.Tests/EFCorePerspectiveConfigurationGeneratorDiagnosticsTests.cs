@@ -358,7 +358,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     await Assert.That(generatedCode).Contains("if (!string.IsNullOrEmpty(");
 
     // Should NOT have the buggy condition that also compares to "public"
-    // The old bug was: if (!string.IsNullOrEmpty("public") && "public" != "public")
+    // The old bug compared the schema literal with itself, so the guard could never fire.
     await Assert.That(generatedCode).DoesNotContain("!= \"public\"");
   }
 
@@ -535,7 +535,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string VeryLongPropertyNameThatWillExceedTheSixtyThreeByteLimitForPostgresColumnNames { get; init; } = "";
       }
 
@@ -576,7 +577,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string Status { get; init; } = "";
       }
 
@@ -616,7 +618,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record LongModelNameForTableThatWillCauseIndexNameOverflow {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string SomeReasonablyLongPropertyNameForColumn { get; init; } = "";
       }
 
@@ -663,7 +666,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string Status { get; init; } = "";
       }
 

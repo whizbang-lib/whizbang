@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// new work / had cursors advanced.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
 
   // ----- commit_handler_result -----
@@ -60,7 +61,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     var ownerMessages = received.Where(r => r.Channel == $"wh_work_i_{owner}").ToList();
     await Assert.That(ownerMessages).Count().IsGreaterThanOrEqualTo(1)
       .Because("the new outbox row's stream is owned by this instance → NOTIFY must land on its routed channel");
-    var ownerPayloads = ownerMessages.Select(m => m.Payload).ToList();
+    var ownerPayloads = ownerMessages.ConvertAll(m => m.Payload);
     await Assert.That(ownerPayloads).Contains("outbox")
       .Because("the outbox-store branch must emit 'outbox' payload");
 
@@ -149,11 +150,20 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     await Assert.That(globalMessages).Count().IsEqualTo(0);
   }
 
+  /// <summary>
+  /// An unpinned stream is routed to the instance its partition names, and never to the global
+  /// channel.
+  /// </summary>
+  /// <remarks>
+  /// The count here was zero while the deterministic branch recovered a stream's partition number
+  /// by reading the queue table: with no row for the stream there, the branch fired for nobody and
+  /// the work waited for a poll. The number follows from the stream id, so the branch now names an
+  /// owner whether or not a row is visible to it. What this test still locks is the part that has
+  /// not changed and matters most: the wake is targeted at one instance, never broadcast on the
+  /// global channel.
+  /// </remarks>
   [Test]
-  public async Task CompletePerspective_UnknownStream_EmitsZeroNotifiesAsync() {
-    // Locks the "polling backstop is the safety net" semantic: if wh_active_streams
-    // doesn't know who owns a stream, no NOTIFY fires — but the work IS persisted and
-    // polling will catch it.
+  public async Task CompletePerspective_UnknownStream_WakesOneInstanceAndNeverTheGlobalChannelAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -176,8 +186,12 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       alsoListenGlobal: true,
       emit: async () => await _completePerspectiveAsync(conn, cursorsJson));
 
-    await Assert.That(received).Count().IsEqualTo(0)
-      .Because("stream not in wh_active_streams → no NOTIFY, no global fallback (polling catches it)");
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("a stream wh_active_streams does not know still has a partition, and the instance that partition "
+        + "names is the one that would claim its work, so waking it is what the deterministic branch is for");
+    await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{observer}")
+      .Because("the wake is targeted at the partition's instance and never broadcast: a global fallback would "
+        + "wake every instance in the fleet for one stream");
   }
 
   // ============================================================================
@@ -245,6 +259,12 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a roundtrip to flush the NOTIFY queue to the Notification event.
       await using var ping = conn.CreateCommand();

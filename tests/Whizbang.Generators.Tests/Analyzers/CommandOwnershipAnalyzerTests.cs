@@ -148,7 +148,7 @@ public class CommandOwnershipAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<CommandOwnershipAnalyzer>(source);
 
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ151").Count()).IsEqualTo(2)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ151")).IsEqualTo(2)
       .Because("sync and async receptor surfaces are the same inbox-handler claim");
   }
 
@@ -232,7 +232,7 @@ public class CommandOwnershipAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<CommandOwnershipAnalyzer>(source);
 
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ151").Count()).IsEqualTo(2);
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ151")).IsEqualTo(2);
   }
 
   [Test]

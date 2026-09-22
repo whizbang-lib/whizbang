@@ -342,12 +342,17 @@ private JsonPropertyInfo CreateProperty<TProperty>(
 private static global::System.Collections.Generic.HashSet<global::System.Type>? _typesBeingCreated;
 private static global::System.Collections.Generic.HashSet<global::System.Type> TypesBeingCreated => _typesBeingCreated ??= new();
 
-// Thread-local cache for type infos that are being created or have been created
-// This enables circular references to work: when creating type A which needs type B,
-// and type B needs type A, type A's (incomplete) info can be found in this cache.
+// Thread-local cache of the type infos created for each set of serializer options. It is what lets
+// circular references work: when creating type A which needs type B, and type B needs type A, type
+// A's (incomplete) info can be found here. Keyed by the options, never by type alone: metadata is
+// bound to the options it was created for, and a property's converter is chosen from those options,
+// so a cache keyed by type handed one profile metadata built for another (a date the wire profile
+// asked for first was written by the persistence profile as a rendering). Weakly keyed, so a cache
+// lives exactly as long as its options.
 [global::System.ThreadStaticAttribute]
-private static global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo>? _typeInfoCache;
-private static global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo> TypeInfoCache => _typeInfoCache ??= new();
+private static global::System.Runtime.CompilerServices.ConditionalWeakTable<global::System.Text.Json.JsonSerializerOptions, global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo>>? _typeInfoCaches;
+private static global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo> TypeInfoCacheFor(global::System.Text.Json.JsonSerializerOptions options) =>
+  (_typeInfoCaches ??= new()).GetValue(options, static _ => new());
 #endregion
 
 #region HELPER_TRY_GET_OR_CREATE_TYPE_INFO
@@ -363,7 +368,7 @@ private JsonTypeInfo<T>? TryGetOrCreateTypeInfo<T>(JsonSerializerOptions options
 
   // Check cache first - with deferred initialization, the type info is cached
   // before properties are created, so self-referencing types will find themselves here
-  if (TypeInfoCache.TryGetValue(type, out var cached)) {
+  if (TypeInfoCacheFor(options).TryGetValue(type, out var cached)) {
     return cached as JsonTypeInfo<T>;
   }
 
@@ -388,8 +393,8 @@ private JsonTypeInfo<T>? TryGetOrCreateTypeInfo<T>(JsonSerializerOptions options
 private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
   var type = typeof(T);
 
-  // Check cache first - handles cases where we've already created this type
-  if (TypeInfoCache.TryGetValue(type, out var cached)) {
+  // Check cache first - handles cases where we've already created this type for these options
+  if (TypeInfoCacheFor(options).TryGetValue(type, out var cached)) {
     return (JsonTypeInfo<T>)cached;
   }
 
@@ -399,7 +404,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
   // Throw a clear error - use TryGetOrCreateTypeInfo for graceful handling.
   if (TypesBeingCreated.Contains(type)) {
     throw new InvalidOperationException(
-        $"Circular type reference detected while creating JsonTypeInfo for {type.FullName}. " +
+        $"Circular type reference detected while creating JsonTypeInfo for {(global::Whizbang.Core.TypeNameFormatter.DisplayName(type))}. " +
         "Your type graph has a cycle (e.g., type A references type B, and type B references type A). " +
         "To resolve this, use [JsonIgnore] on one of the properties to break the cycle, " +
         "or use a custom JsonConverter for one of the types.");
@@ -412,7 +417,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
     var typeInfo = GetTypeInfoInternal(type, options);
     if (typeInfo != null) {
       // Cache the result for circular reference support
-      TypeInfoCache[type] = typeInfo;
+      TypeInfoCacheFor(options)[type] = typeInfo;
       return (JsonTypeInfo<T>)typeInfo;
     }
 
@@ -608,7 +613,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
     }
 
     // If still null, type is not registered anywhere - throw helpful error
-    throw new InvalidOperationException($"No JsonTypeInfo found for type {type.FullName}. " +
+    throw new InvalidOperationException($"No JsonTypeInfo found for type {(global::Whizbang.Core.TypeNameFormatter.DisplayName(type))}. " +
       "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializable attribute.");
   } finally {
     // Always clean up the tracking set, even if an exception was thrown

@@ -102,6 +102,7 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(MessageEnvelope<Whizbang.Core.Offloads.BodyClaimEnvelopePayload>))]
 [JsonSerializable(typeof(Whizbang.Core.Offloads.BodyClaimEnvelopePayload))]
 [JsonSerializable(typeof(Whizbang.Core.Offloads.MessageBodyClaim))]
+[JsonSerializable(typeof(Whizbang.Core.Offloads.MessageBodyCipherDescriptor))]
 // Work coordinator types
 [JsonSerializable(typeof(OutboxMessage))]
 [JsonSerializable(typeof(OutboxMessage[]))]

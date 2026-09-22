@@ -17,7 +17,12 @@ public class AsyncTimeoutHelperTests {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     tcs.TrySetResult(true);
 
-    // Should not throw — task is already complete
+    // Should not throw — task is already complete. The completed await IS the guarantee here: the
+    // void overload returns nothing to inspect, and a TimeoutException on a task that finished
+    // inside its budget is the only failure this arrangement can produce.
+    // AsyncTimeoutHelperNonGenericTests.ATaskThatCompletesInTime_PassesThroughAsync carries the
+    // stronger form — a task that completes AFTER the wait starts, proving the helper tracks it
+    // rather than only short-circuiting on an already-completed one.
     await AsyncTimeoutHelper.WaitWithTimeoutAsync(
         tcs.Task, TimeSpan.FromSeconds(5), "should not timeout");
   }
@@ -38,7 +43,7 @@ public class AsyncTimeoutHelperTests {
   public async Task WaitWithTimeoutAsync_ExternalCancellation_ThrowsOperationCanceledExceptionAsync() {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await AsyncTimeoutHelper.WaitWithTimeoutAsync(
@@ -84,7 +89,7 @@ public class AsyncTimeoutHelperTests {
   public async Task WaitWithTimeoutAsyncGeneric_ExternalCancellation_ThrowsOperationCanceledExceptionAsync() {
     var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await AsyncTimeoutHelper.WaitWithTimeoutAsync(
@@ -116,6 +121,11 @@ public class AsyncTimeoutHelperTests {
 
     await AsyncTimeoutHelper.WaitWithTimeoutAsync(
         tcs.Task, TimeSpan.FromSeconds(5), "should not timeout");
+
+    await Assert.That(tcs.Task.IsCompletedSuccessfully).IsTrue()
+      .Because("the helper must WAIT for the task, not merely race a timer against it: the task is "
+             + "still running when the wait starts, so returning before it finished would leave "
+             + "callers observing a half-done operation as complete.");
   }
 
   [Test]

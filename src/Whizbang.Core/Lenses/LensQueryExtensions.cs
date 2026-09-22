@@ -26,7 +26,7 @@ namespace Whizbang.Core.Lenses;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_Generic_ReturnsWrappedQueryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_GetByIdAsync_Generic_WaitsAndQueriesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:LensQueryExtensions_WithSync_TypeParam_ReturnsWrappedQueryAsync</tests>

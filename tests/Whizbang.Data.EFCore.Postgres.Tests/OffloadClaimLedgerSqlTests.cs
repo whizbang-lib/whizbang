@@ -27,13 +27,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/messaging/body-offload</docs>
 [Category("Integration")]
 [NotInParallel("OffloadClaimLedger")]
+[Category("Shard2")]
 public class OffloadClaimLedgerSqlTests : EFCoreTestBase {
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
-  private async Task _cleanupAsync(NpgsqlConnection conn) {
+  private static async Task _cleanupAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand(
       "DELETE FROM wh_offload_claims WHERE storage_key LIKE 'test-ledger/%'; " +
       "DELETE FROM wh_settings WHERE setting_key = 'offload_claim_sweep_last_run';", conn);

@@ -12,10 +12,21 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <DevelopmentDependency>true</DevelopmentDependency>
+    <!-- Merge the shared naming helper into the generator DLL, as the other generator packages do (issue #698) -->
+    <ILRepackEnabled>true</ILRepackEnabled>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The one place type names are rendered on the generator side (TypeNameUtilities); ILRepacked into this DLL -->
+    <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <PrivateAssets>all</PrivateAssets>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>

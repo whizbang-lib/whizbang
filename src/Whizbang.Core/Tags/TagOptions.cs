@@ -29,11 +29,14 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#configuration</docs>
-/// <tests>Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
   private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);
   private readonly Dictionary<string, string> _routeNamespaceBindings = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int> _priorityDeclarations = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int?> _payloadSizeWarningByTag = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int?> _payloadSizeErrorByTag = new(StringComparer.Ordinal);
 
   /// <summary>
   /// Gets the registered hook configurations.
@@ -49,6 +52,9 @@ public sealed class TagOptions {
   /// Gets the TransportNamespace keys bound per tag. See <see cref="RouteNamespace(string, string)"/>.
   /// </summary>
   public IReadOnlyDictionary<string, string> RouteNamespaceBindings => _routeNamespaceBindings;
+
+  /// <summary>Gets the priority declared per tag. See <see cref="DeclarePriority(string, int)"/>.</summary>
+  public IReadOnlyDictionary<string, int> PriorityDeclarations => _priorityDeclarations;
 
   /// <summary>
   /// Size in bytes at which the tag processor logs a warning for a built payload.
@@ -70,6 +76,79 @@ public sealed class TagOptions {
   /// Evaluated before hooks run; when tripped, no hook fires for the offending tag.
   /// </remarks>
   public int? PayloadSizeErrorThresholdBytes { get; set; }
+
+  /// <summary>
+  /// Warning thresholds declared per tag. A tag present here uses its own value, including an
+  /// explicit <see langword="null"/> that disables the warning for that tag alone; a tag absent
+  /// here uses <see cref="PayloadSizeWarningThresholdBytes"/>.
+  /// </summary>
+  /// <remarks>
+  /// Some payloads are wide by design (an embedding, a rendered document) and every one of them
+  /// crossed the global line, several warnings per message. The line is raised for that tag and
+  /// the global one keeps catching the tag attribute that forgot to narrow its properties.
+  /// </remarks>
+  public IReadOnlyDictionary<string, int?> PayloadSizeWarningThresholdBytesByTag => _payloadSizeWarningByTag;
+
+  /// <summary>
+  /// Error thresholds declared per tag, resolved the same way as
+  /// <see cref="PayloadSizeWarningThresholdBytesByTag"/>.
+  /// </summary>
+  public IReadOnlyDictionary<string, int?> PayloadSizeErrorThresholdBytesByTag => _payloadSizeErrorByTag;
+
+  /// <summary>
+  /// Declares both payload-size thresholds for one tag, each overriding the global value for that
+  /// tag; <see langword="null"/> disables the threshold for the tag.
+  /// </summary>
+  /// <param name="tag">The tag name, as declared on the tag attribute.</param>
+  /// <param name="warningBytes">Bytes above which the processor warns, or <see langword="null"/> for never.</param>
+  /// <param name="errorBytes">Bytes above which the processor refuses, or <see langword="null"/> for never.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <example>
+  /// <code>
+  /// options.Tags.UsePayloadSizeThresholds("embeddings", warningBytes: 65_536, errorBytes: 262_144);
+  /// </code>
+  /// </example>
+  public TagOptions UsePayloadSizeThresholds(string tag, int? warningBytes, int? errorBytes) {
+    SetPayloadSizeWarningThreshold(tag, warningBytes);
+    SetPayloadSizeErrorThreshold(tag, errorBytes);
+    return this;
+  }
+
+  /// <summary>Declares the warning threshold for one tag; <see langword="null"/> disables it for the tag.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <param name="warningBytes">Bytes above which the processor warns, or <see langword="null"/> for never.</param>
+  public void SetPayloadSizeWarningThreshold(string tag, int? warningBytes) {
+    _payloadSizeWarningByTag[_validTag(tag)] = _validThreshold(warningBytes, nameof(warningBytes));
+  }
+
+  /// <summary>Declares the error threshold for one tag; <see langword="null"/> disables it for the tag.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <param name="errorBytes">Bytes above which the processor refuses, or <see langword="null"/> for never.</param>
+  public void SetPayloadSizeErrorThreshold(string tag, int? errorBytes) {
+    _payloadSizeErrorByTag[_validTag(tag)] = _validThreshold(errorBytes, nameof(errorBytes));
+  }
+
+  /// <summary>The warning threshold that applies to <paramref name="tag"/>: its own if declared, else the global one.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <returns>Bytes above which the processor warns, or <see langword="null"/> when it never does for this tag.</returns>
+  public int? ResolvePayloadSizeWarningThreshold(string tag) =>
+    _payloadSizeWarningByTag.TryGetValue(tag, out var own) ? own : PayloadSizeWarningThresholdBytes;
+
+  /// <summary>The error threshold that applies to <paramref name="tag"/>: its own if declared, else the global one.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <returns>Bytes above which the processor refuses, or <see langword="null"/> when it never does for this tag.</returns>
+  public int? ResolvePayloadSizeErrorThreshold(string tag) =>
+    _payloadSizeErrorByTag.TryGetValue(tag, out var own) ? own : PayloadSizeErrorThresholdBytes;
+
+  private static string _validTag(string tag) =>
+    string.IsNullOrWhiteSpace(tag)
+      ? throw new ArgumentException("A tag name is required.", nameof(tag))
+      : tag;
+
+  private static int? _validThreshold(int? bytes, string parameterName) =>
+    bytes is < 0
+      ? throw new ArgumentOutOfRangeException(parameterName, "A payload-size threshold cannot be negative.")
+      : bytes;
 
   /// <summary>
   /// Registers a hook for processing messages tagged with the specified attribute type.
@@ -252,6 +331,33 @@ public sealed class TagOptions {
   }
 
   /// <summary>
+  /// Declares the priority of every message type that carries <paramref name="tag"/> (priority step 2): a
+  /// constant such as <see cref="Whizbang.Core.Priority.WorkPriority.BACKGROUND"/>, or any number in a band.
+  /// Tags classify; this binds a declaration to the class, so a producer's bulk types are declared once, whatever
+  /// context they are dispatched from. Applied by <see cref="Whizbang.Core.Priority.TagDeclaredPriorityProducerHook"/>,
+  /// which runs before the framework's context default; an explicit declaration made earlier in the chain is kept.
+  /// Registration is last-wins per tag, like the other tag bindings.
+  /// </summary>
+  /// <param name="tag">The tag string the declaration binds to.</param>
+  /// <param name="priority">The number to declare; lower is more urgent.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/messaging/message-priority#declaring-with-tags</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/PriorityTagSurfaceTests.cs</tests>
+  public TagOptions DeclarePriority(string tag, int priority) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(priority);
+    _priorityDeclarations[tag] = priority;  // last-wins per tag
+    return this;
+  }
+
+  /// <summary>Overwrites (or adds) a priority declaration; used when merging options across AddWhizbang calls.</summary>
+  internal TagOptions UsePriorityDeclaration(string tag, int priority) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    _priorityDeclarations[tag] = priority;
+    return this;
+  }
+
+  /// <summary>
   /// Overwrites (or adds) a coalesce binding from an existing policy instance.
   /// Used internally for merging bindings when AddWhizbang() is called multiple times —
   /// last-wins per tag applies across calls too.
@@ -324,11 +430,5 @@ public sealed class TagOptions {
   /// <param name="tag">The tag string the routing binds to.</param>
   /// <param name="transportNamespaceKey">The TransportNamespace key to bind.</param>
   /// <returns>This options instance for chaining.</returns>
-  internal TagOptions UseRouteNamespaceBinding(string tag, string transportNamespaceKey) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
-    ArgumentException.ThrowIfNullOrWhiteSpace(transportNamespaceKey);
-
-    _routeNamespaceBindings[tag] = transportNamespaceKey;
-    return this;
-  }
+  internal TagOptions UseRouteNamespaceBinding(string tag, string transportNamespaceKey) => RouteNamespace(tag, transportNamespaceKey);
 }

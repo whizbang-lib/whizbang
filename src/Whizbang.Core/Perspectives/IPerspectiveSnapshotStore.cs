@@ -11,6 +11,10 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveSnapshotStore {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Creates a snapshot of the perspective model state at the given event.
   /// </summary>
@@ -113,4 +117,46 @@ public interface IPerspectiveSnapshotStore {
   /// <param name="perspectiveName">Perspective name</param>
   /// <param name="ct">Cancellation token</param>
   Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default);
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IPerspectiveSnapshotStore"/>: reports
+/// <see cref="IPerspectiveSnapshotStore.IsConfigured"/> false, so perspective rewinds and bootstraps run without
+/// snapshots exactly as they did when no store was registered. Callers check the flag first and this implementation
+/// throws if they do not.
+/// </summary>
+public sealed class NullPerspectiveSnapshotStore : IPerspectiveSnapshotStore, INullDefault {
+  private const string NOT_REGISTERED = "No perspective snapshot store is registered; a storage driver supplies one. Check IsConfigured before calling.";
+
+  private NullPerspectiveSnapshotStore() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullPerspectiveSnapshotStore Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
 }

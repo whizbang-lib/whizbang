@@ -32,9 +32,9 @@ public class DapperSqliteEventStore(
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Uses retry logic with the UNIQUE constraint to handle concurrent writes.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
@@ -90,6 +90,7 @@ public class DapperSqliteEventStore(
 
     // Create a minimal envelope - registry-based lookup would require constructor injection
     var envelope = new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [
@@ -108,9 +109,9 @@ public class DapperSqliteEventStore(
   /// <summary>
   /// Reads events from a stream by stream ID (UUID).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
@@ -263,8 +264,13 @@ public class DapperSqliteEventStore(
   /// </summary>
   private MessageEnvelope<IEvent>? _tryMatchEventType(JsonElement root, IReadOnlyList<Type> eventTypes, JsonElement messageIdProp) {
     foreach (var eventType in eventTypes) {
-      var typeInfo = JsonOptions.GetTypeInfo(eventType);
-      if (typeInfo == null) {
+      // TryGetTypeInfo, not GetTypeInfo. GetTypeInfo THROWS NotSupportedException for a type the
+      // resolver chain does not know -- it never returns null -- so the null check this guard used
+      // to perform could not fire, and a caller listing one unregistered candidate type crashed
+      // the entire read instead of having that candidate skipped. Skipping is the whole contract
+      // of a polymorphic union: the caller offers several shapes and the store picks the one that
+      // fits, so one unknown shape must cost that shape, not the stream.
+      if (!JsonOptions.TryGetTypeInfo(eventType, out var typeInfo)) {
         continue;
       }
 
@@ -322,8 +328,9 @@ public class DapperSqliteEventStore(
   /// Deserializes the MessageId from its JSON element. Returns null on failure.
   /// </summary>
   private MessageId? _tryDeserializeMessageId(JsonElement messageIdProp) {
-    var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
-    if (messageIdTypeInfo == null) {
+    // See _tryMatchEventType: GetTypeInfo throws rather than returning null, so this guard was
+    // unreachable and a resolver gap for MessageId surfaced as an exception out of the read.
+    if (!JsonOptions.TryGetTypeInfo(typeof(MessageId), out var messageIdTypeInfo)) {
       return null;
     }
 
@@ -338,8 +345,10 @@ public class DapperSqliteEventStore(
       return [];
     }
 
-    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
-    if (hopsTypeInfo == null) {
+    // Hops are diagnostic trace metadata, not authoritative event data, so a resolver gap here
+    // must cost the trace and not the event. GetTypeInfo threw instead of returning null, which
+    // meant one unregistered hop shape took down delivery of the event carrying it.
+    if (!JsonOptions.TryGetTypeInfo(typeof(List<MessageHop>), out var hopsTypeInfo)) {
       return [];
     }
 
@@ -360,7 +369,7 @@ public class DapperSqliteEventStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for appending an event to the event store.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   protected override string GetAppendSql() => @"
     INSERT INTO whizbang_event_store (stream_id, sequence_number, envelope, created_at)
@@ -369,9 +378,9 @@ public class DapperSqliteEventStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for reading events from a stream by sequence number.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   protected override string GetReadSql() => @"
     SELECT envelope AS Envelope
     FROM whizbang_event_store
@@ -381,8 +390,8 @@ public class DapperSqliteEventStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for retrieving the last sequence number in a stream.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   protected override string GetLastSequenceSql() => @"
     SELECT COALESCE(MAX(sequence_number), -1)
     FROM whizbang_event_store

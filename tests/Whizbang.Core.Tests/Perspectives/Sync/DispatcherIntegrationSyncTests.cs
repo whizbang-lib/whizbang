@@ -30,7 +30,7 @@ public class DispatcherIntegrationSyncTests {
   /// next <see cref="GetPendingEvents"/> returns. Lets a test mark an event processed exactly when the
   /// awaiter first observes it as pending — a deterministic completion signal in place of timing.
   /// </summary>
-  private sealed class _firstPollSignalTracker(SyncEventTracker inner) : ISyncEventTracker {
+  private sealed class FirstPollSignalTracker(SyncEventTracker inner) : ISyncEventTracker {
     private Action? _nextPoll;
 
     public void ArmNextPoll(Action callback) => _nextPoll = callback;
@@ -140,7 +140,7 @@ public class DispatcherIntegrationSyncTests {
     // event processed on the awaiter's FIRST pending-check — a deterministic completion signal that
     // replaces the previous Task.Delay race (two competing delays inverted under CI thread starvation,
     // yielding NoPendingEvents).
-    var singletonTracker = new _firstPollSignalTracker(new SyncEventTracker());
+    var singletonTracker = new FirstPollSignalTracker(new SyncEventTracker());
     var typeRegistry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
       { typeof(IntegrationTestEventB), [perspectiveCName] }
     });
@@ -164,8 +164,12 @@ public class DispatcherIntegrationSyncTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
     var awaiter = new PerspectiveSyncAwaiter(
-        mockCoordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        singletonTracker);
+        coordinator: mockCoordinator,
+        clock: clock,
+        logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+        syncEventTracker: singletonTracker,
+        tracker: NullScopedEventTracker.Instance,
+        lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // === STEP 3+4: Command E waits; Perspective C processes Event B exactly when the awaiter first
     // observes it pending. No racing tasks, no timing assumptions: the awaiter's first GetPendingEvents
@@ -235,6 +239,6 @@ public class DispatcherIntegrationSyncTests {
 }
 
 // Integration test types
-internal sealed class IntegrationTestEventB { }
-internal sealed class IntegrationTestPerspectiveC { }
-internal sealed class IntegrationTestCommandE { }
+internal sealed class IntegrationTestEventB;
+internal sealed class IntegrationTestPerspectiveC;
+internal sealed class IntegrationTestCommandE;

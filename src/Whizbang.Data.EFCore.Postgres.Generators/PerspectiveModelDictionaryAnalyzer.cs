@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -130,8 +131,9 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// Checks if a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    return type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
-           !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal);
+    return type.ContainingNamespace is { } ns &&
+           TypeNameUtilities.Display(ns).StartsWith("System", StringComparison.Ordinal) &&
+           !TypeNameUtilities.Display(ns).StartsWith("System.Collections", StringComparison.Ordinal);
   }
 
   /// <summary>
@@ -167,8 +169,8 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       INamedTypeSymbol containingType,
       INamedTypeSymbol dictionaryType) {
 
-    var keyType = dictionaryType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-    var valueType = dictionaryType.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var keyType = TypeNameUtilities.MinimallyQualified(dictionaryType.TypeArguments[0]);
+    var valueType = TypeNameUtilities.MinimallyQualified(dictionaryType.TypeArguments[1]);
     var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
 
     var diagnostic = Diagnostic.Create(
@@ -206,14 +208,14 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       return false;
     }
 
-    var typeName = type.ConstructedFrom.ToDisplayString();
+    var typeName = TypeNameUtilities.Display(type.ConstructedFrom);
     return typeName == "System.Collections.Generic.Dictionary<TKey, TValue>" ||
            typeName == "System.Collections.Generic.IDictionary<TKey, TValue>" ||
            typeName == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>";
   }
 
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
+    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
     if (ns == null) {
       return false;
     }
@@ -238,7 +240,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
   /// </remarks>
   private static bool _isPropertyIgnored(IPropertySymbol property) {
     foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
+      var attrName = attr.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : null;
       if (attrName == null) {
         continue;
       }

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="SyncTrackingEventStoreDecorator"/>.
 /// </remarks>
@@ -36,14 +36,14 @@ namespace Whizbang.Core.Messaging;
 /// <param name="typeRegistry">The registry of event types to track (optional).</param>
 public sealed class SyncTrackingEventStoreDecorator(
     IEventStore inner,
-    IScopedEventTracker? tracker = null,
-    IEnvelopeRegistry? envelopeRegistry = null,
-    ISyncEventTracker? syncEventTracker = null,
-    ITrackedEventTypeRegistry? typeRegistry = null) : ForwardingEventStoreDecorator(inner) {
-  private readonly IScopedEventTracker? _tracker = tracker;
-  private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
-  private readonly ITrackedEventTypeRegistry? _typeRegistry = typeRegistry;
-  private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry;
+    IScopedEventTracker tracker,
+    IEnvelopeRegistry envelopeRegistry,
+    ISyncEventTracker syncEventTracker,
+    ITrackedEventTypeRegistry typeRegistry) : ForwardingEventStoreDecorator(inner) {
+  private readonly IScopedEventTracker _tracker = tracker;
+  private readonly ISyncEventTracker _syncEventTracker = syncEventTracker;
+  private readonly ITrackedEventTypeRegistry _typeRegistry = typeRegistry;
+  private readonly IEnvelopeRegistry _envelopeRegistry = envelopeRegistry;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
@@ -53,7 +53,7 @@ public sealed class SyncTrackingEventStoreDecorator(
     var messageId = envelope.MessageId;
 
     // Track the emitted event in scoped tracker (same request scope)
-    _tracker?.TrackEmittedEvent(streamId, eventType, messageId.Value);
+    _tracker.TrackEmittedEvent(streamId, eventType, messageId.Value);
 
     // Track in singleton tracker for cross-scope sync (if event type is registered)
     _trackInSingletonTracker(eventType, messageId.Value, streamId);
@@ -62,7 +62,7 @@ public sealed class SyncTrackingEventStoreDecorator(
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
     // Try to get the envelope from the registry to get the actual MessageId
-    var envelope = _envelopeRegistry?.TryGetEnvelope(message);
+    var envelope = _envelopeRegistry.TryGetEnvelope(message);
     var messageId = envelope?.MessageId ?? MessageId.New();
 
     await Inner.AppendAsync(streamId, message, cancellationToken);
@@ -70,7 +70,7 @@ public sealed class SyncTrackingEventStoreDecorator(
     var eventType = typeof(TMessage);
 
     // Track the emitted event in scoped tracker (same request scope)
-    _tracker?.TrackEmittedEvent(streamId, eventType, messageId.Value);
+    _tracker.TrackEmittedEvent(streamId, eventType, messageId.Value);
 
     // Track in singleton tracker for cross-scope sync (if event type is registered)
     _trackInSingletonTracker(eventType, messageId.Value, streamId);
@@ -80,9 +80,6 @@ public sealed class SyncTrackingEventStoreDecorator(
   /// Tracks the event in the singleton tracker if the event type is registered.
   /// </summary>
   private void _trackInSingletonTracker(Type eventType, Guid messageId, Guid streamId) {
-    if (_syncEventTracker is null || _typeRegistry is null) {
-      return;
-    }
 
     // Check if this event type should be tracked
     var perspectiveNames = _typeRegistry.GetPerspectiveNames(eventType);

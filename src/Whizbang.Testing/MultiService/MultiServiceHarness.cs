@@ -35,16 +35,14 @@ namespace Whizbang.Testing.MultiService;
 /// <docs>testing/multi-service-harness</docs>
 public sealed class MultiServiceHarness : IAsyncDisposable {
   private readonly List<ServiceRuntime> _services;
-  private readonly JsonSerializerOptions _wireOptions;
   private readonly WireFaultInjector _faults;
 
   /// <summary>The shared wire connecting every service in the harness.</summary>
   public InMemoryWireTransport Wire { get; }
 
-  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, JsonSerializerOptions wireOptions, WireFaultInjector faults) {
+  private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, WireFaultInjector faults) {
     Wire = wire;
     _services = services;
-    _wireOptions = wireOptions;
     _faults = faults;
   }
 
@@ -94,7 +92,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
       Target = target
     };
     var envelopeType =
-      $"Whizbang.Core.Messaging.MessageEnvelope`1[[{typeof(TMessage).AssemblyQualifiedName}]], Whizbang.Core";
+      $"Whizbang.Core.Messaging.MessageEnvelope`1[[{TypeNameFormatter.AssemblyQualifiedName(typeof(TMessage))}]], Whizbang.Core";
     await Wire.PublishAsync(envelope, new TransportDestination(topic), envelopeType);
   }
 
@@ -260,7 +258,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
         }
       }
 
-      return new MultiServiceHarness(wire, runtimes, wireOptions, faults);
+      return new MultiServiceHarness(wire, runtimes, faults);
     }
   }
 

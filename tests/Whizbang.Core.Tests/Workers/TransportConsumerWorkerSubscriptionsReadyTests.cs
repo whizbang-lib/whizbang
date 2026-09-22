@@ -1,16 +1,21 @@
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -35,24 +40,34 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
       options.Destinations.Add(new TransportDestination("test-topic"));
     }
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => new NoOpStrategy());
     services.AddScoped<IWorkCoordinator>(_ => new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator());
     var sp = services.BuildServiceProvider();
     return new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance);
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   [Test]
   public async Task SubscriptionsReady_BeforeStartAsync_IsNotCompletedAsync() {
-    var worker = _newWorker(new _FakeTransport());
+    var worker = _newWorker(new FakeTransport());
 
     await Assert.That(worker.SubscriptionsReady.IsCompleted).IsFalse()
       .Because("the readiness signal must NOT be pre-completed — consumers gate startup on this");
@@ -60,7 +75,7 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
 
   [Test]
   public async Task SubscriptionsReady_CompletesAfterSubscribeReturnsAsync() {
-    var transport = new _FakeTransport();
+    var transport = new FakeTransport();
     var worker = _newWorker(transport);
 
     using var cts = new CancellationTokenSource();
@@ -72,13 +87,13 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(worker.SubscriptionsReady.IsCompletedSuccessfully).IsTrue();
 
-    cts.Cancel();
+    await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown best-effort */ }
   }
 
   [Test]
   public async Task WaitForSubscriptionsReadyAsync_HonorsCancellationAsync() {
-    var transport = new _FakeTransport { BlockSubscribe = true };
+    var transport = new FakeTransport { BlockSubscribe = true };
     var worker = _newWorker(transport);
 
     using var cts = new CancellationTokenSource();
@@ -87,7 +102,7 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
     // Subscribe never returns — so WaitForSubscriptionsReadyAsync must surface
     // cancellation rather than hang.
     var waitTask = worker.WaitForSubscriptionsReadyAsync(cts.Token);
-    cts.Cancel();
+    await cts.CancelAsync();
     await Assert.That(async () => await waitTask).Throws<OperationCanceledException>();
 
     transport.UnblockSubscribe();
@@ -96,7 +111,7 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
 
   // --- minimal fakes ---
 
-  private sealed class _FakeTransport : ITransport {
+  private sealed class FakeTransport : ITransport {
     private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool BlockSubscribe { get; init; }
     public void UnblockSubscribe() => _gate.TrySetResult();
@@ -108,12 +123,6 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _FakeSubscription());
-
     public async Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -122,7 +131,7 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
       if (BlockSubscribe) {
         await _gate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
       }
-      return new _FakeSubscription();
+      return new FakeSubscription();
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
@@ -132,7 +141,7 @@ public class TransportConsumerWorkerSubscriptionsReadyTests {
       => throw new NotSupportedException();
   }
 
-  private sealed class _FakeSubscription : ISubscription {
+  private sealed class FakeSubscription : ISubscription {
     public bool IsActive => true;
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
     public Task PauseAsync() => Task.CompletedTask;

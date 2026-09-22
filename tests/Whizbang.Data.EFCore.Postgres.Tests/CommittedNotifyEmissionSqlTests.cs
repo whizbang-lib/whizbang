@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>wh_committed</c> notification reaches each LISTEN-er.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard1")]
 public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
 
   [Test]
@@ -179,6 +180,12 @@ public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a roundtrip so any pending NOTIFYs dispatch to the handler before we read.
       await using var ping = conn.CreateCommand();

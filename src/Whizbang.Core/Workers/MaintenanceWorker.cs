@@ -17,16 +17,22 @@ namespace Whizbang.Core.Workers;
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/maintenance</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<MaintenanceWorkerOptions> options,
   ILogger<MaintenanceWorker> logger,
-  Whizbang.Core.Observability.MaintenanceMetrics? metrics = null) : BackgroundService {
+  Whizbang.Core.Observability.MaintenanceMetrics? metrics = null,
+  HousekeepingCoordinator? housekeeping = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly MaintenanceWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<MaintenanceWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+  // Optional by design: a host that constructs this worker directly keeps prior behavior rather
+  // than failing to start. A missing collaborator must never silently switch maintenance OFF.
+  private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -34,7 +40,7 @@ public sealed partial class MaintenanceWorker(
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 
@@ -67,6 +73,117 @@ public sealed partial class MaintenanceWorker(
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
+
+    if (_housekeeping is null) {
+      await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
+      return;
+    }
+
+    // Settledness is measured SERVICE-wide from the shared store. An instance reading its own
+    // local view sees "idle" the moment it finishes its slice, while peers still hold leases on
+    // the very rows this sweep would contend with.
+    ServiceBacklog? backlog;
+    try {
+      backlog = await coordinator.CountServiceBacklogAsync(ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Unmeasured, not busy. Falling through as null keeps prior behavior; treating a failed
+      // read as "busy" would let one broken query disable cleanup for the life of the process.
+      LogSettlednessProbeFailed(_logger, ex);
+      backlog = null;
+    }
+
+    var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
+    if (!decision.Granted) {
+      LogMaintenanceDeferred(
+        _logger, decision.Reason,
+        backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
+        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
+      return;
+    }
+
+    if (decision.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit) {
+      // Reaching this branch means the service did not settle once across the whole deferral
+      // window — worth surfacing on its own, separately from the sweep it is about to run.
+      LogMaintenanceForcedAfterDeferrals(
+        _logger, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
+        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
+    }
+
+    try {
+      await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
+    } finally {
+      // In a finally: a sweep that throws and never releases its slot would disable maintenance
+      // for the lifetime of the process.
+      _housekeeping.End(HousekeepingCoordinator.Activity.Maintenance);
+    }
+  }
+
+  /// <summary>Type names for a log line: the simple name of each normalized assembly-qualified name.</summary>
+  private static string _shortTypeNames(IReadOnlyList<string> normalizedNames)
+    => string.Join(", ", normalizedNames.Select(n => n.Split(',')[0].Split('.')[^1]));
+
+  /// <summary>
+  /// A stream-integrity feature that is off leaves nothing behind. The dispatch seams enforce that for
+  /// the rows they reach; rows parked by retry backoff, minted before the operator opted out, or delivered
+  /// by a peer that does not know would otherwise wait out their schedule (or sit unpublished for as long
+  /// as the feature is off), so the sweep drops them here. A feature that is on is never touched.
+  /// Best-effort: a failing sweep is logged with its consequence and the cycle continues; cancellation
+  /// is shutdown and propagates.
+  /// </summary>
+  private async Task _sweepIntegrityTrafficAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp,
+      Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
+    var inboxTypes = IntegrityTraffic.InboxTypesToDiscard(integrity);
+    var outboxTypes = IntegrityTraffic.OutboxTypesToDiscard(integrity);
+    if (inboxTypes.Count == 0 && outboxTypes.Count == 0) {
+      return;
+    }
+    try {
+      var inboxDiscarded = inboxTypes.Count == 0 ? 0
+        : await coordinator.DiscardPendingInboxMessagesAsync(inboxTypes, ct).ConfigureAwait(false);
+      var outboxDiscarded = outboxTypes.Count == 0 ? 0
+        : await coordinator.DiscardPendingOutboxMessagesAsync(outboxTypes, ct).ConfigureAwait(false);
+      var sweepMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      _recordIntegrityDiscard(sweepMetrics, inboxDiscarded, "inbox", inboxTypes);
+      _recordIntegrityDiscard(sweepMetrics, outboxDiscarded, "outbox", outboxTypes);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogIntegritySweepFailed(_logger, ex);
+    }
+  }
+
+  private void _recordIntegrityDiscard(
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, long discarded, string table, IReadOnlyList<string> types) {
+    if (discarded <= 0) {
+      return;
+    }
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var typeNames = _shortTypeNames(types);
+      LogIntegrityRowsDiscarded(_logger, discarded, table, typeNames);
+    }
+    metrics?.RepairTrafficDiscarded.Add(discarded,
+      new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", table));
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One maintenance cycle: each guarded task is a documented sweep and their order is the contract.")]
+  private async Task _runMaintenanceCycleAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,
+    // not from this process's options, and nothing used to write it — so enabling debug retention
+    // marked rows that the sweep then deleted anyway. Synced every cycle rather than at startup so
+    // a configuration change takes effect without a restart, and so a stale value cannot outlive
+    // the option that set it.
+    try {
+      await coordinator.SyncDebugRetentionSettingAsync(_coordinatorDebugMode(sp), ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Never fail a maintenance cycle over a settings write; the sweep keeps its previous value.
+      LogDebugRetentionSyncFailed(_logger, ex);
+    }
 
     // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
     // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
@@ -117,16 +234,41 @@ public sealed partial class MaintenanceWorker(
       }
     }
 
+    await _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
     var results = await coordinator.PerformMaintenanceAsync(ct);
+    var sweptRows = 0L;
     foreach (var r in results) {
+      sweptRows += Math.Max(0, r.RowsAffected);
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
       // Fleet-visible per-task outcomes (row retention's "is it working" signal rides
       // task=reap_expired_perspective_rows). Optional — null when metrics aren't registered.
       metrics?.Record(r.TaskName, r.RowsAffected, r.DurationMs);
     }
+    // Volume rollup: total rows the sweep touched, on the cross-activity housekeeping meter.
+    sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()
+      ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
     // E2 PostDestruction hooks — detached, after the reap committed.
     await _firePostDestructionHooksAsync(sp, destructionTargets, ct);
+
+    // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
+    // documented the table as periodically cleaned, but no production path ever called it, so the
+    // table grew once per event forever while appearing to have retention. Best-effort: a failed
+    // sweep must not fail the cycle, but it is logged with the retention it was trying to apply so a
+    // permanently detached sweep is visible instead of silently reverting to unbounded growth.
+    if (_options.LifecycleCompletionRetentionDays > 0) {
+      try {
+        var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
+        var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
+        if (removed > 0) {
+          LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
+      }
+    }
 
     // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
     // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
@@ -250,17 +392,43 @@ public sealed partial class MaintenanceWorker(
   }
 
   /// <summary>
+  /// The automatic half of the retention adoption gate (issue #712). The enrolled reap withholds
+  /// every perspective until it is acknowledged, so a deploy cannot silently drain a historical
+  /// backlog; nothing in the framework acknowledged, so a declared window never started reaping.
+  /// Immediately before the reap, adopt every enrolled perspective still gated: the coordinator
+  /// reads the backlog, opens the gate, and reports one row per perspective, which becomes an
+  /// Information line and a meter reading. The surprise the gate exists for is now a signal
+  /// instead of a manual step; the load is already bounded by the reap's batch size. Off when
+  /// <see cref="Whizbang.Core.Configuration.PerspectiveRowRetentionOptions.AutoAcknowledge"/> is
+  /// false, which restores the manual gate exactly.
+  /// </summary>
+  private async Task _adoptDeclaredRetentionAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var retention = sp.GetService<IOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>()?.Value;
+    if (retention is { AutoAcknowledge: false }) {
+      return;
+    }
+    var adopted = await coordinator.AdoptEnrolledPerspectiveRetentionAsync(ct).ConfigureAwait(false);
+    foreach (var adoption in adopted) {
+      LogRetentionAdopted(_logger, adoption.ClrTypeName, adoption.Backlog, _options.RowReapBatchSize);
+      metrics?.RecordRetentionAdopted(adoption.ClrTypeName, adoption.Backlog);
+    }
+  }
+
+  /// <summary>
   /// The perspective-row retention step: offers about-to-die rows to registered guards (the
-  /// pre-destruction seam), applies their per-row decisions as durable holds, then invokes the
-  /// two sweeps — the expiry ladder every cycle, the cap eviction behind a fleet watermark.
-  /// Without a registered guard the offering is skipped entirely and the sweeps keep their
-  /// pure-SQL path. Best-effort: any failure is logged and retried next cycle.
+  /// pre-destruction seam), applies their per-row decisions as durable holds, adopts any newly
+  /// declared window, then invokes the two sweeps — the expiry ladder every cycle, the cap
+  /// eviction behind a fleet watermark. Without a registered guard the offering is skipped
+  /// entirely and the sweeps keep their pure-SQL path. Best-effort: any failure is logged and
+  /// retried next cycle.
   /// </summary>
   private async Task _sweepPerspectiveRowsAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     try {
       var releasedByGuard = await _offerRowsToGuardsAsync(coordinator, sp, ct);
 
+      await _adoptDeclaredRetentionAsync(coordinator, sp, ct).ConfigureAwait(false);
       var ttlResult = await coordinator.ReapEnrolledPerspectiveRowsAsync(_options.RowReapBatchSize, ct)
         .ConfigureAwait(false);
       Whizbang.Core.Messaging.PerspectiveRowReapResult? capResult = null;
@@ -318,7 +486,7 @@ public sealed partial class MaintenanceWorker(
     var guardsByType = new Dictionary<string, Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>(StringComparer.Ordinal);
     foreach (var guard in guards) {
       foreach (var model in guard.GuardedModels) {
-        if (model.FullName is { } name) {
+        if (TypeNameFormatter.TryFormatClrTypeName(model, out var name)) {
           guardsByType[name] = guard;
         }
       }
@@ -336,7 +504,7 @@ public sealed partial class MaintenanceWorker(
         var decisions = await guard.OnBeforeReapAsync(batch, ct).ConfigureAwait(false);
         var proceed = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
         var proceedTargets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
-        var cancelled = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+        var canceled = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
         var deferred = new Dictionary<DateTimeOffset, List<Whizbang.Core.Lifecycle.PerspectiveRowRef>>();
         var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
         foreach (var target in batch) {
@@ -350,7 +518,7 @@ public sealed partial class MaintenanceWorker(
               proceedTargets.Add(target);
               break;
             case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Cancel:
-              cancelled.Add(rowRef);
+              canceled.Add(rowRef);
               break;
             default:
               var until = decision.DeferUntil ?? defaultDefer;
@@ -368,15 +536,15 @@ public sealed partial class MaintenanceWorker(
         foreach (var (until, refs) in deferred) {
           await coordinator.HoldPerspectiveRowDestructionAsync(refs, until, ct).ConfigureAwait(false);
         }
-        if (cancelled.Count > 0) {
-          await coordinator.HoldPerspectiveRowDestructionAsync(cancelled, DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
+        if (canceled.Count > 0) {
+          await coordinator.HoldPerspectiveRowDestructionAsync(canceled, DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
         }
         LogRowGuardDecisions(_logger, batch.Count, proceed.Count,
-          batch.Count - proceed.Count - cancelled.Count, cancelled.Count);
+          batch.Count - proceed.Count - canceled.Count, canceled.Count);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
-        var refs = batch.Select(t => new Whizbang.Core.Lifecycle.PerspectiveRowRef(t.TableName, t.RowId)).ToList();
+        var refs = batch.ConvertAll(t => new Whizbang.Core.Lifecycle.PerspectiveRowRef(t.TableName, t.RowId));
         var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
           refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
           _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
@@ -406,9 +574,9 @@ public sealed partial class MaintenanceWorker(
       }
 
       // clr name ↔ table ↔ model type maps, from the registry + the group declarations.
-      var clrNames = models.Select(m => m.FullName).Where(n => n is not null).Cast<string>().ToList();
+      var clrNames = models.Select(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) ? clr : null).Where(n => n is not null).Cast<string>().ToList();
       var tableNames = await coordinator.GetPerspectiveTableNamesAsync(clrNames, ct).ConfigureAwait(false);
-      var typeByClr = models.Where(m => m.FullName is not null).ToDictionary(m => m.FullName!, m => m, StringComparer.Ordinal);
+      var typeByClr = models.Where(m => TypeNameFormatter.TryFormatClrTypeName(m, out _)).ToDictionary(m => TypeNameFormatter.FormatClrTypeName(m), m => m, StringComparer.Ordinal);
       var typeByTable = new Dictionary<string, Type>(StringComparer.Ordinal);
       var tableByType = new Dictionary<Type, string>();
       foreach (var entry in tableNames) {
@@ -449,7 +617,7 @@ public sealed partial class MaintenanceWorker(
         }
         var rowIds = group.Select(g => g.RowId).ToList();
 
-        if (guardByType.TryGetValue(group.Key, out var guard) && group.Key.FullName is { } guardedClr) {
+        if (guardByType.TryGetValue(group.Key, out var guard) && TypeNameFormatter.TryFormatClrTypeName(group.Key, out var guardedClr)) {
           // Cascaded rows of a guarded perspective pass through the same guard as sweep-selected
           // ones — a resource-referencing row cannot slip out through the cascade path.
           var targets = await coordinator.GetPerspectiveRowsByIdsAsync(guardedClr, table, rowIds, ct).ConfigureAwait(false);
@@ -489,7 +657,7 @@ public sealed partial class MaintenanceWorker(
             throw;
           } catch (Exception ex) {
             anyDeferred = true;
-            var refs = rowIds.Select(id => new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, id)).ToList();
+            var refs = rowIds.ConvertAll(id => new Whizbang.Core.Lifecycle.PerspectiveRowRef(table, id));
             var attempt = await coordinator.RecordPerspectiveRowDestructionFailureAsync(
               refs, TimeSpan.FromSeconds(_options.DestructionRetryBackoffSeconds),
               _options.MaxDestructionRetries, _options.OnDestroyFailure, ct).ConfigureAwait(false);
@@ -505,7 +673,7 @@ public sealed partial class MaintenanceWorker(
       if (anyDeferred) {
         var reseed = seeds
           .Where(s => tableByType.ContainsKey(s.Item1))
-          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.Item2))
+          .Select(s => new Whizbang.Core.Lifecycle.PerspectiveRowRef(tableByType[s.Item1], s.RowId))
           .ToList();
         await coordinator.RequeueRowEvictionsAsync(reseed, ct).ConfigureAwait(false);
       }
@@ -673,6 +841,26 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  private static bool _coordinatorDebugMode(IServiceProvider sp) =>
+    sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>()
+      ?.Value.DebugMode ?? false;
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
+    Message = "Failed to publish the debug-retention setting to the store; the maintenance sweep keeps its previous value. If debug retention was just enabled, completed rows may still be purged.")]
+  static partial void LogDebugRetentionSyncFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 47, Level = LogLevel.Information,
+    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s) and {PendingPerspectiveRows} pending perspective event(s). The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+
+  [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+
+  [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
+    Message = "Service-settledness probe failed; maintenance proceeds UNGATED for this cycle rather than deferring, so a failing probe cannot disable cleanup.")]
+  static partial void LogSettlednessProbeFailed(ILogger logger, Exception ex);
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "MaintenanceWorker started: intervalMinutes={IntervalMinutes}")]
   static partial void LogStarted(ILogger logger, int intervalMinutes);
@@ -702,6 +890,14 @@ public sealed partial class MaintenanceWorker(
     Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 51, Level = LogLevel.Information,
+    Message = "Purged {Removed} lifecycle-completion markers older than {RetentionDays} days")]
+  static partial void LogLifecycleCompletionsPurged(ILogger logger, int removed, int retentionDays);
+
+  [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
+    Message = "Lifecycle-completion purge failed at {RetentionDays}-day retention; wh_lifecycle_completions keeps growing until a later cycle succeeds")]
+  static partial void LogLifecycleCompletionPurgeFailed(ILogger logger, int retentionDays, Exception ex);
+
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]
   static partial void LogLedgerGaugeRefreshFailed(ILogger logger, Exception ex);
@@ -713,6 +909,18 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
     Message = "Digest-epoch closure failed (non-fatal — the frontier advances on a later cycle)")]
   static partial void LogEpochClosureFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 53, Level = LogLevel.Information,
+    Message = "Discarded {Count} pending stream-integrity {Table} rows of features that are off ({Types}): minted or delivered for a feature this service has turned off")]
+  static partial void LogIntegrityRowsDiscarded(ILogger logger, long count, string table, string types);
+
+  [LoggerMessage(EventId = 54, Level = LogLevel.Warning,
+    Message = "Stream-integrity sweep failed; pending rows of features that are off stay until the next cycle (repair rows are still discarded at dispatch when their schedule arrives)")]
+  static partial void LogIntegritySweepFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 55, Level = LogLevel.Information,
+    Message = "Row retention adopted for {ClrTypeName}: {Backlog} rows past the declared window, draining at up to {BatchSize} per maintenance cycle")]
+  static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
@@ -765,8 +973,8 @@ public sealed partial class MaintenanceWorker(
   private static partial void LogOffloadSweepFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 39, Level = LogLevel.Information,
-    Message = "Row guard decisions: offered {Offered}, proceeded {Proceeded}, deferred {Deferred}, cancelled {Cancelled}")]
-  private static partial void LogRowGuardDecisions(ILogger logger, int offered, int proceeded, int deferred, int cancelled);
+    Message = "Row guard decisions: offered {Offered}, proceeded {Proceeded}, deferred {Deferred}, canceled {Canceled}")]
+  private static partial void LogRowGuardDecisions(ILogger logger, int offered, int proceeded, int deferred, int canceled);
 
   [LoggerMessage(EventId = 40, Level = LogLevel.Warning,
     Message = "Row guard offering failed for {RowCount} row(s) (attempt {Attempt}/{MaxRetries}); the batch is held and re-offered next cycle")]
@@ -897,6 +1105,18 @@ public sealed class MaintenanceWorkerOptions {
   /// across cycles instead of in one statement. Default 5000.
   /// </summary>
   public int RowReapBatchSize { get; set; } = 5000;
+
+  /// <summary>
+  /// Days a lifecycle-completion marker is kept before <c>MaintenanceWorker</c> sweeps it.
+  /// </summary>
+  /// <remarks>
+  /// Matches the 7 days migration 035 documented when it created the table and its
+  /// <c>completed_at</c> index. The marker only has to outlive the window in which startup
+  /// reconciliation would look back for an event whose perspectives finished while PostLifecycle
+  /// never fired; past that it is dead weight on a table that grows once per event.
+  /// Set to 0 to disable the sweep.
+  /// </remarks>
+  public int LifecycleCompletionRetentionDays { get; set; } = 7;
 
   /// <summary>
   /// Minimum minutes between cap sweeps service-wide (fleet watermark). The cap eviction ranks

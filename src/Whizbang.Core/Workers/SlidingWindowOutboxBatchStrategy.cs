@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -36,7 +37,7 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   private readonly OutboxBulkFlushCallback _flush;
   private readonly SlidingWindowOutboxOptions _options;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamBuffer> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -47,14 +48,14 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   /// Creates the strategy with the given flush callback.
   /// </summary>
   /// <param name="flush">Called with each per-stream batch. Typically resolves <see cref="IWorkCoordinator"/> from a DI scope and calls <see cref="IWorkCoordinator.StoreOutboxMessagesAsync"/>.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses 50 ms / 1 s / 100 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowOutboxBatchStrategy(
       OutboxBulkFlushCallback flush,
+      ILogger<SlidingWindowOutboxBatchStrategy> logger,
       SlidingWindowOutboxOptions? options = null,
-      TimeProvider? timeProvider = null,
-      ILogger<SlidingWindowOutboxBatchStrategy>? logger = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     _options = options ?? new SlidingWindowOutboxOptions();
@@ -93,7 +94,7 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }
@@ -102,6 +103,14 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   public async ValueTask DisposeAsync() {
     await FlushAndStopAsync(CancellationToken.None).ConfigureAwait(false);
   }
+
+  /// <summary>
+  /// Test seam: runs one idle-sweep pass synchronously and awaits it. Production relies on the
+  /// periodic timer, whose callback is fire-and-forget — so the only way to observe what a sweep
+  /// did (or refused to do after shutdown) is to drive one directly. Mirrors
+  /// <see cref="PerStreamSerializer{T}.RunIdleSweepNowAsync"/>.
+  /// </summary>
+  internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
 
   private StreamBuffer _createStreamBuffer(Guid key) {
     var channel = Channel.CreateBounded<OutboxMessage>(new BoundedChannelOptions(_options.MaxSize * 4) {
@@ -185,7 +194,6 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
 
   private sealed class StreamBuffer(Guid key, Channel<OutboxMessage> channel, DateTimeOffset createdAt) {
     public Guid Key { get; } = key;
-    public ChannelReader<OutboxMessage> Reader => channel.Reader;
     public ChannelWriter<OutboxMessage> Writer => channel.Writer;
     public DateTimeOffset LastActivity { get; set; } = createdAt;
     public Task Worker { get; set; } = Task.CompletedTask;

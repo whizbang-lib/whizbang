@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Unit: Fast tests, no external infrastructure needed -->

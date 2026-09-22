@@ -8,6 +8,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// End-to-end integration tests for schema initialization workflow.
 /// Tests idempotency, error handling, and complete initialization process.
 /// </summary>
+[Category("Shard3")]
 public class SchemaInitializationTests : EFCoreTestBase {
   [Test]
   public async Task EnsureWhizbangDatabaseInitialized_CreatesCoreInfrastructureTablesAsync() {
@@ -171,16 +172,15 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // wh_schema_versions should have a version entry with both library and application versions
-    string libraryVersion;
-    string applicationVersion;
-    {
+    // The reader has to close before the next command runs on this connection.
+    async Task<(string Library, string Application)> ReadVersionsAsync() {
       await using var versionCmd = new NpgsqlCommand(
         "SELECT library_version, application_version FROM wh_schema_versions LIMIT 1", connection);
       await using var versionReader = await versionCmd.ExecuteReaderAsync();
       await Assert.That(await versionReader.ReadAsync()).IsTrue();
-      libraryVersion = versionReader.GetString(0);
-      applicationVersion = versionReader.GetString(1);
+      return (versionReader.GetString(0), versionReader.GetString(1));
     }
+    var (libraryVersion, applicationVersion) = await ReadVersionsAsync();
 
     // Library version should be a semver string (e.g., "0.9.4-local.64")
     await Assert.That(libraryVersion).Contains(".")

@@ -40,7 +40,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// <docs>transports/azure-service-bus</docs>
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class SessionBacklogDrainIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   private const string HAIR_TRIGGER_TOPIC = "topic-drain-hairtrigger";   // LockDuration PT5S in Config.json
@@ -154,9 +154,7 @@ public class SessionBacklogDrainIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var handled = Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await handled.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await handled.Writer.WriteAsync(envelope.MessageId.Value, ct),
       new TransportDestination(SAFE_TOPIC, DRAIN_SUB));
 
     var publishedIds = new HashSet<Guid>();

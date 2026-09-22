@@ -14,6 +14,7 @@ namespace Whizbang.Core.Tests.Notifications;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Regression lock for a production-deployment diagnostic: when
 /// <see cref="PgSharedNotifyConnection"/>'s probe fails (or any other connect-time
 /// error), the disconnect warning MUST name the resolved connection-string source
@@ -21,11 +22,13 @@ namespace Whizbang.Core.Tests.Notifications;
 /// <c>-direct</c>, the pooled key fallback, the DbContext fallback, or an explicit
 /// option. Without this, "Self-test probe failed" in Azure logs is unactionable —
 /// the operator has to read source code to know which env var to investigate.
-///
+/// </para>
+/// <para>
 /// We drive a deliberately-bad connection string through the worker; it fails at
 /// the network layer (the host is unresolvable) which routes us into the
 /// LogReconnect path. The capturing logger snapshots the formatted message; we
 /// assert both placeholders survived into the output.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
@@ -50,7 +53,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -71,11 +74,11 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     await Assert.That(msg).IsNotNull();
     // The new format must name the source (DirectKey here) and the key
     // ("test-db") so operators can match the symptom to the env var.
-    await Assert.That(msg!).Contains("DirectKey");
-    await Assert.That(msg!).Contains("test-db");
+    await Assert.That(msg).Contains("DirectKey");
+    await Assert.That(msg).Contains("test-db");
     // The operator-actionable hint must also be present so the log line stands
     // on its own without needing source-code lookup.
-    await Assert.That(msg!).Contains("-direct");
+    await Assert.That(msg).Contains("-direct");
   }
 
   [Test]
@@ -98,7 +101,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -113,12 +116,12 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
 
     var msg = logger.LastDisconnectMessage;
     await Assert.That(msg).IsNotNull();
-    await Assert.That(msg!).Contains("PooledKeyFallback");
-    await Assert.That(msg!).Contains("test-db");
+    await Assert.That(msg).Contains("PooledKeyFallback");
+    await Assert.That(msg).Contains("test-db");
     // Operator-actionable hint must appear so the fix is obvious without
     // having to read the source.
-    await Assert.That(msg!).Contains("pgbouncer");
-    await Assert.That(msg!).Contains("test-db-direct");
+    await Assert.That(msg).Contains("pgbouncer");
+    await Assert.That(msg).Contains("test-db-direct");
   }
 
   [Test]
@@ -135,7 +138,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -149,8 +152,8 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastResolvedConnectionMessage).IsNotNull();
-    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("DirectKey");
-    await Assert.That(logger.LastResolvedConnectionMessage!).Contains("test-db");
+    await Assert.That(logger.LastResolvedConnectionMessage).Contains("DirectKey");
+    await Assert.That(logger.LastResolvedConnectionMessage).Contains("test-db");
   }
 
   [Test]
@@ -169,7 +172,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -183,12 +186,12 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     try { await worker.StopAsync(CancellationToken.None); } catch { /* shutdown */ }
 
     await Assert.That(logger.LastPooledFallbackMessage).IsNotNull();
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("pgbouncer");
-    await Assert.That(logger.LastPooledFallbackMessage!).Contains("test-db-direct");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("pgbouncer");
+    await Assert.That(logger.LastPooledFallbackMessage).Contains("test-db-direct");
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
-  private sealed class _CapturingLogger : ILogger<PgSharedNotifyConnection> {
+  private sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
     public TaskCompletionSource DisconnectLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ResolvedConnectionLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource PooledFallbackWarningTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -21,6 +21,128 @@ public sealed record PartitionRecomputeResult {
   /// <summary>True if any row in any table was recomputed (i.e. the database was previously inconsistent with the supplied PartitionCount).</summary>
   public bool AnyRecomputed => InboxRowsRecomputed > 0 || OutboxRowsRecomputed > 0 || ActiveStreamsRowsRecomputed > 0;
 }
+/// <summary>
+/// Work outstanding across an entire service, used to decide whether the service has SETTLED.
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="OutstandingWork"/>, which is scoped to one instance. An instance that
+/// finished its own claimed streams reads zero locally while peers are still draining, so an
+/// instance-scoped count cannot answer "has this service settled".
+/// </remarks>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record ServiceBacklog {
+  /// <summary>Unprocessed inbox rows across the whole service.</summary>
+  public long UnprocessedInboxRows { get; init; }
+
+  /// <summary>
+  /// Rows currently leased by ANY instance. Non-zero means a peer is mid-dispatch, so rows counted
+  /// as missing may simply be in that peer's hands.
+  /// </summary>
+  public long ActiveLeasedRows { get; init; }
+
+  /// <summary>
+  /// Age of the oldest unprocessed inbox row, or <see cref="TimeSpan.Zero"/> when nothing is queued.
+  /// </summary>
+  /// <remarks>
+  /// The lag signal <see cref="IntegrityRepairPolicy"/> needs alongside depth and leases. Depth is a
+  /// bounded count and a snapshot; an operator who raises the settled-depth threshold to tolerate a
+  /// small queue still needs to see that something in that small queue has been sitting for an hour.
+  /// </remarks>
+  public TimeSpan OldestUnprocessedAge { get; init; }
+
+  /// <summary>
+  /// Outbox rows not yet published and claimable now, across the whole service (bounded count).
+  /// </summary>
+  /// <remarks>
+  /// A producer under a bulk load holds its work here, not in its inbox. A gate that read only the
+  /// inbox and the leases took such a service for idle and ran its maintenance sweep at the peak,
+  /// where the purges and the epoch closure occupied backends for the length of the load.
+  /// </remarks>
+  public long PendingOutboxRows { get; init; }
+
+  /// <summary>
+  /// Perspective events not yet applied, across the whole service (bounded count).
+  /// </summary>
+  /// <remarks>
+  /// A consumer mid-drain has stored its inbox rows and queued everything as perspective events,
+  /// so this is where its backlog shows once the inbox reads empty.
+  /// </remarks>
+  public long PendingPerspectiveRows { get; init; }
+
+  /// <summary>
+  /// Idle-band rows queued across the work tables (bounded count), counted apart from the three
+  /// figures above rather than included in them.
+  /// </summary>
+  /// <remarks>
+  /// The idle band is drained when the service reads settled, so idle work cannot be allowed to
+  /// make the service read unsettled: a band counted as backlog would hold the gate that exists to
+  /// release it closed, and the work it withheld would never run. Counting it apart is what keeps
+  /// that from being a deadlock. The three counts above therefore mean "work someone is waiting
+  /// for", which is the question every caller of <see cref="IsSettled"/> was already asking.
+  /// </remarks>
+  public long PendingIdleRows { get; init; }
+
+  /// <summary>
+  /// True when no work anyone waits for is queued and no instance holds a live lease. Idle-band
+  /// rows are deliberately not counted; see <see cref="PendingIdleRows"/>.
+  /// </summary>
+  public bool IsSettled =>
+    UnprocessedInboxRows == 0 && ActiveLeasedRows == 0 && PendingOutboxRows == 0 && PendingPerspectiveRows == 0;
+
+  /// <summary>
+  /// True when the service is settled AND its idle band is empty: nothing is left to run at all.
+  /// </summary>
+  /// <remarks>
+  /// This, not <see cref="IsSettled"/>, is what a maintenance sweep waits for. Settled is the
+  /// signal that admits the idle drain, so a sweep admitted on the same signal would compete with
+  /// the drain it just released for the same backends -- and maintenance is the one caller that
+  /// can afford to wait, because its own deferral budget already bounds how long it will.
+  /// </remarks>
+  public bool IsQuiescent => IsSettled && PendingIdleRows == 0;
+}
+
+
+/// <summary>
+/// Work this instance currently holds a live lease on and has not finished, counted in the store
+/// independently of any claim limit.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The independence is the entire point. A claim response cannot report this figure, because the
+/// claim applies <c>LIMIT p_max_streams</c> to its eligible set — so counting the rows it returns
+/// measures the limit, not the backlog. A worker that sized its claim from its own last batch would
+/// observe at most what it just asked for, conclude it had headroom, and claim again, holding more
+/// and more work while the number it watched sat pinned at the limit.
+/// </para>
+/// <para>
+/// It is also read from the store rather than accumulated in memory. A counter the worker maintains
+/// itself can be stranded by a hung or canceled task and then never recovers without a restart —
+/// a failure mode this claim path has already produced in production once.
+/// </para>
+/// </remarks>
+/// <docs>operations/workers/claim-backpressure</docs>
+public sealed record OutstandingWork {
+  /// <summary>Leased, unprocessed rows in <c>wh_inbox</c>.</summary>
+  public long InboxRows { get; init; }
+  /// <summary>Leased, unprocessed rows in <c>wh_outbox</c>.</summary>
+  public long OutboxRows { get; init; }
+  /// <summary>Leased, unapplied rows in the perspective work table.</summary>
+  public long PerspectiveRows { get; init; }
+
+  /// <summary>
+  /// Every leased row this instance holds. All three kinds count: each is leased and each charges
+  /// an attempt, so bounding one column would leave the same arithmetic free to recur in another.
+  /// </summary>
+  public long Total => InboxRows + OutboxRows + PerspectiveRows;
+}
+
+/// <summary>
+/// Result of <see cref="IWorkCoordinator.ReleaseUnstartedLeasesAsync"/>: rows released per kind.
+/// </summary>
+/// <param name="InboxReleased">Inbox rows returned to unassigned.</param>
+/// <param name="PerspectiveReleased">Perspective rows returned to unassigned.</param>
+/// <docs>fundamentals/work-coordinator/claim-loop</docs>
+public sealed record UnstartedLeaseRelease(int InboxReleased, int PerspectiveReleased);
 
 /// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
@@ -46,6 +168,78 @@ public interface IWorkCoordinator {
   /// Called by WhizbangShutdownService.StopAsync on SIGTERM.
   /// </summary>
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Counts the work this instance holds a live lease on and has not finished — the figure the
+  /// claim-outstanding budget is sized against.
+  /// </summary>
+  /// <param name="instanceId">The instance whose held work is being counted.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The current counts, or <see langword="null"/> when this backend cannot measure them.
+  /// </returns>
+  /// <remarks>
+  /// <para>
+  /// Defaulted to <see langword="null"/> rather than <c>0</c>, and the distinction is load-bearing.
+  /// Zero is a measurement meaning "this instance holds nothing", which would license a full-size
+  /// claim; <see langword="null"/> means "unmeasured", and the budget declines to engage rather
+  /// than bound against a number it did not read. Returning zero from a backend that cannot count
+  /// would disable the bound while looking exactly like a healthy idle worker.
+  /// </para>
+  /// <para>
+  /// Defaulted at all — rather than added to the interface outright — because implementations are
+  /// numerous and mostly test doubles that have no store to count. Forcing each to supply a body
+  /// would produce a wave of <c>0</c> and <c>throw</c> stubs, and the <c>0</c>s are precisely the
+  /// silent-disable this method exists to make impossible.
+  /// </para>
+  /// </remarks>
+  ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+      Guid instanceId, CancellationToken cancellationToken = default)
+    => ValueTask.FromResult<OutstandingWork?>(null);
+
+  /// <summary>
+  /// Counts work outstanding across the WHOLE service, not just the calling instance.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Settledness is a service property. A service runs many instances against one shared store, and
+  /// an instance that has finished its own claimed streams looks completely idle from the inside
+  /// while peers are still draining. A control deciding from its LOCAL view acts on events its own
+  /// siblings are actively processing.
+  /// </para>
+  /// <para>
+  /// Returns null when the backend cannot answer. Callers must treat null as UNMEASURED — never as
+  /// settled — because "nothing outstanding" and "nobody looked" are the same value and opposite
+  /// facts, and defaulting to settled re-enables exactly the behavior the caller is gating.
+  /// </para>
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Service-wide outstanding work, or null when unmeasurable.</returns>
+  ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult<ServiceBacklog?>(null);
+
+  /// <summary>
+  /// Publishes the host's debug-retention setting to the store, where the maintenance sweep reads it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Debug retention is decided in two places. The completion path honors
+  /// <c>WorkCoordinatorOptions.DebugMode</c> in process; the maintenance sweep reads a stored
+  /// setting instead. Nothing wrote that setting, so enabling the documented option produced
+  /// retention that the sweep silently undid within one interval — the counts it exists to enable
+  /// fell while being read.
+  /// </para>
+  /// <para>
+  /// Default is a no-op so engines without a settings table are unaffected. Implementations must
+  /// write BOTH values: leaving a stale true behind would disable the purge permanently and grow
+  /// the inbox without bound.
+  /// </para>
+  /// </remarks>
+  /// <param name="debugMode">Whether completed rows should be retained.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the setting is stored.</returns>
+  Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken cancellationToken = default)
+    => Task.CompletedTask;
 
   /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
@@ -165,6 +359,78 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement RenewLeasesAsync.");
+
+  /// <summary>
+  /// Hands back inbox rows this instance claimed but never dispatched, refunding the attempt the
+  /// claim optimistically charged and clearing the lease.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>claim_orphaned_inbox</c> charges an attempt on every claim, which must stay: it is the only
+  /// fail-safe that survives a process vanishing mid-dispatch, because a dead process reports
+  /// nothing. The cost is that a worker claiming more rows than it can dispatch inside the lease
+  /// window pays an attempt for every untouched row, every cycle — so a backlog larger than one
+  /// worker's throughput burns its own retry budget and dead-letters healthy messages as
+  /// <see cref="MessageFailureReason.MaxAttemptsExceeded"/> having never reached a receptor, with no
+  /// failure recorded anywhere because none occurred.
+  /// </para>
+  /// <para>
+  /// The resolution is a refund rather than a smaller charge. A worker that ends a cycle still
+  /// holding rows it never touched calls this; an UNGRACEFUL exit calls nothing, so its charge
+  /// correctly stands. The store cannot distinguish "never dispatched" from "dispatched and died" —
+  /// only the worker can, which is why this is an explicit call rather than store-side inference.
+  /// </para>
+  /// <para>
+  /// Idempotent, and scoped to the caller's own claim: releasing a row held by another instance is a
+  /// no-op, so a late or duplicated release can neither refund twice nor unlock work another worker
+  /// is actively dispatching.
+  /// </para>
+  /// </remarks>
+  /// <param name="instanceId">The instance that holds the claim. Rows held by anyone else are skipped.</param>
+  /// <param name="messageIds">Inbox message ids being handed back undispatched.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually released.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxGracefulReleaseSqlTests.cs</tests>
+  Task<int> ReleaseUnprocessedInboxAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> messageIds,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReleaseUnprocessedInboxAsync.");
+
+  /// <summary>
+  /// Releases the rows this instance has leased but NOT started in the given streams, and ends the
+  /// instance's ownership of those streams, so a sibling may acquire them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the stuck instance's own act, never a sibling's: work is never taken from a heartbeating
+  /// instance by anyone else. The claim loop calls it when it has re-offered the same work set for a
+  /// sustained streak while its dispatch consumers sit idle, naming only streams whose drain has not
+  /// begun. Rows are returned to unassigned with the optimistic attempt refunded (they never reached a
+  /// receptor), and the instance's stream ownership is ended so the unowned path opens to siblings.
+  /// </para>
+  /// <para>
+  /// Idempotent and scoped to the caller's own leases: rows held by anyone else are untouched. Stores
+  /// that do not implement it throw <see cref="NotImplementedException"/>; the caller treats that as
+  /// "leases lapse on their own", which is the previous behavior.
+  /// </para>
+  /// </remarks>
+  /// <param name="instanceId">The instance releasing its own leases.</param>
+  /// <param name="inboxStreamIds">Inbox streams whose leased, unstarted rows are released.</param>
+  /// <param name="perspectiveStreamIds">Perspective streams whose leased, unstarted rows are released.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many rows of each kind were released.</returns>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BoundedAcquisitionRewriteSqlTests.cs</tests>
+  Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> inboxStreamIds,
+    IReadOnlyList<Guid> perspectiveStreamIds,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReleaseUnstartedLeasesAsync.");
 
   /// <summary>
   /// Reports failures for the supplied category. Increments retry counters and sets
@@ -1004,6 +1270,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0L);
 
   /// <summary>
+  /// Adopts retention for every enrolled perspective that has not been acknowledged yet: reads the
+  /// backlog its window would remove, opens the adoption gate (the acknowledgment
+  /// <see cref="AcknowledgeRetentionEnforcementAsync"/> sets by hand), and reports one row per
+  /// perspective so the adoption is visible. The maintenance worker calls this immediately before
+  /// the enrolled reap when
+  /// <see cref="Whizbang.Core.Configuration.PerspectiveRowRetentionOptions.AutoAcknowledge"/> is on,
+  /// so a declared window is draining within one maintenance interval of the deploy. Idempotent: an
+  /// acknowledged perspective produces no row. Default: nothing adopted.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RetentionAutoAdoptionTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveRetentionAdoption>> AdoptEnrolledPerspectiveRetentionAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<PerspectiveRetentionAdoption>>([]);
+
+  /// <summary>
   /// Atomically claims a batch of journaled origin evictions (what the row sweeps destroyed) for
   /// group-cascade processing — DELETE ... RETURNING, so N replicas never double-cascade.
   /// Default: empty.
@@ -1709,6 +1992,22 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 
   /// <summary>
+  /// Reactive orphan disposal (#679). When <see cref="GetStreamEventsAsync"/> returns nothing
+  /// for a leased stream, its rows may be orphaned — their source event is absent from the
+  /// event store, so they can never project and would re-claim forever. This disposes such
+  /// rows ON CONTACT for the given streams, scoped to this instance's leases and keyed on
+  /// <paramref name="maxAttempts"/>: a row attempted that many times with no surviving event is
+  /// unambiguously an orphan, so attempts (not age) are the safety. Returns the count reaped.
+  /// Default is a no-op for coordinators that do not back a relational event store.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> streamIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
   /// Slice 26.6b — returns the local service's stable identity from
   /// <c>wh_service_config</c>. Cached by callers (publish path) at startup; queried
   /// once per process. Default implementation returns <see cref="Guid.Empty"/> for
@@ -1915,6 +2214,52 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
 
   /// <summary>
+  /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of
+  /// <paramref name="messageTypeNames"/>: the maintenance sweep's way to drop work this service has decided
+  /// not to perform. The maintenance worker passes <see cref="RepairTraffic.InboxMessageTypeNames"/> while
+  /// <see cref="StreamIntegrityOptions.RepairMode"/> is <see cref="IntegrityRepairMode.ReportOnly"/>; without
+  /// the sweep, a repair row that failed and backed off waits out its schedule and is only then discarded,
+  /// one row per dispatch, long after the operator opted down.
+  /// </summary>
+  /// <remarks>
+  /// A stored <c>message_type</c> may carry assembly version metadata or an envelope wrapper around the
+  /// normalized name, so implementations match by containment of each normalized name. Leased rows are
+  /// skipped: a row mid-dispatch is discarded by the dispatch seam, which applies the same mode check, and
+  /// deleting under a live lease could race its completion. Empty list = no-op. Default impl returns 0 so
+  /// non-Postgres backends and test fakes need not override.
+  /// </remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names (see
+  /// <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
+  Task<long> DiscardPendingInboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
+
+  /// <summary>
+  /// The outbox half of <see cref="DiscardPendingInboxMessagesAsync"/>: deletes pending, unleased
+  /// <c>wh_outbox</c> rows whose <c>message_type</c> names one of <paramref name="messageTypeNames"/>. The
+  /// maintenance worker passes <see cref="IntegrityTraffic.OutboxTypesToDiscard"/>: what this service
+  /// minted for a stream-integrity feature that is now off and never published (checkpoints, audit asks,
+  /// report events, repair bundles), which would otherwise sit unpublished for as long as the feature is off.
+  /// </summary>
+  /// <remarks>Same matching and lease rules as the inbox half; empty list = no-op; default impl returns 0.</remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
+  Task<long> DiscardPendingOutboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
+
+  /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"
   /// bug class. Returns <c>wh_outbox</c> rows whose <c>attempts</c> exceeds
   /// <paramref name="maxAttempts"/> AND have not been processed.
@@ -2115,6 +2460,16 @@ public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
 public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
 
+/// <summary>
+/// One perspective whose declared retention window the maintenance cycle adopted: the registry key
+/// and the rows past the window at the moment the gate opened (see
+/// <see cref="IWorkCoordinator.AdoptEnrolledPerspectiveRetentionAsync"/>).
+/// </summary>
+/// <param name="ClrTypeName">The perspective model's CLR type name, the registry key.</param>
+/// <param name="Backlog">Rows past the declared window when adoption happened.</param>
+/// <docs>fundamentals/perspectives/row-retention</docs>
+public sealed record PerspectiveRetentionAdoption(string ClrTypeName, long Backlog);
+
 /// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
 /// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
 /// <param name="TableName">The perspective's physical table.</param>
@@ -2267,6 +2622,14 @@ public record WorkCoordinatorStatistics {
 }
 
 /// <summary>
+/// One inbox stream of a claim as the batch hook sees it (priority step 1): the stream's most urgent row, its
+/// oldest arrival and how many of its rows the batch holds, folded by the coordinator over the rows the claim
+/// returned for the stream.
+/// </summary>
+/// <docs>fundamentals/messaging/message-priority#hooks</docs>
+public sealed record InboxStreamFold(Guid StreamId, int FoldedPriority, DateTimeOffset? OldestReceivedAt, int PendingRows);
+
+/// <summary>
 /// Contains the results of a work batch poll including work items for this instance to process.
 /// </summary>
 public record WorkBatch {
@@ -2287,6 +2650,10 @@ public record WorkBatch {
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
 
+  /// <summary>The inbox streams of this claim folded for the batch hooks (priority step 1); empty when the coordinator does not fold.</summary>
+  /// <docs>fundamentals/messaging/message-priority#hooks</docs>
+  public IReadOnlyList<InboxStreamFold> InboxStreams { get; init; } = [];
+
   /// <summary>
   /// Stream IDs that have leased perspective events for this instance.
   /// The worker determines which perspectives apply from event types using its C# registry.
@@ -2303,6 +2670,14 @@ public record WorkBatch {
   /// once <c>claim_work</c> SQL drops the body projection, this becomes the only outbox surface.
   /// </summary>
   public List<Guid> OutboxStreamIds { get; init; } = [];
+
+  /// <summary>
+  /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
+  /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
+  /// and the store supports it. Null means "not measured here" — the caller must fall back to
+  /// <see cref="IWorkCoordinator.CountOutstandingWorkAsync"/>, never treat it as zero.
+  /// </summary>
+  public OutstandingWork? Outstanding { get; init; }
 
   /// <summary>
   /// Distinct stream IDs that have leased inbox messages for this instance — the per-stream-id
@@ -2325,7 +2700,7 @@ public record WorkBatch {
 /// Used for immediate processing pattern (store + immediately return for publishing).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxMessage {
+public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -2367,6 +2742,14 @@ public record OutboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The priority the producer declared for this message (<see cref="Whizbang.Core.Priority.WorkPriority"/>),
+  /// stamped by the dispatcher from context and the producer hooks; zero when nothing was declared. Stored
+  /// in the row's <c>priority</c> column as the effective number.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Whether this message is a composite event (implements
@@ -2472,7 +2855,7 @@ public sealed record CoalesceGroupStats {
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxMessage {
+public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -2506,6 +2889,13 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The effective priority this consumer stores for the row (<see cref="Whizbang.Core.Priority.WorkPriority"/>):
+  /// the declared number after the receive hooks, never zero once classified.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Categorization bitmask preserved from the originating
@@ -2581,26 +2971,26 @@ public record MessageFailure {
   /// <summary>
   /// Message ID that failed.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required Guid MessageId { get; init; }
 
   /// <summary>
   /// Which stages of processing completed successfully before failure.
   /// For example: (Stored | EventStored) indicates storage succeeded but next stage failed.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required MessageProcessingStatus CompletedStatus { get; init; }
 
   /// <summary>
   /// Error message or exception details.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public required string Error { get; init; }
 
   /// <summary>
@@ -2608,9 +2998,9 @@ public record MessageFailure {
   /// Enables typed filtering and handling of different failure scenarios.
   /// Defaults to Unknown if not specified.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithReason_StoresReasonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
 }
 
@@ -2635,7 +3025,7 @@ public interface IHasMessageIdAndStatus {
 /// Includes both new pending messages and messages with expired leases (orphaned).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxWork : IHasMessageIdAndStatus {
+public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -2654,6 +3044,13 @@ public record OutboxWork : IHasMessageIdAndStatus {
   /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
   public required IMessageEnvelope<JsonElement> Envelope { get; init; }
+
+  /// <summary>
+  /// Priority step 1 on the wire: the row's number, the same one stamped inside <see cref="Envelope"/> before publish
+  /// (<see cref="Whizbang.Core.Priority.WorkPriority.FirstDeclared"/> of the row and the stored envelope).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync</tests>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
@@ -2719,7 +3116,7 @@ public record OutboxWork : IHasMessageIdAndStatus {
 /// From the application's perspective, these are the next messages to handle.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxWork : IHasMessageIdAndStatus {
+public record InboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -2751,10 +3148,26 @@ public record InboxWork : IHasMessageIdAndStatus {
   public int? PartitionNumber { get; init; }
 
   /// <summary>
+  /// The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>), entered as the ambient
+  /// parent (<see cref="Whizbang.Core.Priority.PriorityContext"/>) while the row is handled so what the handler
+  /// produces inherits it.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
+
+  /// <summary>
   /// Number of previous processing attempts.
   /// Used for retry logic, poison message detection, and MaxInboxAttempts purge.
   /// </summary>
   public int Attempts { get; init; }
+
+  /// <summary>
+  /// The handler this inbox row is addressed to (the row's <c>handler_name</c>), when the store
+  /// supplied it. Rides on the typed envelope's dispatch context so an emission made while handling
+  /// the row derives an identity that names the handler (<see cref="EmissionIdentity"/>); null when
+  /// the row came from a store that does not carry it.
+  /// </summary>
+  public string? HandlerName { get; init; }
 
   /// <summary>
   /// Current processing status flags.
@@ -3039,6 +3452,18 @@ public record StreamEventData {
   /// </summary>
   /// <docs>operations/dead-letter-queue/perspective-events</docs>
   public int Attempts { get; init; }
+
+  /// <summary>
+  /// <c>wh_perspective_events.failures</c> for this work row: the number of apply failures
+  /// recorded by <c>process_perspective_event_failures</c>. This, not <see cref="Attempts"/>, is
+  /// the input to the dead-letter decision. <see cref="Attempts"/> counts leases (dispatch starts),
+  /// and a lease can lapse without an apply when the worker skips the row, dies mid-batch, or
+  /// classifies it as recently processed; counting those toward dead-lettering turned lease churn
+  /// under a backlog into thrash-casualty dead letters for perfectly good events. Default 0 for
+  /// legacy fakes and drivers that predate the column.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/perspective-events</docs>
+  public int Failures { get; init; }
 }
 
 /// <summary>
@@ -3079,7 +3504,11 @@ public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, lon
 /// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before publishing.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record OutboxBatchRow {
+public sealed record OutboxBatchRow : Whizbang.Core.Priority.IPrioritized {
+  /// <summary>Priority step 1: the number the producer declared, stored on the row (0 when the fetch predates the column).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MessagePrioritySqlTests.cs:FetchOutboxBatch_ReturnsTheRowsPriorityAsync</tests>
+  public int Priority { get; init; }
+
   /// <summary>Outbox message id (wh_outbox.message_id).</summary>
   public required Guid MessageId { get; init; }
   /// <summary>Stream id this message belongs to (may be null for unbound messages).</summary>
@@ -3148,7 +3577,7 @@ public sealed record OutboxBatchRow {
 /// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before dispatching to its handler.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record InboxBatchRow {
+public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   /// <summary>Inbox message id (wh_inbox.message_id).</summary>
   public required Guid MessageId { get; init; }
   /// <summary>Stream id this message belongs to (may be null).</summary>
@@ -3171,6 +3600,10 @@ public sealed record InboxBatchRow {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this inbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>).</summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
   /// <summary>
   /// Previous error text persisted on the inbox row (<c>wh_inbox.error</c>), populated
   /// by the most recent <c>process_inbox_failures</c> cycle. NULL when no prior failure

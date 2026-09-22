@@ -33,7 +33,7 @@ public class AsbAcceptorGovernorTests {
     }
   }
 
-  /// <summary>Drives the governor from the floor to 8 slots via one sustained pressure window.</summary>
+  /// <summary>Drives the governor from the floor to 8 slots by filling the floor pool.</summary>
   private static void _growToEight(AsbAcceptorGovernor governor, FakeTimeProvider time) {
     _openSessions(governor, 4);
     _ = governor.Evaluate();
@@ -59,33 +59,62 @@ public class AsbAcceptorGovernorTests {
   }
 
   [Test]
-  public async Task Evaluate_PressureSustainedForOneWindow_DoublesConcurrencyAsync() {
+  public async Task Evaluate_PressureBelowFull_SustainedForOneWindow_DoublesConcurrencyAsync() {
     var time = new FakeTimeProvider();
-    var governor = _governor(time);
-    _openSessions(governor, 4); // 4 ≥ 80% of 4 — pressure
+    var governor = _governor(time, floor: 8);
+    _openSessions(governor, 7); // 7 ≥ 80% of 8 — pressure, but a slot is still free
 
     var atStamp = governor.Evaluate();
     time.Advance(_window);
     var afterWindow = governor.Evaluate();
 
     await Assert.That(atStamp).IsFalse()
-      .Because("pressure must be SUSTAINED for a full window — a momentary spike is not demand");
+      .Because("near-saturation must be SUSTAINED for a full window — a momentary spike is not demand");
     await Assert.That(afterWindow).IsTrue();
-    await Assert.That(governor.CurrentConcurrency).IsEqualTo(8)
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(16)
       .Because("sustained pressure doubles the acceptor pool so waiting sessions get slots");
+  }
+
+  [Test]
+  public async Task Evaluate_PoolFullyOccupied_GrowsWithoutWaitingTheWindowAsync() {
+    // A FULL pool is not a spike (issue #710): the next session is already queueing behind the
+    // acceptor cap, and every queued session is a stream whose first message waits. The window
+    // filters the near-saturation band; it must not gate a pool that has no free slot at all.
+    var time = new FakeTimeProvider();
+    var governor = _governor(time);
+    _openSessions(governor, 4); // 4 of 4 — no free slot
+
+    var grew = governor.Evaluate();
+
+    await Assert.That(grew).IsTrue()
+      .Because("the accept that fills the last slot is the moment the next session starts waiting");
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task Evaluate_PoolFullyOccupied_AtTheCeiling_HoldsAsync() {
+    var time = new FakeTimeProvider();
+    var governor = _governor(time, floor: 4, ceiling: 4);
+    _openSessions(governor, 4);
+
+    var grew = governor.Evaluate();
+
+    await Assert.That(grew).IsFalse()
+      .Because("MaxConcurrentSessions is the hard ceiling even for a full pool");
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(4);
   }
 
   [Test]
   public async Task Evaluate_PressureBrokenMidWindow_RestartsTheWindowAsync() {
     var time = new FakeTimeProvider();
-    var governor = _governor(time);
-    _openSessions(governor, 4);
+    var governor = _governor(time, floor: 8);
+    _openSessions(governor, 7);
     _ = governor.Evaluate();
 
     time.Advance(TimeSpan.FromSeconds(15));
-    _closeSessions(governor, 3); // 1 active < 80% of 4 — pressure broken
+    _closeSessions(governor, 6); // 1 active < 80% of 8 — pressure broken
     _ = governor.Evaluate();
-    _openSessions(governor, 3); // back to 4 active
+    _openSessions(governor, 6); // back to 7 active
     _ = governor.Evaluate();
 
     time.Advance(TimeSpan.FromSeconds(15));
@@ -93,21 +122,21 @@ public class AsbAcceptorGovernorTests {
 
     await Assert.That(grew).IsFalse()
       .Because("the pressure clock restarted when occupancy dipped — only 15s of the fresh window has elapsed");
-    await Assert.That(governor.CurrentConcurrency).IsEqualTo(4);
+    await Assert.That(governor.CurrentConcurrency).IsEqualTo(8);
   }
 
   [Test]
   public async Task Evaluate_Growth_CapsAtTheCeilingAsync() {
     var time = new FakeTimeProvider();
-    var governor = _governor(time, floor: 4, ceiling: 6);
-    _openSessions(governor, 4);
+    var governor = _governor(time, floor: 5, ceiling: 6);
+    _openSessions(governor, 4); // 4 of 5 = 80% — the band, one slot free
     _ = governor.Evaluate();
     time.Advance(_window);
 
     _ = governor.Evaluate();
 
     await Assert.That(governor.CurrentConcurrency).IsEqualTo(6)
-      .Because("doubling would give 8, but MaxConcurrentSessions stays the hard ceiling");
+      .Because("doubling would give 10, but MaxConcurrentSessions stays the hard ceiling");
   }
 
   [Test]

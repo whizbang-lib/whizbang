@@ -141,12 +141,12 @@ public class GraphQLMutationBaseTests {
   }
 
   [Test]
-  public async Task Execute_WhenCancelled_ShouldThrowOperationCanceledAsync() {
+  public async Task Execute_WhenCanceled_ShouldThrowOperationCanceledAsync() {
     // Arrange
     var mutation = new TestGraphQLMutation();
     var command = new TestMutationCommand { Value = "test" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

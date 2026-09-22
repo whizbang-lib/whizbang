@@ -10,11 +10,12 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Policy: GROW (double, capped at the ceiling) when active sessions have held at or above 80%
-/// of current concurrency for one full evaluation window; DECAY (halve, floored) after a full
-/// window with active sessions below 25% of current. Between those bands the pool holds. A
-/// growth or decay step restarts both windows so the next decision is measured against the new
-/// pool size.
+/// Policy: GROW (double, capped at the ceiling) at once when active sessions have FILLED the
+/// current pool (the next session is already queueing behind the cap), or when they have held at
+/// or above 80% of current concurrency for one full evaluation window; DECAY (halve, floored)
+/// after a full window with active sessions below 25% of current. Between those bands the pool
+/// holds. A growth or decay step restarts both windows so the next decision is measured against
+/// the new pool size.
 /// </para>
 /// <para>
 /// The governor is deterministic and owns no threads: time flows through the injected
@@ -28,9 +29,10 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
-public sealed class AsbAcceptorGovernor {
-  // Growth fires when active sessions occupy ≥ 80% of the current pool — near-saturation means
-  // pending sessions are probably queueing behind the acceptor cap.
+public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGovernor {
+  // Window-gated growth fires when active sessions occupy ≥ 80% of the current pool —
+  // near-saturation means pending sessions are probably queueing behind the acceptor cap. A pool
+  // with no free slot at all grows without the window (see Evaluate).
   private const double GROWTH_PRESSURE_RATIO = 0.8;
   // Decay fires when active sessions fall below 25% of the current pool — most slots are pure
   // idle accept churn.
@@ -81,6 +83,39 @@ public sealed class AsbAcceptorGovernor {
     }
   }
 
+  /// <summary>
+  /// The seam's name for <see cref="CurrentConcurrency"/>.
+  /// </summary>
+  /// <remarks>
+  /// This type predates <see cref="Whizbang.Core.Execution.IConcurrencyGovernor"/> and already
+  /// had the same shape — floor, ceiling, and a width it grows and decays. Implementing the
+  /// interface makes the one proven adaptive policy in the framework reusable instead of private
+  /// to this transport, without changing what it computes.
+  /// </remarks>
+  public int CurrentWidth => CurrentConcurrency;
+
+  /// <summary>
+  /// Seam entry point: folds an observation in and applies the policy.
+  /// </summary>
+  /// <remarks>
+  /// This governor derives its own pressure from session accounting rather than from the caller,
+  /// so the signal's queue depth is advisory here. What it does honor is
+  /// <see cref="Whizbang.Core.Execution.GovernorSignal.Contended"/>: an explicit report of
+  /// pushback decays immediately, without waiting out the evaluation window, because the window
+  /// exists to avoid reacting to noise — and a caller reporting contention is not noise.
+  /// </remarks>
+  /// <param name="signal">The observed cycle.</param>
+  public void Observe(Whizbang.Core.Execution.GovernorSignal signal) {
+    if (signal.Contended) {
+      lock (_sync) {
+        _currentConcurrency = Math.Max(Floor, _currentConcurrency / SCALE_FACTOR);
+        _restartWindows();
+      }
+      return;
+    }
+    _ = Evaluate();
+  }
+
   /// <summary>Sessions currently held open (initialized and not yet closed).</summary>
   public int ActiveSessions {
     get {
@@ -114,10 +149,21 @@ public sealed class AsbAcceptorGovernor {
   public bool Evaluate() {
     var now = _timeProvider.GetUtcNow();
     lock (_sync) {
+      var full = _activeSessions >= _currentConcurrency;
       var pressure = _activeSessions >= _currentConcurrency * GROWTH_PRESSURE_RATIO;
       var quiet = _activeSessions < _currentConcurrency * DECAY_IDLE_RATIO;
       _pressureSince = pressure ? _pressureSince ?? now : null;
       _quietSince = quiet ? _quietSince ?? now : null;
+
+      // A FULL pool is not a spike (issue #710): the next session is already queueing behind the
+      // acceptor cap, and every queued session is a stream whose first message waits until a slot
+      // frees or the pool grows. The window filters the near-saturation band below; it must not
+      // gate a pool with no free slot at all, so growth is immediate here.
+      if (full && _currentConcurrency < Ceiling) {
+        _currentConcurrency = Math.Min(_currentConcurrency * SCALE_FACTOR, Ceiling);
+        _restartWindows();
+        return true;
+      }
 
       if (_pressureSince is { } pressureStart
           && now - pressureStart >= _evaluationWindow

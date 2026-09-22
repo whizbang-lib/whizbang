@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -251,7 +252,7 @@ public class DispatcherInvokeWithReceiptTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceipt_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceipt_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrderCommand(Guid.NewGuid(), "Test Order");
@@ -323,7 +324,7 @@ public class DispatcherInvokeWithReceiptTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddSingleton<IReceptor<CreateOrderCommand, CreateOrderResponse>, CreateOrderReceptor>();
     services.AddSingleton<IReceptor<ProcessPaymentCommand, ProcessPaymentResponse>, ProcessPaymentReceptor>();
@@ -341,7 +342,7 @@ public class DispatcherInvokeWithReceiptTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddSingleton<IReceptor<CreateOrderCommand, CreateOrderResponse>, CreateOrderReceptor>();
     services.AddSingleton<IReceptor<ProcessPaymentCommand, ProcessPaymentResponse>, ProcessPaymentReceptor>();

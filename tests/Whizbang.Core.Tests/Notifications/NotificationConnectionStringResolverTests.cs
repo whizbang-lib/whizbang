@@ -104,14 +104,14 @@ public class NotificationConnectionStringResolverTests {
   // Last-resort fallback so .WithDriver.Postgres<TDbContext>() consumers don't need to
   // duplicate connection-string config under Whizbang:Database just to enable notifications.
 
-  private sealed class _FixedFallback(string? value) : INotificationConnectionStringFallback {
+  private sealed class FixedFallback(string? value) : INotificationConnectionStringFallback {
     public string? GetConnectionString() => value;
   }
 
   [Test]
   public async Task Resolve_NoExplicitConfig_WithFallback_UsesFallbackAsync() {
     var opts = new WhizbangNotificationOptions();
-    var fallback = new _FixedFallback("Host=dbcontext.local;Database=gateway");
+    var fallback = new FixedFallback("Host=dbcontext.local;Database=gateway");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 
@@ -122,7 +122,7 @@ public class NotificationConnectionStringResolverTests {
   [Test]
   public async Task Resolve_NoExplicitConfig_FallbackReturnsNull_ReturnsNoneAsync() {
     var opts = new WhizbangNotificationOptions();
-    var fallback = new _FixedFallback(null);
+    var fallback = new FixedFallback(null);
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 
@@ -133,7 +133,7 @@ public class NotificationConnectionStringResolverTests {
   [Test]
   public async Task Resolve_NoExplicitConfig_FallbackReturnsEmpty_ReturnsNoneAsync() {
     var opts = new WhizbangNotificationOptions();
-    var fallback = new _FixedFallback("   ");
+    var fallback = new FixedFallback("   ");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 
@@ -147,7 +147,7 @@ public class NotificationConnectionStringResolverTests {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = "Host=explicit"
     };
-    var fallback = new _FixedFallback("Host=should-not-be-used");
+    var fallback = new FixedFallback("Host=should-not-be-used");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 
@@ -159,7 +159,7 @@ public class NotificationConnectionStringResolverTests {
   public async Task Resolve_DirectKeyResolves_FallbackIgnoredAsync() {
     var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gateway-db" };
     var config = _config(new() { ["ConnectionStrings:gateway-db-direct"] = "Host=direct.pg" });
-    var fallback = new _FixedFallback("Host=should-not-be-used");
+    var fallback = new FixedFallback("Host=should-not-be-used");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config, fallback);
 
@@ -171,7 +171,7 @@ public class NotificationConnectionStringResolverTests {
   public async Task Resolve_PooledKeyResolves_FallbackIgnoredAsync() {
     var opts = new WhizbangNotificationOptions { ConnectionStringKey = "gateway-db" };
     var config = _config(new() { ["ConnectionStrings:gateway-db"] = "Host=pooled" });
-    var fallback = new _FixedFallback("Host=should-not-be-used");
+    var fallback = new FixedFallback("Host=should-not-be-used");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, config, fallback);
 
@@ -183,7 +183,7 @@ public class NotificationConnectionStringResolverTests {
   public async Task Resolve_KeySetButNoMatchingConfig_FallbackConsultedAsync() {
     // ConnectionStringKey set but neither -direct nor pooled is present → still try fallback.
     var opts = new WhizbangNotificationOptions { ConnectionStringKey = "missing" };
-    var fallback = new _FixedFallback("Host=dbcontext.local");
+    var fallback = new FixedFallback("Host=dbcontext.local");
 
     var result = NotificationConnectionStringResolver.Resolve(opts, _config([]), fallback);
 

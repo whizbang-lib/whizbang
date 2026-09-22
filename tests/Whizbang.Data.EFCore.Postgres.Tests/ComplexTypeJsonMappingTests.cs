@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class ComplexTypeJsonMappingTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -51,6 +52,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
   /// <summary>
   /// Test model with both physical and JSONB-only fields.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class ProductModel {
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }
@@ -163,7 +165,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }
@@ -328,7 +330,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
         .ToListAsync(cancellationToken);
 
     // Assert - verify Metadata structure preserved
-    var first = results.First();
+    var first = results[0];
     await Assert.That(first.Metadata).IsNotNull();
     await Assert.That(first.Metadata.EventType).IsEqualTo("ProductCreated");
     await Assert.That(first.Metadata.EventId).IsNotNull();

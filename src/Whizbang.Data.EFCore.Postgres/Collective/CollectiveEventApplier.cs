@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -41,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// <typeparam name="TModel">The perspective model the collective event mutates.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the established Whizbang.Data.EFCore.Postgres pattern for generic-over-TModel static helpers (e.g. EFCoreCollectiveAdapter<TModel> from Slice 6).")]
-public sealed class CollectiveEventApplier<TModel> where TModel : class {
+public static class CollectiveEventApplier<TModel> where TModel : class {
   /// <summary>
   /// Apply a collective event against the EF-backed perspective.
   /// </summary>
@@ -78,12 +79,12 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     // model we're generic over.
     if (entry.EventType != evt.GetType()) {
       throw new ArgumentException(
-        $"Entry's EventType {entry.EventType.FullName} does not match the supplied event type {evt.GetType().FullName}. Registry lookup or dispatch routing is wrong.",
+        $"Entry's EventType {TypeNameFormatter.DisplayName(entry.EventType)} does not match the supplied event type {TypeNameFormatter.DisplayName(evt.GetType())}. Registry lookup or dispatch routing is wrong.",
         nameof(entry));
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {entry.ModelType.FullName} does not match TModel {typeof(TModel).FullName}. The dispatcher should fan out to CollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to CollectiveEventApplier<{entry.ModelType.Name}> instead.",
         nameof(entry));
     }
 
@@ -106,7 +107,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     var query = new EFCoreCollectiveQuery(dbContext);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
@@ -114,7 +115,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
-    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where —
     // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
     // (ReplaceWhere) the handler cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
@@ -123,7 +124,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     // A stable identity for the scope (includes the tenant), so the per-(table,scope) advisory lock serializes
     // same-scope applies while letting disjoint scopes run concurrently. The record ToString() is
     // compiler-generated (AOT-safe, no reflection) and carries the scope's members (e.g. TenantId).
-    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope;
 
     // §6: fold this handler's per-apply knob overrides onto the global default (0 = inherit). SerializeApplies
     // stays global — exclusive serialization is not per-handler optional (D4 safety).

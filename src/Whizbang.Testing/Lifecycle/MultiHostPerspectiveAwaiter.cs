@@ -101,7 +101,9 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
 
     public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
       var context = _asyncLocalContext.Value;
-      var perspectiveKey = context?.PerspectiveType?.FullName ?? $"unknown-{Guid.NewGuid()}";
+      var perspectiveKey = context?.PerspectiveType is { } perspectiveType && TypeNameFormatter.TryFormatClrTypeName(perspectiveType, out var clrTypeName)
+        ? clrTypeName
+        : $"unknown-{Guid.NewGuid()}";
 
       // Track unique perspectives (deduplicate by perspective type)
       if (_completedPerspectives.TryAdd(perspectiveKey, 0) && _completedPerspectives.Count >= Expected) {

@@ -48,8 +48,10 @@ public class ReceptorInvocationTrackingTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -81,9 +83,7 @@ public class ReceptorInvocationTrackingTests {
     });
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
-    services.Configure<WhizbangOptions>(o => {
-      configureGuardrails?.Invoke(o.Guardrails);
-    });
+    services.Configure<WhizbangOptions>(o => configureGuardrails?.Invoke(o.Guardrails));
     var provider = services.BuildServiceProvider();
     var collector = provider.GetFakeLogCollector();
 
@@ -108,7 +108,7 @@ public class ReceptorInvocationTrackingTests {
 
       await Assert.That(fires).Count().IsEqualTo(1);
       await Assert.That(envelope.ReceptorInvocations).IsNotNull();
-      await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(1);
+      await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(1);
       await Assert.That(envelope.ReceptorInvocations![0].ReceptorId).IsEqualTo("MyReceptor");
       await Assert.That(envelope.ReceptorInvocations[0].Stage).IsEqualTo(LifecycleStage.PostInboxInline);
     }
@@ -230,7 +230,7 @@ public class ReceptorInvocationTrackingTests {
       // but the new invocation is appended to the list so the data is available for
       // observability / later rollout of enforcement.
       await Assert.That(fires).Count().IsEqualTo(1);
-      await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(2);
+      await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(2);
     }
   }
 

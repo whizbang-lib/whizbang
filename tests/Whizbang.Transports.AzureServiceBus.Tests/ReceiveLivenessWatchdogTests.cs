@@ -5,13 +5,16 @@ using TUnit.Core;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Unit tests for <see cref="ReceiveLivenessWatchdog"/> — the consume-liveness guard that
 /// detects a receiver that has gone silent while its subscription still has a backlog
 /// (a dropped session receiver link presents exactly this way: no errors, no receives,
 /// healthy process) and triggers subscription recovery.
-///
+/// </para>
+/// <para>
 /// All time flows through FakeTimeProvider and the backlog probe / recovery callbacks are
 /// counting fakes, so every test is deterministic — no real clocks, no broker.
+/// </para>
 /// </summary>
 [Timeout(10_000)]
 public class ReceiveLivenessWatchdogTests {
@@ -168,6 +171,8 @@ public class ReceiveLivenessWatchdogTests {
   [Test]
   public async Task Start_TimerTick_RunsSweepAndRecoversStalledSubscriptionAsync() {
     var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var probeCalls = 0;
+    var recoveryCalls = 0;
     var time = new FakeTimeProvider();
     var watchdog = new ReceiveLivenessWatchdog(
       new AzureServiceBusOptions {
@@ -175,17 +180,35 @@ public class ReceiveLivenessWatchdogTests {
         ReceiveLivenessSilenceThreshold = TimeSpan.FromSeconds(30),
         ReceiveLivenessProbeInterval = _interval
       },
-      (_, _, _) => Task.FromResult(5L),
-      _ => { recovered.TrySetResult(); return Task.CompletedTask; },
+      (_, _, _) => { Interlocked.Increment(ref probeCalls); return Task.FromResult(5L); },
+      _ => {
+        Interlocked.Increment(ref recoveryCalls);
+        recovered.TrySetResult();
+        return Task.CompletedTask;
+      },
       time,
       NullLogger.Instance);
     watchdog.Track("topic-a", "sub-a");
 
     watchdog.Start();
+
+    // Start only parks the loop on the timer. Nothing may sweep before a tick — a watchdog that
+    // probed on startup would query the admin plane once per process restart.
+    await Assert.That(probeCalls).IsEqualTo(0)
+      .Because("the sweep is driven by the probe interval, not by Start.");
+
     time.Advance(_interval);
 
+    // Completing this await is the sweep: recovery only fires from inside ProbeAsync.
     await recovered.Task;
     await watchdog.DisposeAsync();
+
+    await Assert.That(probeCalls).IsEqualTo(1)
+      .Because("one tick is one sweep over the one tracked subscription — the loop must not fan a "
+             + "single interval out into repeated admin-plane queries.");
+    await Assert.That(recoveryCalls).IsEqualTo(1)
+      .Because("the tick found a subscription silent past its threshold with a backlog, which is the "
+             + "silent-receiver-stall signature the periodic loop exists to catch.");
   }
 
   [Test]

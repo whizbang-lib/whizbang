@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -301,11 +302,11 @@ public class DispatcherErrorHandlingTests {
   // ========================================
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new SimpleCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -448,7 +449,7 @@ public class DispatcherErrorHandlingTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();

@@ -78,7 +78,7 @@ internal static class CollectiveSettersRewriter {
       where TModel : class {
     ArgumentNullException.ThrowIfNull(source);
 
-    var visitor = new _propertyCollector(typeof(TModel));
+    var visitor = new PropertyCollector(typeof(TModel));
     visitor.Visit(source.Body);
 
     if (visitor.Assignments.Count == 0) {
@@ -116,16 +116,16 @@ internal static class CollectiveSettersRewriter {
     return result;
   }
 
-  private sealed record _propertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison);
+  private sealed record PropertyAssignment(PropertyInfo Property, object? Value, CollectiveComputedComparison? Comparison);
 
   /// <summary>
   /// Walks the spec body and accumulates one
-  /// <see cref="_propertyAssignment"/> per <c>SetProperty</c> call.
+  /// <see cref="PropertyAssignment"/> per <c>SetProperty</c> call.
   /// Refuses computed expressions and nested paths — those use the
   /// raw-SQL escape hatch.
   /// </summary>
-  private sealed class _propertyCollector(Type modelType) : ExpressionVisitor {
-    public List<_propertyAssignment> Assignments { get; } = new();
+  private sealed class PropertyCollector(Type modelType) : ExpressionVisitor {
+    public List<PropertyAssignment> Assignments { get; } = [];
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
       if (node.Method.Name != "SetProperty" ||
@@ -149,11 +149,11 @@ internal static class CollectiveSettersRewriter {
       var valueExpr = node.Arguments[1];
       if (_isLambda(valueExpr)) {
         var (comparison, rhs) = _parseComputedComparison(valueExpr, property.Name);
-        Assignments.Add(new _propertyAssignment(property, rhs, comparison));
+        Assignments.Add(new PropertyAssignment(property, rhs, comparison));
         return node;
       }
 
-      Assignments.Add(new _propertyAssignment(property, _evaluateValue(valueExpr), Comparison: null));
+      Assignments.Add(new PropertyAssignment(property, _evaluateValue(valueExpr), Comparison: null));
       return node;
     }
 
@@ -165,7 +165,7 @@ internal static class CollectiveSettersRewriter {
         return (new CollectiveComputedComparison(comparedProperty, op), _evaluateValue(_stripConvert(bin.Right)));
       }
       throw new NotSupportedException(
-        $"CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
+        "CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +
         $"(j => j.{targetProperty}, j => j.SomeProp == value). Arithmetic, string, and other computed shapes require [CollectiveApplyFor(SpecKind = CollectiveSpecKind.RawSql)].");
     }
 

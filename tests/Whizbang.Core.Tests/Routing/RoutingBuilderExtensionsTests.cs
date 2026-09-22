@@ -161,4 +161,47 @@ public class RoutingBuilderExtensionsTests {
   }
 
   #endregion
+
+  #region Owned + subscribed namespace guard (issue #636)
+
+  /// <summary>
+  /// A namespace that is both owned and manually subscribed is a contradiction the framework cannot
+  /// honor: event discovery strips owned namespaces from the subscription set on purpose, so the
+  /// declared subscription was silently never created and a broker with no subscriber discards the
+  /// messages. The options factory refuses at first resolution, the same seam
+  /// <c>ThrowIfRetirementIncomplete</c> uses, so the contradiction fails startup loudly.
+  /// </summary>
+  [Test]
+  public async Task WithRouting_OwnedAndSubscribedNamespace_FailsAtFirstResolutionAsync() {
+    var services = new ServiceCollection();
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing
+      .OwnDomains("app.contracts.identity")
+      .SubscribeTo("app.contracts.events")
+      .SubscribeTo("app.contracts.identity"));
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(() => provider.GetRequiredService<IOptions<RoutingOptions>>())
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("app.contracts.identity");
+  }
+
+  [Test]
+  public async Task WithRouting_OwnedAndAbsorbedNamespace_ResolvesAsync() {
+    // Absorbing is the declared way to say "create the binding even though I own it" — it is the
+    // remedy the refusal points at, so it must not itself be refused.
+    var services = new ServiceCollection();
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing
+      .OwnDomains("app.contracts.identity")
+      .SubscribeTo("app.contracts.identity")
+      .AbsorbNamespaces("app.contracts.identity"));
+    await using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
+
+    await Assert.That(options.AbsorbedNamespaces).Contains("app.contracts.identity");
+  }
+
+  #endregion
 }

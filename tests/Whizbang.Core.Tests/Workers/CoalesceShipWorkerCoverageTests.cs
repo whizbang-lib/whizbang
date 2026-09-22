@@ -1,0 +1,281 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
+using Whizbang.Core.Tags;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// Coverage for <see cref="CoalesceShipWorker"/> paths the primary suite
+/// (<see cref="CoalesceShipWorkerTests"/>) doesn't reach: the schema-gate wait and the startup
+/// recovery step being canceled before the loop ever ticks, the release-backstop's own logging
+/// (both on startup recovery and on the per-tick backstop), and a cancellation arriving mid-fold
+/// propagating instead of being treated as one group's isolated failure.
+/// </summary>
+public class CoalesceShipWorkerCoverageTests {
+  private static readonly DateTimeOffset _testNow = new(2026, 8, 18, 12, 0, 0, TimeSpan.Zero);
+
+  /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
+  private sealed class MessageLogger : ILogger<CoalesceShipWorker> {
+    private readonly List<string> _messages = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_messages) { _messages.Add(formatter(state, exception)); }
+    }
+    public bool Saw(string fragment) {
+      lock (_messages) { return _messages.Any(m => m.Contains(fragment, StringComparison.Ordinal)); }
+    }
+  }
+
+  /// <summary>A coordinator whose <c>ReleaseMaturedCoalesceAsync</c> throws instead of releasing.</summary>
+  private sealed class CanceledOnReleaseCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    public int ReleaseCalls { get; private set; }
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      ReleaseCalls++;
+      throw new OperationCanceledException("shutdown during startup recovery");
+    }
+  }
+
+  /// <summary>
+  /// Counts every coordinator call the shipper can make once it is past the barrier, so a
+  /// gate-cancel test can assert that none of them happened.
+  /// </summary>
+  private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      return Task.FromResult<IReadOnlyList<CoalesceGroupStats>>([]);
+    }
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      return Task.FromResult(0);
+    }
+  }
+
+  /// <summary>A coordinator whose release always reports rows released — for the LogReleasedMatured branch.</summary>
+  private sealed class ReleasingCoordinator(int releasedCount) : NoOpWorkCoordinator, IWorkCoordinator {
+    public IReadOnlyList<CoalesceGroupStats> Stats { get; init; } = [];
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Stats);
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) =>
+      Task.FromResult(releasedCount);
+  }
+
+  /// <summary>
+  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
+  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
+  /// </summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>A coordinator whose fetch (the first call inside a fold) always cancels.</summary>
+  private sealed class CancelingFoldCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    public List<string> ReleasedGroups { get; } = [];
+    public IReadOnlyList<CoalesceGroupStats> Stats { get; init; } = [];
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(Stats);
+
+    public Task<IReadOnlyList<OutboxMessage>> FetchPendingCoalesceAsync(string group, int limit, CancellationToken cancellationToken = default) =>
+      throw new OperationCanceledException("shutdown mid-fold");
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      ReleasedGroups.Add(group);
+      return Task.FromResult(0);
+    }
+  }
+
+  // ── ExecuteAsync lifecycle: both quiet exits must return, never fault ───
+
+  /// <summary>
+  /// If this regressed to running startup recovery before the schema gate opened (or to
+  /// faulting instead of returning), the shipper could fire SQL against tables migrations
+  /// haven't created yet, or a routine shutdown-before-ready would read as a crash.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new CountingCoordinator();
+    // Gate never marked ready — a host stopped mid-migration.
+    var gate = new BlockingGate();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, gate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // The gate reports when the body reaches it. On .NET 10 the base class dispatches ExecuteAsync
+    // through Task.Run, so StartAsync returning proves only that the body was scheduled — and a
+    // work item dequeued after the stopping token is canceled never invokes the delegate at all,
+    // settling Canceled, which satisfies both assertions below without the worker ever running.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    var executeTask = worker.ExecuteTask;
+    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("stopping while still waiting on the schema gate must let ExecuteAsync return promptly");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a host stopped before the schema exists must shut down cleanly, not report a crash");
+    await Assert.That(coordinator.Calls).IsEqualTo(0)
+      .Because("startup recovery and the first tick both sit behind the barrier — either one "
+             + "reached here would query coalesce tables the migration may not have created");
+  }
+
+  /// <summary>
+  /// If this regressed to letting a mid-recovery cancellation escape uncaught (or retry instead
+  /// of stopping), a shutdown in progress would either crash-log on every deploy or keep hammering
+  /// a coordinator that is already being torn down.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_StartupRecoveryCanceled_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new CanceledOnReleaseCoordinator();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("a cancellation during startup recovery must let the loop exit promptly rather than hang");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a canceled recovery ending ExecuteAsync as a fault would read as a crash on an ordinary shutdown");
+    await Assert.That(coordinator.ReleaseCalls).IsEqualTo(1)
+      .Because("the cancellation must stop recovery immediately rather than retrying past it");
+  }
+
+  // ── Release-backstop logging: both call sites ───────────────────────────
+
+  /// <summary>
+  /// If this regressed to staying silent on a non-zero release, an operator would have no
+  /// visibility into rows quietly degrading to individual shipping on every restart.
+  /// </summary>
+  [Test]
+  public async Task RunStartupRecoveryAsync_ReleasedRows_LogsHowManyAndForWhichGroupAsync() {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new ReleasingCoordinator(releasedCount: 4);
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, logger: logger);
+
+    await worker.RunStartupRecoveryAsync(CancellationToken.None);
+
+    await Assert.That(logger.Saw("Released 4")).IsTrue()
+      .Because("a silent release would leave an operator with no evidence that backlog just "
+             + "degraded to individual shipping on this restart");
+    await Assert.That(logger.Saw("record-digest")).IsTrue()
+      .Because("the log line must name WHICH group degraded, not just that something did");
+  }
+
+  /// <summary>
+  /// The per-tick backstop is the LAST exit for rows a fold could not claim. If this regressed
+  /// to staying silent, an operator would have no signal that rows are steadily degrading to
+  /// individual shipping tick after tick.
+  /// </summary>
+  [Test]
+  public async Task RunOnceAsync_ReleaseBackstopReleasesRows_LogsHowManyAndForWhichGroupAsync() {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new ReleasingCoordinator(releasedCount: 2) {
+      // PendingCount 0 keeps the fold pass a no-op (binding lookup short-circuits on
+      // `PendingCount <= 0`) so only the backstop pass below is under test.
+      Stats = [_stats("record-digest", count: 0, oldestAge: 500, newestAge: 500)],
+    };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, logger: logger);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Saw("Released 2")).IsTrue()
+      .Because("the per-tick release backstop is the last exit for rows a fold could not claim — "
+             + "silence here removes the only signal that rows are degrading to individual shipping");
+  }
+
+  // ── Cancellation mid-fold must propagate, not isolate-and-continue ─────
+
+  /// <summary>
+  /// If this regressed to treating a mid-fold cancellation like an ordinary per-group failure
+  /// (log and move on), a shutdown in progress would keep working through the rest of the tick
+  /// — including running the release backstop — instead of winding down immediately.
+  /// </summary>
+  [Test]
+  public async Task RunOnceAsync_FoldCanceledMidGroup_PropagatesRatherThanTreatingItAsAGroupFailureAsync() {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new CancelingFoldCoordinator {
+      Stats = [_stats("record-digest", count: 3, oldestAge: 40, newestAge: 20)],
+    };
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+
+    await Assert.ThrowsAsync<OperationCanceledException>(async () => await worker.RunOnceAsync(CancellationToken.None));
+
+    await Assert.That(coordinator.ReleasedGroups).IsEmpty()
+      .Because("a cancellation mid-fold must abort the whole tick immediately — unlike an ordinary "
+             + "fold failure (isolated per group, release backstop still runs), a shutdown in "
+             + "progress must not keep doing more work on its way out");
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+
+  private static CoalesceGroupResolver _oneGroupResolver(FakeTimeProvider time, string group = "record-digest") {
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce(group, c => c.SlideSeconds = 15);
+    return new CoalesceGroupResolver(tagOptions, time, () => []);
+  }
+
+  private static CoalesceGroupStats _stats(string group, long count, int oldestAge, int newestAge) => new() {
+    Group = group,
+    PendingCount = count,
+    OldestCreatedAt = _testNow.AddSeconds(-oldestAge),
+    NewestCreatedAt = _testNow.AddSeconds(-newestAge),
+  };
+
+  private static CoalesceShipWorker _buildWorker(
+      IWorkCoordinator coordinator,
+      CoalesceGroupResolver? resolver,
+      FakeTimeProvider time,
+      ISchemaReadyGate? gate = null,
+      ILogger<CoalesceShipWorker>? logger = null) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+    services.AddSingleton(new WorkCoordinatorOptions());
+    var sp = services.BuildServiceProvider();
+
+    return new CoalesceShipWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate ?? SchemaReadyGate.AlreadyReady(),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: logger ?? NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
+      timeProvider: time);
+  }
+}

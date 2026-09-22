@@ -225,7 +225,6 @@ public class PopulateFromContextAttributeTests {
 
   // Derived record inherits the attribute
   private sealed record DerivedEventWithContext : BaseEventWithContext {
-    public string? AdditionalData { get; init; }
   }
 
   // Abstract base class pattern
@@ -235,7 +234,6 @@ public class PopulateFromContextAttributeTests {
   }
 
   private sealed record ConcreteEventWithContext : AbstractEventWithContext {
-    public string? Payload { get; init; }
   }
 
   // Record with both context kinds

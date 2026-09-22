@@ -23,11 +23,11 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <para>
 /// <strong>Per-awaiter tracking:</strong> Waiter registrations are keyed by awaiter ID,
 /// enabling precise cleanup via <see cref="UnregisterAwaiter"/> when an awaiter is
-/// cancelled — without affecting other awaiters waiting on the same events.
+/// canceled — without affecting other awaiters waiting on the same events.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 public sealed class SyncEventTracker : ISyncEventTracker {
   // Key is (eventId, perspectiveName) to allow the same event to be tracked for multiple perspectives
   private readonly ConcurrentDictionary<(Guid EventId, string PerspectiveName), TrackedSyncEvent> _trackedEvents = new();

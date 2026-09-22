@@ -169,6 +169,10 @@ public class LifecycleDeserializationTests {
 
   // Helper receptor for counting multiple events
   [FireAt(LifecycleStage.PostDistributeInline)]
+  // Constructed by hand so it can close over per-test state; the container has no way to supply
+  // that callback. Declaring it keeps the receptor out of DI, where one un-constructible
+  // descriptor would abort the whole service provider.
+  [SuppressReceptorRegistration]
   public sealed class CustomDistributeReceptor(Action<ProductCreatedEvent> onReceived) : IReceptor<ProductCreatedEvent> {
     private readonly Action<ProductCreatedEvent> _onReceived = onReceived;
 

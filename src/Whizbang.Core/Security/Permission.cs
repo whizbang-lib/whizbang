@@ -7,7 +7,7 @@ namespace Whizbang.Core.Security;
 /// Supports wildcard matching for flexible permission hierarchies.
 /// </summary>
 /// <docs>fundamentals/security/security#permissions</docs>
-/// <tests>Whizbang.Core.Tests/Security/PermissionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/PermissionTests.cs</tests>
 /// <example>
 /// // Create specific permissions
 /// var readOrders = Permission.Read("orders");      // "orders:read"

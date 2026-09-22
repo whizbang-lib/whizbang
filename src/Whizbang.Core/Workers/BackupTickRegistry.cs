@@ -5,7 +5,7 @@ namespace Whizbang.Core.Workers;
 /// Thread-safe; registration order is preserved.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
-/// <tests>Whizbang.Core.Tests/Workers/BackupTickRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickRegistryTests.cs</tests>
 public sealed class BackupTickRegistry : IBackupTickRegistry {
   private readonly Lock _lock = new();
   private readonly List<BackupTickRegistration> _registrations = [];

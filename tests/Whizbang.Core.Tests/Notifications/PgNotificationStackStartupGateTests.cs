@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
@@ -66,12 +67,12 @@ public class PgNotificationStackStartupGateTests {
   [Test]
   public async Task DurableSignalTail_DoesNotInitializeItsCursorUntilTheGateOpensAsync() {
     var gate = new SchemaReadyGate();
-    var config = new _countingConfiguration();
+    var config = new CountingConfiguration();
     var worker = new PgDurableSignalTailWorker(
       Options.Create(_optionsWithKey()),
       config,
       new ServiceInstanceProvider(_plainConfig()),
-      new _noOpSink(),
+      new NoOpSink(),
       NullLogger<PgDurableSignalTailWorker>.Instance,
       schemaReadyGate: gate);
 
@@ -92,11 +93,11 @@ public class PgNotificationStackStartupGateTests {
   [Test]
   public async Task InstanceLifecycleMonitor_DoesNotScanForDeathsUntilTheGateOpensAsync() {
     var gate = new SchemaReadyGate();
-    var config = new _countingConfiguration();
+    var config = new CountingConfiguration();
     var worker = new PgInstanceLifecycleMonitor(
       Options.Create(_optionsWithKey()),
       config,
-      new _noOpSignalBus(),
+      new NoOpSignalBus(),
       NullLogger<PgInstanceLifecycleMonitor>.Instance,
       schemaReadyGate: gate);
 
@@ -117,7 +118,7 @@ public class PgNotificationStackStartupGateTests {
   [Test]
   public async Task DurableSignalRetention_DoesNotSweepUntilTheGateOpensAsync() {
     var gate = new SchemaReadyGate();
-    var config = new _countingConfiguration();
+    var config = new CountingConfiguration();
     var worker = new PgDurableSignalRetentionWorker(
       Options.Create(_optionsWithKey()),
       config,
@@ -143,12 +144,12 @@ public class PgNotificationStackStartupGateTests {
   [Test]
   public async Task CommitOrderStamper_DoesNotEnterElectionUntilTheGateOpensAsync() {
     var gate = new SchemaReadyGate();
-    var config = new _countingConfiguration();
+    var config = new CountingConfiguration();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(_optionsWithKey()),
       Options.Create(new CommitOrderStamperOptions()),
       config,
-      new _fakeSharedConnection(),
+      new FakeSharedConnection(),
       NullLogger<PgCommitOrderStamperWorker>.Instance,
       schemaReadyGate: gate);
 
@@ -168,7 +169,166 @@ public class PgNotificationStackStartupGateTests {
 
   /// <summary>Counts configuration reads — the gated workers' first act is resolving their
   /// connection string, which consults configuration, so zero reads means none began.</summary>
-  private sealed class _countingConfiguration : IConfiguration {
+  [Test]
+  [Timeout(60000)]
+  public async Task InstanceLifecycleMonitor_AnUnreachableDatabase_DoesNotStopDeathDetectionAsync(
+      CancellationToken ct) {
+    // This loop is what announces a dead pod, and the announcement is what triggers takeover of
+    // the streams that pod owned. If a failed tick ended the loop, no death would be announced
+    // again for the life of the process and those streams would stay stranded -- with nothing in
+    // the logs after the first warning to say the monitor had stopped watching.
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var log = new EventCountingLogger<PgInstanceLifecycleMonitor>(TICK_FAILED_EVENT_ID, target: 2);
+    var worker = new PgInstanceLifecycleMonitor(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = UNREACHABLE_DATABASE }),
+      _plainConfig(),
+      new NoOpSignalBus(),
+      log,
+      schemaReadyGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // The SECOND failure is the assertion: it can only happen if the loop survived the first and
+    // came back round after its interval. The first proves only that a tick ran.
+    await log.Reached.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the monitor keeps scanning through a database outage and still stops cleanly "
+             + "when asked");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task InstanceLifecycleMonitor_ShutdownBeforeTheGateOpens_ExitsCleanlyAsync(
+      CancellationToken ct) {
+    // A pod stopped while the migration is still running never gets to scan. That exit has to be
+    // an ordinary shutdown: a fault here would report a death-detection crash on every rollout
+    // that happens to be slow.
+    var gate = new BlockingGate();
+    var worker = new PgInstanceLifecycleMonitor(
+      Options.Create(_optionsWithKey()),
+      _plainConfig(),
+      new NoOpSignalBus(),
+      NullLogger<PgInstanceLifecycleMonitor>.Instance,
+      schemaReadyGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Observed at the gate first, or "exited cleanly" is answered by a worker that never began.
+    await gate.WaitEntered.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("stopping while gated is a shutdown, not a monitor failure");
+  }
+
+  /// <summary>A refused port: the connection plan is available, and opening it always fails.</summary>
+  private const string UNREACHABLE_DATABASE =
+    "Host=127.0.0.1;Port=1;Database=none;Username=u;Password=p;Timeout=1;Command Timeout=1";
+
+  /// <summary>A schema gate that never opens, and reports when the worker began waiting on it.</summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitEntered => _waitEntered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task DurableSignalRetention_AnUnreachableDatabase_DoesNotStopTheSweepAsync(
+      CancellationToken ct) {
+    // The sweep is the only thing bounding wh_signals. Every durable signal ever published stays
+    // in that table until this loop deletes it, so a loop that ends on one failed sweep leaves the
+    // table growing without limit for the life of the process -- and the next sweep after a
+    // restart has that much more to delete.
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var log = new EventCountingLogger<PgDurableSignalRetentionWorker>(SWEEP_FAILED_EVENT_ID, target: 2);
+    var worker = new PgDurableSignalRetentionWorker(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = UNREACHABLE_DATABASE }),
+      _plainConfig(),
+      log,
+      schemaReadyGate: gate) {
+      SweepInterval = TimeSpan.FromMilliseconds(50),
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await log.Reached.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the sweep retries through an outage and still stops cleanly when asked");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DurableSignalRetention_ShutdownBeforeTheGateOpens_ExitsCleanlyAsync(
+      CancellationToken ct) {
+    // The gate deliberately comes before the interval delay, so a host stopped during a slow
+    // migration is still waiting here rather than sweeping. That exit must be an ordinary stop.
+    var gate = new BlockingGate();
+    var worker = new PgDurableSignalRetentionWorker(
+      Options.Create(_optionsWithKey()),
+      _plainConfig(),
+      NullLogger<PgDurableSignalRetentionWorker>.Instance,
+      schemaReadyGate: gate) {
+      SweepInterval = TimeSpan.FromMilliseconds(50),
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await gate.WaitEntered.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("stopping while gated is a shutdown, not a retention failure");
+  }
+
+  private const int TICK_FAILED_EVENT_ID = 1;
+  private const int SWEEP_FAILED_EVENT_ID = 1;
+
+  /// <summary>
+  /// Completes a task once a given log event has been seen <c>target</c> times.
+  /// </summary>
+  /// <remarks>
+  /// The second occurrence is what these tests wait on. The first only proves a pass ran; the
+  /// second cannot happen unless the loop survived that pass and came back round after its
+  /// interval, which is the whole claim.
+  /// </remarks>
+  private sealed class EventCountingLogger<T>(int expectedEventId, int target) : ILogger<T> {
+    private readonly TaskCompletionSource _reached =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _seen;
+
+    public Task Reached => _reached.Task;
+
+    IDisposable? ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == expectedEventId && Interlocked.Increment(ref _seen) >= target) {
+        _reached.TrySetResult();
+      }
+    }
+  }
+
+  private sealed class CountingConfiguration : IConfiguration {
     private readonly IConfiguration _inner = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     private int _reads;
     public int Reads => Volatile.Read(ref _reads);
@@ -187,25 +347,25 @@ public class PgNotificationStackStartupGateTests {
     }
   }
 
-  private sealed class _noOpSink : ISignalSink {
+  private sealed class NoOpSink : ISignalSink {
     public ValueTask ReceiveAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
       where TSignal : ISignal => ValueTask.CompletedTask;
   }
 
-  private sealed class _noOpSignalBus : ISignalBus {
-    private sealed class _subscription : ISignalSubscription {
+  private sealed class NoOpSignalBus : ISignalBus {
+    private sealed class Subscription : ISignalSubscription {
       public void Dispose() { }
     }
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
       where TSignal : ISignal => ValueTask.CompletedTask;
     public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler)
-      where TSignal : ISignal => new _subscription();
+      where TSignal : ISignal => new Subscription();
   }
 
-  private sealed class _fakeSharedConnection : ISharedNotifyConnection {
-    private sealed class _handle : IDisposable {
+  private sealed class FakeSharedConnection : ISharedNotifyConnection {
+    private sealed class Handle : IDisposable {
       public void Dispose() { }
     }
-    public IDisposable Subscribe(INotifySubscription subscription) => new _handle();
+    public IDisposable Subscribe(INotifySubscription subscription) => new Handle();
   }
 }

@@ -41,18 +41,25 @@ internal readonly record struct FlushContext(
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
 /// their queued operations through the new (post-Phase-H) work-pump path.
 /// </summary>
+/// <docs>messaging/work-coordinator#inbox-completions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
 /// <remarks>
+/// <para>
 /// The legacy implementation routed every flush through <c>process_work_batch</c>, which
 /// inserted messages, recorded completions/failures, and claimed work in one trip.
 /// The new path decomposes those responsibilities:
 ///  - <c>store_outbox_messages</c> / <c>store_inbox_messages</c> insert new rows
 ///  - <see cref="IOutboxCompletionChannel"/> + <see cref="IFailureChannel"/> handle completions/failures
+///  - <see cref="IInboxHandlerCommitChannel"/> (or <see cref="IWorkCoordinator.CommitHandlerResultAsync"/>
+///    without a scope) lands queued inbox completions as handler commits
 ///  - <c>claim_work</c> is owned by <c>ClaimWorker</c>; nothing is claimed during a flush
-///
+/// </para>
+/// <para>
 /// Lifecycle stages, tracing, and audit-message expansion that this helper used to drive
 /// during a flush are now driven by <c>OutboxPublishWorker</c> and <c>InboxDispatchWorker</c>
 /// when they pick up the inserted rows. The strategy flush path therefore only needs to
 /// persist the queued state and signal the publisher to wake.
+/// </para>
 /// </remarks>
 internal static class WorkCoordinatorFlushHelper {
   internal static async Task<WorkBatch> ExecuteFlushAsync(
@@ -143,6 +150,30 @@ internal static class WorkCoordinatorFlushHelper {
         }
       }
 
+      // Inbox completions a strategy queued (#734). Each becomes a handler commit with no emitted
+      // messages: on the handler commit channel inside a scope, or committed on the coordinator directly
+      // when the flush runs without one. They used to be counted in the empty-flush check above and then
+      // dropped here, so a consumer's handled rows stayed leased until they lapsed and were re-offered.
+      if (ctx.InboxCompletions.Length > 0) {
+        var commitChannel = scopedProvider?.GetService<IInboxHandlerCommitChannel>();
+        foreach (var c in ctx.InboxCompletions) {
+          var request = new HandlerCommitRequest(
+            HandlerId: c.MessageId,
+            InstanceId: ctx.InstanceProvider.InstanceId,
+            ServiceName: ctx.InstanceProvider.ServiceName,
+            HostName: ctx.InstanceProvider.HostName,
+            ProcessId: ctx.InstanceProvider.ProcessId,
+            PartitionCount: partitionCount,
+            InboxCompletion: new HandlerInboxCompletion(c.MessageId, (int)c.Status),
+            DebugMode: ctx.Options.DebugMode);
+          if (commitChannel is not null) {
+            await commitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
+          } else {
+            await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
+          }
+        }
+      }
+
       // Wake ClaimWorker immediately so freshly-stored outbox/inbox rows are claimed
       // on this tick instead of after the next 250 ms poll. ClaimWorker subscribes to
       // OnNewWorkAvailable / OnNewInboxWorkAvailable to translate this signal into
@@ -175,7 +206,7 @@ internal static class WorkCoordinatorFlushHelper {
       return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
     }
     var claimOptions = scopedProvider.GetService<IOptions<ClaimWorkerOptions>>()?.Value;
-    if (claimOptions is not null && claimOptions.PartitionCount > 0) {
+    if (claimOptions?.PartitionCount > 0) {
       return claimOptions.PartitionCount;
     }
     return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;

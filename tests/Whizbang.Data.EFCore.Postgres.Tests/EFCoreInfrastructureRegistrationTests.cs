@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Sample perspective model for testing infrastructure registration.
 /// </summary>
+[Category("Shard2")]
 public class SamplePerspectiveModel {
   public required Guid Id { get; init; }
   public required string Name { get; init; }
@@ -33,6 +34,7 @@ public class InfraTestDbContext(DbContextOptions<InfraTestDbContext> options) : 
 /// Verifies service registration for IPerspectiveStore and ILensQuery.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard4")]
 public class EFCoreInfrastructureRegistrationTests {
   /// <summary>
   /// Registers the scope dependencies required by EFCorePostgresLensQuery constructors.
@@ -346,11 +348,8 @@ public class EFCoreInfrastructureRegistrationTests {
 
     // Assert - use reflection to verify different DbContext instances
     // This is critical for HotChocolate parallel resolver safety
-    var contextField = typeof(EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)
-        .GetField("_context", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-    var context1 = contextField?.GetValue(query1);
-    var context2 = contextField?.GetValue(query2);
+    var context1 = ((EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)query1).Context;
+    var context2 = ((EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)query2).Context;
 
     await Assert.That(context1).IsNotNull();
     await Assert.That(context2).IsNotNull();

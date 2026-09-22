@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresApplyStackQuery.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class ApplyStackEndToEndTests : EFCoreTestBase {
 
   private async Task _seedStreamAsync(Guid streamId, params string[] eventTypes) {

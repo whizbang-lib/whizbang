@@ -80,12 +80,24 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
     // Remove Wolverine using and add Whizbang.Core
     var newUsings = new List<UsingDirectiveSyntax>();
-    var addedWhizbang = false;
+    var addedWhizbang = compilationUnit.Usings
+        .Any(u => u.Name?.ToString() == "Whizbang.Core");
 
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
-      if (name == "Wolverine") {
+      if (name == "Wolverine" && addedWhizbang) {
+        // Whizbang.Core is already imported -- another transformer in the pipeline
+        // rewrote its own Wolverine/Marten using first. Emitting a second one is
+        // legal C# but raises CS0105, which fails any migrated project building
+        // with warnings-as-errors. Drop this one instead.
+        changes.Add(new CodeChange(
+            usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.UsingRemoved,
+            "Removed 'using Wolverine' (Whizbang.Core already imported)",
+            "using Wolverine;",
+            ""));
+      } else if (name == "Wolverine") {
         // Replace with Whizbang.Core - preserve original formatting
         var whizbangUsing = usingDirective
             .WithName(SyntaxFactory.ParseName("Whizbang.Core")
@@ -107,8 +119,14 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
     // If no Whizbang using was added, add it at the start
     if (!addedWhizbang) {
+      // Unreachable today -- the guard above requires an exact `using Wolverine;`, which the
+      // loop always replaces -- but the name still needs its own leading space. SyntaxFactory
+      // emits `using` and the name as adjacent tokens, so a directive built from scratch
+      // without it renders as `usingWhizbang.Core;` and the migrated file does not compile. Kept
+      // correct so loosening that guard later cannot quietly start emitting broken source.
       var whizbangUsing = SyntaxFactory.UsingDirective(
-          SyntaxFactory.ParseName("Whizbang.Core"))
+          SyntaxFactory.ParseName("Whizbang.Core")
+              .WithLeadingTrivia(SyntaxFactory.Space))
           .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
       newUsings.Insert(0, whizbangUsing);
 
@@ -176,8 +194,15 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
                           parent is ParameterSyntax ||
                           parent is FieldDeclarationSyntax;
 
-        // Also check grandparent for type argument lists
-        if (!isTypeUsage && parent?.Parent is TypeArgumentListSyntax) {
+        // A type argument's parent IS the argument list -- in `List<IMessageBus>` the identifier
+        // hangs directly off the TypeArgumentListSyntax, and the grandparent is the GenericName.
+        // Checking only the grandparent therefore never matched the common case, and the type
+        // argument survived the migration while its using directive did not: the file came out
+        // referring to a Wolverine interface it no longer imports. The grandparent check stays for
+        // a qualified argument (`List<Wolverine.IMessageBus>`), where the parent is the
+        // QualifiedName instead.
+        if (!isTypeUsage &&
+            (parent is TypeArgumentListSyntax || parent?.Parent is TypeArgumentListSyntax)) {
           isTypeUsage = true;
         }
 
@@ -251,7 +276,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
       if (paramName.Contains("messageBus", StringComparison.OrdinalIgnoreCase) ||
           paramName.Contains("MessageBus", StringComparison.Ordinal)) {
-        var newName = _getDispatcherParamName();
+        var newName = DISPATCHER_PARAM_NAME;
         var newIdentifier = SyntaxFactory.Identifier(newName)
             .WithLeadingTrivia(node.Identifier.LeadingTrivia)
             .WithTrailingTrivia(node.Identifier.TrailingTrivia);
@@ -283,7 +308,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
                             parent is ArgumentSyntax;
 
         if (isMemberAccess) {
-          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : _getDispatcherParamName();
+          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : DISPATCHER_PARAM_NAME;
 
           return SyntaxFactory.IdentifierName(newName)
               .WithLeadingTrivia(node.GetLeadingTrivia())
@@ -303,11 +328,8 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
       return "dispatcher";
     }
 
-    private static string _getDispatcherParamName() {
-      // messageBus -> dispatcher
-      // bus -> dispatcher
-      return "dispatcher";
-    }
+    // messageBus -> dispatcher, bus -> dispatcher
+    private const string DISPATCHER_PARAM_NAME = "dispatcher";
   }
 
   /// <summary>

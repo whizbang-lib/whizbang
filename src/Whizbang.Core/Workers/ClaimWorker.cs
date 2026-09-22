@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,23 +20,53 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
 public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
-  private readonly INotifySignalingGate? _signalingGate;
+  private readonly INotifySignalingGate _signalingGate;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IWorkChannelWriter? _outboxChannel;
-  private readonly IInboxChannelWriter? _inboxChannel;
-  private readonly IPerspectiveChannelWriter? _perspectiveChannel;
-  private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel;
-  private readonly IOutboxDrainChannel? _outboxDrainChannel;
-  private readonly IInboxDrainChannel? _inboxDrainChannel;
+  private readonly IWorkChannelWriter _outboxChannel;
+  private readonly IInboxChannelWriter _inboxChannel;
+  private readonly IPerspectiveChannelWriter _perspectiveChannel;
+  private readonly IPerspectiveDrainChannel _perspectiveDrainChannel;
+  private readonly IOutboxDrainChannel _outboxDrainChannel;
+  private readonly IInboxDrainChannel _inboxDrainChannel;
+  private readonly Whizbang.Core.Priority.PriorityHookChain? _priorityHooks;
   private readonly ClaimWorkerOptions _options;
+  private readonly AdaptiveClaimWindow _claimWindow;
+  private readonly ClaimCycleReport _cycleReport = new(repeatStreakThreshold: 8);
+  private readonly ClaimChurnFeedback? _churnFeedback;
+  /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
+  private readonly TimeProvider _time;
+  private readonly AdaptiveOutstandingBudget _outstandingBudget;
+
+  /// <summary>
+  /// How stale a settledness reading may be and still admit the idle band at full width. Readings
+  /// arrive on the MAINTENANCE cadence (default ten minutes), not the claim's, so this has to
+  /// exceed that interval or a quiet service would spend most of its time unable to act on the
+  /// last reading it took.
+  /// </summary>
+  /// <remarks>
+  /// Acting on a reading up to this old is safe because the bands share one budget and are walked
+  /// most-urgent-first: if the service went busy since the reading, interactive and standard work
+  /// takes that budget before the idle band is reached, so the worst a stale "settled" can do is
+  /// let idle work use what is left over. A service whose maintenance interval is longer than this
+  /// simply never drains on quiet and falls back to the store's time bounds, which is a slower
+  /// band, not a stalled one.
+  /// </remarks>
+  private static readonly TimeSpan _idleSettledReadingMaxAge = TimeSpan.FromMinutes(12);
+
+  /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
+  private double _rowsPerStream = 1.0;
+  private int _lastOutstanding;
+  private long _lastDrainTicks;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
-  private readonly ISignalBus? _signalBus;
+  private readonly ISignalBus _signalBus;
   private readonly SignalBusLivenessState? _busLiveness;
+  private readonly WorkCompletionMeter? _completionMeter;
   private int _doorbellSinceLastClaim;
   private bool _lastClaimWasEmpty;
   private ISignalSubscription? _outboxSignalSub;
@@ -43,11 +74,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   private ISignalSubscription? _perspectiveSignalSub;
   private readonly SemaphoreSlim _wake = new(0, 1);
 
-  // The current repeat-claim spacing nap, when one is in progress. SignalNewWork cancels it so a
-  // genuinely NEW row never sits out the nap; completion-feedback wakes (RequestImmediatePoll)
-  // deliberately cannot reach it. Null outside the nap window.
+  // The current repeat-claim spacing nap, when one is in progress. SignalNewWork and a gate
+  // transition (either direction) cancel it so a genuinely NEW row, or work that accumulated
+  // during a NOTIFY outage, never sits out the nap; completion-feedback wakes
+  // (RequestImmediatePoll) deliberately cannot reach it. Null outside the nap window.
   private CancellationTokenSource? _napCts;
   private int _consecutiveEmptyPolls;
+
+  // #665 drain linger: TickCount64 of the last claim that found FRESH work. While within
+  // NotifyDrainLingerSeconds of it, empty polls run at LINGER_POLL_MS so a doorbell the SQL
+  // debounce suppressed is picked up inside the margin. Repeats do not stamp — re-offer
+  // damping must not hold the tight cadence open.
+  private long _lastFreshWorkTicks = long.MinValue / 2;
+
+  // Half the debounce margin (linger 8 s minus SQL window 7 s): the loop can serve a nap AND
+  // a wake wait between claims, so the per-wait value must be half the worst-case spacing.
+  private const int LINGER_POLL_MS = 500;
 
   /// <summary>
   /// Identity of the previous claim's work set. A claim that returns exactly what the last one
@@ -58,6 +100,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <summary>True when the most recent claim re-offered the previous claim's work set.</summary>
   private bool _lastClaimWasRepeat;
 
+  /// <summary>
+  /// Set once the work coordinator has been asked for outstanding work and answered that it cannot
+  /// measure it. Latched rather than re-probed: a backend either implements the count or it does
+  /// not, and retrying it every poll would add a round trip per cycle to say the same thing.
+  /// </summary>
+  private bool _outstandingUnmeasurable;
+
+  /// <summary>
+  /// Whether the outstanding bound is doing anything. Every precondition must hold: the operator
+  /// enabled it, drain is measurable, and the store can report what this instance holds. Missing any
+  /// one of them means the budget would be sized from a number nobody read — worse than no bound,
+  /// because it throttles silently and presents as an unexplained performance problem.
+  /// </summary>
+  private bool _budgetEngaged =>
+    _options.AdaptiveOutstandingBudget && _completionMeter is not null && !_outstandingUnmeasurable;
+
   /// <summary>Constructor.</summary>
 #pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
@@ -67,16 +125,22 @@ public sealed partial class ClaimWorker : BackgroundService {
     ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> options,
     ILogger<ClaimWorker> logger,
-    IWorkChannelWriter? outboxChannel = null,
-    IInboxChannelWriter? inboxChannel = null,
-    IPerspectiveChannelWriter? perspectiveChannel = null,
-    IPerspectiveDrainChannel? perspectiveDrainChannel = null,
-    IOutboxDrainChannel? outboxDrainChannel = null,
-    IInboxDrainChannel? inboxDrainChannel = null,
-    INotifySignalingGate? signalingGate = null,
-    IPinnedConnectionPool? pinnedPool = null,
-    ISignalBus? signalBus = null,
-    SignalBusLivenessState? busLiveness = null) {
+    IWorkChannelWriter outboxChannel,
+    IInboxChannelWriter inboxChannel,
+    IPerspectiveChannelWriter perspectiveChannel,
+    IPerspectiveDrainChannel perspectiveDrainChannel,
+    IOutboxDrainChannel outboxDrainChannel,
+    IInboxDrainChannel inboxDrainChannel,
+    INotifySignalingGate signalingGate,
+    IPinnedConnectionPool pinnedPool,
+    ISignalBus signalBus,
+    SignalBusLivenessState? busLiveness = null,
+    WorkCompletionMeter? completionMeter = null,
+    ClaimChurnFeedback? churnFeedback = null,
+    TimeProvider? timeProvider = null,
+    // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
+    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
+    _priorityHooks = priorityHooks;
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -84,6 +148,15 @@ public sealed partial class ClaimWorker : BackgroundService {
     _signalingGate = signalingGate;
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _claimWindow = new AdaptiveClaimWindow(
+      ceiling: _options.MaxStreamsPerBatch,
+      floor: _options.MinStreamsPerBatch,
+      additiveStep: _options.ClaimWindowGrowthStep);
+    _outstandingBudget = new AdaptiveOutstandingBudget(
+      leaseSeconds: _options.LeaseSeconds,
+      ceiling: _options.MaxOutstandingInboxRows,
+      floor: _options.MinOutstandingInboxRows,
+      safetyFactor: _options.OutstandingBudgetSafetyFactor);
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _outboxChannel = outboxChannel;
     _inboxChannel = inboxChannel;
@@ -91,42 +164,39 @@ public sealed partial class ClaimWorker : BackgroundService {
     _perspectiveDrainChannel = perspectiveDrainChannel;
     _outboxDrainChannel = outboxDrainChannel;
     _inboxDrainChannel = inboxDrainChannel;
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _signalBus = signalBus;
     _busLiveness = busLiveness;
+    _completionMeter = completionMeter;
+    _churnFeedback = churnFeedback;
+    _time = timeProvider ?? TimeProvider.System;
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
     // source (5s DB backstop) both raise the typed signal, so ClaimWorker wakes uniformly on
     // either path. The IWorkNotificationListener.OnSignal subscription is preserved for the
     // orphan + deadletter categories that don't have typed signals yet.
-    if (_signalBus is not null) {
+    if (_signalBus.IsConfigured) {
       _outboxSignalSub = _signalBus.Subscribe<WorkOutboxAvailableSignal>(_wakeOnSignal);
       _inboxSignalSub = _signalBus.Subscribe<WorkInboxAvailableSignal>(_wakeOnSignal);
       _perspectiveSignalSub = _signalBus.Subscribe<WorkPerspectiveAvailableSignal>(_wakeOnSignal);
     }
 
-    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path);
+    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path) —
     // outbox/inbox/perspective now come via the bus above.
     _notificationListener.OnSignal += _onSignal;
 
     // Slice 33.6 — pick up the gate's availability transitions so a polling-to-NOTIFY-available
     // recovery immediately polls (any work that accumulated during the unavailable window
     // would otherwise wait for the next backoff tick).
-    if (_signalingGate is not null) {
-      _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
-    }
+    _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
 
     // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
     // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
     // process_work_batch used to provide. Must remain attached for the lifetime of the
     // worker; BackgroundService disposal handles cleanup.
-    if (_outboxChannel is not null) {
-      _outboxChannel.OnNewWorkAvailable += SignalNewWork;
-    }
-    if (_inboxChannel is not null) {
-      _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
-    }
+    _outboxChannel.OnNewWorkAvailable += SignalNewWork;
+    _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
   }
 
   private void _onSignal(WorkSignalCategory category) {
@@ -141,7 +211,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       RequestImmediatePoll();
       return;
     }
-    if (_signalBus is null && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.Perspective) {
+    if (!_signalBus.IsConfigured && category is WorkSignalCategory.Outbox or WorkSignalCategory.Inbox or WorkSignalCategory.Perspective) {
       SignalNewWork();
     }
   }
@@ -174,7 +244,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     } else {
       Interlocked.Exchange(ref _lastUnavailableAtTicks, DateTimeOffset.UtcNow.Ticks);
     }
-    RequestImmediatePoll();
+    // Either wait, not just the semaphore: after an empty poll with the gate healthy the loop is
+    // in its spacing nap, and a wake that only releases the semaphore lets that nap run out before
+    // the catch-up poll. An outage edge is new work in effect — interrupt the nap too.
+    _wakeNow();
   }
 
   // Tracks the wall-clock ticks at which the gate last flipped to unavailable. Used to
@@ -220,6 +293,17 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   public void SignalNewWork() {
     Volatile.Write(ref _doorbellSinceLastClaim, 1);
+    _wakeNow();
+  }
+
+  /// <summary>
+  /// Wakes the loop from EITHER wait: releases the semaphore and cancels a spacing nap in progress.
+  /// New-work signals and gate transitions use this; completion-feedback wakes deliberately do not
+  /// (see <see cref="RequestImmediatePoll"/>), so a burst of completions cannot turn the nap into a
+  /// tight loop.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerGateCadenceTests.cs:GateFlipsToAvailable_TriggersImmediatePollAsync</tests>
+  private void _wakeNow() {
     RequestImmediatePoll();
     try {
       Volatile.Read(ref _napCts)?.Cancel();
@@ -238,6 +322,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
+
+    // Say at startup whether the bound is on, and if not, exactly which precondition is missing.
+    // Store measurability is only knowable after the first claim, so a coordinator that cannot
+    // report outstanding work logs its own line then (EventId 14) rather than being guessed at here.
+    if (!_options.AdaptiveOutstandingBudget) {
+      LogOutstandingBudgetInactive(_logger, "disabled via AdaptiveOutstandingBudget");
+    } else if (_completionMeter is null) {
+      LogOutstandingBudgetInactive(_logger, "no WorkCompletionMeter registered, so drain is unmeasurable");
+    } else {
+      LogOutstandingBudgetActive(
+        _logger,
+        _options.MinOutstandingInboxRows,
+        _options.MaxOutstandingInboxRows,
+        _options.LeaseSeconds,
+        _options.OutstandingBudgetSafetyFactor);
+    }
 
     // Killswitch: ops can disable this worker via ClaimWorkerOptions.Enabled = false
     // (e.g., maintenance window, isolating a misbehaving instance) without removing the
@@ -328,6 +428,12 @@ public sealed partial class ClaimWorker : BackgroundService {
         // nothing can wedge waiting on a suppressed emit. Only the wait adapts.
         var signature = _workSignature(batch);
         _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature;
+
+        // A sustained run of repeats means rows are leased to this instance and are NOT completing,
+        // so the backlog cannot drain even though the process is healthy and polling. From outside
+        // that is indistinguishable from an idle service — modest CPU, no errors, no restarts — so
+        // nothing reports it today. See ClaimCycleReport.
+        _cycleReport.Record(hadWork, _lastClaimWasRepeat, _logger);
         _lastWorkSignature = signature;
 
         // Doorbell-liveness accounting (issue #505): on the empty→non-empty edge the store
@@ -337,11 +443,22 @@ public sealed partial class ClaimWorker : BackgroundService {
         // resets the streak. Startup catch-up never counts: it requires a previously-observed
         // empty claim, and _lastClaimWasEmpty starts false.
         var doorbellRang = Interlocked.Exchange(ref _doorbellSinceLastClaim, 0) == 1;
+        // A doorbell that lands DURING an empty claim raced past the claim it was meant to cause:
+        // an empty batch cannot have served it. Consuming it here would both charge the NEXT
+        // discovery as a missed doorbell and let the idle spacing below nap through a genuinely
+        // fresh row (SignalNewWork's cancel only reaches a nap that has already registered its
+        // token). Put it back so the next cycle sees it — for the spacing skip and for liveness.
+        if (!hadWork && doorbellRang) {
+          Volatile.Write(ref _doorbellSinceLastClaim, 1);
+        }
         if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
-            && (_signalingGate?.IsAvailable ?? false)) {
+            && _signalingGate.IsAvailable) {
           if (doorbellRang) {
             _busLiveness.RecordDoorbellWake();
-          } else {
+          } else if (!_withinDrainLinger()) {
+            // Inside the linger a poll-discovered edge is the SQL debounce working as
+            // designed (the doorbell was deliberately suppressed) — recording it would
+            // flag the debounce itself as a NOTIFY outage.
             _busLiveness.RecordMissedDoorbell();
           }
         }
@@ -350,8 +467,15 @@ public sealed partial class ClaimWorker : BackgroundService {
         if (hadWork) {
           if (_lastClaimWasRepeat) {
             Interlocked.Increment(ref _consecutiveEmptyPolls);
+            // A sustained re-offer with idle consumers is the #724 livelock: the rows are leased to
+            // this instance, nothing is draining them, and nobody else may touch them while this
+            // instance heartbeats. Give back what has not been started. Emission below is untouched,
+            // so anything a consumer IS working on keeps flowing.
+            await _releaseUnstartedIfStuckAsync(batch, stoppingToken);
           } else {
             _consecutiveEmptyPolls = 0;
+            _releasedThisStreak = false;
+            Volatile.Write(ref _lastFreshWorkTicks, Environment.TickCount64);
           }
           await _distributeAsync(batch, stoppingToken);
           OnBatchClaimed?.Invoke(batch);
@@ -361,7 +485,13 @@ public sealed partial class ClaimWorker : BackgroundService {
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
-        LogError(_logger, ex);
+        // A deadlock, a canceled statement or a dropped connection inside one claim says something
+        // about the database at that moment, not about this loop; the shared classifier names it so
+        // an operator can tell a passing failure from a defect. This loop already had a cadence of
+        // its own, so it reports and lets the empty-poll backoff below carry the waiting.
+        WorkerLoopRecovery.Report(ex,
+          (transient, cause) => LogTransientFailure(_logger, transient.Reason, transient.SqlState ?? "none", cause),
+          cause => LogError(_logger, cause));
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
       }
 
@@ -383,7 +513,22 @@ public sealed partial class ClaimWorker : BackgroundService {
         // one. When the last claim was a pure re-offer, space the next one out BEFORE waiting on
         // the permit. New work stays responsive: it sets the permit during this delay, so the
         // wait below returns immediately and the added latency is bounded by the delay itself.
-        if (_lastClaimWasRepeat) {
+        // #635: a pure-EMPTY claim spaces out exactly like a re-offer, but only while the
+        // signaling gate reports NOTIFY healthy — the doorbell will announce new work, so the
+        // permit-per-completion feedback that keeps short-circuiting the wait below must not set
+        // the idle cadence. Measured before this: ~27 claim cycles/sec fleet-wide on a deployment
+        // with zero application traffic, each cycle a rank + claim + outstanding-count round trip.
+        // When the gate is unavailable (or absent), idle polling stays tight, because polling is
+        // then the only way work is discovered at all.
+        // A doorbell that rang between the claim above and this point must skip the nap outright:
+        // SignalNewWork's cancel only reaches a nap that has already registered its token, so
+        // without this check a doorbell in that window would wait out the full floor. The flag is
+        // not consumed here — the next claim's liveness accounting still reads it.
+        var doorbellPending = Volatile.Read(ref _doorbellSinceLastClaim) == 1;
+        var spaceOut = !doorbellPending
+          && (_lastClaimWasRepeat
+            || (Volatile.Read(ref _consecutiveEmptyPolls) > 0 && _signalingGate.IsAvailable));
+        if (spaceOut) {
           var floorMs = Math.Min(_computeAdaptivePollWaitMs(), _options.PollingMaxIntervalMilliseconds);
           if (floorMs > 0) {
             // Interruptible nap: a NEW-WORK doorbell (SignalNewWork) cancels it so a fresh row
@@ -401,7 +546,7 @@ public sealed partial class ClaimWorker : BackgroundService {
             }
           }
         }
-        if (_signalBus is not null) {
+        if (_signalBus.IsConfigured) {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_options.PollingMaxIntervalMilliseconds), stoppingToken);
         } else {
           _ = await _wake.WaitAsync(TimeSpan.FromMilliseconds(_computeAdaptivePollWaitMs()), stoppingToken);
@@ -418,27 +563,50 @@ public sealed partial class ClaimWorker : BackgroundService {
     // Ordering invariant: write each category in MessageId order so downstream channel readers
     // (which preserve enqueue order) receive same-stream items chronologically. See
     // plans/ordered-stream-invariant.md.
-    if (_outboxChannel is not null) {
-      foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
-        await _outboxChannel.WriteAsync(ow, ct);
+    foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
+      await _outboxChannel.WriteAsync(ow, ct);
+    }
+    // The claim already charged an attempt against every row here. If this loop is cut short —
+    // shutdown, a full channel, a faulting writer — the rows never handed off have spent an
+    // attempt for a dispatch that never happened, and will spend another on every future claim
+    // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
+    // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
+    // so a process that dies here still (correctly) leaves its charge standing.
+    // Skip rows already in flight. claim_work re-emits every row still leased to this instance and
+    // unprocessed on EVERY poll, so without this the same row is queued again each cycle —
+    // duplicate copies of work already being dispatched.
+    //
+    // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
+    // this path proved unrecoverable in production: a flag stranded by a hung or canceled task
+    // made this worker discard that row's emits forever, and only restarting the process cleared
+    // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
+    // eligible again on its own, so the failure is self-healing rather than permanent.
+    var ordered = batch.InboxWork
+      .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
+      .OrderByMessageId()
+      .ToList();
+    var handedOff = 0;
+    try {
+      for (; handedOff < ordered.Count; handedOff++) {
+        await _inboxChannel.WriteAsync(ordered[handedOff], ct);
+      }
+    } finally {
+      // Only rows THIS loop failed to deliver are refunded. A row filtered out above was handed
+      // off on an earlier poll and is being processed — refunding it would credit an attempt for
+      // work that is genuinely in progress.
+      if (handedOff < ordered.Count) {
+        await _releaseUndispatchedAsync([.. ordered.Skip(handedOff).Select(w => w.MessageId)]);
       }
     }
-    if (_inboxChannel is not null) {
-      foreach (var iw in batch.InboxWork.OrderByMessageId()) {
-        await _inboxChannel.WriteAsync(iw, ct);
-      }
-    }
-    if (_perspectiveChannel is not null) {
-      foreach (var pw in batch.PerspectiveWork) {
-        await _perspectiveChannel.WriteAsync(pw, ct);
-      }
+    foreach (var pw in batch.PerspectiveWork) {
+      await _perspectiveChannel.WriteAsync(pw, ct);
     }
     // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
-    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us;
+    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us —
     // we just forward every stream_id every poll. We deliberately do NOT consult IsInFlight
     // here — Phase H step 6 slice 5 / Part B introduced an IsInFlight write-time filter that
     // turned out to be unrecoverable in production: a drain task that hung past its try/finally
-    // (or crashed before MarkDrained ran, or got cancelled mid-`_drainStreamInnerAsync`) left
+    // (or crashed before MarkDrained ran, or got canceled mid-`_drainStreamInnerAsync`) left
     // the in-memory flag stuck forever, and ClaimWorker silently discarded every subsequent
     // claim_work emit for that stream. Observed in production — thousands of inbox rows leased to a
     // healthy instance with zero drain progress; only restart unstuck them. The reconciliation
@@ -446,21 +614,168 @@ public sealed partial class ClaimWorker : BackgroundService {
     // AND processed_at IS NULL`, so they re-emit every leased row on every poll. The drainer's
     // session-local seen-set + idempotent fetch_*_batch (filters processed_at IS NULL) make
     // duplicate writes harmless — a second drain returns zero rows and exits.
-    if (_perspectiveDrainChannel is not null) {
-      foreach (var streamId in batch.PerspectiveStreamIds) {
-        await _perspectiveDrainChannel.WriteAsync(streamId, ct);
-      }
+    foreach (var streamId in batch.PerspectiveStreamIds) {
+      await _perspectiveDrainChannel.WriteAsync(streamId, ct);
     }
-    if (_outboxDrainChannel is not null) {
-      foreach (var sid in batch.OutboxStreamIds) {
-        await _outboxDrainChannel.WriteAsync(sid, ct);
-      }
+    foreach (var sid in batch.OutboxStreamIds) {
+      await _outboxDrainChannel.WriteAsync(sid, ct);
     }
-    if (_inboxDrainChannel is not null) {
-      foreach (var sid in batch.InboxStreamIds) {
-        await _inboxDrainChannel.WriteAsync(sid, ct);
-      }
+    foreach (var sid in _orderForDispatch(batch)) {
+      await _inboxDrainChannel.WriteAsync(sid, ct);
     }
+  }
+
+  /// <summary>
+  /// The order the claim's inbox streams reach the drain (priority step 1): the claim's own bucket order, unless
+  /// batch hooks are registered, in which case each stream's folded number (most urgent row, oldest arrival, rows
+  /// in the batch) is offered to the hooks and the streams are handed over by the adjusted number, stable within
+  /// equal numbers. A hook sets a stream's number, never a row's position, so per-stream order holds.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/ClaimWorkerPriorityBatchHookTests.cs</tests>
+  private List<Guid> _orderForDispatch(WorkBatch batch) {
+    if ((_priorityHooks?.IsEmpty ?? true) || batch.InboxStreams.Count == 0) {
+      return batch.InboxStreamIds;
+    }
+    var now = _time.GetUtcNow();
+    var entries = batch.InboxStreams
+      .Select(s => new Whizbang.Core.Priority.PriorityBatchEntry(
+        s.StreamId, s.FoldedPriority, s.OldestReceivedAt is { } oldest ? now - oldest : TimeSpan.Zero, s.PendingRows))
+      .ToList();
+    var adjusted = new Dictionary<Guid, int>(entries.Count);
+    foreach (var entry in entries) {
+      adjusted[entry.StreamId] = _priorityHooks.Adjust(entry, entries);
+    }
+    return [.. batch.InboxStreamIds
+      .Select((id, index) => (Id: id, Number: adjusted.TryGetValue(id, out var n) ? n : Whizbang.Core.Priority.WorkPriority.STANDARD, Index: index))
+      .OrderBy(x => x.Number).ThenBy(x => x.Index)
+      .Select(x => x.Id)];
+  }
+
+  /// <summary>
+  /// Hands claimed-but-undispatched inbox rows back, refunding the attempt the claim charged.
+  /// </summary>
+  /// <remarks>
+  /// Deliberately does NOT take the caller's cancellation token: this runs on the shutdown path,
+  /// where that token is already canceled. Using it would skip the release precisely when it
+  /// matters most and leave the rows to burn their budget. Failures are swallowed and logged — a
+  /// release that does not happen costs an attempt, which is strictly better than a shutdown that
+  /// throws.
+  /// </remarks>
+  private async Task _releaseUndispatchedAsync(List<Guid> messageIds) {
+    // No empty-guard here: the sole call site only fires when rows were left undelivered, and
+    // ReleaseUnprocessedInboxAsync already returns 0 without opening a connection for an empty list
+    // (locked by Coordinator_ReleaseUnprocessedInbox_EmptyList_IsANoOpAsync).
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var released = await coordinator.ReleaseUnprocessedInboxAsync(
+        _instanceProvider.InstanceId, messageIds, CancellationToken.None);
+      LogReleasedUndispatched(_logger, released, messageIds.Count);
+    } catch (Exception ex) {
+      LogReleaseUndispatchedFailed(_logger, ex, messageIds.Count);
+    }
+  }
+
+  /// <summary>Feeds the drain rate that sizes the outstanding budget.</summary>
+  /// <remarks>
+  /// Deliberately conservative: this counts only the NET decrease in outstanding work between
+  /// samples, so work arriving in the same interval masks some completions and the measured rate
+  /// comes out low. That understates capacity and therefore sizes the budget smaller — the safe
+  /// direction to be wrong in, since the failure being prevented is holding too much.
+  /// </remarks>
+  /// <summary>Own-residue claims that must come back without inbox work before stealing is allowed (#725).</summary>
+  internal const int STEAL_AFTER_EMPTY_CLAIMS = 2;
+
+  /// <summary>Consecutive re-offers of the same work set before leased-but-unstarted rows are released (#724).</summary>
+  internal const int RELEASE_UNSTARTED_AFTER_REPEATS = 8;
+
+  private int _consecutiveInboxEmptyClaims;
+
+  /// <summary>True once the #724 release has fired for the current repeat streak; a productive claim clears it.</summary>
+  private bool _releasedThisStreak;
+
+  /// <summary>
+  /// The row bound for inbox acquisition this cycle (#714). Headroom when the budget governs, else
+  /// the stream window scaled by the running rows-per-stream estimate, never past the outstanding
+  /// ceiling, never below one.
+  /// </summary>
+  private int _acquireRowBound(int maxStreams) {
+    double rows = _budgetEngaged
+      ? _outstandingBudget.Headroom(_lastOutstanding)
+      : maxStreams * Math.Max(1.0, _rowsPerStream);
+    var bounded = Math.Min(rows, _options.MaxOutstandingInboxRows);
+    return (int)Math.Max(1, Math.Min(int.MaxValue, Math.Ceiling(bounded)));
+  }
+
+  /// <summary>
+  /// True while the perspective drain channel holds more stream ids than the configured cap (#719).
+  /// A channel that cannot count reports false, so a store without the cap behaves as before.
+  /// </summary>
+  private bool _perspectiveDrainBacklogAboveCap() {
+    if (_options.MaxPerspectiveDrainBacklog <= 0) {
+      return false;
+    }
+    var reader = _perspectiveDrainChannel.Reader;
+    return reader.CanCount && reader.Count > _options.MaxPerspectiveDrainBacklog;
+  }
+
+  /// <summary>
+  /// The #724 release: when this loop has re-offered the same work set for a sustained streak, the
+  /// rows it leased but never started are given back so a sibling can take them. Streams whose drain
+  /// has begun are never released. The store does the row selection; this only names the streams.
+  /// </summary>
+  /// <remarks>
+  /// A stuck instance looks idle from outside, and today nothing else can act: siblings cannot take
+  /// work from a heartbeating instance (by design, #722), so the instance itself has to let go of
+  /// what it is not working on. The release is scoped to this instance's own leases, refunds the
+  /// attempt the claim charged, and ends its ownership of the released streams. One release per
+  /// streak; the streak resets on any productive claim.
+  /// </remarks>
+  private async Task _releaseUnstartedIfStuckAsync(WorkBatch batch, CancellationToken ct) {
+    var streak = _cycleReport.CurrentRepeatStreak;
+    if (streak < RELEASE_UNSTARTED_AFTER_REPEATS || _releasedThisStreak) {
+      return;
+    }
+    _releasedThisStreak = true;
+
+    var inboxStreams = _notInFlight(batch.InboxStreamIds, _inboxDrainChannel.IsInFlight);
+    var perspectiveStreams = _notInFlight(batch.PerspectiveStreamIds, _perspectiveDrainChannel.IsInFlight);
+    if (inboxStreams.Count == 0 && perspectiveStreams.Count == 0) {
+      return;
+    }
+
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var released = await coordinator.ReleaseUnstartedLeasesAsync(
+        _instanceProvider.InstanceId, inboxStreams, perspectiveStreams, ct);
+      LogReleasedUnstarted(_logger, streak, released.InboxReleased, inboxStreams.Count, released.PerspectiveReleased, perspectiveStreams.Count);
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      // Not implemented by this store, or a transient failure: the rows stay leased and lapse on
+      // their own, which is today's behavior. Logged so the gap is visible, never fatal.
+      LogReleaseUnstartedFailed(_logger, ex, inboxStreams.Count + perspectiveStreams.Count);
+    }
+  }
+
+  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool>? isInFlight) =>
+    isInFlight is null ? [.. streamIds] : [.. streamIds.Where(id => !isInFlight(id))];
+
+  private void _observeDrain(int outstanding) {
+    var now = Stopwatch.GetTimestamp();
+
+    if (_lastDrainTicks != 0 && _completionMeter is not null) {
+      // Real completions, not a difference between outstanding readings. Rows arriving inside the
+      // same interval would mask completions in a delta, so the measured rate would read low and
+      // the budget would shrink for no reason — and a delta-based rate makes the control loop
+      // untestable without wall-clock sleeps.
+      var completed = (int)Math.Min(int.MaxValue, _completionMeter.ReadAndReset());
+      _outstandingBudget.Observe(completed, Stopwatch.GetElapsedTime(_lastDrainTicks, now));
+    }
+
+    _lastOutstanding = outstanding;
+    _lastDrainTicks = now;
   }
 
   private async Task<WorkBatch> _claimOnceAsync(CancellationToken ct) {
@@ -468,14 +783,241 @@ public sealed partial class ClaimWorker : BackgroundService {
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    return await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
+    var maxStreams = _boundedMaxStreams();
+
+    // Acquisition is bounded in ROWS, not streams (#714). The stream count doubled as the row cap in
+    // the store, which made a fat stream one row per cycle and a backlog of singleton streams a full
+    // batch of them. The row bound is the budget's headroom when the budget governs, else the stream
+    // window scaled by the running rows-per-stream estimate; either way never past the configured
+    // outstanding ceiling, so a wide window cannot lease more than the drain can hold.
+    var maxAcquireRows = _acquireRowBound(maxStreams);
+
+    // Stealing (#725) is a last resort, never a first move. Only after this instance's own residue
+    // has come back empty twice running does it reach for unowned rows assigned to other residues —
+    // a live sibling's owned streams are never touched (the store enforces that). Under normal load
+    // the residues stay disjoint and ownership stays stable.
+    var allowSteal = Volatile.Read(ref _consecutiveInboxEmptyClaims) >= STEAL_AFTER_EMPTY_CLAIMS;
+
+    // Perspective acquisition pauses while the drain channel is above its cap (#719). Re-emission
+    // of held work continues so the drain keeps moving; only NEW perspective leases wait.
+    var maxPerspectiveStreams = _perspectiveDrainBacklogAboveCap() ? 0 : (int?)null;
+
+    // 167: the idle band drains at full width while the SERVICE reads settled. Settledness is a
+    // service property measured from the shared store, so it is read from the coordinator that
+    // already takes that measurement on the maintenance cadence rather than counted here -- a
+    // service-wide count on every poll is the cost this band exists to avoid. A reading older
+    // than the window below is not acted on, so a service that has gone busy since cannot have
+    // its band drained on stale evidence; the time bounds in the store still guarantee the band
+    // makes progress regardless.
+    var idleSettled = scope.ServiceProvider.GetService<HousekeepingCoordinator>()
+      ?.ServiceReadsSettled(_idleSettledReadingMaxAge) ?? false;
+
+    var claimStarted = _time.GetTimestamp();
+    var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId,
-      MaxStreams: _options.MaxStreamsPerBatch,
+      MaxStreams: maxStreams,
       PartitionCount: _options.PartitionCount,
-      LeaseSeconds: _options.LeaseSeconds), ct);
+      LeaseSeconds: _options.LeaseSeconds,
+      // #635: the budget reads these counts every cycle; carrying them on the claim's own round
+      // trip removes a per-cycle call. Stores that ignore the flag leave batch.Outstanding null
+      // and the fallback probe below still runs.
+      IncludeOutstanding: _budgetEngaged,
+      FreshWorkShare: _options.FreshWorkShare,
+      MaxAcquireRows: maxAcquireRows,
+      AllowSteal: allowSteal,
+      MaxPerspectiveStreams: maxPerspectiveStreams,
+      IdleSettled: idleSettled), ct);
+    var claimElapsed = _time.GetElapsedTime(claimStarted);
+
+    _recordClaimShape(batch, allowSteal);
+    if (_budgetEngaged) {
+      await _observeOutstandingAsync(batch, coordinator, ct);
+    }
+    if (_options.AdaptiveClaimWindow) {
+      _observeClaimLatency(claimElapsed);
+      _observeChurn(batch);
+    }
+    return batch;
+  }
+
+  /// <summary>
+  /// The stream window for this claim: the adaptive window (or the configured ceiling when adaptation
+  /// is off), narrowed to what the outstanding budget can afford and never below one stream.
+  /// </summary>
+  private int _boundedMaxStreams() {
+    // Opting out of the adaptive window means claiming at the operator's configured ceiling, not
+    // at whatever value the window happens to hold. Previously this always read the window and
+    // relied on it having been constructed AT the ceiling — so "disabled" meant "frozen wherever it
+    // started" rather than "bypassed". That was invisible while the window started wide; once it
+    // starts at the floor, the distinction is the difference between honouring the opt-out and
+    // silently pinning every claim to the minimum.
+    var maxStreams = _options.AdaptiveClaimWindow ? _claimWindow.Current : _options.MaxStreamsPerBatch;
+
+    // Bound the TOTAL outstanding, not just this batch — a loop that claims and immediately claims
+    // again accumulates held work across cycles regardless of batch size.
+    //
+    // The outstanding figure comes from the STORE, never from an in-memory flag. That is not a
+    // stylistic preference: an earlier in-memory IsInFlight filter on this path proved unrecoverable
+    // in production (see the emit loop below) — a flag stranded by a hung or canceled task made
+    // this worker silently discard every later emit for that stream, and only a restart cleared it.
+    // Any counter we maintain ourselves can be stranded the same way. claim_work's eligible_* CTEs
+    // re-emit every row still leased to us and unprocessed on EVERY poll, so the previous claim's
+    // counts are the outstanding total according to SQL, and it re-derives itself each cycle. A
+    // wrong value cannot persist.
+    //
+    // No meter means no measured drain. Rather than let the rate read zero forever and pin every
+    // deployment at the floor, the bound simply does not engage — an unmeasured budget is worse
+    // than none, because it throttles silently and looks like a performance problem.
+    if (!_budgetEngaged) {
+      return maxStreams;
+    }
+    var headroomRows = _outstandingBudget.Headroom(_lastOutstanding);
+
+    // Convert the row budget into streams: the store claims by stream, and rows-per-stream varies
+    // by orders of magnitude, so a fixed assumption would be wrong in one direction or the other.
+    var streamsAffordable = (int)Math.Ceiling(headroomRows / Math.Max(1.0, _rowsPerStream));
+
+    // NEVER drop to zero. Skipping the claim entirely is how the previous design deadlocked: the
+    // poll is the only thing that observes outstanding work, so a worker that stops polling stops
+    // being able to discover that it has recovered. Re-emitting rows we already hold costs no new
+    // attempt — they are already leased to us — so polling at the floor is cheap and self-healing.
+    return Math.Max(1, Math.Min(maxStreams, streamsAffordable));
+  }
+
+  /// <summary>
+  /// Bookkeeping on the claim's shape: the empty-claim streak that licenses stealing, the steal log,
+  /// and the running rows-per-stream estimate the budget converts rows into streams with.
+  /// </summary>
+  private void _recordClaimShape(WorkBatch batch, bool allowSteal) {
+    var foundInbox = batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0;
+    if (foundInbox) {
+      Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
+    } else {
+      Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
+    }
+    if (allowSteal && foundInbox) {
+      LogStoleWork(_logger, batch.InboxWork.Count, batch.InboxStreamIds.Count);
+    }
+
+    // Keep the rows-per-stream estimate current. The store claims by stream while the budget is in
+    // rows, and the ratio is workload-specific — mostly-singleton streams and a few thousand-row
+    // streams both occur, so a fixed assumption would be wrong in one direction or the other.
+    if (batch.InboxStreamIds.Count > 0 && batch.InboxWork.Count > 0) {
+      var observed = (double)batch.InboxWork.Count / batch.InboxStreamIds.Count;
+      _rowsPerStream = (0.2 * observed) + (0.8 * _rowsPerStream);
+    }
+  }
+
+  /// <summary>
+  /// Feeds the store's outstanding inbox count to the drain observer. An unmeasurable count stands
+  /// the budget down rather than reading as zero.
+  /// </summary>
+  private async Task _observeOutstandingAsync(WorkBatch batch, IWorkCoordinator coordinator, CancellationToken ct) {
+    // Outstanding, straight from the store. claim_work re-emits everything still leased to this
+    // instance and unprocessed, so these counts ARE the current outstanding total — re-derived every
+    // poll rather than accumulated, which is what makes it impossible to strand.
+    //
+    // All three work kinds count. Every one of them is leased and charges an attempt, so bounding
+    // only the inbox would leave the identical over-claim arithmetic free to recur in another
+    // column — the failure would simply move rather than stop.
+    //
+    // Ask the store what this instance is actually holding. The batch counts CANNOT answer that:
+    // claim_work truncates its eligible_* CTEs to the limit computed above, so a figure taken
+    // from them can never exceed that limit no matter how much work is held. Sizing the budget
+    // from it means reading our own output instead of the system state — the budget stays wide
+    // open, more work is claimed each poll, and held work grows without the number ever moving.
+    // Prefer the counts the claim itself carried (#635) — same round trip, same snapshot. Null
+    // means the store did not measure them there, so probe separately; it never means zero.
+    var outstanding = batch.Outstanding
+      ?? await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
+    if (outstanding is null) {
+      // Unmeasurable is not zero. Zero would license a full-size claim on the strength of a
+      // reading that was never taken, so the bound stands down instead — loudly, once.
+      _outstandingUnmeasurable = true;
+      LogOutstandingUnmeasurable(_logger);
+      return;
+    }
+    // INBOX rows only (#719). The budget bounds inbox acquisition and is sized in inbox rows,
+    // so its headroom must be read against inbox rows. Folding outbox and perspective rows into
+    // the same figure let a perspective backlog close the inbox headroom (the inbox then starved
+    // behind work it could not affect) and, in the other direction, let a large inbox holding
+    // hide behind a drained perspective set. Perspective has its own cap above.
+    _observeDrain((int)Math.Min(int.MaxValue, outstanding.InboxRows));
+  }
+
+  /// <summary>
+  /// The claim's own duration is the acquisition-cost signal (#714). Churn says whether the batch
+  /// drained; this says whether it was affordable to ACQUIRE, and a slow claim halves the window
+  /// regardless of how clean the batch was.
+  /// </summary>
+  private void _observeClaimLatency(TimeSpan claimElapsed) {
+    var beforeLatency = _claimWindow.Current;
+    _claimWindow.ObserveLatency(claimElapsed);
+    if (_claimWindow.Current != beforeLatency) {
+      LogClaimWindowNarrowedOnLatency(_logger, beforeLatency, _claimWindow.Current, claimElapsed.TotalMilliseconds);
+    }
+  }
+
+  /// <summary>
+  /// Feeds the claim back into the window. A row arriving with attempts > 1 is work already claimed
+  /// and not finished, so a high share means the batch outruns what this instance can dispatch
+  /// inside its lease — and every one of those rows has silently spent a retry attempt it never
+  /// used. Narrowing here is what stops a backlog consuming its own budget and dead-lettering
+  /// healthy messages as MaxAttemptsExceeded.
+  /// </summary>
+  private void _observeChurn(WorkBatch batch) {
+    // Churn is measured across BOTH claim representations. Iterating InboxWork alone reads zero
+    // on the stream-id path — where rows arrive as stream ids and are fetched separately — so the
+    // window saw "no work, no churn" and Observe() short-circuited on claimedRows <= 0, never
+    // adapting for the life of the process. See ClaimChurnSignal.
+    var attempts = new int[batch.InboxWork.Count];
+    for (var i = 0; i < batch.InboxWork.Count; i++) {
+      attempts[i] = batch.InboxWork[i].Attempts;
+    }
+    // Attempts are not available at claim time on the stream-id path — the claim returns stream
+    // ids and never sees a row. The drain worker fetches them and reports what it saw, which is
+    // the ONLY place the churn signal exists. Without this the window observes zero churn forever.
+    var churn = ClaimChurnSignal.Measure(
+      materializedAttempts: attempts,
+      streamIdCount: batch.InboxStreamIds.Count,
+      fetchedAttempts: _fetchedAttempts(_churnFeedback?.Take() ?? (0, 0)));
+    var reclaimed = churn.Reclaimed;
+    var previous = _claimWindow.Current;
+    // Gate growth on measured drain ONLY while the budget is the governing control. When the
+    // budget is not engaged at all (disabled, or no meter to measure with) it will never produce
+    // a sample, and gating on one would freeze the window at its floor forever — turning a
+    // cold-start guard into a permanent throughput ceiling for every deployment without a meter.
+    // Unmeasured must not silently disable an unrelated control. See AdaptiveClaimWindow.Observe.
+    // Unmeasured churn must not read as a clean cycle. Growing on evidence nobody gathered is
+    // how a window widens on top of an unobserved thrash, so an unmeasurable cycle blocks growth
+    // exactly as an unmeasured drain does. Shrinking stays ungated — backing off is always safe.
+    var drainMeasured = (!_budgetEngaged || _outstandingBudget.HasDrainSample) && churn.IsMeasurable;
+    _claimWindow.Observe(churn.ClaimedItems, reclaimed, drainMeasured);
+    if (_claimWindow.Current != previous) {
+      LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, churn.ClaimedItems);
+    }
+  }
+
+  /// <summary>
+  /// The drain worker's churn report reconstructed as attempt counts, the shape the signal measures;
+  /// only the re-claim COUNT is meaningful, not which specific rows churned. Null when nothing was
+  /// fetched, so the signal treats the stream-id path as unmeasured rather than as clean.
+  /// </summary>
+  private static int[]? _fetchedAttempts((int Observed, int Reclaimed) fed) {
+    if (fed.Observed <= 0) {
+      return null;
+    }
+    var fetchedAttempts = new int[fed.Observed];
+    for (var i = 0; i < fed.Reclaimed && i < fetchedAttempts.Length; i++) {
+      fetchedAttempts[i] = 2;
+    }
+    for (var i = fed.Reclaimed; i < fetchedAttempts.Length; i++) {
+      fetchedAttempts[i] = 1;
+    }
+    return fetchedAttempts;
   }
 
   private async Task _initialHeartbeatAsync(CancellationToken ct) {
@@ -509,20 +1051,35 @@ public sealed partial class ClaimWorker : BackgroundService {
     return hash.ToHashCode();
   }
 
+  private bool _withinDrainLinger() {
+    var lingerMs = (long)_options.NotifyDrainLingerSeconds * 1000;
+    return lingerMs > 0
+      && Environment.TickCount64 - Volatile.Read(ref _lastFreshWorkTicks) < lingerMs;
+  }
+
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
     // Slice 33.6 — when the gate has flipped NOTIFY availability to false, the listener
     // won't wake us when work arrives, so we MUST keep polling at the tight base cadence
     // (do not let the adaptive backoff stretch out to PollingMaxIntervalMilliseconds —
     // that would silently increase latency to up to 10 s while NOTIFY is broken).
-    if (_signalingGate?.IsAvailable == false) {
+    if (_signalingGate.IsConfigured && !_signalingGate.IsAvailable) {
       return baseMs;
     }
-    if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
+    // #665 drain linger: freshly-found work means producers may be suppressing doorbells
+    // toward this instance (its watermark is fresh) — poll tight until the SQL window has
+    // self-expired. Takes precedence over the notify-healthy elevation AND poll-off mode:
+    // during the linger, polling IS the delivery mechanism. A REPEAT claim opts out: the
+    // spacing nap exists to damp re-offer spin, and the linger must not revive it — a
+    // suppressed store during a repeat streak is floored by the backstop poll instead.
+    if (!_lastClaimWasRepeat && _withinDrainLinger()) {
+      return Math.Min(LINGER_POLL_MS, _options.PollingMaxIntervalMilliseconds);
+    }
+    if (!_options.EnableSafetyNetPoll && _signalingGate.IsAvailable) {
       return int.MaxValue;
     }
     var notifyHealthyBase = _options.NotifyHealthyPollingIntervalMilliseconds;
-    if (_signalingGate?.IsAvailable == true && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
+    if (_signalingGate.IsAvailable && notifyHealthyBase.HasValue && notifyHealthyBase.Value > baseMs) {
       baseMs = notifyHealthyBase.Value;
     }
     var maxMs = _options.PollingMaxIntervalMilliseconds;
@@ -553,8 +1110,54 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "ClaimWorker tick failed; will back off and retry")]
   static partial void LogError(ILogger logger, Exception ex);
 
+  /// <summary>The event id of the tick failure a <see cref="TransientDatabaseFailure"/> explains.</summary>
+  internal const int TRANSIENT_FAILURE_EVENT_ID = 19;
+
+  [LoggerMessage(EventId = TRANSIENT_FAILURE_EVENT_ID, Level = LogLevel.Warning,
+    Message = "ClaimWorker tick hit a transient database failure ({Reason}, SQLSTATE {SqlState}); will back off and retry")]
+  static partial void LogTransientFailure(ILogger logger, string reason, string sqlState, Exception ex);
+
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "ClaimWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Information,
+    Message = "ClaimWorker resized its claim window {Previous} -> {Current} "
+            + "(re-claimed {Reclaimed} of {Claimed} inbox rows last cycle)")]
+  static partial void LogClaimWindowResized(
+    ILogger logger, int previous, int current, int reclaimed, int claimed);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Information,
+    Message = "ClaimWorker handed back {Released} of {Attempted} undispatched inbox rows, "
+            + "refunding the attempt each claim charged")]
+  static partial void LogReleasedUndispatched(ILogger logger, int released, int attempted);
+
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "ClaimWorker could not hand back {Attempted} undispatched inbox rows; "
+            + "they keep the attempt their claim charged and will be re-claimed")]
+  static partial void LogReleaseUndispatchedFailed(ILogger logger, Exception ex, int attempted);
+
+  [LoggerMessage(EventId = 15, Level = LogLevel.Information,
+    Message = "ClaimWorker took unowned work from other residues after its own came back empty: "
+            + "{Rows} inbox rows across {Streams} streams (#725)")]
+  static partial void LogStoleWork(ILogger logger, int rows, int streams);
+
+  [LoggerMessage(EventId = 16, Level = LogLevel.Information,
+    Message = "ClaimWorker narrowed the claim window from {Previous} to {Current} streams: the claim itself "
+            + "took {ElapsedMs:F0} ms, far above the learned norm, so acquisition is paying for the backlog (#714)")]
+  static partial void LogClaimWindowNarrowedOnLatency(ILogger logger, int previous, int current, double elapsedMs);
+
+  [LoggerMessage(EventId = 17, Level = LogLevel.Warning,
+    Message = "ClaimWorker re-offered the same work set {Streak} times with no drain progress and released its "
+            + "unstarted leases: {InboxReleased} inbox rows in {InboxStreams} streams, {PerspectiveReleased} "
+            + "perspective rows in {PerspectiveStreams} streams, so a sibling may take them (#724)")]
+  static partial void LogReleasedUnstarted(
+    ILogger logger, int streak, int inboxReleased, int inboxStreams, int perspectiveReleased, int perspectiveStreams);
+
+  [LoggerMessage(EventId = 18, Level = LogLevel.Warning,
+    Message = "ClaimWorker could not release its unstarted leases in {Streams} streams; they stay leased "
+            + "to this instance until they lapse (#724)")]
+  static partial void LogReleaseUnstartedFailed(ILogger logger, Exception ex, int streams);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ClaimWorker disabled via options — claim loop skipped")]
   static partial void LogDisabled(ILogger logger);
@@ -570,6 +1173,25 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 7, Level = LogLevel.Information,
     Message = "ClaimWorker startup catch-up complete: picked up {ItemsPicked} pre-existing work item(s)")]
   static partial void LogStartupCatchUp(ILogger logger, int itemsPicked);
+
+  // A bound that silently fails to engage is indistinguishable from one that is working, which is
+  // how a previous version of this shipped, deployed, and looked correct while holding twelve times
+  // the work it permitted. State it plainly at startup, and say WHICH precondition is missing.
+  [LoggerMessage(EventId = 12, Level = LogLevel.Information,
+    Message = "ClaimWorker outstanding budget ACTIVE: floor={Floor} rows, ceiling={Ceiling} rows, "
+            + "leaseSeconds={LeaseSeconds}, safetyFactor={SafetyFactor}")]
+  static partial void LogOutstandingBudgetActive(
+    ILogger logger, int floor, int ceiling, int leaseSeconds, double safetyFactor);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "ClaimWorker outstanding budget INACTIVE ({Reason}) — claimed work is not bounded by "
+            + "measured drain; a backlog can be leased faster than it can be dispatched")]
+  static partial void LogOutstandingBudgetInactive(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 14, Level = LogLevel.Warning,
+    Message = "ClaimWorker outstanding budget DISENGAGED: the work coordinator does not report "
+            + "outstanding work, so the bound has nothing to measure against")]
+  static partial void LogOutstandingUnmeasurable(ILogger logger);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>
@@ -606,12 +1228,34 @@ public sealed class ClaimWorkerOptions {
   /// </remarks>
   public bool EnableSafetyNetPoll { get; set; } = true;
 
+  /// <summary>
+  /// Share of each inbox claim batch reserved for fresh-head streams — streams whose earliest
+  /// unprocessed row has never been attempted. Strict oldest-first ordering let a large retry
+  /// backlog starve every new arrival (a production 28k-row control-plane backlog put a user's
+  /// brand-new stream hours out); the claim is a weighted-fair merge instead. Work-conserving:
+  /// when either class is empty the other takes the whole batch. 0.5 balances real-time work
+  /// against backlog drain; raise it on services where interactive latency outranks backlog
+  /// (1.0 = every fresh stream claims before any retry). Default 0.5.
+  /// </summary>
+  public double FreshWorkShare { get; set; } = 0.5;
+
   /// <summary>Base polling cadence in ms. Default 250.</summary>
   public int PollingIntervalMilliseconds { get; set; } = 250;
   /// <summary>Adaptive backoff cap in ms. Default 10 000 (10 s).
   /// Constrained at startup to <c>AbandonStaleInstanceThresholdSeconds × 1000 / 3</c>
   /// to preserve heartbeat-budget freshness.</summary>
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
+
+  /// <summary>
+  /// Drain linger (issue #665): after a claim finds fresh work, empty polls keep a tight
+  /// (~500 ms) cadence for this many seconds before the notify-healthy elevation and the
+  /// adaptive backoff resume. Pairs with the SQL-side <c>notify_debounce_seconds</c>
+  /// setting (default 7): producers suppress doorbells toward an instance whose watermark
+  /// is fresher than that window, and the linger polls are the guaranteed pickup. MUST stay
+  /// ABOVE the SQL window so the suppression self-expires while the drainer still polls.
+  /// Default 8; 0 disables the linger (and the SQL setting should then be 0 too).
+  /// </summary>
+  public int NotifyDrainLingerSeconds { get; set; } = 8;
 
   /// <summary>
   /// Relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy. Replaces
@@ -648,6 +1292,95 @@ public sealed class ClaimWorkerOptions {
   public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 5_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// Narrows the claim batch when work is being re-claimed rather than finished. Default true.
+  /// </summary>
+  /// <remarks>
+  /// A claim charges an attempt per row, so rows claimed but never reached inside the lease window
+  /// are re-claimed at another attempt each cycle and eventually dead-lettered as
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never
+  /// reached a receptor. Without this, a backlog larger than one instance's throughput consumes its
+  /// own retry budget and destroys healthy messages. Set false to pin the batch at
+  /// <see cref="MaxStreamsPerBatch"/> — appropriate only where throughput is known to exceed
+  /// arrival rate.
+  /// </remarks>
+  public bool AdaptiveClaimWindow { get; set; } = true;
+
+  /// <summary>
+  /// Floor for the adaptive claim window, so a struggling instance still makes progress. Default 25.
+  /// </summary>
+  public int MinStreamsPerBatch { get; set; } = 25;
+
+  /// <summary>
+  /// Bounds how many claimed-but-unprocessed inbox ROWS this instance may hold at once. Default false.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Distinct from <see cref="AdaptiveClaimWindow"/>, and not substitutable for it. The window bounds
+  /// the size of each individual claim; this bounds the <i>total outstanding</i> across claims. A loop
+  /// that claims and immediately claims again accumulates outstanding work every cycle no matter how
+  /// small each batch is, until the whole backlog is held and its leases lapse together — so a batch
+  /// bound alone changes only how long that takes, never whether it happens.
+  /// </para>
+  /// <para>
+  /// On by default. The budget is per category and row-bound: it samples inbox completions and reads
+  /// its headroom against the inbox rows this instance holds, never against outbox or perspective
+  /// rows, so a perspective backlog cannot collapse inbox acquisition; and the headroom is passed to
+  /// the store as a row bound on acquisition (<see cref="ClaimWorkRequest.MaxAcquireRows"/>), so a
+  /// collapse can no longer turn into one row per cycle. Perspective acquisition has its own cap,
+  /// <see cref="MaxPerspectiveDrainBacklog"/>. The failure mode the budget prevents is silent (rows
+  /// dead-letter as <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/>
+  /// having never reached a receptor, and consumers are OOM-killed holding work they cannot drain),
+  /// which is why it is no longer opt-in. Set false to fall back to the churn-based claim window alone.
+  /// </para>
+  /// </remarks>
+  public bool AdaptiveOutstandingBudget { get; set; } = true;
+
+  /// <summary>
+  /// Cap on the perspective drain channel's backlog (stream ids queued and not yet drained) above
+  /// which the claim loop stops leasing NEW perspective work. Re-emission of work already held is
+  /// unaffected, so the drain keeps moving while acquisition waits. Zero disables the cap.
+  /// </summary>
+  /// <remarks>
+  /// The perspective drain channel is unbounded by design (a bounded channel deadlocked the drain in
+  /// an earlier design), so without this a bulk ingest queues every perspective stream it touches in
+  /// process memory ahead of a fixed-parallelism drain. Default 2,000 stream ids: far more than any
+  /// drain parallelism consumes between two claims, small enough that the queue never becomes the
+  /// process's largest allocation.
+  /// </remarks>
+  public int MaxPerspectiveDrainBacklog { get; set; } = 2_000;
+
+  /// <summary>
+  /// Minimum outstanding inbox rows, retained even when stalled. Default 100.
+  /// </summary>
+  /// <remarks>
+  /// Also the cold-start value: a restarting instance has no drain history, and a restart carrying a
+  /// large backlog is exactly when unbounded claiming does its damage, so capacity is earned from
+  /// observed completions rather than assumed.
+  /// </remarks>
+  public int MinOutstandingInboxRows { get; set; } = 100;
+
+  /// <summary>
+  /// Hard ceiling on outstanding inbox rows, whatever the measured drain rate suggests. Default 10000.
+  /// </summary>
+  public int MaxOutstandingInboxRows { get; set; } = 10_000;
+
+  /// <summary>
+  /// Fraction of the lease window to plan against when sizing the outstanding budget. Default 0.5.
+  /// </summary>
+  /// <remarks>
+  /// Below 1.0 buys deliberate headroom. Lease expiry is a cliff rather than a gradual degradation —
+  /// at the full computed capacity any slowdown tips straight into mass expiry, and every expired row
+  /// is re-claimed at another attempt. Raise it only if drain rate is very stable.
+  /// </remarks>
+  public double OutstandingBudgetSafetyFactor { get; set; } = 0.5;
+
+  /// <summary>
+  /// Streams added back per fully clean cycle. Default 25 — additive on purpose, since recovering
+  /// multiplicatively would re-enter the overload that caused the shrink.
+  /// </summary>
+  public int ClaimWindowGrowthStep { get; set; } = 25;
 
   /// <summary>
   /// When true, ClaimWorker only distributes perspective stream IDs to the drain channel

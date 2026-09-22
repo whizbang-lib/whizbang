@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>wh_transition_schedule</c> (pause / resume / cancel with optimistic concurrency).
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard3")]
 public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
   private static DateTimeOffset _utc(int y, int mo, int d, int h, int mi) =>
     new(y, mo, d, h, mi, 0, TimeSpan.Zero);
@@ -38,13 +39,13 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
         p_event_type => @etype, p_event_data => '{}'::jsonb, p_scope => NULL,
         p_authority_principal_id => @authority)";
     cmd.Parameters.AddWithValue("id", scheduleId);
-    cmd.Parameters.AddWithValue("key", (object?)key ?? DBNull.Value);
-    cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = kind });
+    cmd.Parameters.AddWithValue(nameof(key), (object?)key ?? DBNull.Value);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(kind), NpgsqlDbType.Smallint) { Value = kind });
     cmd.Parameters.AddWithValue("interval", (object?)intervalMs ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("cron", (object?)cron ?? DBNull.Value);
+    cmd.Parameters.AddWithValue(nameof(cron), (object?)cron ?? DBNull.Value);
     cmd.Parameters.Add(new NpgsqlParameter("start", NpgsqlDbType.TimestampTz) { Value = (object?)startAt ?? DBNull.Value });
     cmd.Parameters.AddWithValue("etype", eventType);
-    cmd.Parameters.AddWithValue("authority", authority ?? Guid.NewGuid());
+    cmd.Parameters.AddWithValue(nameof(authority), authority ?? Guid.NewGuid());
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
     var next = new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
@@ -60,10 +61,10 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("v", (object?)expectedVersion ?? DBNull.Value);
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
-    return (r.GetBoolean(0), r.IsDBNull(1) ? null : r.GetInt64(1));
+    return (r.GetBoolean(0), await r.IsDBNullAsync(1) ? null : r.GetInt64(1));
   }
 
-  private async Task<(short Status, long Version, long Count)> _readAsync(NpgsqlConnection conn, Guid scheduleId) {
+  private static async Task<(short Status, long Version, long Count)> _readAsync(NpgsqlConnection conn, Guid scheduleId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT status, version, occurrence_count FROM wh_schedules WHERE schedule_id = @id";
     cmd.Parameters.AddWithValue("id", scheduleId);
@@ -175,7 +176,7 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
 
     var cancel = await _transitionAsync(conn, id, target: 3);
     await Assert.That(cancel.Updated).IsTrue();
-    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // Cancelled
+    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // Canceled
   }
 
   [Test]
@@ -202,6 +203,6 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     var pauseAfterCancel = await _transitionAsync(conn, id, target: 1);
 
     await Assert.That(pauseAfterCancel.Updated).IsFalse();
-    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // still Cancelled
+    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // still Canceled
   }
 }

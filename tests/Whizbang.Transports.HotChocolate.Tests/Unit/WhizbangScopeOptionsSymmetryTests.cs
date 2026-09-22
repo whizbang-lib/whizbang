@@ -23,8 +23,10 @@ public class WhizbangScopeOptionsSymmetryTests {
 
   [Test]
   public async Task TenantId_SingularSet_ReplacesPluralListAsync() {
-    var opts = new WhizbangScopeOptions { TenantIdClaimTypes = ["a", "b", "c"] };
-    opts.TenantIdClaimType = "only";
+    var opts = new WhizbangScopeOptions {
+      TenantIdClaimTypes = ["a", "b", "c"],
+      TenantIdClaimType = "only"
+    };
     var list = opts.TenantIdClaimTypes;
     await Assert.That(list.Count).IsEqualTo(1);
     await Assert.That(list[0]).IsEqualTo("only");
@@ -32,8 +34,9 @@ public class WhizbangScopeOptionsSymmetryTests {
 
   [Test]
   public async Task Permissions_SingularSet_ReplacesPluralListAsync() {
-    var opts = new WhizbangScopeOptions();
-    opts.PermissionsClaimType = "perms";
+    var opts = new WhizbangScopeOptions {
+      PermissionsClaimType = "perms"
+    };
     var list = opts.PermissionsClaimTypes;
     await Assert.That(list.Count).IsEqualTo(1);
     await Assert.That(list[0]).IsEqualTo("perms");
@@ -41,8 +44,9 @@ public class WhizbangScopeOptionsSymmetryTests {
 
   [Test]
   public async Task Groups_SingularSet_ReplacesPluralListAsync() {
-    var opts = new WhizbangScopeOptions();
-    opts.GroupsClaimType = "grp";
+    var opts = new WhizbangScopeOptions {
+      GroupsClaimType = "grp"
+    };
     var list = opts.GroupsClaimTypes;
     await Assert.That(list.Count).IsEqualTo(1);
     await Assert.That(list[0]).IsEqualTo("grp");
@@ -50,8 +54,9 @@ public class WhizbangScopeOptionsSymmetryTests {
 
   [Test]
   public async Task Organization_SingularSet_ReplacesPluralListAsync() {
-    var opts = new WhizbangScopeOptions();
-    opts.OrganizationIdClaimType = "org";
+    var opts = new WhizbangScopeOptions {
+      OrganizationIdClaimType = "org"
+    };
     var list = opts.OrganizationIdClaimTypes;
     await Assert.That(list.Count).IsEqualTo(1);
     await Assert.That(list[0]).IsEqualTo("org");
@@ -59,8 +64,9 @@ public class WhizbangScopeOptionsSymmetryTests {
 
   [Test]
   public async Task Customer_SingularSet_ReplacesPluralListAsync() {
-    var opts = new WhizbangScopeOptions();
-    opts.CustomerIdClaimType = "cust";
+    var opts = new WhizbangScopeOptions {
+      CustomerIdClaimType = "cust"
+    };
     var list = opts.CustomerIdClaimTypes;
     await Assert.That(list.Count).IsEqualTo(1);
     await Assert.That(list[0]).IsEqualTo("cust");

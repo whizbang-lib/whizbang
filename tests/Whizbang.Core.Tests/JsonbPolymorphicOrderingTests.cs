@@ -154,11 +154,11 @@ public partial class JsonbPolymorphicOrderingTests {
   internal sealed record TestTinyKeyEvent(int X, Guid OrderId) : IEvent;
 
   [JsonSerializable(typeof(TestTinyKeyEvent))]
-  internal sealed partial class TinyKeyJsonContext : JsonSerializerContext { }
+  internal sealed partial class TinyKeyJsonContext : JsonSerializerContext;
 
   private sealed record MechHolder(PictureDto Object);
   private abstract record PictureDto;
-  private sealed record ShapeDto : PictureDto { public string Shape { get; init; } = ""; public int A { get; init; } public string? Id { get; init; } }
+  private sealed record ShapeDto : PictureDto { public string Shape { get; init; } = ""; }
 }
 
 /// <summary>

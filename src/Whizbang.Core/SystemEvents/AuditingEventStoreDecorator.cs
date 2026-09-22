@@ -43,7 +43,9 @@ public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
-    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
+    Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
+    IAuditDecisionHook auditDecisionHook,
+    ILogger<AuditingEventStoreDecorator> logger) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -55,6 +57,12 @@ public sealed class AuditingEventStoreDecorator(
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;
+
+  // Optional: a service with no telemetry identity wired must still produce audit records.
+  private readonly Whizbang.Core.Observability.IServiceInstanceProvider _instanceProvider = instanceProvider;
+
+  // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
+  private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(
@@ -101,7 +109,10 @@ public sealed class AuditingEventStoreDecorator(
     if (!_options.EventAuditEnabled) {
       return;
     }
-    if (!_shouldAudit(typeof(TMessage))) {
+    // One place decides: the attribute gates the TYPE, the hook may veto or name the OCCURRENCE.
+    var auditDecision = AuditEligibility.Decide(
+      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook);
+    if (!auditDecision.ShouldAudit) {
       return;
     }
     if (envelope.Payload is null) {
@@ -109,7 +120,7 @@ public sealed class AuditingEventStoreDecorator(
     }
 
     var streamPosition = await Inner.GetLastSequenceAsync(streamId, cancellationToken);
-    var auditEvent = _buildEventAudited(streamId, streamPosition, envelope);
+    var auditEvent = _buildEventAudited(streamId, streamPosition, envelope, auditDecision);
     var outboxMsg = _buildOutboxMessage(auditEvent);
     await _outboxChannel.QueueAsync(outboxMsg, cancellationToken);
   }
@@ -127,7 +138,8 @@ public sealed class AuditingEventStoreDecorator(
   private EventAudited _buildEventAudited<TMessage>(
       Guid streamId,
       long streamPosition,
-      MessageEnvelope<TMessage> envelope) {
+      MessageEnvelope<TMessage> envelope,
+      AuditDecision decision) {
     // Extract scope from envelope
     var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
@@ -164,6 +176,9 @@ public sealed class AuditingEventStoreDecorator(
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
       Timestamp = DateTimeOffset.UtcNow,
+      // Supplied per occurrence by the decision hook; null falls back to humanizing the type name.
+      ActivityName = decision.Name,
+      ActivityDescription = decision.Description,
       TenantId = scopeContext?.Scope?.TenantId,
       UserId = scopeContext?.Scope?.UserId,
       CorrelationId = correlationId?.ToString(),
@@ -176,14 +191,22 @@ public sealed class AuditingEventStoreDecorator(
   private OutboxMessage _buildOutboxMessage(EventAudited auditEvent) {
     // Create envelope for the audit event
     var envelope = new MessageEnvelope<EventAudited> {
+      // The audit band, idle by default; see SystemEventOptions.AuditPriority. All three stampings
+      // in this method read the one value, so the record cannot travel at one priority and land at
+      // another.
+      Priority = _options.AuditPriority,
       MessageId = MessageId.New(),
       Payload = auditEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,
+          // The audited TENANT plus the system marker. Not the acting user: scope is an
+          // access-control key, so writing the actor here would hand the SUBJECT of an audit
+          // record a key to their own audit trail.
+          Scope = AuditRecordScope.For(auditEvent.TenantId),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -192,6 +215,7 @@ public sealed class AuditingEventStoreDecorator(
     // Serialize the envelope to JsonElement form for the outbox
     var serializedPayload = AuditJsonSerializer.SerializeToJsonElement(auditEvent, _jsonOptions, _logger);
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      Priority = _options.AuditPriority,
       MessageId = envelope.MessageId,
       Payload = serializedPayload,
       Hops = envelope.Hops,
@@ -200,6 +224,7 @@ public sealed class AuditingEventStoreDecorator(
 
     var eventType = typeof(EventAudited);
     return new OutboxMessage {
+      Priority = _options.AuditPriority,
       MessageId = envelope.MessageId.Value,
       Destination = AUDIT_TOPIC_DESTINATION,
       Envelope = jsonEnvelope,
@@ -207,10 +232,10 @@ public sealed class AuditingEventStoreDecorator(
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? []
       },
-      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = auditEvent.Id,
       IsEvent = true,
-      MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
     };
   }
 

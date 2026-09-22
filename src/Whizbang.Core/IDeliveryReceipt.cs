@@ -211,7 +211,7 @@ public sealed class DeliveryReceipt(
   ) {
     var metadata = exception != null
         ? new Dictionary<string, JsonElement> {
-          ["ExceptionType"] = JsonElementHelper.FromString(exception.GetType().FullName),
+          ["ExceptionType"] = JsonElementHelper.FromString(TypeNameFormatter.DisplayName(exception.GetType())),
           ["ExceptionMessage"] = JsonElementHelper.FromString(exception.Message),
           ["ExceptionStackTrace"] = JsonElementHelper.FromString(exception.StackTrace)
         }

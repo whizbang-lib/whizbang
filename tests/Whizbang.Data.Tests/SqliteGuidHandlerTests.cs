@@ -8,8 +8,7 @@ using Whizbang.Data.Dapper.Sqlite;
 
 namespace Whizbang.Data.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Direct tests for <see cref="SqliteGuidHandler"/> — the Dapper type
@@ -70,14 +69,14 @@ public class SqliteGuidHandlerTests {
     // handler subsequently works for a round-trip query.
     SqliteGuidHandler.Register();
 
-    using var connection = new SqliteConnection("DataSource=:memory:");
-    connection.Open();
-    connection.Execute("CREATE TABLE t (id TEXT)");
+    await using var connection = new SqliteConnection("DataSource=:memory:");
+    await connection.OpenAsync();
+    await connection.ExecuteAsync("CREATE TABLE t (id TEXT)");
 
     var input = Guid.NewGuid();
-    connection.Execute("INSERT INTO t (id) VALUES (@Id)", new { Id = input });
+    await connection.ExecuteAsync("INSERT INTO t (id) VALUES (@Id)", new { Id = input });
 
-    var output = connection.QuerySingle<Guid>("SELECT id FROM t");
+    var output = await connection.QuerySingleAsync<Guid>("SELECT id FROM t");
     await Assert.That(output).IsEqualTo(input);
   }
 }

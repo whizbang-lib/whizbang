@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// connection against the test DB; we issue pg_notify on a separate connection.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard3")]
 public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   private static async Task<TaskCompletionSource<WorkSignalCategory>> _attachAsync(PgWorkNotificationListener listener) {
@@ -32,7 +33,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     // => _gate.IsAvailable), not proof that THIS listener's LISTEN has been registered. Subscribe()
     // is synchronous and the LISTEN lands on the connection's own loop, so healthy can be true with
     // the channel not yet subscribed. Waiting here narrows the window but cannot close it — callers
-    // must use _notifyUntilSignalledAsync rather than a single fire-and-forget notify.
+    // must await PgSharedNotifyConnection.WaitForChannelListenedAsync before emitting.
     var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
     while (!listener.IsHealthy && DateTimeOffset.UtcNow < deadline) {
       await Task.Delay(50);
@@ -40,43 +41,6 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     return tcs;
   }
 
-  /// <summary>
-  /// Issues <c>pg_notify</c> on <paramref name="channel"/> until the listener reports it, or the
-  /// deadline passes.
-  /// </summary>
-  /// <remarks>
-  /// A Postgres NOTIFY is delivered only to sessions already LISTENing — it is not queued, and a
-  /// notification sent a millisecond early is gone for good. Nothing observable from another
-  /// session says whether a given channel is subscribed (<c>pg_listening_channels()</c> is
-  /// session-local), so a single fire-and-forget notify is a race by construction: it passes when
-  /// the LISTEN happens to land first and times out when it does not.
-  ///
-  /// <para>This suite does fail late-run under load, on a different test each time, and this test
-  /// timed out waiting for a signal that was sent. Removing the readiness wait locally did NOT
-  /// reproduce it, so the lost-notification window is an unproven cause rather than a confirmed
-  /// one — the retry is hardening against a hazard the protocol genuinely has, not a verified fix
-  /// for that failure.</para>
-  ///
-  /// <para>Re-sending does not weaken the assertion. The contract under test is "a notify on this
-  /// channel reaches OnSignal"; if the listener never subscribes, every attempt is dropped and the
-  /// test still fails on the deadline.</para>
-  /// </remarks>
-  private static async Task<WorkSignalCategory> _notifyUntilSignalledAsync(
-      NpgsqlConnection conn, string channel, string payload,
-      TaskCompletionSource<WorkSignalCategory> tcs, int timeoutSeconds = 15) {
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
-    while (true) {
-      await using (var cmd = conn.CreateCommand()) {
-        cmd.CommandText = $"SELECT pg_notify('{channel}', '{payload}')";
-        _ = await cmd.ExecuteScalarAsync();
-      }
-      try {
-        return await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(500));
-      } catch (TimeoutException) when (DateTimeOffset.UtcNow < deadline) {
-        // LISTEN had not landed yet — send again.
-      }
-    }
-  }
 
   // Slice 27: each test resolves a unique instance_id (via a fresh ServiceInstanceProvider)
   // and exposes it so the test can also pin streams and emit on the routed channel.
@@ -84,7 +48,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
   // Slice 33.4 — listener no longer owns a connection. Each test gets a fresh
   // PgSharedNotifyConnection too; StartAsync wires the listener as a subscriber. The
   // shared-conn must also be started so its dispatch loop runs.
-  private (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
+  private static (PgWorkNotificationListener Listener, PgSharedNotifyConnection Shared, Guid InstanceId) _newListenerWithInstance(WhizbangNotificationOptions options) {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(config);
     var shared = new PgSharedNotifyConnection(
@@ -99,9 +63,6 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       NullLogger<PgWorkNotificationListener>.Instance);
     return (listener, shared, instanceProvider.InstanceId);
   }
-
-  private PgWorkNotificationListener _newListener(WhizbangNotificationOptions options)
-    => _newListenerWithInstance(options).Listener;
 
   /// <summary>
   /// Starts the shared connection, waits for its probe to succeed, then subscribes the
@@ -153,7 +114,18 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var category = await _notifyUntilSignalledAsync(conn, $"wh_work_i_{instanceId}", "outbox", tcs);
+    // Deterministic completion signal: Subscribe registers intent, the dispatch loop issues the
+    // LISTEN asynchronously, and pg_notify never queues — so a NOTIFY emitted before the LISTEN
+    // lands is lost outright. Waiting for the channel removes the race instead of re-emitting
+    // until an attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instanceId}", cts.Token);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'outbox')";
+      _ = await cmd.ExecuteScalarAsync();
+    }
+
+    var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
     await Assert.That(category).IsEqualTo(WorkSignalCategory.Outbox);
 
     // stop handled by `await using var stack` above
@@ -180,7 +152,18 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var category = await _notifyUntilSignalledAsync(conn, $"wh_work_i_{instanceId}", "inbox", tcs);
+    // Deterministic completion signal: Subscribe registers intent, the dispatch loop issues the
+    // LISTEN asynchronously, and pg_notify never queues — so a NOTIFY emitted before the LISTEN
+    // lands is lost outright. Waiting for the channel removes the race instead of re-emitting
+    // until an attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instanceId}", cts.Token);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'inbox')";
+      _ = await cmd.ExecuteScalarAsync();
+    }
+
+    var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
     await Assert.That(category).IsEqualTo(WorkSignalCategory.Inbox);
 
     // stop handled by `await using var stack` above
@@ -201,7 +184,18 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    var category = await _notifyUntilSignalledAsync(conn, $"wh_work_i_{instanceId}", "perspective", tcs);
+    // Deterministic completion signal: Subscribe registers intent, the dispatch loop issues the
+    // LISTEN asynchronously, and pg_notify never queues — so a NOTIFY emitted before the LISTEN
+    // lands is lost outright. Waiting for the channel removes the race instead of re-emitting
+    // until an attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instanceId}", cts.Token);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = $"SELECT pg_notify('wh_work_i_{instanceId}', 'perspective')";
+      _ = await cmd.ExecuteScalarAsync();
+    }
+
+    var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
     await Assert.That(category).IsEqualTo(WorkSignalCategory.Perspective);
 
     // stop handled by `await using var stack` above
@@ -233,7 +227,7 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
     // Race: give the notification a chance to land. If OnSignal fires within 1 s,
     // tcs completes and the test fails. Otherwise tcs stays pending and the test passes.
-    var raced = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+    _ = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
     await Assert.That(tcs.Task.IsCompleted).IsFalse()
       .Because("payloads outside {outbox, inbox, perspective} must not surface as a WorkSignalCategory");
 
@@ -297,6 +291,11 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       fire.CommandText = "SELECT complete_perspective(@cursors::jsonb, NULL::uuid[], FALSE)";
       fire.Parameters.AddWithValue("cursors", cursorsJson);
       _ = await fire.ExecuteScalarAsync();
+    }
+    // 146 (#720): the completion queued its doorbell; the driver rings after the commit, modeled here.
+    await using (var ring = conn.CreateCommand()) {
+      ring.CommandText = "SELECT ring_doorbells()";
+      _ = await ring.ExecuteScalarAsync();
     }
 
     var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));

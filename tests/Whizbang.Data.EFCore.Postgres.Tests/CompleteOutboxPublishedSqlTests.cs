@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// This is the legacy <c>process_outbox_completions</c> design (mig 013) restored after the Phase H regression.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard1")]
 public class CompleteOutboxPublishedSqlTests : EFCoreTestBase {
 
   [Test]
@@ -108,7 +109,7 @@ public class CompleteOutboxPublishedSqlTests : EFCoreTestBase {
 
     // claim_work should NOT return the row — published_at filter excludes it.
     await using var claim = connection.CreateCommand();
-    claim.CommandText = @"SELECT count(*) FROM claim_work(@inst, 'test-svc', 'test-host', 1, 1000, 10000, 300) WHERE source = 'outbox' AND work_id = @id";
+    claim.CommandText = "SELECT count(*) FROM claim_work(@inst, 'test-svc', 'test-host', 1, 1000, 10000, 300) WHERE source = 'outbox' AND work_id = @id";
     claim.Parameters.AddWithValue("inst", instanceId);
     claim.Parameters.AddWithValue("id", messageId);
     var rowsClaimed = (long)(await claim.ExecuteScalarAsync())!;
@@ -151,14 +152,33 @@ public class CompleteOutboxPublishedSqlTests : EFCoreTestBase {
       await connection.OpenAsync();
     }
 
+    // A real row exists alongside the ghosts. Completion ids arrive from a coalesced in-memory
+    // buffer and routinely name rows a retry or a competing instance already deleted, so
+    // "unknown id" is the normal case, not the edge case — and the DELETE it drives is untargeted
+    // apart from the id filter.
+    var survivor = Guid.NewGuid();
+    await _insertOutboxRowsAsync(connection, [survivor]);
+
     var ghosts = new[] { Guid.NewGuid(), Guid.NewGuid() };
 
     await using var call = connection.CreateCommand();
     call.CommandText = "SELECT complete_outbox_published(@ids)";
     call.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ghosts });
 
-    // Should not throw.
-    _ = await call.ExecuteScalarAsync();
+    var affected = (int)(await call.ExecuteScalarAsync())!;
+
+    // "Silently ignored" is a rows-affected claim, not a did-not-throw claim.
+    await Assert.That(affected).IsEqualTo(0)
+      .Because("the function returns rows-affected; a nonzero count for ids that do not exist "
+             + "means it matched something else");
+
+    await using var verify = connection.CreateCommand();
+    verify.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_id = @id";
+    verify.Parameters.AddWithValue("id", survivor);
+    var stillThere = (long)(await verify.ExecuteScalarAsync())!;
+    await Assert.That(stillThere).IsEqualTo(1L)
+      .Because("a DELETE that lost its id filter would complete without error and take every "
+             + "unpublished message in the table with it — pending work erased on a no-op call");
   }
 
   private static async Task _insertOutboxRowsAsync(NpgsqlConnection connection, Guid[] ids) {

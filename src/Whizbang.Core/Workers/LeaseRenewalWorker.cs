@@ -28,16 +28,16 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
     ISchemaReadyGate schemaReadyGate,
     IOptions<LeaseRenewalWorkerOptions> options,
     ILogger<LeaseRenewalWorker> logger,
+    IPinnedConnectionPool pinnedPool,
     LeaseRegistry? leaseRegistry = null,
-    TimeProvider? timeProvider = null,
-    IPinnedConnectionPool? pinnedPool = null) {
+    TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _leaseRegistry = leaseRegistry;
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<CategorizedLeaseRenewal>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -120,7 +120,12 @@ public sealed partial class LeaseRenewalWorker : BackgroundService, ILeaseRenewa
 /// <summary>Categorized lease-renewal request.</summary>
 public sealed record CategorizedLeaseRenewal(WorkCategory Category, Guid Id);
 
-/// <summary>Channel surface for workers to enqueue lease renewals.</summary>
+/// <summary>
+/// Channel through which workers enqueue renewals for the leases on work they still hold. The lease
+/// renewal worker drains it and extends the leases in batches, so a long-running item is not
+/// reclaimed by a peer mid-flight. Replaceable; the default is the renewal worker itself.
+/// </summary>
+/// <docs>messaging/work-coordination</docs>
 public interface ILeaseRenewalChannel {
   /// <summary>Enqueue a (category, id) for asynchronous lease extension.</summary>
   ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default);

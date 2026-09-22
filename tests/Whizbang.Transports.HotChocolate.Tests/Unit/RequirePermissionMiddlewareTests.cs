@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Security;
@@ -314,10 +315,11 @@ public class RequirePermissionMiddlewareTests {
 public class GuardedQuery {
   [UseRequirePermission]
   [RequirePermission("doc:read", Operation = ScopeOperation.Read)]
+  [SuppressMessage("Minor Code Smell", "S3400:Methods should not return constants", Justification = "[RequirePermission] targets methods and classes only, so the guarded resolver has to stay a method.")]
   public string GetGuardedValue() => "guarded-value";
 
   [UseRequirePermission]
-  public string GetOpenValue() => "open-value";
+  public string OpenValue => "open-value";
 }
 
 /// <summary>
@@ -331,6 +333,7 @@ public class GuardedQuery {
 public class GuardedMutation {
   [UseRequirePermission]
   [RequirePermission("doc:write", Operation = ScopeOperation.Write)]
+  [SuppressMessage("Minor Code Smell", "S3400:Methods should not return constants", Justification = "[RequirePermission] targets methods and classes only, so the guarded resolver has to stay a method.")]
   public bool WriteThing() => true;
 }
 
@@ -345,5 +348,5 @@ public class GuardedMutation {
     Justification = "HotChocolate requires instance methods for GraphQL resolvers")]
 public class ClassGuardedQuery {
   [UseRequirePermission]
-  public string GetAdminValue() => "admin-value";
+  public string AdminValue => "admin-value";
 }

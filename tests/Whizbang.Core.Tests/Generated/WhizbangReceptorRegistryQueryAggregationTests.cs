@@ -29,10 +29,7 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
   }
 
   [After(Test)]
-  public void TeardownRegistry() {
-    AssemblyRegistry<ReceptorRegistryContribution>.ClearForTesting();
-    WhizbangReceptorRegistryQuery.ClearCacheForTesting();
-  }
+  public void TeardownRegistry() => ResetRegistry();
 
   // ===== Single-contribution lookups =====
 

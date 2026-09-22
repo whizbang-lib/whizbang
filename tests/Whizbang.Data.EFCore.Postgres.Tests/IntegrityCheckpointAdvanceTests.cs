@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityCheckpoint.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("IntegrityCheckpoint")]
+[Category("Shard3")]
 public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
@@ -140,7 +141,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     store.Parameters.AddWithValue("stream", streamId);
     store.Parameters.AddWithValue("type", eventType);
     store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-    store.Parameters.AddWithValue("version", version);
+    store.Parameters.AddWithValue(nameof(version), version);
     store.Parameters.AddWithValue("origin", originServiceId);
     store.Parameters.AddWithValue("oseq", originSeq);
     await store.ExecuteNonQueryAsync();
@@ -165,13 +166,15 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-      store.Parameters.AddWithValue("version", version);
+      store.Parameters.AddWithValue(nameof(version), version);
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {
-      body.CommandText = @"
+      body.CommandText = """
+
         INSERT INTO wh_event_body (event_id, event_data, metadata)
-        VALUES (@event, '{""seeded"":true}'::jsonb, @meta::jsonb)";
+        VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
+""";
       body.Parameters.AddWithValue("event", eventId);
       body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
       await body.ExecuteNonQueryAsync();

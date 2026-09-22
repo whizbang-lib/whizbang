@@ -27,10 +27,17 @@ namespace Whizbang.Core.Offloads;
 /// <remarks>
 /// Runs at <see cref="Order"/> = 1000 so simpler hooks (size measurement,
 /// compression) see the original bytes. Encryption / signing (Order 2000+)
-/// should run after offload so the small claim envelope is also covered.
+/// runs after offload and covers the small claim envelope on the wire; it
+/// cannot cover the body, which has already left the process. A body that
+/// must not reach the store in the clear is sealed by the configured
+/// <see cref="IMessageBodyCipher"/> inside this hook, before the upload
+/// (issue #704).
 /// </remarks>
 /// <docs>fundamentals/offloads/message-body-store</docs>
-public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
+/// <remarks>Builds the hook. <see cref="IServiceProvider"/> is used to resolve the keyed body store at invocation time so options changes don't require DI rebuild.</remarks>
+public sealed partial class BodyOffloadPostSerializeHook(
+    IServiceProvider serviceProvider,
+    IOptionsMonitor<MessageBodyOffloadOptions> options) : IPostSerializeHook {
 #pragma warning disable CA1707
   /// <summary>Destination metadata key set to <c>true</c> when the wire bytes are a claim envelope.</summary>
   public const string IS_CLAIM_METADATA_KEY = "whizbang.is-claim";
@@ -42,16 +49,8 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
   public const string ORIGINAL_TYPE_METADATA_KEY = "whizbang.original-type";
 #pragma warning restore CA1707
 
-  private readonly IServiceProvider _serviceProvider;
-  private readonly IOptionsMonitor<MessageBodyOffloadOptions> _options;
-
-  /// <summary>Builds the hook. <see cref="IServiceProvider"/> is used to resolve the keyed body store at invocation time so options changes don't require DI rebuild.</summary>
-  public BodyOffloadPostSerializeHook(
-      IServiceProvider serviceProvider,
-      IOptionsMonitor<MessageBodyOffloadOptions> options) {
-    _serviceProvider = serviceProvider;
-    _options = options;
-  }
+  private readonly IServiceProvider _serviceProvider = serviceProvider;
+  private readonly IOptionsMonitor<MessageBodyOffloadOptions> _options = options;
 
   /// <inheritdoc />
   public int Order => 1000;
@@ -81,7 +80,26 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
         $"MessageBodyOffloadOptions.ProviderName = '{opts.ProviderName}' but no IMessageBodyStore was registered under that key. " +
         "Register via services.AddWhizbangMessageBodyStore<T>(name) (or a typed wrapper like AddWhizbangInMemoryOffload(name)) before the offload hook runs.");
 
-    var claim = await store.UploadAsync(context.SerializedBytes, context.ContentType, options: null, cancellationToken);
+    // Seal INSIDE the offload path (issue #704): the store must never receive plaintext, and a hook
+    // slot cannot guarantee that (a hook at 2000 runs after the upload; one at 500 holds only while
+    // nobody registers between 500 and 1000). The claim hash covers the STORED bytes, so the
+    // receiver verifies before it decrypts.
+    var bytesToStore = context.SerializedBytes;
+    MessageBodyCipherDescriptor? descriptor = null;
+    if (!string.IsNullOrWhiteSpace(opts.CipherName)) {
+      var cipher = _serviceProvider.GetKeyedService<IMessageBodyCipher>(opts.CipherName)
+        ?? throw new InvalidOperationException(
+          $"MessageBodyOffloadOptions.CipherName = '{opts.CipherName}' but no IMessageBodyCipher was registered under that key. " +
+          "Register via services.AddWhizbangMessageBodyCipher<T>(name) or AddWhizbangAesGcmBodyCipher(name, ...) before the offload hook runs.");
+      var sealedBody = await cipher.SealAsync(bytesToStore, cancellationToken);
+      bytesToStore = sealedBody.Bytes;
+      descriptor = sealedBody.Descriptor;
+    }
+
+    var claim = await store.UploadAsync(bytesToStore, context.ContentType, options: null, cancellationToken);
+    if (descriptor is not null) {
+      claim = claim with { Cipher = descriptor };
+    }
 
     // Ledger the claim so the passive expiry sweep can find this blob by QUERY instead of a
     // container listing. This is the database's only durable record of the blob: the claim
@@ -114,12 +132,11 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
 
     var claimPayload = new BodyClaimEnvelopePayload(claim, context.ContentType, context.EnvelopeType);
     var claimEnvelope = _buildClaimEnvelope(context.Envelope, claimPayload);
-    var claimEnvelopeType = claimEnvelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException("Claim envelope type must have an assembly-qualified name.");
+    var claimEnvelopeType = TypeNameFormatter.AssemblyQualifiedName(claimEnvelope.GetType());
 
     var typeInfo = context.JsonOptions.GetTypeInfo(claimEnvelope.GetType())
       ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for claim envelope type {claimEnvelope.GetType().FullName}. " +
+        $"No JsonTypeInfo found for claim envelope type {TypeNameFormatter.DisplayName(claimEnvelope.GetType())}. " +
         "Ensure MessageEnvelope<BodyClaimEnvelopePayload> is registered via JsonContextRegistry.");
 
     var claimJson = JsonSerializer.Serialize(claimEnvelope, typeInfo);
@@ -189,6 +206,7 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
       SourceCommitSequence = original.SourceCommitSequence,
       CausedByServiceId = original.CausedByServiceId,
       CausedByCommitSequence = original.CausedByCommitSequence,
+      Priority = original.Priority,   // the claim replaces the body, not the scheduling decision
     };
   }
 

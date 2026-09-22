@@ -115,7 +115,17 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
       SyntaxNode root,
       List<CodeChange> changes,
       List<string> warnings) {
-    var rewriter = new HotChocolateMethodCallRewriter(changes, warnings);
+    // Whether the file ends up with AddWhizbangLenses is a property of the whole tree, not of
+    // visit order. A fluent chain puts .AddMartenSorting() OUTSIDE .AddMartenFiltering(), so the
+    // rewriter reaches the sorting call first and, judging by a flag the filtering call has not
+    // set yet, warned that lenses were missing on the very files that were about to get them.
+    // Acting on that warning would add a second AddWhizbangLenses(). Decide it up front instead.
+    var fileAddsLenses = root.DescendantNodes()
+        .OfType<InvocationExpressionSyntax>()
+        .Select(_getMethodName)
+        .Any(name => name != null && _methodsToReplaceWithLenses.Contains(name));
+
+    var rewriter = new HotChocolateMethodCallRewriter(changes, warnings, fileAddsLenses);
     return rewriter.Visit(root);
   }
 
@@ -178,10 +188,15 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms HotChocolate Marten method calls to Whizbang equivalents.
   /// </summary>
-  private sealed class HotChocolateMethodCallRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+  private sealed class HotChocolateMethodCallRewriter(
+      List<CodeChange> changes,
+      List<string> warnings,
+      bool fileAddsLenses) : CSharpSyntaxRewriter {
     private readonly List<CodeChange> _changes = changes;
     private readonly List<string> _warnings = warnings;
-    private bool _addedWhizbangLenses;
+    /// <summary>Whether anywhere in this file becomes AddWhizbangLenses -- decided before the walk,
+    /// because a fluent chain is visited outermost-first and would otherwise misreport.</summary>
+    private bool _addedWhizbangLenses = fileAddsLenses;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var methodName = _getMethodName(node);

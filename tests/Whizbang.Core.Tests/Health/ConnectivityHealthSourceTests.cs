@@ -17,7 +17,7 @@ public class ConnectivityHealthSourceTests {
 
   private sealed class FakeLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; } = phase;
-    public ValueTask AdvanceToAsync(LifecyclePhase p, CancellationToken cancellationToken) => default;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
     public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
   }
 
@@ -96,6 +96,24 @@ public class ConnectivityHealthSourceTests {
     var source = ConnectivityHealthSource.AlwaysRequired(
       "event-store", _ => throw new InvalidOperationException("down"), new FakeLifecycle(LifecyclePhase.Running));
     await Assert.That((await source.ReportAsync(CancellationToken.None)).State).IsEqualTo(ComponentState.Faulted);
+  }
+
+  [Test]
+  public async Task CanceledProbe_PropagatesRatherThanReportingUnreachableAsync() {
+    // The companion to ThrowingProbe_TreatedAsUnreachable, and the opposite answer. A probe that
+    // throws cannot answer the question, so "unreachable" is the safe reading. A probe canceled
+    // by shutdown answers nothing either, but calling that unreachable faults the component on
+    // every deploy — the health surface would flap on the way down, and an operator watching for
+    // a real outage learns to ignore it.
+    var source = ConnectivityHealthSource.AlwaysRequired(
+      "event-store",
+      _ => throw new OperationCanceledException(),
+      new FakeLifecycle(LifecyclePhase.Running));
+
+    await Assert.That(async () => await source.ReportAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown is not an outage, and reporting it as one trains operators to ignore "
+             + "the signal that matters");
   }
 
   [Test]

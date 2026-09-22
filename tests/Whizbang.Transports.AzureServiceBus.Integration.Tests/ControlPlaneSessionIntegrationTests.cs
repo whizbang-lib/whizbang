@@ -27,7 +27,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -68,9 +68,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var receivedChannel = Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (received, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(received.MessageId.Value, ct);
-      },
+      async (received, _, ct) => await receivedChannel.Writer.WriteAsync(received.MessageId.Value, ct),
       new TransportDestination("topic-fifo-01", "sub-fifo-session")
     );
 
@@ -132,7 +130,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var received = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (env, _, ct) => { await received.Writer.WriteAsync(env.MessageId.Value, ct); },
+      async (env, _, ct) => await received.Writer.WriteAsync(env.MessageId.Value, ct),
       new TransportDestination("topic-filtered-01", "sub-filtered-session"));
 
     try {
@@ -161,7 +159,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
   }
 
   [Test]
-  public async Task BarePublish_SessionRequiredSubscription_IsDeadLetteredAsync() {
+  public async Task StreamlessPublish_SessionRequiredSubscription_IsDeliveredNotDeadLetteredAsync() {
     // The pre-fix shape: a direct publish with NO session metadata. The broker must dead-letter
     // it on a session-required subscription — asserting the DLQ arrival is the deterministic
     // positive signal (never a negative timeout on the main queue).
@@ -200,21 +198,40 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
       "topic-fifo-02", "sub-fifo-session",
       new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+    // Proving ABSENCE needs different mechanics from proving presence. The original loop polled
+    // until a long token fired, which was fine while a dead-letter was guaranteed to arrive; now
+    // that none ever does, spinning to the deadline just kills the test with TaskCanceledException
+    // before it reaches its assertion. Drain what is actually there, stop when the queue is empty,
+    // and treat the deadline as the expected outcome rather than a failure.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     ServiceBusReceivedMessage? dead = null;
-    while (dead is null && !cts.IsCancellationRequested) {
-      var candidate = await dlqReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10), cts.Token);
-      if (candidate is null) {
-        continue;
+    try {
+      while (dead is null && !cts.IsCancellationRequested) {
+        var candidate = await dlqReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5), cts.Token);
+        if (candidate is null) {
+          break;  // nothing waiting — the dead-letter queue is empty, which is the point
+        }
+        if (candidate.MessageId == envelope.MessageId.Value.ToString()) {
+          dead = candidate;
+        }
+        await dlqReceiver.CompleteMessageAsync(candidate, CancellationToken.None);
       }
-      if (candidate.MessageId == envelope.MessageId.Value.ToString()) {
-        dead = candidate;
-      }
-      await dlqReceiver.CompleteMessageAsync(candidate, cts.Token);
+    } catch (OperationCanceledException) {
+      // Expected. Nothing was dead-lettered within the window, which is exactly the assertion below.
     }
 
-    await Assert.That(dead).IsNotNull()
-      .Because("a sessionless publish to a session-REQUIRED subscription is broker-dead-lettered — " +
-               "the live failure mode this suite exists to keep impossible to reintroduce silently.");
+    // INVERTED, and this inversion IS the point of the fix. This test was written to characterise a
+    // live failure: a streamless control-plane publish reached a session-REQUIRED subscription with
+    // no session id and the broker dead-lettered it before any consumer saw it. The transport now
+    // stamps a session id on EVERY message, so that failure can no longer be produced through the
+    // publish path at all — the message is delivered instead of destroyed.
+    //
+    // Keeping the original assertion would lock the defect in as expected behavior. The property
+    // worth guarding is the one below: the publish path must never emit a message a session-enabled
+    // entity will refuse.
+    await Assert.That(dead).IsNull()
+      .Because("the publish path now stamps a session id on every message, so a control-plane "
+             + "broadcast can no longer be broker-dead-lettered for a null session — this test "
+             + "characterised the live failure, and the fix makes that failure unreachable");
   }
 }

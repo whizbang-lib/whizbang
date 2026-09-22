@@ -35,19 +35,26 @@ public sealed class PerspectiveMetrics {
   // Throughput
 
   /// <summary>Events applied to perspectives.</summary>
-  public Counter<long> EventsProcessed { get; }
+  public PassiveCounter<long> EventsProcessed { get; }
 
   /// <summary>Batches completed.</summary>
-  public Counter<long> BatchesProcessed { get; }
+  public PassiveCounter<long> BatchesProcessed { get; }
 
   /// <summary>Unique streams updated.</summary>
-  public Counter<long> StreamsUpdated { get; }
+  public PassiveCounter<long> StreamsUpdated { get; }
 
   /// <summary>Processing errors.</summary>
-  public Counter<long> Errors { get; }
+  public PassiveCounter<long> Errors { get; }
 
   /// <summary>Polling cycles with no work.</summary>
-  public Counter<long> EmptyBatches { get; }
+  public PassiveCounter<long> EmptyBatches { get; }
+
+  /// <summary>
+  /// Rows a perspective could not read. Tags: perspective_name, reason
+  /// (<see cref="Perspectives.StoredFormUnreadable.REASON"/> for a stored form no reader takes).
+  /// </summary>
+  /// <docs>operations/infrastructure/migrations</docs>
+  public PassiveCounter<long> ReadFailures { get; }
 
   // Batch composition
 
@@ -72,7 +79,7 @@ public sealed class PerspectiveMetrics {
 
   /// <summary>Rewind operations triggered. Tags: perspective_name, has_snapshot.</summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
-  public Counter<long> Rewinds { get; }
+  public PassiveCounter<long> Rewinds { get; }
 
   /// <summary>Rewind replay duration in milliseconds. Tags: perspective_name.</summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
@@ -89,7 +96,7 @@ public sealed class PerspectiveMetrics {
   /// <summary>Initializes a new instance of the <see cref="PerspectiveMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public PerspectiveMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full _processWorkBatchAsync cycle");
     ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");
@@ -97,11 +104,12 @@ public sealed class PerspectiveMetrics {
     RunnerDuration = meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
     CheckpointDuration = meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");
 
-    EventsProcessed = meter.CreateCounter<long>("whizbang.perspective.events_processed", description: "Events applied to perspectives");
-    BatchesProcessed = meter.CreateCounter<long>("whizbang.perspective.batches_processed", description: "Batches completed");
-    StreamsUpdated = meter.CreateCounter<long>("whizbang.perspective.streams_updated", description: "Unique streams updated");
-    Errors = meter.CreateCounter<long>("whizbang.perspective.errors", description: "Processing errors");
-    EmptyBatches = meter.CreateCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
+    EventsProcessed = meter.CreatePassiveCounter<long>("whizbang.perspective.events_processed", description: "Events applied to perspectives");
+    BatchesProcessed = meter.CreatePassiveCounter<long>("whizbang.perspective.batches_processed", description: "Batches completed");
+    StreamsUpdated = meter.CreatePassiveCounter<long>("whizbang.perspective.streams_updated", description: "Unique streams updated");
+    Errors = meter.CreatePassiveCounter<long>("whizbang.perspective.errors", description: "Processing errors");
+    EmptyBatches = meter.CreatePassiveCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
+    ReadFailures = meter.CreatePassiveCounter<long>("whizbang.perspective.read_failures", description: "Rows a perspective could not read, by perspective and reason");
 
     BatchWorkItems = meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
     BatchEventCount = meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");
@@ -111,7 +119,7 @@ public sealed class PerspectiveMetrics {
       observeValue: () => Interlocked.Read(ref _pendingEventsValue),
       description: "Pending perspective events awaiting processing");
 
-    Rewinds = meter.CreateCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations triggered");
+    Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations triggered");
     RewindDuration = meter.CreateHistogram<double>("whizbang.perspective.rewind.duration", "ms", "Rewind replay duration");
     RewindEventsReplayed = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_replayed", description: "Events replayed per rewind");
     RewindEventsBehind = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_behind", description: "Events behind cursor when rewind triggered");

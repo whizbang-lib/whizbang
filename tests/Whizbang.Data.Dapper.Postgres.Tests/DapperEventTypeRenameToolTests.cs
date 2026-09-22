@@ -55,7 +55,7 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
           FROM pg_stat_activity
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* ignore */ }
       _testDatabaseName = null;
       _connectionString = null;
@@ -205,8 +205,13 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
     await connection.ExecuteAsync(
-      @"INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, partition_number, is_event, status, attempts)
-        VALUES (gen_random_uuid(), 'test-handler', @Clr, '{}'::jsonb, '{}'::jsonb, gen_random_uuid(), 0, true, 1, 0)",
+      @"WITH m AS (
+          INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, is_event)
+          VALUES (gen_random_uuid(), 'test-handler', @Clr, '{}'::jsonb, '{}'::jsonb, gen_random_uuid(), true)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, partition_number, status, attempts)
+        SELECT message_id, stream_id, received_at, priority, is_event, 0, 1, 0 FROM m",
       new { Clr = clrTypeName });
   }
 

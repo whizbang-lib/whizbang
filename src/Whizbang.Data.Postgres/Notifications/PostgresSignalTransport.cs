@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
@@ -20,9 +21,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <strong>Targeting.</strong> Broadcast signals go to <c>wh_signal_broadcast</c> — every instance
 /// LISTENs and receives. Targeted signals go to <c>wh_work_i_&lt;instanceId&gt;</c> — one channel per
 /// instance, listened to by that instance only, so only the owner wakes.
-/// <see cref="SignalTarget.Streams"/> resolves owners via <c>notify_instance_owners(payload, uuid[])</c>
+/// <see cref="SignalTarget.Streams"/> resolves owners via <c>notify_instance_owners_with_payload(kind, payload, uuid[])</c>
 /// (same helper the SQL store procs use, so the routing rule is unified: pinned owner from
-/// <c>wh_active_streams</c>, or deterministic partition-modulo target for unclaimed streams).
+/// <c>wh_active_streams</c>, or deterministic partition-modulo target for unclaimed streams). The
+/// wire name is both the debounce key and the payload; the doorbell form the store procs call takes
+/// only a kind from the closed doorbell vocabulary.
 /// <see cref="SignalTarget.Instance"/> emits <c>pg_notify</c> directly to that one instance's channel.
 /// </para>
 /// </remarks>
@@ -37,7 +40,7 @@ public sealed partial class PostgresSignalTransport(
   INotificationDataSource? notificationDataSource = null,
   SignalBusLivenessState? busLiveness = null,
   TimeProvider? timeProvider = null
-) : ISignalTransport {
+) : ISignalTransport, IDisposable {
   /// <summary>Broadcast channel every instance listens on.</summary>
   internal const string BROADCAST_CHANNEL = "wh_signal_broadcast";
 
@@ -89,12 +92,12 @@ public sealed partial class PostgresSignalTransport(
       // Routing maps are built in StartAsync — this publish beat the hosted start (or the bus was
       // never started at all). Say THAT, not "not in the registry": the misleading version of
       // this message hid a fleet-wide dead doorbell route for weeks (issue #505).
-      LogPublishBeforeStart(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
+      LogPublishBeforeStart(_logger, TypeNameFormatter.DisplayName(typeof(TSignal)));
       return;
     }
     if (!_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
       // Genuinely not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
-      LogUnregisteredSignal(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
+      LogUnregisteredSignal(_logger, TypeNameFormatter.DisplayName(typeof(TSignal)));
       return;
     }
 
@@ -163,8 +166,13 @@ public sealed partial class PostgresSignalTransport(
     // Reuse the same notify_instance_owners helper the SQL store procs already call — one NOTIFY
     // per unique owner across the input streams, with deterministic partition-modulo fallback for
     // streams not yet pinned in wh_active_streams. See migration 045_NotifyInstanceOwners.sql.
+    // The general form, notify_instance_owners_with_payload: the debounce key and the NOTIFY payload are
+    // separate arguments (migration 141, issue #702). A signal's key is its wire name, which is
+    // also what the wire carries; the two-argument form is the doorbell form and accepts only the
+    // doorbell vocabulary.
     await using var cmd = new NpgsqlCommand(
-      "SELECT notify_instance_owners(@payload, @stream_ids)", conn);
+      "SELECT notify_instance_owners_with_payload(@kind, @payload, @stream_ids)", conn);
+    cmd.Parameters.AddWithValue("kind", wireName);
     cmd.Parameters.AddWithValue("payload", wireName);
     var streamArray = new Guid[streamIds.Count];
     for (var i = 0; i < streamIds.Count; i++) {
@@ -174,6 +182,10 @@ public sealed partial class PostgresSignalTransport(
       Value = streamArray,
     });
     _ = await cmd.ExecuteScalarAsync(ct);
+    // #720: stream-targeted signals go through the debounced helper, which now queues instead of
+    // notifying inside the caller's transaction; ring on this autocommit connection right away so a
+    // signal is delivered as promptly as before.
+    await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, logger: null, ct);
   }
 
   private void _onNotification(string payload) {
@@ -236,4 +248,10 @@ public sealed partial class PostgresSignalTransport(
     Message = "PostgresSignalTransport.PublishAsync: transport not started — StartAsync has not run, so signal {SignalType} cannot be routed to the wire. " +
               "The signal bus is hosted by SignalBusHostedService (AddWhizbangSignalBus); if this repeats after startup, the bus was never started")]
   static partial void LogPublishBeforeStart(ILogger logger, string signalType);
+
+  /// <summary>Releases the broadcast and per-instance LISTEN registrations on the shared connection.</summary>
+  public void Dispose() {
+    _broadcastSubscription?.Dispose();
+    _instanceSubscription?.Dispose();
+  }
 }

@@ -9,16 +9,19 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Surface tests for <see cref="ReceptorProcessingCompletion"/> and
 /// <see cref="ReceptorProcessingFailure"/> — the two records that carry handler
 /// success/failure rows from the in-memory tracking strategy into the SQL
 /// complete_receptor_processing function. The coverage report shows 0/13 and
 /// 0/17 lines (records generate value-equality machinery — coverage counts each
 /// compiler-generated member as a "line").
-///
+/// </para>
+/// <para>
 /// These records have `required` properties — the test surface is small but
 /// load-bearing: any rename, reorder, or removal here breaks the SQL marshaller
 /// silently. Pin the property names + value equality + with-expression copying.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/receptor-completion</docs>
 public class ReceptorProcessingRecordsTests {

@@ -36,7 +36,7 @@ public class StreamCloserFoldOrderTests {
   [Test]
   public async Task Close_FoldsTheApplyPath_BeforeTheTruncateAsync() {
     var coordinator = new OrderRecordingCoordinator();
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance);
+    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, NoOpDestructionHook.Instance);
 
     var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 3);
 

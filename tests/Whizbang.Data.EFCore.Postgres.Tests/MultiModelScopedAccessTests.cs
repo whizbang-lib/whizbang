@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Unit")]
 [Category("Lenses")]
+[Category("Shard1")]
 public class MultiModelScopedAccessTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

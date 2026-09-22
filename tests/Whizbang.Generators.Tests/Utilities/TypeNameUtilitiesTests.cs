@@ -523,4 +523,112 @@ public class GlobalEvent { }
   }
 
   #endregion
+
+  // --- Generic arity --------------------------------------------------------
+  // BuildClrTypeName appends CLR generic arity (Name`N). Every existing case uses a
+  // non-generic type, so the arity branch was never taken.
+
+  [Test]
+  public async Task BuildClrTypeName_GenericType_AppendsArityAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Box<T> { }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Box`1")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Box`1");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_TwoParameterGeneric_AppendsArityTwoAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Pair<TKey, TValue> { }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Pair`2")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Pair`2");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_NestedGeneric_JoinsWithPlusAndKeepsArityAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Outer {
+          public class Inner<T> { }
+        }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Outer+Inner`1")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Outer+Inner`1");
+  }
+
+  #region Null guards and the nullability-annotated format
+
+  /// <summary>
+  /// Each of the three display helpers guards its symbol argument. The guard matters because these
+  /// run inside generators: a null symbol reaching ToDisplayString throws a NullReferenceException
+  /// from deep inside Roslyn, which surfaces to a consumer as a generator crash with no indication
+  /// of which call site was wrong. The explicit guard names the parameter instead.
+  /// </summary>
+  [Test]
+  public async Task FullyQualified_NullSymbol_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => TypeNameUtilities.FullyQualified(null!))
+      .Throws<ArgumentNullException>()
+      .Because("a null symbol would otherwise fail inside Roslyn's ToDisplayString, where the message names nothing the caller can act on");
+  }
+
+  /// <inheritdoc cref="FullyQualified_NullSymbol_ThrowsArgumentNullExceptionAsync"/>
+  [Test]
+  public async Task FullyQualifiedWithNullability_NullSymbol_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => TypeNameUtilities.FullyQualifiedWithNullability(null!))
+      .Throws<ArgumentNullException>()
+      .Because("the nullability-annotated overload guards its argument the same way as the plain one");
+  }
+
+  /// <inheritdoc cref="FullyQualified_NullSymbol_ThrowsArgumentNullExceptionAsync"/>
+  [Test]
+  public async Task MinimallyQualified_NullSymbol_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => TypeNameUtilities.MinimallyQualified(null!))
+      .Throws<ArgumentNullException>()
+      .Because("the minimally-qualified overload guards its argument the same way as the plain one");
+  }
+
+  /// <summary>
+  /// The nullability-annotated format is what separates this helper from FullyQualified: a nullable
+  /// reference type must render as "string?" and not "string". Generated source that drops the
+  /// annotation declares a non-nullable member for a nullable one, which compiles in the consumer
+  /// and then warns or misleads at every use site.
+  /// </summary>
+  [Test]
+  public async Task FullyQualifiedWithNullability_NullableReferenceType_KeepsTheAnnotationAsync() {
+    const string source = """
+      #nullable enable
+      namespace Sample {
+        public class Holder { public string? MaybeName { get; set; } }
+      }
+      """;
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var holder = compilation.GetTypeByMetadataName("Sample.Holder")!;
+    var property = (Microsoft.CodeAnalysis.IPropertySymbol)holder.GetMembers("MaybeName")[0];
+
+    var rendered = TypeNameUtilities.FullyQualifiedWithNullability(property.Type);
+
+    await Assert.That(rendered).EndsWith("?")
+      .Because("dropping the nullable annotation makes generated source declare a non-nullable member for a nullable one");
+  }
+
+  #endregion
 }

@@ -1,17 +1,24 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -39,6 +46,7 @@ public class PerspectiveWorkerChannelModeTests {
     var eventTypeProvider = new FakeEventTypeProvider([typeof(TestEvent)]);
     var instanceProvider = new FakeServiceInstanceProvider();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry());
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -59,18 +67,40 @@ public class PerspectiveWorkerChannelModeTests {
     }, coordinator, default);
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
         MaxStreamsPerBatch = 10
       }),
-      tracingOptions: null,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
-      failureChannel: failureCapture);
+      failureChannel: failureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        MaxStreamsPerBatch = 10
+      })).Value));
 
     // Act — call the new entry point directly with an empty batch. The flush of pending
     // completions should run regardless of batch contents.
@@ -102,6 +132,7 @@ public class PerspectiveWorkerChannelModeTests {
     var instanceProvider = new FakeServiceInstanceProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry());
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -110,16 +141,34 @@ public class PerspectiveWorkerChannelModeTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
-      tracingOptions: null,
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new BatchedCompletionStrategy(),
       eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
       failureChannel: failureCapture,
-      perspectiveDrainChannel: drainChannel);
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: drainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 })).Value));
 
     // Act — call the drain-aware overload with NO per-event work but ONE drain stream ID.
     // This must not throw and must not touch the legacy poll path.
@@ -135,7 +184,6 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
     public int ClaimWorkAsyncCallCount { get; private set; }
-    public int CommitHandlerResultCallCount { get; private set; }
     public int GetStreamEventsCallCount { get; private set; }
     public Guid? LastStreamEventsRequestedFor { get; private set; }
 
@@ -155,15 +203,12 @@ public class PerspectiveWorkerChannelModeTests {
     }
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
@@ -225,7 +270,7 @@ public class PerspectiveWorkerChannelModeTests {
   }
 
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider services) =>
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
       perspectiveName == "Test.FakePerspective" ? new FakePerspectiveRunner() : null;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];
@@ -235,7 +280,7 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,

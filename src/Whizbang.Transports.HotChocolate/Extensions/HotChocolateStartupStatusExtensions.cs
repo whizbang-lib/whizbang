@@ -32,7 +32,7 @@ public sealed record WhizbangStartupStatusGraphOptions(bool IncludeReasons);
 [ExtendObjectType(OperationTypeNames.Query)]
 public sealed class WhizbangStartupQueries {
   /// <summary>The startup status of this instance plus the fleet, as the status surface projects it.</summary>
-#pragma warning disable CA1822 // HotChocolate binds resolvers on instance members of the type extension
+#pragma warning disable CA1822, S2325 // HotChocolate binds resolvers on instance members of the type extension
   public Task<StartupStatusReport> GetWhizbangStartupAsync(IResolverContext context, CancellationToken cancellationToken) {
     var services = context.Services;
     var options = services.GetService<WhizbangStartupStatusGraphOptions>();
@@ -44,7 +44,7 @@ public sealed class WhizbangStartupQueries {
       options?.IncludeReasons ?? false,
       cancellationToken);
   }
-#pragma warning restore CA1822
+#pragma warning restore CA1822, S2325
 }
 
 /// <summary>Registers the <c>whizbangStartup</c> query field. Opt-in — one explicit call.</summary>

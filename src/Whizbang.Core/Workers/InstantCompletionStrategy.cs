@@ -30,8 +30,8 @@ namespace Whizbang.Core.Workers;
 /// <remarks>
 /// No configuration needed - uses lightweight out-of-band coordinator methods.
 /// </remarks>
-public sealed partial class InstantCompletionStrategy(ILogger<InstantCompletionStrategy>? logger = null) : IPerspectiveCompletionStrategy {
-  private readonly ILogger<InstantCompletionStrategy> _logger = logger ?? NullLogger<InstantCompletionStrategy>.Instance;
+public sealed partial class InstantCompletionStrategy(ILogger<InstantCompletionStrategy> logger) : IPerspectiveCompletionStrategy {
+  private readonly ILogger<InstantCompletionStrategy> _logger = logger;
 
   /// <inheritdoc />
   /// <remarks>

@@ -1,17 +1,22 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -97,6 +102,7 @@ public class TransportConsumerWorkerFlagDerivationTests {
   private static async Task<InboxMessage> _deliverAsync(Type payloadType) {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     await using var sp = services.BuildServiceProvider();
 
@@ -125,13 +131,24 @@ public class TransportConsumerWorkerFlagDerivationTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("flags-topic"));
     return new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()));
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {

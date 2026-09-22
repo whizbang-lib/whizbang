@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("IntegrityAuditClaim")]
+[Category("Shard1")]
 public class IntegrityAuditClaimTests : EFCoreTestBase {
 
   private const string CLAIM_KEY = "integrity_audit_last_run";

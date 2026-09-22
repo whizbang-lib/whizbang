@@ -52,6 +52,20 @@ public static class PinnedPoolServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(configure);
 
+    // #646: configuration binds FIRST (registration order), then the host's code callback —
+    // code wins over config for explicit opt-ins, and the documented
+    // Whizbang:Workers:PinnedPool section finally reaches the options turnkey.
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<WhizbangPinnedPoolOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<WhizbangPinnedPoolOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:PinnedPool"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<WhizbangPinnedPoolOptions>()
       .Configure(configure)
       // Catches the #1 misconfiguration (Size left at 0 while Enabled=true) at

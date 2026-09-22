@@ -82,7 +82,7 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
     ArgumentNullException.ThrowIfNull(options);
 
     return await _withConnectionAsync(async (cmd, prefix) => {
-#pragma warning disable S2077 // the schema prefix comes from the EF model, not user input — coordinator pattern
+#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
       // The settled/live split: persisted (folded) signatures union into the live computation —
       // but ONLY for the unfiltered whole-store view, because folded shapes carry no perspective
       // or scope identity to filter by. Filtered queries stay live-only.
@@ -123,10 +123,10 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         signatures.Add(new ApplyPathSignature(
-          reader.GetFieldValue<string[]>(0),
+          await reader.GetFieldValueAsync<string[]>(0, CancellationToken.None),
           reader.GetInt64(1),
-          _asUtc(reader.GetFieldValue<DateTime>(2)),
-          _asUtc(reader.GetFieldValue<DateTime>(3))));
+          _asUtc(await reader.GetFieldValueAsync<DateTime>(2, CancellationToken.None)),
+          _asUtc(await reader.GetFieldValueAsync<DateTime>(3, CancellationToken.None))));
       }
       return (IReadOnlyList<ApplyPathSignature>)signatures;
     }, cancellationToken).ConfigureAwait(false);
@@ -143,7 +143,7 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
     ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
 
     return await _withConnectionAsync(async (cmd, prefix) => {
-#pragma warning disable S2077 // the schema prefix comes from the EF model, not user input — coordinator pattern
+#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
       cmd.CommandText = string.Format(
         System.Globalization.CultureInfo.InvariantCulture,
         PATHS_CTE + """
@@ -189,7 +189,7 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
 
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = string.IsNullOrWhiteSpace(schema) || schema == "public" ? "" : $"\"{schema}\".";
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);

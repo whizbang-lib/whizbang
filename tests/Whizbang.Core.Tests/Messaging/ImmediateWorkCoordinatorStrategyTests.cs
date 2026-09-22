@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -9,7 +11,9 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -20,7 +24,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Simple test message for envelope creation
-  public record _testEvent([StreamId] string Data) : IEvent;
+  public record TestEvent([StreamId] string Data) : IEvent;
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy
@@ -40,15 +44,22 @@ public class ImmediateWorkCoordinatorStrategyTests {
     };
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -97,15 +108,22 @@ public class ImmediateWorkCoordinatorStrategyTests {
     };
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -154,15 +172,22 @@ public class ImmediateWorkCoordinatorStrategyTests {
     };
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -205,9 +230,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
-      null!,
-      instanceProvider,
-      options
+      coordinator: null!,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -219,9 +251,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
-      coordinator,
-      null!,
-      options
+      coordinator: coordinator,
+      instanceProvider: null!,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -233,9 +272,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
-      coordinator,
-      instanceProvider,
-      null!
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: null!,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -270,7 +316,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -294,7 +349,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -325,7 +389,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -349,7 +422,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -373,7 +455,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -397,7 +488,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Act
@@ -421,7 +521,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var logger = new FakeLogger<ImmediateWorkCoordinatorStrategy>();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Queue a message so FlushAsync has work (exercises flush logging)
@@ -453,8 +562,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     systemEventOptions.EnableEventAudit();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options,
-      systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions)
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     // Queue an event message with IsEvent=true
@@ -503,7 +620,16 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: channelWriter
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -529,9 +655,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private OutboxMessage _createOutboxMessage() {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -555,9 +681,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
   private MessageEnvelope<System.Text.Json.JsonElement> _createJsonEnvelope() {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
-      Payload = new _testEvent("test"),
+      Payload = new TestEvent("test"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -597,7 +723,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -622,16 +748,15 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
-    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
-    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
-    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
-    public MessageFailure[] LastInboxFailures { get; private set; } = [];
-    public WorkBatchOptions LastFlags { get; private set; }
+    public MessageCompletion[] LastOutboxCompletions { get; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; } = [];
+    public MessageFailure[] LastOutboxFailures { get; } = [];
+    public MessageFailure[] LastInboxFailures { get; } = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -650,7 +775,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;

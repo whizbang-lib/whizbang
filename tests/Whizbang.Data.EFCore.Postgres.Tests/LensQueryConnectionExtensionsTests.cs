@@ -10,6 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Provides escape hatch for queries not expressible in LINQ.
 /// </summary>
 [Category("RawSql")]
+[Category("Shard4")]
 public class LensQueryConnectionExtensionsTests {
   [Test]
   public async Task LensQueryConnectionExtensions_HasExecuteSqlAsyncMethodAsync() {

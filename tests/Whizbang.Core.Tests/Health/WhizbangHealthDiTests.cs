@@ -24,7 +24,7 @@ public class WhizbangHealthDiTests {
     var services = new ServiceCollection();
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<MigratingSource>();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var aggregator = provider.GetRequiredService<WhizbangHealthAggregator>();
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
@@ -55,7 +55,7 @@ public class WhizbangHealthDiTests {
     var services = new ServiceCollection();
     services.AddWhizbangManagedHealth(o => o.Components["schema"] = HealthPolicy.Strict);
     services.AddWhizbangHealthSource<MigratingSource>();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var aggregator = provider.GetRequiredService<WhizbangHealthAggregator>();
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);

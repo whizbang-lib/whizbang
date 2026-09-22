@@ -121,9 +121,8 @@ public class IndexDefinitionTests {
 
   [Test]
   public async Task IndexDefinition_IsRecordAsync() {
-    // Arrange & Act - Records have compiler-generated EqualityContract property
-    var hasEqualityContract = typeof(IndexDefinition).GetProperty("EqualityContract",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null;
+    // Arrange & Act - Records carry the compiler-generated public clone method
+    var hasEqualityContract = typeof(IndexDefinition).GetMethod("<Clone>$") is not null;
 
     // Assert
     await Assert.That(hasEqualityContract).IsTrue();

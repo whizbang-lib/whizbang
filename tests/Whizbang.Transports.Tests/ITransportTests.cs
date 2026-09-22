@@ -30,13 +30,36 @@ public class ITransportTests {
 
   [Test]
   public async Task ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync() {
-    // Arrange
+    // Arrange - a subscriber on the destination, so "completed successfully" can mean something
+    // stronger than "returned". PublishAsync is fire-and-forget: it returns the same way whether
+    // the message was handed to the destination's subscribers or dropped on the floor, so a
+    // returning-normally test cannot tell a working transport from a silently broken one.
     var transport = _createTestTransport();
     var envelope = _createTestEnvelope();
     var destination = new TransportDestination("test-topic");
 
-    // Act & Assert - Should not throw
-    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
+    var delivered = new TaskCompletionSource<IReadOnlyList<TransportMessage>>(
+      TaskCreationOptions.RunContinuationsAsynchronously);
+    using var subscription = await transport.SubscribeBatchAsync(
+      (batch, _) => { delivered.TrySetResult(batch); return Task.CompletedTask; },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 5000, MaxWaitMs = 10000 },
+      CancellationToken.None
+    );
+
+    // Act
+    await transport.PublishAsync(envelope, destination, envelopeType: "TestEnvelopeType", cancellationToken: CancellationToken.None);
+
+    // Assert - the published envelope arrives at the destination's subscriber, identity intact.
+    var batch = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(batch).Count().IsEqualTo(1)
+      .Because("one publish to a destination with one subscriber delivers one message");
+    await Assert.That(batch[0].Envelope.MessageId).IsEqualTo(envelope.MessageId)
+      .Because("the subscriber must receive the envelope that was published, not a substitute — "
+             + "a transport that delivered the wrong one would still 'complete successfully'");
+    await Assert.That(batch[0].EnvelopeType).IsEqualTo("TestEnvelopeType")
+      .Because("the envelope type is what the receiving side deserializes against; losing it "
+             + "turns a delivered message into an undeserializable one");
   }
 
   [Test]
@@ -45,8 +68,8 @@ public class ITransportTests {
     var transport = _createTestTransport();
     var envelope = _createTestEnvelope();
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
@@ -62,7 +85,7 @@ public class ITransportTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      async (batch, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None
@@ -77,7 +100,7 @@ public class ITransportTests {
     var transport = _createTestTransport();
     var requestEnvelope = _createTestEnvelope();
     var destination = new TransportDestination("test-service");
-    var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

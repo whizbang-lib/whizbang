@@ -38,12 +38,12 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   /// <summary>Creates the step over the scope factory the coordinator resolves from.</summary>
   public TableRewriteStartupStep(
       IServiceScopeFactory scopeFactory,
-      IOptions<MaintenanceWorkerOptions>? options = null,
-      ILogger<TableRewriteStartupStep>? logger = null) {
+      IOptions<MaintenanceWorkerOptions> options,
+      ILogger<TableRewriteStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
-    _options = options?.Value ?? new MaintenanceWorkerOptions();
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TableRewriteStartupStep>.Instance;
+    _options = options.Value;
+    _logger = logger;
   }
 
   /// <inheritdoc />

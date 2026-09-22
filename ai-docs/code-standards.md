@@ -405,6 +405,56 @@ public decimal CalculateTotal(List<OrderItem> items) {
 
 ## Code Quality
 
+### Never Swallow an Exception Silently — NON-NEGOTIABLE
+
+**Every `catch` that does not rethrow must log.** No empty catch blocks, no `catch { }`, no
+catch-and-continue without a trace.
+
+A swallowed exception erases the only evidence that something failed. It converts a loud bug into an
+invisible one, which is strictly worse than the crash it replaces — the system is still broken, but
+now nothing says so.
+
+```csharp
+// ❌ WRONG — the work was abandoned and nothing records it
+try {
+    await coordinator.DeregisterInstanceAsync(id, ct);
+} catch (OperationCanceledException) {
+    // the row is now stranded, and no operator will ever know
+}
+
+// ✅ CORRECT — names what failed AND what is now untrue about the system
+try {
+    await coordinator.DeregisterInstanceAsync(id, deregisterWindow.Token);
+} catch (OperationCanceledException ex) {
+    LogShutdownDeregisterAbandoned(logger, id, sw.ElapsedMilliseconds, ex);
+}
+```
+
+**Requirements:**
+
+1. **Log at a level matching the consequence.** `Warning` when state is left inconsistent or work was
+   abandoned. `Information` only when the swallow is genuinely routine and nothing is left undone.
+2. **The message must name the consequence, not just the failure.** "deregistration abandoned; the
+   instance row remains until stale cleanup reaps it, so fleet membership may over-count" beats
+   "deregistration failed". The reader needs to know what is now untrue about the system.
+3. **Give it its own `EventId`** so it is greppable and alertable.
+4. **Test that the log happens.** A test asserting only "does not throw" passes equally for a correct
+   fix and for a silent swallow, so it cannot detect a regression to silence. Assert the emission.
+5. **Cancellation is not an exemption.** `catch (OperationCanceledException)` on a shutdown or cleanup
+   path still abandons work and still needs a line.
+
+**Watch for exception filters that exclude the common case.** This shipped in `WhizbangShutdownService`:
+
+```csharp
+} catch (Exception ex) when (ex is not OperationCanceledException) {
+    // "Don't rethrow — stale cleanup will handle it if deregistration fails"
+}
+```
+
+The stated intent was "failures here must not crash shutdown", but the filter re-threw the single most
+likely failure, defeating that intent and turning every graceful stop into a crash exit. If a filter
+excludes an exception type, be explicit about why that type *should* propagate.
+
 ### Modern C# Features
 
 **Use modern C# patterns:**

@@ -1,8 +1,11 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -119,7 +122,7 @@ public class TagPolicyValidatorRouteNamespaceTests {
   public async Task StartAsync_RouteBindingOnUnknownSysTag_FailsHostStartAsync() {
     var options = new TagOptions();
     options.RouteNamespace("sys-mine", "bulk");
-    var validator = new TagPolicyStartupValidator(options, () => []);
+    var validator = new TagPolicyStartupValidator(options: options, registrationSource: () => [], systemEventOptions: Options.Create(new SystemEventOptions()), configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => await validator.StartAsync(CancellationToken.None))
       .Throws<TagPolicyConfigurationException>();
@@ -129,7 +132,7 @@ public class TagPolicyValidatorRouteNamespaceTests {
   public async Task StartAsync_CleanRouteBindings_CompletesAsync() {
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");
-    var validator = new TagPolicyStartupValidator(options, () => []);
+    var validator = new TagPolicyStartupValidator(options: options, registrationSource: () => [], systemEventOptions: Options.Create(new SystemEventOptions()), configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => await validator.StartAsync(CancellationToken.None))
       .ThrowsNothing();

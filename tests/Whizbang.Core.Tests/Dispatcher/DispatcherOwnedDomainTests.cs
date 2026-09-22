@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -103,7 +104,7 @@ public class DispatcherOwnedDomainTests {
   /// Tests the cascade path: LocalInvokeAsync → receptor → _dispatchByModeAsync → outbox.
   /// </summary>
   public class CascadeTestCommandHandler : IReceptor<CascadeTestCommand, CascadeTestEvent> {
-    public ValueTask<CascadeTestEvent> HandleAsync(CascadeTestCommand message, CancellationToken cancellationToken) {
+    public ValueTask<CascadeTestEvent> HandleAsync(CascadeTestCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new CascadeTestEvent(message.EntityId));
     }
   }
@@ -219,7 +220,7 @@ public class DispatcherOwnedDomainTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 

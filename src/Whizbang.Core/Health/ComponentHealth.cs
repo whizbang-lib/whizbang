@@ -9,7 +9,6 @@ namespace Whizbang.Core.Health;
 /// <docs>resilience/managed-resource-health</docs>
 /// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Aggregate_WorstStatusWinsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:Liveness_NeverFailsForIntentionalStates_UnderStrictAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthAggregatorTests.cs:LenientDefault_IntentionalState_IsReadyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Health/ConnectivityHealthSourceTests.cs:AssumedHealthy_IsPhaseAware_NeverFaultsFromProbeAsync</tests>
 public enum ComponentState {
   /// <summary>Running normally.</summary>

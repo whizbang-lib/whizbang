@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// that survived the cooldown + cursor + inversion filters.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard1")]
 public class FetchEventsByIdsSqlTests : EFCoreTestBase {
 
   [Test]
@@ -115,9 +116,9 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     await Assert.That(rows[0].EventType).IsEqualTo("TestType");
     await Assert.That(rows[0].EventData).Contains("\"payload\"");
     await Assert.That(rows[0].Metadata).IsNotNull();
-    await Assert.That(rows[0].Metadata!).Contains("\"hop\"");
+    await Assert.That(rows[0].Metadata).Contains("\"hop\"");
     await Assert.That(rows[0].Scope).IsNotNull();
-    await Assert.That(rows[0].Scope!).Contains("\"tenant\"");
+    await Assert.That(rows[0].Scope).Contains("\"tenant\"");
   }
 
   // --- helpers ---
@@ -166,7 +167,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("type", eventType);
     ins.Parameters.AddWithValue("data", eventData);
     ins.Parameters.AddWithValue("meta", metadata);
-    ins.Parameters.AddWithValue("scope", scope);
+    ins.Parameters.AddWithValue(nameof(scope), scope);
     ins.Parameters.AddWithValue("ver", version);
     await ins.ExecuteNonQueryAsync();
   }

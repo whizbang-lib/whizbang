@@ -20,9 +20,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// semantics rather than inventing new ones.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
+[Category("Shard4")]
 public class CoordinatorIntegrityRepairLedgerBatchTests {
 
-  private sealed class _batchCoordinator : IWorkCoordinator {
+  private sealed class BatchCoordinator : IWorkCoordinator {
     public IReadOnlyList<bool>? BatchAnswer { get; set; }
     public bool BatchHealedHandled { get; set; } = true;
     public bool ThrowOnBatch { get; set; }
@@ -33,8 +34,8 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     public int LastMaxGrants = -1;
 
     public Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
-        Guid origin, IReadOnlyList<IntegrityReportObservation> observations,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+        Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       BatchCalls++;
       return ThrowOnBatch
         ? Task.FromException<IReadOnlyList<bool>?>(new InvalidOperationException("batch down"))
@@ -42,8 +43,8 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     }
 
     public Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
-        Guid origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
-        DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants, CancellationToken ct = default) {
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+        DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants, CancellationToken cancellationToken = default) {
       BatchCalls++;
       LastMaxGrants = maxGrants;
       return ThrowOnBatch
@@ -52,7 +53,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     }
 
     public Task<bool> IntegrityMarkHealedBatchAsync(
-        Guid origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken ct = default) {
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken cancellationToken = default) {
       BatchCalls++;
       return ThrowOnBatch
         ? Task.FromException<bool>(new InvalidOperationException("batch down"))
@@ -65,41 +66,42 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
         Guid originServiceId, System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
         CancellationToken cancellationToken = default) {
       BatchCalls++;
-      return ThrowOnBatch
-        ? Task.FromException<System.Collections.Generic.IReadOnlyList<double>?>(new InvalidOperationException("batch heal exploded"))
-        : Task.FromResult<System.Collections.Generic.IReadOnlyList<double>?>(BatchHealedHandled ? [] : null);
+      if (ThrowOnBatch) {
+        return Task.FromException<System.Collections.Generic.IReadOnlyList<double>?>(new InvalidOperationException("batch heal exploded"));
+      }
+      return Task.FromResult<System.Collections.Generic.IReadOnlyList<double>?>(BatchHealedHandled ? [] : null);
     }
 
     public Task<bool> IntegrityTryBeginReportAsync(
-        IntegrityRepairLedger.DivergenceKey key, long ol, long oh, long ll, long lh,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+        IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       SingleReportCalls++;
       return Task.FromResult(true);
     }
 
     public Task<bool> IntegrityTryBeginRepairAsync(
         IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
       SingleRepairCalls++;
       return Task.FromResult(true);
     }
 
-    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) {
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
       SingleHealedCalls++;
       return Task.CompletedTask;
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static (CoordinatorIntegrityRepairLedger Ledger, _batchCoordinator Coordinator) _build() {
-    var coordinator = new _batchCoordinator();
+  private static (CoordinatorIntegrityRepairLedger Ledger, BatchCoordinator Coordinator) _build() {
+    var coordinator = new BatchCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var sp = services.BuildServiceProvider();

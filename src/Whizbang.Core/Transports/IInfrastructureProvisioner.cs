@@ -15,7 +15,7 @@ namespace Whizbang.Core.Transports;
 /// - Kafka: Create topics via AdminClient</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
-/// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_DefaultImplementation_CompletesWithoutThrowingAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithEmptyOwnedDomains_SkipsProvisioningAsync</tests>
@@ -32,9 +32,6 @@ public interface IInfrastructureProvisioner {
   /// domains should be safe. Implementations should handle race conditions where
   /// multiple service instances attempt to provision the same resources.
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionOwnedDomains_DeclaresResourcesForEachDomainAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionOwnedDomains_EmptySet_DoesNothingAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionOwnedDomains_CancellationRequested_ThrowsAsync</tests>
   Task ProvisionOwnedDomainsAsync(
     IReadOnlySet<string> ownedDomains,
     CancellationToken cancellationToken = default);
@@ -53,10 +50,10 @@ public interface IInfrastructureProvisioner {
   /// The default implementation is a no-op for transports that don't need pre-creation (e.g., RabbitMQ).
   /// </remarks>
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
   Task EnsureTopicExistsAsync(
     string topicName,
     CancellationToken cancellationToken = default) => Task.CompletedTask;

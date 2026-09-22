@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   private const string LEADER_TABLE = "wh_per_sg_leader";
   private const string FOLLOWER_TABLE = "wh_per_sg_follower";
@@ -31,7 +32,7 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   private sealed class SgLeaderModel;
   private sealed class SgFollowerModel;
 
-  private IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
@@ -60,14 +61,14 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       INSERT INTO {table} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb,
               NOW() - make_interval(hours => @h), NOW() - make_interval(hours => @h), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("h", idleHours);
     await cmd.ExecuteNonQueryAsync();
   }
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, string table, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {table} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(
       await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }

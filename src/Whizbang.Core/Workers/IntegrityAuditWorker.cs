@@ -42,7 +42,7 @@ public sealed partial class IntegrityAuditWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.AuditEnabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     LogStarted(_logger, _options.AuditIntervalMinutes);
@@ -125,6 +125,7 @@ public sealed partial class IntegrityAuditWorker(
   /// </summary>
   private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
     var dispatcher = services.GetService<IDispatcher>();
@@ -234,7 +235,7 @@ public sealed partial class IntegrityAuditWorker(
     // The assembly-qualified WIRE form ("Type, Assembly") — the origin matches these against its
     // event_type/digest columns, which store that form; a CLR-FullName-only list silently
     // matches nothing and every origin answers with silence.
-    var subscribed = typeProvider?.GetEventTypes()
+    var subscribed = (typeProvider is { IsAvailable: true } ? typeProvider.GetEventTypes() : null)?
       .Select(TypeNameFormatter.Format)
       .Distinct(StringComparer.Ordinal)
       .ToList();
@@ -254,6 +255,7 @@ public sealed partial class IntegrityAuditWorker(
       // the comparator then compares legacy and the seal simply stays put.
       var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
           RequesterService = requester,
@@ -265,11 +267,7 @@ public sealed partial class IntegrityAuditWorker(
           SinceSequence = since,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = DateTimeOffset.UtcNow,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-          }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = originName,

@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Messaging/Redelivery.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("RedeliverySelection")]
+[Category("Shard4")]
 public class SelectRedeliveryEventsTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
@@ -77,14 +78,14 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
 
     // Ordering: (stream, version) — stream 1 versions ascend despite out-of-order insertion.
     var stream1Rows = selected.Where(e => e.StreamId == stream1).ToList();
-    await Assert.That(stream1Rows.Select(e => e.Version).ToList()).IsEquivalentTo([1L, 2L, 4L])
+    await Assert.That(stream1Rows.ConvertAll(e => e.Version)).IsEquivalentTo([1L, 2L, 4L])
       .Because("per-stream results replay in append order regardless of physical insert order.");
     await Assert.That(stream1Rows[0].EventId).IsEqualTo(e1V1);
 
     // Original stored form comes back.
     await Assert.That(stream1Rows[0].EventType).IsEqualTo("Contracts.ThingCreated");
     await Assert.That(stream1Rows[0].EventData).Contains("\"seeded\"");
-    await Assert.That(stream1Rows[0].Scope!).Contains(TENANT_A);
+    await Assert.That(stream1Rows[0].Scope).Contains(TENANT_A);
   }
 
   [Test]
@@ -170,7 +171,7 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     // stream order is the database's uuid collation — deliberately not asserted from C#.
     foreach (var stream in streams) {
       var versions = seen.Where(s => s.Stream == stream).Select(s => s.Version).ToList();
-      await Assert.That(versions).IsEquivalentTo(versions.OrderBy(v => v).ToList())
+      await Assert.That(versions).IsEquivalentTo(versions.Order().ToList())
         .Because("a stream's versions arrive ascending across pages — repair bundles replay in order.");
     }
   }
@@ -190,15 +191,17 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-      store.Parameters.AddWithValue("version", version);
-      store.Parameters.AddWithValue("flags", flags);
+      store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
     if (!reapBody) {
       await using var body = conn.CreateCommand();
-      body.CommandText = @"
+      body.CommandText = """
+
         INSERT INTO wh_event_body (event_id, event_data, metadata)
-        VALUES (@event, '{""seeded"":true}'::jsonb, @meta::jsonb)";
+        VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
+""";
       body.Parameters.AddWithValue("event", eventId);
       body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
       await body.ExecuteNonQueryAsync();

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -166,7 +167,7 @@ public class DeferredDispatchTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
 
     // Register deferred channel (simulating singleton registration)
@@ -190,7 +191,7 @@ public class DeferredDispatchTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
 
     // Register deferred channel

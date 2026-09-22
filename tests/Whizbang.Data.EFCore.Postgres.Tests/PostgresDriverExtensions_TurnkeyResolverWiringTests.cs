@@ -8,8 +8,7 @@ using Whizbang.Core.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// End-to-end proof that the turnkey
@@ -21,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// reproduction tests.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard4")]
 public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
 
   // A representative consumer production config shape: ConnectionStrings:appservice-db

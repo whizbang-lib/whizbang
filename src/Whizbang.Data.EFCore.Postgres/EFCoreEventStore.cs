@@ -61,6 +61,11 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Projects a (filtered, ordered) pointer query into body-aware rows via LEFT JOIN on
   /// <c>wh_event_body</c>. Apply Where/OrderBy on the pointer query BEFORE calling this.
   /// </summary>
+  // IDE0031 (use null propagation) is off across this projection: it is an EF Core expression
+  // tree, where `b?.Metadata` is a compile error (CS8072, "an expression tree lambda may not
+  // contain a null propagating operator"). The explicit null check is the only legal spelling,
+  // and `dotnet format style` rewrites it to the illegal one on every run without this.
+#pragma warning disable IDE0031
   private IQueryable<EventRow> _bodyAwareRows(IQueryable<EventStoreRecord> pointers) =>
     from e in pointers
     join body in _context.Set<EventBodyRecord>().AsNoTracking()
@@ -79,6 +84,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       EventData = b != null ? (JsonElement?)b.EventData : null,
       Metadata = b != null ? b.Metadata : null,
     };
+#pragma warning restore IDE0031
 
   /// <summary>
   /// Appends an event to the specified stream.
@@ -301,6 +307,40 @@ public sealed class EFCoreEventStore<TDbContext>(
     return await _context.Set<EventStoreRecord>()
       .AsNoTracking()
       .AnyAsync(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0, cancellationToken);
+  }
+
+  /// <summary>
+  /// The perspective-aware history probe (issue #696): does this stream hold an event ordered
+  /// before the given id whose stored type is one the perspective folds? The stream's distinct
+  /// pre-batch <c>event_type</c> values are read (an indexed range over the stream's pointer rows;
+  /// a stream carries few distinct types) and matched in process through
+  /// <see cref="EventTypeMatchingHelper"/>, the one strategy every read path shares, so a name a
+  /// producer wrote in the decorated assembly-qualified form still matches.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return false;
+    }
+    var storedTypes = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .Where(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0)
+      .Select(e => e.EventType)
+      .Distinct()
+      .ToListAsync(cancellationToken);
+    return _anyStoredTypeIsHandled(storedTypes, eventTypes);
+  }
+
+  private static bool _anyStoredTypeIsHandled(IEnumerable<string> storedTypes, IReadOnlyList<Type> eventTypes) {
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    foreach (var stored in storedTypes) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
@@ -535,9 +575,9 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
   /// Returns the (possibly modified) hops list.
   /// </summary>
-  private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata metadata, PerspectiveScope? scope) {
-    var hops = metadata.Hops.ToList();
-    if (scope == null || hops.Count == 0 || hops[0].Scope != null) {
+  private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata? metadata, PerspectiveScope? scope) {
+    var hops = metadata?.Hops?.ToList() ?? [];
+    if (scope == null || (hops.Count > 0 && hops[0].Scope != null)) {
       return hops;
     }
 
@@ -546,9 +586,40 @@ public sealed class EFCoreEventStore<TDbContext>(
       return hops;
     }
 
+    if (hops.Count == 0) {
+      // No hops to hang it on. That is the normal shape when an event is read back from the store:
+      // the row keeps its scope in a column but carries no envelope metadata, so there are no hops
+      // to restore into.
+      //
+      // Returning early here dropped a scope that had already been read and deserialized.
+      // GetCurrentScope() walks hops, so it returned null, and any perspective requiring a security
+      // context threw on every replayed event — a retry that could never succeed, ten times per
+      // event, then a permanent park.
+      //
+      // Synthesizing a hop restores exactly what the store persisted. No authority is invented: an
+      // event with no stored scope still yields none, because scope == null returns above.
+      hops.Add(new MessageHop {
+        ServiceInstance = _replayInstance(),
+        Scope = scopeDelta,
+      });
+      return hops;
+    }
+
     hops[0] = hops[0] with { Scope = scopeDelta };
     return hops;
   }
+
+  /// <summary>
+  /// Identity stamped on a hop synthesized while reading an event back from the store. The
+  /// originating instance is not recorded on the row, and inventing one would misattribute the hop;
+  /// this names the reader, which is what actually produced it.
+  /// </summary>
+  private static ServiceInstanceInfo _replayInstance() => new() {
+    InstanceId = Guid.Empty,
+    ServiceName = "replay",
+    HostName = Environment.MachineName,
+    ProcessId = Environment.ProcessId,
+  };
 
   /// <summary>
   /// Checks if the exception is due to a duplicate key constraint violation.
@@ -628,12 +699,10 @@ public sealed class EFCoreEventStore<TDbContext>(
     var metadata = _deserializeMetadataIfPresent(raw.Metadata);
     var scope = _deserializeScopeIfPresent(raw.Scope);
 
-    var hops = metadata?.Hops?.ToList() ?? [];
-    // Restore scope into first hop (same pattern as _restoreScopeInHops)
-    if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-    }
-
+    // Same restore path the read methods use, so drain mode and ReadPolymorphicAsync cannot
+    // drift apart on scope handling again — they previously did, and the drain-mode copy was
+    // fixed while the shared one kept dropping scope for events with no hops.
+    var hops = _restoreScopeInHops(metadata, scope);
     return new MessageEnvelope<IEvent> {
       MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
       Payload = (IEvent)eventData,

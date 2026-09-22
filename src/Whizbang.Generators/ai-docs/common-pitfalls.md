@@ -353,7 +353,7 @@ private static ReceptorInfo? ExtractInfo(
 ### Why This Is a Pitfall
 
 **Problem**:
-- Without cancellation token, generator can't be cancelled
+- Without cancellation token, generator can't be canceled
 - User closes IDE or stops build = generator keeps running
 - Wastes CPU resources
 - Delays IDE responsiveness

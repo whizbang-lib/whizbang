@@ -35,8 +35,8 @@ public class SyncFireBehaviorTests {
 [NotInParallel("DefaultTimeoutMs")]
 public class AwaitPerspectiveSyncAttributeTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
-  private sealed class TestEvent { }
+  private sealed class TestPerspective;
+  private sealed class TestEvent;
 
   // ==========================================================================
   // Constructor tests
@@ -233,5 +233,5 @@ public class AwaitPerspectiveSyncAttributeTests {
   // Test class with multiple sync attributes
   [AwaitPerspectiveSync(typeof(TestPerspective))]
   [AwaitPerspectiveSync(typeof(TestPerspective), TimeoutMs = 10000)]
-  private sealed class MultiSyncTestClass { }
+  private sealed class MultiSyncTestClass;
 }

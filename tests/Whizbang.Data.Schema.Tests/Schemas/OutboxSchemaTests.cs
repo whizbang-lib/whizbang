@@ -29,7 +29,7 @@ public class OutboxSchemaTests {
     // Assert - Verify column count
     // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans)
     // + coalesce_group (tag-bound coalescing: the group a pending single belongs to; NULL = normal shippable row).
-    await Assert.That(columns).Count().IsEqualTo(22);
+    await Assert.That(columns).Count().IsEqualTo(23);   // 149: + priority
 
     var coalesceGroup = columns.First(c => c.Name == "coalesce_group");
     await Assert.That(coalesceGroup.DataType).IsEqualTo(WhizbangDataType.STRING);
@@ -103,7 +103,16 @@ public class OutboxSchemaTests {
     var indexes = OutboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).Count().IsEqualTo(8);
+    await Assert.That(indexes).Count().IsEqualTo(5);
+
+    // The count dropped from eight because three declarations were partial on a status bitmask.
+    // The outbox discriminates claimable and completed rows with processed_at, and a partial index
+    // is considered only when the planner can prove the query's predicate implies the index's --
+    // textually, not arithmetically -- so "(status & 4) != 4" was unreachable from anything the
+    // outbox asks, while still being maintained on every write it took. Asserted as a property
+    // rather than left as a bare number, so the next one written that way fails here too.
+    await Assert.That(indexes.Where(i => i.WhereClause?.Contains("status &", StringComparison.Ordinal) == true))
+      .IsEmpty();
 
     // Verify composite index on status and created_at
     var statusCreatedIndex = indexes[0];

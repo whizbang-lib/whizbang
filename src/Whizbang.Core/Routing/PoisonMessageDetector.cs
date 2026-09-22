@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Routing;
 
@@ -64,7 +65,19 @@ public readonly record struct PoisonEvaluationContext(
   DateTimeOffset? FirstEnqueuedAt,
   int? BrokerDeliveryCount,
   int? DurableObservationCount,
-  DateTimeOffset Now);
+  DateTimeOffset Now) {
+
+  /// <summary>
+  /// How many times a receptor has actually ATTEMPTED this message, when the caller can supply it.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <c>DurableObservationCount</c>, which counts DELIVERIES. A broadcast fanned out to
+  /// more subscriptions than the observation bound crosses that bound without any receptor having
+  /// tried it, so quarantining on deliveries alone destroys messages that never failed.
+  /// <see langword="null"/> means UNMEASURED — never treated as "zero failures".
+  /// </remarks>
+  public int? ProcessingAttempts { get; init; }
+}
 
 /// <summary>
 /// Outcome of a poison evaluation. <see cref="Reason"/> is <see cref="PoisonQuarantineReason.None"/>
@@ -151,7 +164,7 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
   private readonly PoisonMessageOptions _options;
   private readonly TimeSpan _ageThreshold;
   private readonly ILogger<PoisonMessageDetector> _logger;
-  private readonly Counter<long> _quarantinedCounter;
+  private readonly PassiveCounter<long> _quarantinedCounter;
   private readonly PoisonDetectionCapabilityState? _capabilityState;
 
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
@@ -182,10 +195,14 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
     _ageThreshold = _options.EffectiveAgeThreshold;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _capabilityState = capabilityState;
-    _quarantinedCounter = meter.CreateCounter<long>(
+    _quarantinedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
       description: "Count of messages quarantined by the poison detector (age | durable observations).");
+    // Issue #711: one series per gate exists at zero from construction (see PassiveCounter).
+    foreach (var gate in Enum.GetValues<PoisonQuarantineGate>()) {
+      _quarantinedCounter.Touch(new KeyValuePair<string, object?>("gate", _gateTag(gate)));
+    }
   }
 
   /// <inheritdoc />
@@ -209,12 +226,25 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 
     // Layer 2 — durable redelivery observations. Bounds the loop where no trustworthy timestamp
     // exists, and catches poison that dies mid-processing rather than mid-lock.
+    // The bound alone is NOT sufficient. The observation counter counts DELIVERIES, so a message
+    // broadcast to more subscriptions than the bound crosses it without any receptor having tried
+    // it — quarantining then destroys a message that never failed. Not hypothetical: this
+    // dead-lettered control-plane broadcasts on a healthy system, clustered exactly one past the
+    // bound with an attempt count of zero.
+    //
+    // "Redelivery is not making progress" is a claim about PROCESSING, so processing evidence is
+    // required before it can be made. Null attempts means UNMEASURED, never "zero failures so far" —
+    // destroying a message on the strength of a reading nobody took is the dangerous direction to be
+    // wrong in.
     if (context.DurableObservationCount is { } observations
-        && observations >= _options.MaxDurableObservations) {
+        && observations >= _options.MaxDurableObservations
+        && context.ProcessingAttempts is { } attempts
+        && attempts > 0) {
       return PoisonVerdict.Quarantine(
         PoisonQuarantineReason.ObservationCountExceeded,
         $"Message '{context.MessageId}' has been durably observed {observations} times, at or past the "
-        + $"{_options.MaxDurableObservations} bound; redelivery is not making progress.");
+        + $"{_options.MaxDurableObservations} bound, after {attempts} processing attempt(s); "
+        + "redelivery is not making progress.");
     }
 
     return PoisonVerdict.Proceed();

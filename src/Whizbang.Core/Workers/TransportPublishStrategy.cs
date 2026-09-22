@@ -56,12 +56,12 @@ public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
   string inboxTopic,
-  ILoggerFactory? loggerFactory = null,
+  ILoggerFactory loggerFactory,
+  ICommandInboxAddressResolver namespaceRouting,
   ThrottleRetryOptions? throttleRetryOptions = null,
   TransportMetrics? metrics = null,
   Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
   System.Text.Json.JsonSerializerOptions? jsonOptions = null,
-  ICommandInboxAddressResolver? namespaceRouting = null,
   Whizbang.Core.Tags.TransportNamespaceResolver? transportNamespaces = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
@@ -74,12 +74,21 @@ public partial class TransportPublishStrategy(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-  private readonly ICommandInboxAddressResolver? _namespaceRouting = namespaceRouting;
+  private readonly ICommandInboxAddressResolver _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Tags.TransportNamespaceResolver? _transportNamespaces = transportNamespaces;
+
+  /// <summary>The inbox topic commands ride when no resolver flips them; read by the registration tests.</summary>
+  internal string InboxTopic => _inboxTopic;
+
+  /// <summary>The command-inbox seam the factory handed through; read by the registration tests.</summary>
+  internal ICommandInboxAddressResolver NamespaceRouting => _namespaceRouting;
+
+  /// <summary>The transport-namespace resolver, when one was registered; read by the registration tests.</summary>
+  internal Whizbang.Core.Tags.TransportNamespaceResolver? NamespaceResolver => _transportNamespaces;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
-  private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+  private readonly ILogger _logger = loggerFactory.CreateLogger(LOG_CATEGORY);
 #pragma warning restore S4487
   private readonly ThrottleRetryOptions _throttleRetry = throttleRetryOptions ?? new ThrottleRetryOptions();
   private readonly TransportMetrics? _metrics = metrics;
@@ -128,8 +137,8 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory? loggerFactory = null)
-    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory) {
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory loggerFactory)
+    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory, NullCommandInboxAddressResolver.Instance) {
   }
 
   /// <summary>
@@ -157,7 +166,6 @@ public partial class TransportPublishStrategy(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullDestination_*</tests>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     // Skip transport publishing for event-store-only messages (destination is null)
     // These messages are stored in event store via process_work_batch but should not be transported
@@ -497,7 +505,7 @@ public partial class TransportPublishStrategy(
       // (UnroutableDestinationException) instead of silently dropping when the handling
       // service never dark-provisioned the entity. Unflipped namespaces keep TODAY'S wire
       // shape byte-identical (no metadata) — rollback is removing the flip.
-      var flippedAddress = _namespaceRouting?.ResolveFlippedCommandInboxAddress(ns);
+      var flippedAddress = _namespaceRouting.ResolveFlippedCommandInboxAddress(ns);
       if (flippedAddress is not null) {
         return new TransportDestination(
           Address: flippedAddress,
@@ -546,6 +554,12 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="typeFullName">Assembly-qualified type name (e.g., "MyApp.Commands.CreateTenantCommand, MyApp")</param>
   /// <returns>Detected MessageKind or Unknown</returns>
+  /// <summary>Test seam for the runtime classifier, which must agree with the compile-time
+  /// ladder in CompileTimeMessageClassification — a message that classifies one way at build
+  /// time and another here routes inconsistently.</summary>
+  internal static MessageKind DetectMessageKindForTest(string typeFullName)
+    => _detectMessageKindFromTypeName(typeFullName);
+
   private static MessageKind _detectMessageKindFromTypeName(string typeFullName) {
     var ns = _extractNamespace(typeFullName);
     var typeName = _extractTypeName(typeFullName);
@@ -639,7 +653,7 @@ public partial class TransportPublishStrategy(
   /// chain's outcome (envelope/type/bytes/destination) for the publish
   /// step or a pre-flight failure result the caller returns directly.
   /// </summary>
-  private async Task<_postSerializeOutcome> _runPostSerializeChainAsync(
+  private async Task<PostSerializeOutcome> _runPostSerializeChainAsync(
       OutboxWork work,
       TransportDestination destination,
       CancellationToken cancellationToken) {
@@ -654,8 +668,7 @@ public partial class TransportPublishStrategy(
       work.Envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
 
     var envelopeTypeName = work.EnvelopeType
-      ?? runtimeType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException("Envelope type must have an assembly-qualified name.");
+      ?? TypeNameFormatter.AssemblyQualifiedName(runtimeType);
 
     var context = new Whizbang.Core.Offloads.PostSerializeContext(
       Envelope: work.Envelope,
@@ -684,7 +697,7 @@ public partial class TransportPublishStrategy(
     // size still exceeds the transport's ceiling, fail BEFORE handing it to the
     // transport — the outbox row stays put with a clear reason code.
     if (_transport.MaxMessageSizeBytes is long max && outcome.FinalSerializedBytes.Length > max) {
-      return new _postSerializeOutcome {
+      return new PostSerializeOutcome {
         Failure = new MessagePublishResult {
           MessageId = work.MessageId,
           Success = false,
@@ -695,7 +708,7 @@ public partial class TransportPublishStrategy(
       };
     }
 
-    return new _postSerializeOutcome {
+    return new PostSerializeOutcome {
       Envelope = outcome.FinalEnvelope,
       EnvelopeType = outcome.FinalEnvelopeType,
       Bytes = outcome.FinalSerializedBytes,
@@ -704,7 +717,7 @@ public partial class TransportPublishStrategy(
   }
 
   /// <summary>Internal carrier from <see cref="_runPostSerializeChainAsync"/>. Either Failure is set (pre-flight rejection) or the four chain-outcome fields are.</summary>
-  private sealed class _postSerializeOutcome {
+  private sealed class PostSerializeOutcome {
     public Whizbang.Core.Observability.IMessageEnvelope? Envelope { get; init; }
     public string? EnvelopeType { get; init; }
     public ReadOnlyMemory<byte> Bytes { get; init; }

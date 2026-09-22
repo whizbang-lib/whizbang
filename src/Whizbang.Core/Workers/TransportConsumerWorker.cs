@@ -48,22 +48,19 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly JsonSerializerOptions _jsonOptions;
-  private readonly OrderedStreamProcessor _orderedProcessor;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
-  private readonly IReceptorRegistryQuery? _receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
-  private readonly IEphemeralModeResolver? _ephemeralModeResolver;
+  private readonly IReceptorRegistryQuery _receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry;
+  private readonly IEphemeralModeResolver _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
-  private readonly ISchemaReadyGate? _schemaReadyGate;
-  private readonly IEventMarkerResolver? _eventMarkerResolver;
+  private readonly ISchemaReadyGate _schemaReadyGate;
+  private readonly IEventMarkerResolver _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
   // is ACTUALLY bound to its transport destinations. Completes regardless of
@@ -107,9 +104,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
   private HashSet<string>? _knownEventTypeNames;
-  private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly TransportBatchOptions _transportBatchOptions;
-  private readonly IWorkChannelWriter? _workChannelWriter;
+  private readonly IWorkChannelWriter _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
   // Single source of truth for partition count across this service. Read from
@@ -118,7 +114,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly int _partitionCount;
   // Control class (topology arc phase 9): non-durable receive is a migration step consulted LIVE
   // off the shared options instance, so a rollback is a configuration edit, not a redeploy.
-  private readonly Routing.ControlClassOptions? _controlClass;
+  private readonly Routing.ControlClassOptions _controlClass;
   private readonly Tags.ControlClassResolver? _controlClassResolver;
 
   /// <summary>
@@ -130,7 +126,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <param name="scopeFactory">Service scope factory for creating scoped services</param>
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
-  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
   /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
   /// <remarks>
@@ -148,26 +143,24 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     IServiceScopeFactory scopeFactory,
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
-    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
-    IServiceInstanceProvider? serviceInstanceProvider = null,
-    MessageProcessingOptions? messageProcessingOptions = null,
-    TransportBatchOptions? transportBatchOptions = null,
-    IWorkChannelWriter? workChannelWriter = null,
-    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions>? claimWorkerOptions = null,
-    IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null,
-    IEphemeralModeResolver? ephemeralModeResolver = null,
-    IEventMarkerResolver? eventMarkerResolver = null,
+    IServiceInstanceProvider serviceInstanceProvider,
     // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
     // database work against a schema that may not exist yet on a first boot. Optional only so
     // existing fixtures construct unchanged; DI always supplies it.
-    ISchemaReadyGate? schemaReadyGate = null,
+    ISchemaReadyGate schemaReadyGate,
+    Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions> routingOptions,
+    IWorkChannelWriter workChannelWriter,
+    Microsoft.Extensions.Options.IOptions<ClaimWorkerOptions> claimWorkerOptions,
+    IReceptorRegistryQuery receptorRegistry,
+    IReceptorRegistry runtimeReceptorRegistry,
+    IEphemeralModeResolver ephemeralModeResolver,
+    IEventMarkerResolver eventMarkerResolver,
     // Control class (topology arc phase 9). Both optional: absent ⇒ every message takes the
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
-    Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions>? controlClass = null,
+    Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
+    TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null
   ) {
 #pragma warning restore S107
@@ -183,13 +176,19 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _options = options;
     _resilienceOptions = resilienceOptions;
     _scopeFactory = scopeFactory;
-    _jsonOptions = jsonOptions;
-    _orderedProcessor = orderedProcessor;
-    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
     _logger = logger;
-    _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
-    _serviceName = serviceInstanceProvider?.ServiceName;
+    _ownedDomains = routingOptions.Value.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    // An unknown identity is not a service name. The three gates below (self-echo, foreign
+    // target, hop attribution) all treat a null name as "this service cannot know who it is" and
+    // fail open. Passing "Unknown" through as if it were a real name would make every targeted
+    // message look foreign and be discarded, turning fail-open into fail-closed for exactly the
+    // hosts that cannot defend themselves against it.
+    var resolvedServiceName = serviceInstanceProvider.ServiceName;
+    _serviceName = string.Equals(
+        resolvedServiceName, ServiceInstanceInfo.Unknown.ServiceName, StringComparison.Ordinal)
+      ? null
+      : resolvedServiceName;
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;
@@ -197,12 +196,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _runtimeReceptorRegistry = runtimeReceptorRegistry;
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
-    _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
-    _controlClass = controlClass?.Value;
+    _partitionCount = claimWorkerOptions.Value.PartitionCount;
+    _controlClass = controlClass.Value;
     _controlClassResolver = controlClassResolver;
-
-    var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
-    _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -231,6 +227,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       try {
         await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
       } catch (OperationCanceledException) {
+        // Settle readiness before leaving, for the same reason the catch further down surfaces a
+        // startup failure: a waiter on SubscriptionsReady must observe an outcome rather than hang
+        // forever on a signal that can never arrive. This return is the one exit that used to
+        // leave it unsettled, so a host shutting down while migrations were still pending parked
+        // every readiness waiter — including any that gate shutdown itself — indefinitely.
+        _subscriptionsReadyTcs.TrySetCanceled(stoppingToken);
         return;
       }
     }
@@ -240,9 +242,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // the wiring state once at startup so a broken chain is visible in service logs, not just in data.
     if (_logger.IsEnabled(LogLevel.Information)) {
       _logger.LogInformation(
-        "Receive-path flag derivation: eventMarkerResolver={HasMarkerResolver}, ephemeralModeResolver={HasEphemeralResolver}, indexedTypeNames={IndexedTypeNames}",
-        _eventMarkerResolver is not null,
-        _ephemeralModeResolver is not null,
+        "Receive-path flag derivation: indexedTypeNames={IndexedTypeNames}",
         (_eventMarkerResolver as EventMarkerResolver)?.IndexedTypeNameCount ?? -1);
     }
     if (_logger.IsEnabled(LogLevel.Information)) {
@@ -404,7 +404,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (batch, ct) => await _handleMessageBatchAsync(batch, ct),
+      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct, cancellationToken),
       _transportBatchOptions,
       state,
       _resilienceOptions,
@@ -482,6 +482,22 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
+  /// <summary>
+  /// Runs the batch handler so that a failed batch costs one batch, never the process.
+  /// </summary>
+  /// <remarks>
+  /// Delegates to <see cref="TransportBatchGuard"/> so the containment behavior is testable on its
+  /// own — the guard is the part that must be proven, and proving it should not require standing up
+  /// a whole worker with a transport and a database behind it.
+  /// </remarks>
+  private Task _handleBatchWithoutKillingTheHostAsync(
+      IReadOnlyList<TransportMessage> messages,
+      CancellationToken batchToken,
+      CancellationToken hostStoppingToken)
+    => TransportBatchGuard.RunAsync(
+         ct => _handleMessageBatchAsync(messages, ct),
+         messages.Count, _logger, batchToken, hostStoppingToken);
+
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {
@@ -527,12 +543,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // fan-out note below). Running the gate against the composite drops the ENTIRE bundle here,
       // before any inbox row is written — unrecoverable, and only visible at Debug. See
       // CompositeInboxFanout.IsCompositeWireType.
-      if (_receptorRegistry is not null && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
+      if (!string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
         if (innerMessageType is not null
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !(_runtimeReceptorRegistry?.HasAnyRuntimeReceptors(innerMessageType) ?? false)
+            && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
             && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
           _metrics?.InboxMessagesDeduplicated.Add(1);
           continue;
@@ -546,7 +562,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // receive-boundary extension of the rule DeadLetterDropPolicy already applies at the
       // dead-letter boundary. The comparison is not skipped — it MOVES here, at the same
       // lifecycle stage the durable path fires it at, so control receptors are unchanged.
-      if (_controlClass?.NonDurableReceive == true
+      if (_controlClass.NonDurableReceive
           && _controlClassResolver is not null
           && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && _controlClassResolver.IsControlClass(EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType))) {
@@ -564,7 +580,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         // ICompositeEvent payload and fans it out into per-inner-event inbox rows.
         inboxMessages.Add(inboxMessage);
         if (cleanupClaim is not null) {
-          (pendingCleanupClaims ??= []).Add(cleanupClaim);
+          pendingCleanupClaims ??= [];
+          pendingCleanupClaims.Add(cleanupClaim);
         }
       }
     }
@@ -614,7 +631,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     }
 
     // Signal the publisher worker to poll immediately so messages are claimed and processed promptly.
-    _workChannelWriter?.SignalNewWorkAvailable();
+    _workChannelWriter.SignalNewWorkAvailable();
 
     // Active-cleanup body-offload claims (MessageBodyOffloadOptions.ActiveCleanup=true).
     // Runs AFTER the inbox commit succeeds — a failed insert never deletes a body that's
@@ -701,7 +718,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBodyClaimRehydrateTests.cs</tests>
   private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim)>
       _tryBuildInboxMessageFromTransportAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
@@ -791,7 +807,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         FirstEnqueuedAt: null,
         BrokerDeliveryCount: null,
         DurableObservationCount: observation.ObservationCount,
-        Now: now);
+        Now: now) { ProcessingAttempts = observation.ProcessingAttempts };
 
       var verdict = poisonDetector.Evaluate(context);
       if (!verdict.ShouldQuarantine) {
@@ -1003,6 +1019,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 
+  /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
   /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
@@ -1046,8 +1069,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Determine if message is an event using IEventTypeProvider
     // This is more reliable than "payload is IEvent" when payload is JsonElement
     var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider != null) {
+    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
     } else {
@@ -1055,28 +1078,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name
-    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
-    var handlerName = simpleTypeName + "Handler";
-
-    var streamId = _extractStreamId(envelope);
-
-    // Guard: fail-fast if StreamId is Guid.Empty for events
-    if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
-    }
-
-    // Name-first flag derivation: transport payloads are typically JsonElement here, where
-    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
-    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
-    // flags intact across a service boundary. Typed checks remain the fallback for types the
-    // local catalog does not know.
-    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
-      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
     // Diagnostic: an EVENT whose wire type name is absent from the catalog union means its flags
     // (and TTL) cannot be derived on this service — warn once per type so the exact name that
     // missed is visible in logs instead of silently storing flags=0.
-    if (isEvent && _eventMarkerResolver is not null
+    if (isEvent
         && Whizbang.Core.Messaging.EventFlagsDeriver.ToClrTypeName(messageTypeName) is { } diagClrName
         && _eventMarkerResolver.Resolve(diagClrName) is null
         && _warnedFlagMisses.Count < 100 && _warnedFlagMisses.TryAdd(diagClrName, 0)) {
@@ -1084,69 +1089,27 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         "Receive-path flag derivation MISS: event type {ClrTypeName} is not in the message-type catalog union — flags/TTL fall back to typed checks (blind for JsonElement payloads).",
         diagClrName);
     }
-    return new InboxMessage {
-      MessageId = envelope.MessageId.Value,
-      HandlerName = handlerName,
-      Envelope = jsonEnvelope,
-      EnvelopeType = envelopeTypeFromTransport,
-      StreamId = streamId,
-      IsEvent = isEvent,
-      Flags = flags,
-      Scope = envelope.GetCurrentScope()?.Scope,
-      Metadata = new EnvelopeMetadata {
-        MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
-      },
-      MessageType = messageTypeName,
-      // Slice 26.6: propagate source identity from envelope → wh_inbox columns.
-      // Producer side populates these on publish (slice 26.6b); receive-side records
-      // exactly what the source claimed. When envelope hasn't been populated (in-process
-      // dispatch, legacy envelope before slice 26.5), defaults to Guid.Empty + 0; the
-      // SQL trigger then COALESCEs to local wh_service_config.service_id.
-      SourceServiceId = envelope.SourceServiceId,
-      SourceCommitSequence = envelope.SourceCommitSequence,
-    };
+    // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
+    // from the envelope) is built by the helper both consumer workers share (#739).
+    return ReceivedInboxMessageBuilder.Build(
+      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
+      ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
+      "TransportConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
   }
 
   /// <summary>
   /// Extracts message type from envelope type name.
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException($"Invalid envelope type name format: '{envelopeTypeName}'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+    // The one parser of envelope type names (issue #698).
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException($"Invalid envelope type name format: '{envelopeTypeName}'");
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException($"Failed to extract message type from envelope type: '{envelopeTypeName}'");
     }
 
     return messageTypeName;
-  }
-
-  /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
-  /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    // Defensive: Handle null Hops gracefully
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    return envelope.MessageId.Value;
   }
 
   /// <summary>
@@ -1260,13 +1223,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   )]
   private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
 
-  /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
-  [LoggerMessage(
-    Level = LogLevel.Error,
-    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
-  )]
-  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
-
   /// <summary>
   /// Checks if the message originated from this service (self-echo).
   /// The last hop is the most recent — it identifies the service that dispatched the message.
@@ -1307,8 +1263,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     if (_knownEventTypeNames is not null) {
       return;
     }
-    var eventTypeProvider = serviceProvider.GetService<IEventTypeProvider>();
-    if (eventTypeProvider is not null) {
+    var eventTypeProvider = serviceProvider.GetRequiredService<IEventTypeProvider>();
+    if (eventTypeProvider.IsAvailable) {
       var eventTypes = eventTypeProvider.GetEventTypes();
       _knownEventTypeNames = new HashSet<string>(
         eventTypes.Select(t => EventTypeMatchingHelper.NormalizeTypeName(

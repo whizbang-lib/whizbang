@@ -32,14 +32,15 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_dead_letters_due(
   dead_lettered_at   TIMESTAMPTZ,
   recovery_status    INTEGER,
   recovery_attempts  INTEGER,
-  generation         TEXT
+  generation         TEXT,
+  error_fingerprint  VARCHAR(16)
 ) AS $$
 BEGIN
   RETURN QUERY
   SELECT
     dl.dead_letter_id, dl.source_table, dl.source_id, dl.stream_id, dl.message_type,
     dl.failure_reason, dl.attempts_when_dlq, dl.dead_lettered_at,
-    dl.recovery_status, dl.recovery_attempts, dl.generation
+    dl.recovery_status, dl.recovery_attempts, dl.generation, dl.error_fingerprint
   FROM __SCHEMA__.wh_dead_letters dl
   WHERE dl.recovered_at IS NULL
     AND dl.recovery_status NOT IN (2, 4)  -- HoldForReview, PermanentlyFailed
@@ -221,17 +222,26 @@ $$ LANGUAGE plpgsql;
 SELECT __SCHEMA__.drop_all_overloads('reset_dead_letters_for_generation');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.reset_dead_letters_for_generation(
-  p_current_generation TEXT
+  p_current_generation TEXT,
+  p_stagger_minutes INTEGER DEFAULT 0
 ) RETURNS INTEGER AS $$
 DECLARE
   v_count INTEGER;
 BEGIN
   UPDATE __SCHEMA__.wh_dead_letters
-  SET next_recovery_at = NOW(),
+  -- #669: a deploy's replay is a mass re-offer; falling due all at once made it compete
+  -- with live traffic as one flood. Staggered across the window it drains as a paced
+  -- stream through the same bounded scans. 0 keeps schedule-all-now.
+  SET next_recovery_at = NOW() + (random() * make_interval(mins => GREATEST(p_stagger_minutes, 0))),
       retried_on_generations = array_append(retried_on_generations, p_current_generation),
       recovery_status = 0  -- Pending
   WHERE recovered_at IS NULL
-    AND recovery_status NOT IN (4)  -- not PermanentlyFailed (operator can re-enable via API)
+    -- Jurisdiction split (P3 of plans/dlq-stack-intelligence.md): replay re-offers PENDING
+    -- rows on a new build; HELD rows (2) belong to the canary campaigns, which probe a
+    -- stratified sample and release on proof. A blind mass re-offer of held rows empties
+    -- the cohorts in the same startup that is about to probe them, and spent-budget rows
+    -- just churn back to Held through policy adjudication.
+    AND recovery_status NOT IN (2, 4)  -- not HoldForReview (campaigns), not PermanentlyFailed (operator)
     AND operator_disposition NOT IN (2)  -- not HoldIndefinitely
     AND NOT (p_current_generation = ANY(retried_on_generations));
   GET DIAGNOSTICS v_count = ROW_COUNT;

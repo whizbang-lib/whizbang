@@ -72,6 +72,7 @@ public record SampleOrderCreatedEvent : IEvent {
 /// Read model maintained by OrderPerspective.
 /// Generator infers this from "OrderPerspective" -> "Order".
 /// </summary>
+[SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
 public class Order {
   [StreamId]
   public required TestOrderId OrderId { get; init; }

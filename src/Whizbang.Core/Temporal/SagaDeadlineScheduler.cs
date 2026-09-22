@@ -11,12 +11,9 @@ namespace Whizbang.Core.Temporal;
 /// caller-side bookkeeping. Nothing here is timing logic: the engine does the firing.
 /// </summary>
 /// <docs>fundamentals/temporal/saga-deadlines</docs>
-public sealed class SagaDeadlineScheduler : ISagaDeadlineScheduler {
-  private readonly IScheduleManager _manager;
-
-  /// <summary>Constructor.</summary>
-  public SagaDeadlineScheduler(IScheduleManager manager) =>
-    _manager = manager ?? throw new ArgumentNullException(nameof(manager));
+/// <remarks>Constructor.</remarks>
+public sealed class SagaDeadlineScheduler(IScheduleManager manager) : ISagaDeadlineScheduler {
+  private readonly IScheduleManager _manager = manager ?? throw new ArgumentNullException(nameof(manager));
 
   /// <inheritdoc />
   public Guid DeadlineScheduleId(Guid sagaStreamId, string deadlineName) {
@@ -42,7 +39,7 @@ public sealed class SagaDeadlineScheduler : ISagaDeadlineScheduler {
     ArgumentException.ThrowIfNullOrWhiteSpace(eventType);
 
     // Keyed one-shot: create-or-update by key means re-arming moves the deadline instead of stacking
-    // a second one, and it re-activates a previously cancelled deadline.
+    // a second one, and it re-activates a previously canceled deadline.
     return _manager.CreateAsync(new ScheduleDefinition {
       ScheduleId = DeadlineScheduleId(sagaStreamId, deadlineName),
       Key = _key(sagaStreamId, deadlineName),

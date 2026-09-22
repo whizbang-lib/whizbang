@@ -107,8 +107,8 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results[0].Success).IsTrue();
     await Assert.That(results[0].Error).IsNull();
     await Assert.That(results[1].Success).IsFalse();
-    await Assert.That(results[1].Error!).Contains("InvalidOperationException");
-    await Assert.That(results[1].Error!).Contains("broker rejected");
+    await Assert.That(results[1].Error).Contains("InvalidOperationException");
+    await Assert.That(results[1].Error).Contains("broker rejected");
     await Assert.That(channel.Published).Count().IsEqualTo(1)
       .Because("Only the successful item reaches the wire; the failing item is reported per-item.");
   }
@@ -128,8 +128,8 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results).Count().IsEqualTo(2)
       .Because("_failRemainingItems must add a failure result for every item not yet recorded.");
     await Assert.That(results.All(r => !r.Success)).IsTrue();
-    await Assert.That(results[0].Error!).Contains("AlreadyClosedException");
-    await Assert.That(results[1].Error!).Contains("AlreadyClosedException");
+    await Assert.That(results[0].Error).Contains("AlreadyClosedException");
+    await Assert.That(results[1].Error).Contains("AlreadyClosedException");
     await Assert.That(results[0].MessageId).IsEqualTo(items[0].MessageId);
     await Assert.That(results[1].MessageId).IsEqualTo(items[1].MessageId);
   }
@@ -150,8 +150,8 @@ public class RabbitMQTransportBatchPathTests {
 
     await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results.All(r => !r.Success)).IsTrue();
-    await Assert.That(results[0].Error!).Contains("InvalidOperationException");
-    await Assert.That(results[0].Error!).Contains("declare failed");
+    await Assert.That(results[0].Error).Contains("InvalidOperationException");
+    await Assert.That(results[0].Error).Contains("declare failed");
     await Assert.That(channel.Published).IsEmpty();
   }
 
@@ -237,7 +237,7 @@ public class RabbitMQTransportBatchPathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+        (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -258,7 +258,7 @@ public class RabbitMQTransportBatchPathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+        (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -276,7 +276,7 @@ public class RabbitMQTransportBatchPathTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, logger: logger);
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+      (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
 
     await Assert.That(subscription).IsNotNull();
     await Assert.That(logger.Entries.Any(e =>
@@ -375,7 +375,7 @@ public class RabbitMQTransportBatchPathTests {
     var options = new TransportBatchOptions { BatchSize = 2, SlideMs = 60_000, MaxWaitMs = 60_000 };
     var (channel, batches, _) = await _subscribeBatchAsync(
       options,
-      handler: (batch, ct) => throw RabbitTestWire.NewAlreadyClosedException(),
+      handler: (_, ct) => throw RabbitTestWire.NewAlreadyClosedException(),
       logger: logger);
 
     var (props1, body1) = RabbitTestWire.ValidWireMessage("m1");
@@ -857,11 +857,11 @@ internal sealed class CapturingLogger<T> : ILogger<T> {
     }
     OnLog?.Invoke(logLevel, message);
   }
+}
 
-  private sealed class NullScope : IDisposable {
-    public static readonly NullScope Instance = new();
-    public void Dispose() { }
-  }
+internal sealed class NullScope : IDisposable {
+  public static readonly NullScope Instance = new();
+  public void Dispose() { }
 }
 
 /// <summary>
@@ -920,7 +920,7 @@ internal sealed class RecordingChannel : IChannel {
   public int ChannelNumber => 1;
   public ShutdownEventArgs? CloseReason => null;
   public IAsyncBasicConsumer? DefaultConsumer { get; set; }
-  public ulong NextPublishSeqNo => 0;
+  public static ulong NextPublishSeqNo => 0;
   public string? CurrentQueue => null;
   public TimeSpan ContinuationTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
@@ -938,7 +938,7 @@ internal sealed class RecordingChannel : IChannel {
     return ValueTask.CompletedTask;
   }
 
-  public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+  public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments = null, bool passive = false, bool noWait = false, CancellationToken cancellationToken = default) {
     if (ExceptionToThrowOnExchangeDeclare != null) {
       throw ExceptionToThrowOnExchangeDeclare;
     }
@@ -948,7 +948,7 @@ internal sealed class RecordingChannel : IChannel {
     return Task.CompletedTask;
   }
 
-  public ValueTask BasicPublishAsync<TProperties>(string exchange, string routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
+  public ValueTask BasicPublishAsync<TProperties>(string exchange, string routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
     var toThrow = PublishExceptionSelector?.Invoke(basicProperties.MessageId);
     if (toThrow != null) {
       throw toThrow;
@@ -959,17 +959,17 @@ internal sealed class RecordingChannel : IChannel {
     return ValueTask.CompletedTask;
   }
 
-  public ValueTask BasicPublishAsync<TProperties>(CachedString exchange, CachedString routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader =>
+  public ValueTask BasicPublishAsync<TProperties>(CachedString exchange, CachedString routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader =>
     throw new NotImplementedException();
 
-  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments = null, bool passive = false, bool noWait = false, CancellationToken cancellationToken = default) {
     lock (_sync) {
       DeclaredQueues.Add((queue, arguments));
     }
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }
 
-  public Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+  public Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) {
     if (ExceptionToThrowOnQueueBind != null) {
       throw ExceptionToThrowOnQueueBind;
     }
@@ -984,7 +984,7 @@ internal sealed class RecordingChannel : IChannel {
     return Task.FromResult(consumerTag);
   }
 
-  public Task BasicCancelAsync(string consumerTag, bool noWait, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
   public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) {
     lock (_sync) {
@@ -1013,28 +1013,28 @@ internal sealed class RecordingChannel : IChannel {
   // --- Members not used by these tests ---
 
   public ValueTask<ulong> GetNextPublishSequenceNumberAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<BasicGetResult?> BasicGetAsync(string queue, bool autoAck, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public ValueTask BasicRejectAsync(ulong deliveryTag, bool requeue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task CloseAsync(ushort replyCode, string replyText, bool abort, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task CloseAsync(ShutdownEventArgs reason, bool abort, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task CloseAsync(ShutdownEventArgs reason, bool abort) => Task.CompletedTask;
-  public ValueTask ConfirmSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static ValueTask ConfirmSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> ConsumerCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeBindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeBindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task ExchangeDeclarePassiveAsync(string exchange, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeDeleteAsync(string exchange, bool ifUnused, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeDeleteAsync(string exchange, bool ifUnused = false, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> MessageCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxCommitAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxRollbackAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<bool> WaitForConfirmsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task WaitForConfirmsOrDieAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task<bool> WaitForConfirmsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task WaitForConfirmsOrDieAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
 }
 
 /// <summary>

@@ -98,8 +98,15 @@ public class MutationEndpointBaseTests {
     var command = new TestOrderCommand { CustomerId = "cust-123" };
     var ct = CancellationToken.None;
 
-    // Act & Assert - should not throw
-    await endpoint.TestOnBeforeExecuteAsync(command, ct);
+    // Act
+    var hook = endpoint.TestOnBeforeExecuteAsync(command, ct);
+
+    // Assert - "immediately" is the point: the un-overridden hook must be an already-completed
+    // ValueTask, so every endpoint that does not use it pays no state machine and no async hop.
+    // Simply awaiting it would pass just as well if the default started doing real work.
+    await Assert.That(hook.IsCompletedSuccessfully).IsTrue()
+      .Because("the default hook must return a synchronously completed ValueTask");
+    await hook;
   }
 
   [Test]
@@ -110,8 +117,13 @@ public class MutationEndpointBaseTests {
     var result = new TestOrderResult { OrderId = "order-456" };
     var ct = CancellationToken.None;
 
-    // Act & Assert - should not throw
-    await endpoint.TestOnAfterExecuteAsync(command, result, ct);
+    // Act
+    var hook = endpoint.TestOnAfterExecuteAsync(command, result, ct);
+
+    // Assert - same contract on the post-dispatch hook.
+    await Assert.That(hook.IsCompletedSuccessfully).IsTrue()
+      .Because("the default hook must return a synchronously completed ValueTask");
+    await hook;
   }
 
   [Test]

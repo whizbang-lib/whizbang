@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.SystemEvents.Audit;
 
@@ -41,6 +42,14 @@ public class AuditEventModel {
   /// <summary>Position of the original event within its stream.</summary>
   public long EventStreamPosition { get; set; }
   /// <summary>Timestamp when the original event occurred.</summary>
+  /// <remarks>
+  /// Indexed because an audit trail is read newest-first, so this is the ordering key of every query
+  /// against the table and an ordering is the one thing the document index cannot answer. Declared
+  /// here rather than left to the consumer: this model ships with the framework, so a consumer
+  /// ordering by it has no way to add the index itself, and would be advised to do something it
+  /// cannot do.
+  /// </remarks>
+  [Indexed]
   public DateTimeOffset OccurredAt { get; set; }
 
   /// <summary>Snapshot of the audited event's scope context (TenantId, UserId, name, email, etc.).</summary>

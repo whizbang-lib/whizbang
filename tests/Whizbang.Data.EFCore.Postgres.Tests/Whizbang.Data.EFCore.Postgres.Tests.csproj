@@ -5,6 +5,11 @@
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
+    <!-- The index expressions a declared JSON index is built from live here, and the container tests
+         assert against that renderer rather than a copy of it: an index over a different expression
+         than the query produces is simply unused, and only comparing the two catches that. The
+         generator hides this behind PrivateAssets, so the reference has to be explicit. -->
+    <ProjectReference Include="..\..\src\Whizbang.Generators.Shared\Whizbang.Generators.Shared.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Offloads.InMemory\Whizbang.Offloads.InMemory.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Hosting.AspNet\Whizbang.Hosting.AspNet.csproj" />
   </ItemGroup>
@@ -60,4 +65,10 @@
     <NoWarn>$(NoWarn);CA1707;IDE1006;CA1816;CA1822;CA1859;CA1860</NoWarn>
   </PropertyGroup>
 
+
+  <!-- The performance baseline travels with the test binary: the scenarios read it from the build
+       output, and a run that cannot find it reports every measure as new rather than failing. -->
+  <ItemGroup>
+    <None Update="Performance\baseline.tsv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

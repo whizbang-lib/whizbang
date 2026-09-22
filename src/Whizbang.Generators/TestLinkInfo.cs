@@ -13,8 +13,8 @@ namespace Whizbang.Generators;
 /// <param name="TestMethod">Test method name (e.g., "Dispatcher_Send_RoutesToCorrectReceptorAsync")</param>
 /// <param name="TestClass">Test class name (e.g., "DispatcherTests")</param>
 /// <param name="LinkSource">How this link was discovered (Convention, SemanticAnalysis, or XmlTag)</param>
-/// <tests>No tests found</tests>
-internal sealed record TestLinkInfo(
+/// <tests>tests/Whizbang.Generators.Tests/Models/TestLinkInfoTests.cs</tests>
+public sealed record TestLinkInfo(
   string SourceFile,
   int SourceLine,
   string SourceSymbol,
@@ -29,23 +29,23 @@ internal sealed record TestLinkInfo(
 /// <summary>
 /// Indicates how a test link was discovered.
 /// </summary>
-/// <tests>No tests found</tests>
-internal enum TestLinkSource {
+/// <tests>tests/Whizbang.Generators.Tests/Models/TestLinkInfoTests.cs:TestLinkSource_HasExactlyThreeDistinctValuesAsync</tests>
+public enum TestLinkSource {
   /// <summary>
   /// Link discovered via naming convention (e.g., DispatcherTests tests Dispatcher).
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/TestLinkInfoTests.cs:TestLinkSource_RoundTripsThroughTheRecordAsync</tests>
   Convention,
 
   /// <summary>
   /// Link discovered via semantic analysis of test method body.
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/TestLinkInfoTests.cs:TestLinkSource_RoundTripsThroughTheRecordAsync</tests>
   SemanticAnalysis,
 
   /// <summary>
   /// Link explicitly specified via &lt;tests&gt; XML tag in source code.
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/TestLinkInfoTests.cs:TestLinkSource_RoundTripsThroughTheRecordAsync</tests>
   XmlTag
 }

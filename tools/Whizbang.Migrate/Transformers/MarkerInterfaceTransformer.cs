@@ -76,39 +76,8 @@ public sealed class MarkerInterfaceTransformer : ICodeTransformer {
   /// Checks if the file has types that inherit from Wolverine marker interfaces.
   /// </summary>
   private static bool _hasWolverineMarkerInterfaceUsage(SyntaxNode root) {
-    // Check class declarations
-    var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
-    foreach (var classDecl in classDeclarations) {
-      if (_inheritsFromMarkerInterface(classDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check record declarations
-    var recordDeclarations = root.DescendantNodes().OfType<RecordDeclarationSyntax>();
-    foreach (var recordDecl in recordDeclarations) {
-      if (_inheritsFromMarkerInterface(recordDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check interface declarations
-    var interfaceDeclarations = root.DescendantNodes().OfType<InterfaceDeclarationSyntax>();
-    foreach (var interfaceDecl in interfaceDeclarations) {
-      if (_inheritsFromMarkerInterface(interfaceDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check struct declarations
-    var structDeclarations = root.DescendantNodes().OfType<StructDeclarationSyntax>();
-    foreach (var structDecl in structDeclarations) {
-      if (_inheritsFromMarkerInterface(structDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    return false;
+    // Class, record, interface and struct declarations all carry a base list
+    return root.DescendantNodes().OfType<TypeDeclarationSyntax>().Any(decl => _inheritsFromMarkerInterface(decl.BaseList));
   }
 
   /// <summary>
@@ -148,11 +117,24 @@ public sealed class MarkerInterfaceTransformer : ICodeTransformer {
       CompilationUnitSyntax compilationUnit,
       List<CodeChange> changes) {
     var newUsings = new List<UsingDirectiveSyntax>();
+    var addedWhizbang = compilationUnit.Usings
+        .Any(u => u.Name?.ToString() == "Whizbang.Core");
 
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
-      if (name == "Wolverine") {
+      if (name == "Wolverine" && addedWhizbang) {
+        // Whizbang.Core is already imported -- another transformer in the pipeline
+        // rewrote its own Wolverine/Marten using first. Emitting a second one is
+        // legal C# but raises CS0105, which fails any migrated project building
+        // with warnings-as-errors. Drop this one instead.
+        changes.Add(new CodeChange(
+            usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.UsingRemoved,
+            "Removed 'using Wolverine' (Whizbang.Core already imported)",
+            "using Wolverine;",
+            ""));
+      } else if (name == "Wolverine") {
         // Replace with Whizbang.Core - preserve original formatting
         var whizbangUsing = usingDirective
             .WithName(SyntaxFactory.ParseName("Whizbang.Core")

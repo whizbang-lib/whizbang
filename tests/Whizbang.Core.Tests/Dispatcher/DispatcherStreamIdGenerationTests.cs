@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -396,7 +397,7 @@ public class DispatcherStreamIdGenerationTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -409,7 +410,7 @@ public class DispatcherStreamIdGenerationTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

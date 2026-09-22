@@ -111,7 +111,7 @@ public class SagaBackfillTests {
       sagaProjection: null,
       hookName: "pre-archive",
       displayName: null,
-      work: async (ct) => { ran = true; await Task.CompletedTask; },
+      work: async (_) => { ran = true; await Task.CompletedTask; },
       CancellationToken.None);
 
     await Assert.That(result).IsTrue();
@@ -187,7 +187,7 @@ public class SagaBackfillTests {
   // ── Test fakes ───────────────────────────────────────────────────────
 
   private sealed class RecordingEmitter : ISagaEventEmitter {
-    public List<IEvent> Published { get; } = new();
+    public List<IEvent> Published { get; } = [];
     public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {
       Published.Add(eventData!);
       return Task.CompletedTask;

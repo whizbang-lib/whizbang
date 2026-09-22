@@ -128,6 +128,8 @@ public static class TransportConsumerBuilderExtensions {
       this WhizbangBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
     ArgumentNullException.ThrowIfNull(builder);
+    // The consumer worker's collaborators are required; a pipeline composed without AddWhizbang gets the defaults.
+    builder.Services.TryAddWhizbangDefaults();
 
     // Apply custom configuration if provided
     var config = new TransportConsumerConfiguration();
@@ -157,7 +159,7 @@ public static class TransportConsumerBuilderExtensions {
 
       // Get event subscription discovery (may be null if not registered)
       var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetService<IEventNamespaceRegistry>());
+          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
 
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
@@ -171,7 +173,7 @@ public static class TransportConsumerBuilderExtensions {
           discovery,
           serviceName,
           sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetService<Messaging.IReceptorRegistryQuery>());
+          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -193,7 +195,8 @@ public static class TransportConsumerBuilderExtensions {
     // Register IEventCascader for cascading messages returned from receptors
     // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
-    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
+    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(
+        sp, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
 
     // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
@@ -225,6 +228,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
     // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
     // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    // Self-contained: this worker requires the instance identity, so the extension that
+    // registers it must guarantee the identity exists rather than assume a fuller composition.
+    builder.Services.AddWhizbangInstanceIdentity();
     builder.Services.TryAddSingleton<TransportConsumerWorker>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
     builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
@@ -279,6 +285,8 @@ public static class TransportConsumerBuilderExtensions {
       this WhizbangPerspectiveBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
     ArgumentNullException.ThrowIfNull(builder);
+    // The consumer worker's collaborators are required; a pipeline composed without AddWhizbang gets the defaults.
+    builder.Services.TryAddWhizbangDefaults();
 
     // Apply custom configuration if provided
     var config = new TransportConsumerConfiguration();
@@ -307,7 +315,7 @@ public static class TransportConsumerBuilderExtensions {
 
       // Get event subscription discovery (may be null if not registered)
       var discovery = sp.GetService<EventSubscriptionDiscovery>()
-          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetService<IEventNamespaceRegistry>());
+          ?? new EventSubscriptionDiscovery(routingOptions, sp.GetRequiredService<IEventNamespaceRegistry>());
 
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
@@ -321,7 +329,7 @@ public static class TransportConsumerBuilderExtensions {
           discovery,
           serviceName,
           sp.GetService<IInboxRoutingStrategy>(),
-          sp.GetService<Messaging.IReceptorRegistryQuery>());
+          sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -343,7 +351,8 @@ public static class TransportConsumerBuilderExtensions {
     // Register IEventCascader for cascading messages returned from receptors
     // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
-    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
+    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(
+        sp, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatcherEventCascader>>()));
 
     // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
@@ -375,6 +384,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
     // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
     // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    // Self-contained: this worker requires the instance identity, so the extension that
+    // registers it must guarantee the identity exists rather than assume a fuller composition.
+    builder.Services.AddWhizbangInstanceIdentity();
     builder.Services.TryAddSingleton<TransportConsumerWorker>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
     builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(

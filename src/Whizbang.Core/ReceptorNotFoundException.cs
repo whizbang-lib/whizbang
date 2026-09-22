@@ -38,7 +38,7 @@ public class ReceptorNotFoundException(Type messageType) : Exception(_formatMess
   public Type MessageType => messageType;
 
   private static string _formatMessage(Type messageType) {
-    return $@"No receptor found for message type '{messageType.FullName}'.
+    return $@"No receptor found for message type '{TypeNameFormatter.DisplayName(messageType)}'.
 
 To fix this:
 1. Create a receptor that implements IReceptor<{messageType.Name}, TResponse>

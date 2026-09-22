@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -27,11 +28,11 @@ public class DispatcherCoveragePublishTests {
 
   private static readonly List<object> _publishedEvents = [];
   private static readonly Lock _lock = new();
-  private static void _trackEvent(object evt) { lock (_lock) { _publishedEvents.Add(evt); } }
   private static void _reset() { lock (_lock) { _publishedEvents.Clear(); } }
   private static int _snapshotCount() { lock (_lock) { return _publishedEvents.Count; } }
 
-  private sealed class PublishTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class PublishTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
+    private static void _trackEvent(object evt) { lock (_lock) { _publishedEvents.Add(evt); } }
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(TestCommand) && typeof(TResult) == typeof(TestResult)) {
         return msg => { var cmd = (TestCommand)msg; return ValueTask.FromResult((TResult)(object)new TestResult(cmd.OrderId, true)); };
@@ -95,9 +96,9 @@ public class DispatcherCoveragePublishTests {
 
   [Test]
   [NotInParallel]
-  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCancelledExceptionAsync() {
+  public async Task PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.PublishAsync(new TestEvent(Guid.NewGuid()), new DispatchOptions { CancellationToken = cts.Token })).ThrowsExactly<OperationCanceledException>();
   }
@@ -118,19 +119,19 @@ public class DispatcherCoveragePublishTests {
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.SendAsync(new TestCommand(Guid.NewGuid()), new DispatchOptions { CancellationToken = cts.Token })).ThrowsExactly<OperationCanceledException>();
   }
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_ObjectOverload_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_ObjectOverload_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
     object command = new TestCommand(Guid.NewGuid());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.SendAsync(command, new DispatchOptions { CancellationToken = cts.Token })).ThrowsExactly<OperationCanceledException>();
   }

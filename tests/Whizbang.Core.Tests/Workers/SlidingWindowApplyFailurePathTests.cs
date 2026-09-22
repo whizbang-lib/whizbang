@@ -1,0 +1,144 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// What the batching strategy does when a flush fails, and what it does with streams that go quiet.
+/// <para>
+/// A failed flush is deliberately dropped rather than retried here. Durability for these signals
+/// lives in wh_perspective_events and the lease system — claim_orphaned_perspective_events re-issues
+/// anything that did not complete — so retrying at this boundary would duplicate the work the
+/// reclaim path already owns, while blocking the buffer behind a stream that cannot flush. What the
+/// strategy must not do is fail silently: the log line is the only record that a batch was dropped
+/// and is waiting on reclaim rather than having succeeded.
+/// </para>
+/// <para>
+/// The idle sweep is the other half. One buffer and one worker task exist per stream, so a service
+/// that has seen many streams accumulates both for streams that stopped being written to long ago.
+/// Eviction is what keeps that bounded, and it had never run in a test.
+/// </para>
+/// </summary>
+/// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowApplyBatchStrategy.cs</code-under-test>
+public class SlidingWindowApplyFailurePathTests {
+
+  private static SlidingWindowApplyOptions _fastWindow(TimeSpan? idleWindow = null) => new() {
+    SlidingWindow = TimeSpan.FromMilliseconds(20),
+    MaxWait = TimeSpan.FromMilliseconds(200),
+    IdleEvictionWindow = idleWindow ?? TimeSpan.FromSeconds(30),
+    IdleSweepInterval = TimeSpan.FromSeconds(10),
+  };
+
+  [Test]
+  public async Task AFailedFlush_IsLoggedAndDroppedRatherThanBlockingTheStreamAsync() {
+    var attempts = new ConcurrentQueue<Guid>();
+    // Signalling on the first attempt would prove nothing: `attempts` is appended to before the
+    // signal, so the count assertion below is already satisfied by that first flush and would
+    // hold even if the strategy died on the throw. Wait for a SECOND attempt instead -- only a
+    // loop that survived the first failure can produce one.
+    var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (sid, _, _) => {
+        attempts.Enqueue(sid);
+        if (attempts.Count >= 2) {
+          secondAttempt.TrySetResult();
+        }
+        throw new InvalidOperationException("perspective store unavailable");
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
+      options: _fastWindow());
+
+    await sut.AppendAsync(Guid.CreateVersion7());
+    await sut.AppendAsync(Guid.CreateVersion7());
+
+    // Waits on the strategy having flushed a second time after a throw, which is the property
+    // under test -- not on the first flush having been reached.
+    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(attempts.Count).IsGreaterThanOrEqualTo(2)
+      .Because("a flush that throws must not take the batching loop down with it; the reclaim path "
+             + "re-issues the dropped batch, but only if the process is still running to do it");
+  }
+
+  [Test]
+  public async Task StopWhileFlushing_EndsWithoutSurfacingCancellationAsync() {
+    // Shutdown arriving mid-flush is not a flush failure, and must not be logged as one — every
+    // deploy would otherwise file an error per in-flight stream.
+    var flushed = new ConcurrentQueue<Guid>();
+    var logger = new RecordingLogger();
+    await using var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
+      logger: logger,
+      options: _fastWindow());
+
+    var streamId = Guid.CreateVersion7();
+    await sut.AppendAsync(streamId);
+    await sut.FlushAndStopAsync();
+
+    // FlushAndStop completes the writers and awaits the workers, so the buffered signal has to have
+    // been flushed by the time it returns — a stop that abandoned it would lose the apply until the
+    // reclaim path noticed.
+    await Assert.That(flushed).Contains(streamId)
+      .Because("FlushAndStopAsync drains the buffer; it does not just cancel it");
+    await Assert.That(logger.Errors).IsEmpty()
+      .Because("shutdown is not a flush failure — logging one per in-flight stream would make every "
+             + "deploy look like an incident");
+  }
+
+  [Test]
+  public async Task AStreamThatGoesQuiet_IsEvictedSoBuffersDoNotAccumulateAsync() {
+    // One buffer and one worker task per stream: without eviction a long-lived service holds both
+    // for every stream it has ever seen.
+    var time = new FakeTimeProvider();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (sid, count, ct) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
+      options: _fastWindow(idleWindow: TimeSpan.FromSeconds(1)),
+      timeProvider: time);
+
+    await sut.AppendAsync(Guid.CreateVersion7());
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("without a buffer to evict the sweep below would prove nothing");
+
+    time.Advance(TimeSpan.FromSeconds(5));   // past the eviction window
+
+    // The periodic timer's callback is fire-and-forget, so driving one pass directly is the only
+    // way to observe what the sweep did rather than racing it.
+    await sut.RunIdleSweepNowForTestAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("the buffer AND its worker task are held per stream — a service that has seen many "
+             + "streams keeps both forever unless the idle sweep actually removes them");
+
+    await sut.FlushAndStopAsync();
+  }
+
+  /// <summary>Captures error-level lines so "shutdown was not logged as a failure" is checkable.</summary>
+  private sealed class RecordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+    private readonly List<string> _errors = [];
+    private readonly Lock _lock = new();
+
+    public IReadOnlyList<string> Errors {
+      get { lock (_lock) { return [.. _errors]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel < LogLevel.Error) {
+        return;
+      }
+      lock (_lock) { _errors.Add(formatter(state, exception)); }
+    }
+  }
+}

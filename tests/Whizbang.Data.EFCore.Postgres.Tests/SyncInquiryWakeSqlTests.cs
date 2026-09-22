@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream's owner to a known instance and LISTEN on that instance's channel.
 /// </summary>
 /// <docs>fundamentals/perspectives/sync</docs>
+[Category("Shard1")]
 public class SyncInquiryWakeSqlTests : EFCoreTestBase {
 
   [Test]
@@ -78,6 +79,12 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
       fire.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = new[] { workId } });
       _ = await fire.ExecuteScalarAsync();
     }
+    // 146 (#720): the completion queued its doorbell instead of notifying inside its transaction; the
+    // driver rings after the commit, and this raw call models that ring.
+    await using (var ring = fireConn.CreateCommand()) {
+      ring.CommandText = "SELECT ring_doorbells()";
+      _ = await ring.ExecuteScalarAsync();
+    }
 
     // Drive notification delivery on the listener side. Npgsql delivers notifications
     // only when the connection is read from. Use a cancellable WaitAsync so the call
@@ -86,10 +93,10 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
     // NpgsqlOperationInProgressException.
     using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var waitTask = Task.Run(async () => {
-      try { await listenConn.WaitAsync(waitCts.Token); } catch (OperationCanceledException) { }
+      try { await listenConn.WaitAsync(waitCts.Token); } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
     });
     await Task.WhenAny(firstNotification.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    waitCts.Cancel();
+    await waitCts.CancelAsync();
     await waitTask;
 
     await Assert.That(firstNotification.Task.IsCompleted).IsTrue()

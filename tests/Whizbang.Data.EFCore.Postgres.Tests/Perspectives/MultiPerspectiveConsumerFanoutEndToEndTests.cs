@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// if it stays GREEN, the bug is not in the generated runner + per-runner DbContext
 /// flow.
 /// </summary>
+[Category("Shard3")]
 public class MultiPerspectiveConsumerFanoutEndToEndTests : EFCoreTestBase {
 
   private static IPerspectiveRunner CreateRunnerByName<TModel>(

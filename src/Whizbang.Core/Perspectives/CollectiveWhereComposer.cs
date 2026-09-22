@@ -36,7 +36,6 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Custom_WithHandlerWhere_UsesHandlerWhereAloneAsync</tests>
 public static class CollectiveWhereComposer {
   /// <summary>
   /// Build the effective collective-update WHERE for a handler. See the type remarks for the composition
@@ -82,12 +81,12 @@ public static class CollectiveWhereComposer {
       Expression<Func<PerspectiveRow<TModel>, bool>> right)
       where TModel : class {
     var parameter = left.Parameters[0];
-    var reboundRight = new _parameterReplacer(right.Parameters[0], parameter).Visit(right.Body);
+    var reboundRight = new ParameterReplacer(right.Parameters[0], parameter).Visit(right.Body);
     return Expression.Lambda<Func<PerspectiveRow<TModel>, bool>>(
       Expression.AndAlso(left.Body, reboundRight), parameter);
   }
 
-  private sealed class _parameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor {
+  private sealed class ParameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor {
     protected override Expression VisitParameter(ParameterExpression node) =>
       ReferenceEquals(node, from) ? to : base.VisitParameter(node);
   }

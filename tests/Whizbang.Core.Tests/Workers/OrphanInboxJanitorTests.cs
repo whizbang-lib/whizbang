@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -31,7 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>messaging/resilience/orphan-inbox</docs>
 public class OrphanInboxJanitorTests {
 
-  private sealed record _SnapshotMsg : IMessage;
+  private sealed record SnapshotMsg : IMessage;
 
   /// <summary>
   /// Constructor null-arg guards: surface the actual <c>ArgumentNullException</c>
@@ -39,15 +42,21 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task Constructor_NullServices_ThrowsAsync() {
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    await Assert.That(() => new OrphanInboxJanitor(null!, snapshot))
+    var snapshot = new HandledReceptorTypeSnapshot([]);
+    await Assert.That(() => new OrphanInboxJanitor(
+  services: null!,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_NullSnapshot_ThrowsAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
-    await Assert.That(() => new OrphanInboxJanitor(sp, null!))
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    await Assert.That(() => new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: null!,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -57,12 +66,27 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_NoWorkCoordinator_ReturnsCleanlyAsync() {
-    using var sp = new ServiceCollection().BuildServiceProvider();
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var logger = new CapturingLogger();
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+  logger: logger);
 
-    // Should not throw.
     await _runToCompletionAsync(janitor);
+
+    // "Returns cleanly" has two halves, and only asserting the second leaves the first free to
+    // rot: the sweep must take the no-coordinator branch (not fail its way to the same silence),
+    // and it must leave the background task faulted-free so the host keeps running.
+    await Assert.That(janitor.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
+      .Because("a faulted ExecuteTask is an unobserved exception on the host, not a clean return");
+    await Assert.That(logger.Exceptions.Count).IsEqualTo(0)
+      .Because("no IWorkCoordinator is a supported configuration, not an error to log");
+    await Assert.That(logger.Messages.Count(m => m.Contains("no IWorkCoordinator registered", StringComparison.Ordinal)))
+      .IsEqualTo(1)
+      .Because("the skip must be traceable — a silent no-op looks identical to a sweep that ran and found nothing");
   }
 
   /// <summary>
@@ -72,10 +96,13 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_NoHandledTypes_SkipsPurgeAsync() {
-    var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var coordinator = new RecordingCoordinator();
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([]);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -88,10 +115,13 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_WithHandledTypes_NoPurge_LogsAndExitsAsync() {
-    var coordinator = new _RecordingCoordinator();  // default empty result
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var coordinator = new RecordingCoordinator();  // default empty result
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -105,16 +135,19 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_WithHandledTypes_PurgedRows_LogsAndExitsAsync() {
-    var coordinator = new _RecordingCoordinator {
+    var coordinator = new RecordingCoordinator {
       PurgeResult = [
         new PurgedOrphanInboxRow(Guid.NewGuid(), "A", "h1"),
         new PurgedOrphanInboxRow(Guid.NewGuid(), "A", "h1"),
         new PurgedOrphanInboxRow(Guid.NewGuid(), "B", "h2"),
       ],
     };
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -127,13 +160,31 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_CoordinatorThrows_DoesNotPropagateAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnPurge = true };
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var coordinator = new RecordingCoordinator { ThrowOnPurge = true };
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var logger = new CapturingLogger();
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+  logger: logger);
 
-    // Should not bubble out.
     await _runToCompletionAsync(janitor);
+
+    // The failure has to actually be injected — otherwise this test passes by never reaching
+    // the purge at all, which is how a rotted fake goes unnoticed.
+    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1)
+      .Because("the throwing seam must be the one the janitor calls, or this is the success path in disguise");
+    await Assert.That(janitor.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
+      .Because("a purge failure must be contained: the background task may not fault and take the host's startup with it");
+
+    // Contained is not the same as swallowed: the operator has to be able to see what failed.
+    var logged = logger.Exceptions;
+    await Assert.That(logged.Count).IsEqualTo(1);
+    await Assert.That(logged[0]).IsTypeOf<InvalidOperationException>();
+    await Assert.That(logged[0].Message).IsEqualTo("simulated purge failure")
+      .Because("the contained exception's identity must reach the log, not just its existence");
   }
 
   /// <summary>
@@ -143,12 +194,15 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_UnionsPerspectiveAndRawRegistries_IntoHandledNamesAsync() {
-    var coordinator = new _RecordingCoordinator();
-    var perspectives = new _StaticPerspectiveRegistry(new List<Type> { typeof(int) });
-    var raw = new _StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
-    using var sp = _buildProviderWith(coordinator, perspectives, raw);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var coordinator = new RecordingCoordinator();
+    var perspectives = new StaticPerspectiveRegistry([typeof(int)]);
+    var raw = new StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
+    await using var sp = _buildProviderWith(coordinator, perspectives, raw);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -162,10 +216,10 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
     var gate = new SchemaReadyGate();   // NOT ready — the sweep cannot even begin
-    var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var coordinator = new RecordingCoordinator();
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -185,10 +239,10 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task Sweep_DoesNotPurgeWhileTheGateIsClosedAsync() {
     var gate = new SchemaReadyGate();
-    var coordinator = new _RecordingCoordinator();
-    using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var coordinator = new RecordingCoordinator();
+    await using var sp = _buildProviderWith(coordinator);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None);
     await Task.Delay(300);
@@ -226,11 +280,52 @@ public class OrphanInboxJanitorTests {
   }
 
   /// <summary>
+  /// Captures formatted messages and attached exceptions. The formatted message never carries
+  /// the exception, so <see cref="Exceptions"/> is the only way to see a fault the janitor
+  /// contained rather than propagated.
+  /// </summary>
+  private sealed class CapturingLogger : ILogger<OrphanInboxJanitor> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+    private readonly List<Exception> _exceptions = [];
+
+    public IReadOnlyList<string> Messages {
+      get {
+        lock (_lock) {
+          return [.. _messages];
+        }
+      }
+    }
+
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_lock) {
+          return [.. _exceptions];
+        }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      lock (_lock) {
+        _messages.Add(message);
+        if (exception is not null) {
+          _exceptions.Add(exception);
+        }
+      }
+    }
+  }
+
+  /// <summary>
   /// Records purge calls and can be configured to return canned results or
   /// throw. Subclasses <see cref="NoOpWorkCoordinator"/> so the long tail of
   /// <see cref="IWorkCoordinator"/> methods get free no-op implementations.
   /// </summary>
-  private sealed class _RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int PurgeCallCount { get; private set; }
     public IReadOnlyList<string>? LastHandledTypeNames { get; private set; }
     public IReadOnlyList<PurgedOrphanInboxRow> PurgeResult { get; set; } = [];
@@ -251,7 +346,7 @@ public class OrphanInboxJanitorTests {
     }
   }
 
-  private sealed class _StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+  private sealed class StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
     public IReadOnlySet<Whizbang.Core.Messaging.LifecycleStage> LifecycleStagesWithReceptors { get; } =
@@ -259,7 +354,7 @@ public class OrphanInboxJanitorTests {
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
   }
 
-  private sealed class _StaticRawRegistry(IReadOnlyCollection<string> registered) : IRawReceptorRegistry {
+  private sealed class StaticRawRegistry(IReadOnlyCollection<string> registered) : IRawReceptorRegistry {
     public IReadOnlyCollection<string> RegisteredTypeNames => registered;
     public IRawReceptor? FindByTypeName(string messageTypeName) => null;
   }

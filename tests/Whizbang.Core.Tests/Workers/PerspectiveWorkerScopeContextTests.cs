@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -43,7 +44,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -51,6 +52,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -78,7 +80,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_system_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -86,6 +88,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -115,12 +118,11 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_initiating_context_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-        return ValueTask.FromResult<object?>(null);
-      }
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => ValueTask.FromResult<object?>(null)
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -154,7 +156,7 @@ public class PerspectiveWorkerScopeContextTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestPerspectiveEvent),
       ReceptorId: $"test_fallback_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         capturedImmutable = capturedScope is ImmutableScopeContext;
@@ -163,6 +165,7 @@ public class PerspectiveWorkerScopeContextTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // Use AddWhizbangMessageSecurity without custom extractors — relies on default
     // MessageHopSecurityExtractor which extracts from hops' ScopeDelta
     services.AddWhizbangMessageSecurity();
@@ -279,8 +282,10 @@ public class PerspectiveWorkerScopeContextTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

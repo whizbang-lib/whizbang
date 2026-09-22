@@ -27,4 +27,34 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
   </ItemGroup>
+
+  <!--
+    The library version as a compile-time constant (issue #619). The driver registers
+    ILibraryVersionProvider from it, so a consumer whose own DbContext registration skips the
+    generated turnkey callback still has a version for the Assess step — without reflection.
+    $(Version) is what CI passes (-p:Version) and what the generator strips its own informational
+    version down to, so this constant and the migration ledger can never disagree.
+  -->
+  <Target Name="WhizbangGenerateLibraryVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_WhizbangLibraryVersionInfoFile>$(IntermediateOutputPath)LibraryVersionInfo.g.cs</_WhizbangLibraryVersionInfoFile>
+      <_WhizbangLibraryVersionInfoSource>// &lt;auto-generated/&gt;
+// Stamped by the WhizbangGenerateLibraryVersionInfo target from MSBuild $(Version). DO NOT EDIT.
+namespace Whizbang.Data.EFCore.Postgres%3B
+
+/// &lt;summary&gt;The library version this assembly was built as (SemVer text, no build metadata).&lt;/summary&gt;
+internal static class LibraryVersionInfo {
+  /// &lt;summary&gt;The value of MSBuild $(Version) at build time.&lt;/summary&gt;
+  public const string Value = "$(Version)"%3B
+}</_WhizbangLibraryVersionInfoSource>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_WhizbangLibraryVersionInfoFile)"
+                      Lines="$(_WhizbangLibraryVersionInfoSource)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_WhizbangLibraryVersionInfoFile)" />
+      <FileWrites Include="$(_WhizbangLibraryVersionInfoFile)" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -322,6 +322,20 @@ public class WorkCoordinatorDefaultInterfaceTests {
   }
 
   [Test]
+  public async Task DiscardPendingInboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingInboxMessagesAsync(RepairTraffic.InboxMessageTypeNames);
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task DiscardPendingOutboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingOutboxMessagesAsync(IntegrityTraffic.OutboxTypesToDiscard(null));
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  [Test]
   public async Task FindStuckOutboxRowsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var rows = await _coordinator.FindStuckOutboxRowsAsync(5, 100);
 
@@ -357,6 +371,20 @@ public class WorkCoordinatorDefaultInterfaceTests {
       123,
       10_000,
       new HandlerInboxCompletion((Guid)TrackedGuid.NewMedo(), (int)MessageProcessingStatus.Stored));
+  }
+
+  [Test]
+  public async Task CountOutstandingWorkAsync_DefaultImplementation_ReportsUnmeasurableNotZeroAsync() {
+    var reported = await _coordinator.CountOutstandingWorkAsync((Guid)TrackedGuid.NewMedo());
+
+    // The distinction is load-bearing rather than stylistic. Zero is a MEASUREMENT meaning "this
+    // instance holds nothing", which licenses a full-size claim. Null means the figure was never
+    // read, and the claim-outstanding budget declines to engage rather than bound against it.
+    // A backend that cannot count returning 0 here would disable the bound while looking exactly
+    // like a healthy idle worker — the silent-disable this default exists to prevent.
+    await Assert.That(reported).IsNull()
+      .Because("a backend that has not implemented the count must report UNMEASURABLE, not zero — "
+             + "zero is a reading, and the budget would size itself from a number nobody took");
   }
 
   /// <summary>

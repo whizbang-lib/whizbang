@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// Enables group-based access control with nested group support.
 /// </summary>
 /// <docs>fundamentals/security/security#security-principals</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityPrincipalIdTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityPrincipalIdTests.cs</tests>
 /// <example>
 /// // Create principals with type prefixes
 /// var user = SecurityPrincipalId.User("alice");           // "user:alice"

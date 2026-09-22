@@ -48,6 +48,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard4")]
 public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   private const string TYPE = "Contracts.ConvergenceProbe";
   private const string TENANT = "tenant-a";
@@ -57,7 +58,6 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
 
   private string? _consumerDbName;
   private NpgsqlDataSource? _consumerDataSource;
-  private DbContextOptions<WorkCoordinationDbContext>? _consumerDbOptions;
 
   [After(Test)]
   public async Task TeardownConsumerDbAsync() {
@@ -72,7 +72,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
         await admin.ExecuteAsync($@"
           SELECT pg_terminate_backend(pid) FROM pg_stat_activity
           WHERE datname = '{_consumerDbName}' AND pid <> pg_backend_pid()");
-        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_consumerDbName}");
+        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_consumerDbName} WITH (FORCE)");
       } catch {
         // container teardown collects strays
       }
@@ -101,10 +101,10 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
     optionsBuilder.UseNpgsql(_consumerDataSource, o => o.UseWhizbangFunctions())
       .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-    _consumerDbOptions = optionsBuilder.Options;
-    await using var ctx = new WorkCoordinationDbContext(_consumerDbOptions);
+    var consumerDbOptions = optionsBuilder.Options;
+    await using var ctx = new WorkCoordinationDbContext(consumerDbOptions);
     await ctx.EnsureWhizbangDatabaseInitializedAsync();
-    return _consumerDbOptions;
+    return consumerDbOptions;
   }
 
   [Test]
@@ -139,10 +139,11 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     }
 
     // ── the two sides: real coordinators, real receptors, capture transports ────────────────
-    var originTransport = new _captureTransport();
-    var consumerTransport = new _captureTransport();
+    var originTransport = new CaptureTransport();
+    var consumerTransport = new CaptureTransport();
     var originId2 = await _localServiceIdAsync(DbContextOptions, jsonOptions);
     var consumerOptions = new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,   // the loop under test repairs; ReportOnly is the default
       AuditSettleWindowMinutes = 0,
       MaxDigestsPerManifest = 2,    // 3 streams → 2 pages: cursor-following must fire
       PublishReportEvents = false,
@@ -151,7 +152,13 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       // E2E lands with the drain's AIMD increment.
       RepairDrainEnabled = false,
     };
-    var originOptions = new StreamIntegrityOptions { AuditSettleWindowMinutes = 0, MaxDigestsPerManifest = 2 };
+    // Report-only is bilateral: an origin that has not opted in declines re-delivery requests, so the
+    // origin under test opts in as well; ReportOnly is the default.
+    var originOptions = new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      AuditSettleWindowMinutes = 0,
+      MaxDigestsPerManifest = 2
+    };
 
     var originProvider = _buildProvider(DbContextOptions, jsonOptions, originTransport, ORIGIN_NAME, originOptions, tracker: null);
     var consumerTracker = new IntegrityGapTracker();
@@ -255,7 +262,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   /// is exactly what the transport receive path (covered by its own suites) does.
   /// </summary>
   private async Task _pumpUntilQuietAsync(
-      _captureTransport originTransport, _captureTransport consumerTransport,
+      CaptureTransport originTransport, CaptureTransport consumerTransport,
       IntegrityManifestRequestReceptor originRequestReceptor,
       RedeliveryRequestReceptor originRedeliveryReceptor,
       IntegrityManifestReceptor consumerManifestReceptor,
@@ -311,7 +318,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       store.Parameters.AddWithValue("e", eventId);
       store.Parameters.AddWithValue("s", stream);
       store.Parameters.AddWithValue("t", TYPE);
-      store.Parameters.AddWithValue("seq", seq);
+      store.Parameters.AddWithValue(nameof(seq), seq);
       await store.ExecuteNonQueryAsync();
     }
     await using var body = conn.CreateCommand();
@@ -371,15 +378,15 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
 
   private static ServiceProvider _buildProvider(
       DbContextOptions<WorkCoordinationDbContext> dbOptions, JsonSerializerOptions jsonOptions,
-      _captureTransport transport, string serviceName, StreamIntegrityOptions options,
+      CaptureTransport transport, string serviceName, StreamIntegrityOptions options,
       IntegrityGapTracker? tracker) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(dbOptions), jsonOptions));
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IDispatcher>(new _captureDispatcher());
+    services.AddSingleton<IDispatcher>(new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider(serviceName));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     services.AddSingleton(Options.Create(options));
     services.AddSingleton<IIntegrityRepairLedger>(new IntegrityRepairLedger());
     if (tracker is not null) {
@@ -396,7 +403,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(T)))!;
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -411,12 +418,12 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _captureDispatcher : IDispatcher {
+  private sealed class CaptureDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) => PublishAsync(eventData);
@@ -442,7 +449,6 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
@@ -452,7 +458,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;
@@ -464,7 +470,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     }
   }
 
-  private sealed class _instanceProvider(string name) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string name) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => name;
     public string HostName => "e2e-host";

@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard4")]
 public class WhizbangModelBuilderExtensionsTests : EFCoreTestBase {
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync() {

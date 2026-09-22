@@ -45,7 +45,7 @@ public class LifecyclePhaseWorkerTests {
   public async Task AdvancesConnectingThenMigrating_ThenRunningWhenGateOpensAsync() {
     var lifecycle = new RecordingLifecycle();
     var gate = new SchemaReadyGate();
-    var worker = new LifecyclePhaseWorker(lifecycle, gate);
+    var worker = new LifecyclePhaseWorker(lifecycle: lifecycle, schemaReadyGate: gate, readModelsReadyGate: ReadModelsReadyGate.AlreadyReady());
 
     await worker.StartAsync(CancellationToken.None);
     await lifecycle.Migrating.Task; // advanced through Connecting to Migrating at startup

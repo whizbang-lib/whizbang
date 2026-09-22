@@ -24,14 +24,19 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="options">System event options controlling audit behavior.</param>
   /// <param name="logger">Optional logger; a resolution failure is logged rather than silently defaulting.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
-  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null) {
+  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
       return null;
     }
 
     // Check if this event type should be audited based on AuditMode
+    // One place decides, shared with the decorator: the attribute gates the TYPE, the hook may
+    // veto or name the OCCURRENCE. These two call sites previously each had their own copy.
     var eventType = _resolveEventType(eventMessage.MessageType, logger ?? NullLogger.Instance);
-    if (eventType != null && !_shouldAudit(eventType, options)) {
+    var auditDecision = eventType != null
+      ? AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, auditDecisionHook)
+      : AuditDecision.Record();
+    if (eventType != null && !auditDecision.ShouldAudit) {
       return null;
     }
 
@@ -70,6 +75,8 @@ public static partial class AuditOutboxMessageBuilder {
       OriginalStreamPosition = 0, // Position not available from outbox message
       OriginalBody = eventMessage.Envelope.Payload,
       Timestamp = DateTimeOffset.UtcNow,
+      ActivityName = auditDecision.Name,
+      ActivityDescription = auditDecision.Description,
       TenantId = eventMessage.Scope?.TenantId,
       UserId = eventMessage.Scope?.UserId,
       CorrelationId = correlationId,
@@ -79,23 +86,36 @@ public static partial class AuditOutboxMessageBuilder {
     // Serialize EventAudited to JsonElement
     var auditJson = AuditJsonSerializer.SerializeToJsonElement(auditEvent);
 
-    // Build envelope — copy hops from the original event so security context (TenantId, UserId, claims)
-    // propagates to the consuming service (BFF). The hops carry scope metadata that the
-    // DefaultMessageSecurityContextProvider uses to establish security context.
-    var sourceHops = eventMessage.Envelope.Hops?.ToList() ?? [];
-    // Add a new hop indicating this is an audit relay
-    sourceHops.Add(new MessageHop {
+    // The audit record's OWN hop carries its scope: the audited tenant plus the system marker, via
+    // the same helper every audit path uses. Not the acting user — scope is an access-control key,
+    // so carrying the actor would hand the SUBJECT of an audit record a key to their own trail.
+    //
+    // The source hops were previously copied wholesale for exactly that security context, which is
+    // what brought the user along. They are kept for their LINEAGE and demoted to Causation: scope
+    // resolution merges Current hops only, so the trace back to the audited event survives while
+    // its authority does not. The consumer still establishes a context, because the extractor needs
+    // either a tenant or a user and the tenant is present.
+    var sourceHops = (eventMessage.Envelope.Hops ?? [])
+      .ConvertAll(h => h with { Type = HopType.Causation })
+;
+    sourceHops.Insert(0, new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = System.Diagnostics.Activity.Current?.Id,
+      Scope = AuditRecordScope.For(eventMessage.Scope?.TenantId),
     });
 
     var auditEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = auditJson,
       Hops = sourceHops,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      // An audit record is written on the audit band, whatever number the audited event carried. It
+      // never competes with the work it records. The band is SystemEventOptions.AuditPriority,
+      // idle by default, and read from there rather than restated so the record, this envelope and
+      // the queue row below cannot disagree about it.
+      Priority = options.AuditPriority
     };
 
     // No floor stamping here: the sliding-ship safety floor (ScheduledFor = now + MaxDelay) and
@@ -112,27 +132,13 @@ public static partial class AuditOutboxMessageBuilder {
         MessageId = auditEnvelope.MessageId,
         Hops = auditEnvelope.Hops?.ToList() ?? []
       },
-      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{auditEventType.AssemblyQualifiedName}]], Whizbang.Core",
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
+      Priority = options.AuditPriority,
       StreamId = auditEvent.Id,
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
       Scope = eventMessage.Scope,
-      MessageType = auditEventType.AssemblyQualifiedName ?? auditEventType.FullName ?? auditEventType.Name
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(auditEventType)
     };
-  }
-
-  private static bool _shouldAudit(Type eventType, SystemEventOptions options) {
-    // EventAudited itself is excluded (prevents infinite loop)
-    if (eventType == typeof(EventAudited)) {
-      return false;
-    }
-
-    var attr = eventType
-        .GetCustomAttributes(typeof(AuditEventAttribute), inherit: true)
-        .FirstOrDefault() as AuditEventAttribute;
-
-    return options.AuditMode == AuditMode.OptOut
-      ? attr?.Exclude != true           // audit unless excluded
-      : attr?.Exclude == false;         // audit only if marked
   }
 
   private static Type? _resolveEventType(string assemblyQualifiedName, ILogger logger) {

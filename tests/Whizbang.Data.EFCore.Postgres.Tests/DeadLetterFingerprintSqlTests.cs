@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>aggregate_dead_letters</c> recomputes old rows.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/error-fingerprinting</docs>
+[Category("Shard3")]
 public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
 
   private const string _typicalStack = """
@@ -176,10 +177,10 @@ public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task CurrentDeadLetterFingerprintVersion_ReturnsOneAsync() {
+  public async Task CurrentDeadLetterFingerprintVersion_ReturnsTwoAsync() {
     var version = await _currentVersionAsync();
 
-    await Assert.That(version).IsEqualTo((short)1)
-      .Because("Algorithm v1 is the locked baseline. Bumping requires updating this function body + the C# test corpus + adding a regression test for version-aware backfill in Slice 6's aggregate_dead_letters.");
+    await Assert.That(version).IsEqualTo((short)2)
+      .Because("Algorithm v2 is the locked baseline (async-frame normalization, innermost exception type, prose templates; corpus in DeadLetterFingerprintV2Tests). This is the ONE hardcoded pin — the mechanics tests assert against the function so a future bump edits exactly here.");
   }
 }

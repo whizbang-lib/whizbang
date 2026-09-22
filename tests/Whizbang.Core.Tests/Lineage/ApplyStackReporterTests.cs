@@ -69,7 +69,7 @@ public class ApplyStackReporterTests {
     var report = await ApplyStackReporter.BuildAsync(query, new ApplyStackQueryOptions());
 
     await Assert.That(report.Available).IsTrue();
-    await Assert.That(report.Signatures!).Count().IsEqualTo(1);
+    await Assert.That(report.Signatures).Count().IsEqualTo(1);
     await Assert.That(report.Flow).IsNull()
       .Because("the flow view is computed only when an anchor is requested");
   }
@@ -106,7 +106,7 @@ public class ApplyStackReporterTests {
     await Assert.That(async () => await ApplyStackReporter.BuildAsync(
         query, new ApplyStackQueryOptions(), cancellationToken: cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("a cancelled caller is not a degraded store — cancellation is never converted into a reason string");
+      .Because("a canceled caller is not a degraded store — cancellation is never converted into a reason string");
   }
 
   [Test]
@@ -137,7 +137,7 @@ public class ApplyStackReporterTests {
       query, ["Created", "Closed"], new ApplyStackQueryOptions(), limit: 5);
 
     await Assert.That(report.Available).IsTrue();
-    await Assert.That(report.Streams!).Contains(streamId);
+    await Assert.That(report.Streams).Contains(streamId);
     await Assert.That(query.SeenLimit).IsEqualTo(5)
       .Because("the surface adds nothing to the drill-in — the limit passes through unchanged");
   }

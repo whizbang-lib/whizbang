@@ -1,0 +1,240 @@
+# Whizbang performance baseline. One measure per line, tab separated:
+#   name<TAB>value<TAB>unit<TAB>ceiling<TAB>note
+#
+# The value is what the measure read when the line was last written, and is reported as drift on
+# every run. The CEILING is the gate, and is deliberately optional: a measure with no ceiling is
+# recorded and never fails a run. Declare one only where the number is a property of the design
+# rather than of the machine, and say why in the note -- a ceiling that encodes a machine's speed
+# will either flap or hide a real regression, which is the failure mode this file exists to avoid.
+#
+# Values are WORK DONE (tuples, scans, blocks, rows), never wall clock. Time moves with the runner,
+# its neighbors and its cache; a plan's page and tuple counts do not.
+
+# --- Doorbell against settled history -------------------------------------------------------
+# Eight streams carrying 2,500 settled rows each in all three queue tables, none of them in the
+# stream ledger, so every ring takes the deterministic-target branch. A ring names streams and must
+# cost what it names, never what those streams have accumulated.
+#
+# Before the deterministic branch stopped recovering a stream's partition number by reading the
+# queue table, the same scenario read 20,000 tuples and took one sequential scan PER RING on each
+# of the three branches. That is the measurement this suite exists to have caught.
+#
+# The ceiling is on tuples read, and it is a property of the design: the partition number is a
+# total function of the stream id, so a ring has no reason to read a queue row at all. A hundred
+# leaves room for a planner that reads a page to answer something else while still being two orders
+# of magnitude below a scan of a 20,000-row table. Scan counts are recorded without a ceiling,
+# because they are the same finding counted a second way and one gate per family is enough.
+doorbell.inbox.wh_inbox.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.inbox.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+doorbell.inbox.wh_outbox.seq_scans_per_ring	0	scans/ring		
+doorbell.inbox.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.inbox.wh_perspective_events.seq_scans_per_ring	0	scans/ring		
+doorbell.inbox.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.outbox.wh_inbox.seq_scans_per_ring	0	scans/ring		
+doorbell.outbox.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.outbox.wh_outbox.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.outbox.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+doorbell.outbox.wh_perspective_events.seq_scans_per_ring	0	scans/ring		
+doorbell.outbox.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_inbox.seq_scans_per_ring	0	scans/ring		
+doorbell.perspective.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_outbox.seq_scans_per_ring	0	scans/ring		
+doorbell.perspective.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_perspective_events.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.perspective.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+
+# --- Store emptiness probe against a pending backlog -----------------------------------------
+# 200 streams carrying 100 pending unpublished outbox rows each, then a producer storing four
+# messages per call on streams the outbox has never held. Before its first insert for a stream the
+# store asks whether that stream has a pending row, so it knows whether to ring a doorbell.
+#
+# The ceiling is on tuples read per ROW WRITTEN, which is the ratio a deployed fleet reported at
+# 4,550 and the one that makes a scan obvious whatever the absolute size of the table: a store
+# should read about what it writes. Fifty leaves room for the small bookkeeping tables the store
+# legitimately reads while being two orders of magnitude below a scan.
+#
+# The absolute per-call tuple count carries a ceiling too, because the ratio alone can be satisfied
+# by a call that writes more rather than by one that reads less.
+#
+# Measured before the fix: 80,078 tuples and 4 sequential scans per call, 20,019.5 tuples per row
+# written. Every stream_id index on wh_outbox is partial on a condition this predicate cannot
+# satisfy, so nothing served it and it scanned every unpublished row to prove a fresh stream empty.
+#
+# The perspective measures below were noise until wh_perspective_events was seeded. The same loop
+# probes that table, and the fixture left it EMPTY, so the measure read four sequential scans of
+# nothing and zero tuples. A scan of an empty table is what the planner picks for an empty table,
+# and it is indistinguishable in these counters from a probe answered by an index. A measure taken
+# against a table the fixture never fills reads as clean whether the defect is there or not, and a
+# gate that cannot fail is worse than no gate because it is counted as coverage. Seeded, the same
+# measure prices a real probe and the four scans become none.
+#
+# Being exact about what this gate does and does not cover: it stores to FRESH streams only, so it
+# exercises one of the probe's three stream states. It would NOT have caught the drained-stream
+# defect, which is why that lives in its own scenario below with all three states measured
+# separately. Seeding this one makes its number mean something; it does not make it sufficient.
+store.rows_written_per_call	4	rows/call		
+store.wh_outbox.seq_scans_per_call	0	scans/call		was 4 per call before the fix, one per fresh stream
+store.wh_outbox.tuples_read_per_call	0	tuples/call	1000	was 80078; a probe by stream id must not read the table
+store.wh_outbox.tuples_read_per_row_written	0	tuples/row	50	was 20019.5; a deployed fleet reported 4550
+store.wh_perspective_events.seq_scans_per_call	0	scans/call	0.5	was 4 per call against an EMPTY table, which priced nothing
+store.wh_perspective_events.tuples_read_per_call	0	tuples/call	100	
+
+# --- Claim poll cost per call, by stream depth ------------------------------------------------
+# 100 streams and a batch of 10 at two depths: 12 pending perspective events per stream, then 200.
+# Same batch, same stream count; only the depth differs.
+#
+# The gate is the MULTIPLE, because it is the only measure that separates a poll that is expensive
+# because it was asked for a lot from a poll that is expensive because of what it happened to find.
+# A poll bounded by the batch it was asked for holds this near one. Two leaves room for the larger
+# table's own index depth while still failing a poll whose cost tracks its consumer's data shape.
+#
+# The absolute deep-stream cost carries a ceiling as well, so the multiple cannot be satisfied by
+# making the shallow case worse. Rows leased per call is the mechanism rather than a gate: the
+# acquisition selects a batch of STREAMS and then leases every pending event of each one.
+#
+# Measured before the fix: 3,730.5 blocks a call shallow, 54,914 deep, 1,766.7 rows leased a call
+# at depth, a 14.7x multiple. Three deployed services reported 4,575, 12,022 and 29,018 blocks a
+# call on this same code, which is one code path at three data shapes.
+claim.blocks_per_call.depth_12	1025.5	blocks/call	8000	
+claim.blocks_per_call.depth_200	6964.8	blocks/call	8000	was 54914 before the row bound
+claim.blocks_per_call.depth_50	2600	blocks/call	8000	
+claim.depth_cost_multiple	6.8	x		recorded, not gated: 14.7 before the row bound, and the deepest fixture holds 16x the rows
+claim.rows_leased_per_call.depth_12	5	rows/call		
+claim.rows_leased_per_call.depth_200	5	rows/call	50	was 1766.7 before the row bound
+claim.rows_leased_per_call.depth_50	5	rows/call		
+
+# --- Store perspective emptiness probe, by stream state ---------------------------------------
+# 200 streams holding 100 pending perspective events each, plus one stream carrying 400 PROCESSED
+# events and nothing pending, plus store calls on stream ids the table has never held. One message
+# per call, so exactly one stream is probed per call, and one stream state per measured window.
+#
+# The three states exist as separate measures because averaging them is how this defect stayed
+# hidden. Migration 160 recorded this probe as costing three buffers, which was true of a stream the
+# table had never held and false of a stream whose work was all done. A drained stream is what every
+# long-lived stream becomes and what it stays between bursts, so it is the common state rather than
+# an edge, and it was the one that read the whole table.
+#
+# Measured before the fix, on the drained stream: 337.8 blocks and 20,400 tuples for ONE probe, from a
+# sequential scan the planner chose because processed_at IS NULL is true of nearly every row, so it
+# expected to stop at the first one. There is no match on a drained stream, so it read all of them.
+#
+# The ceiling is declared ONCE and applies to all three states, which is the property worth gating:
+# what the probe costs follows the question asked, not the history the stream happens to carry. A
+# ceiling that held only for a fresh stream is the measurement that missed this the first time.
+# Sequential scans carry the tightest gate because the defect is binary -- an index answers it or a
+# scan does -- and half a scan per call is not a thing that can happen.
+probe.wh_perspective_events.blocks_per_call.drained	5	blocks/call	50	was 337.8; a drained stream read the whole table
+probe.wh_perspective_events.blocks_per_call.fresh	2.2	blocks/call	50	
+probe.wh_perspective_events.blocks_per_call.pending	4	blocks/call	50	
+probe.wh_perspective_events.seq_scans_per_call.drained	0	scans/call	0.5	was 1 per call; the probe must answer from an index
+probe.wh_perspective_events.seq_scans_per_call.fresh	0	scans/call	0.5	
+probe.wh_perspective_events.seq_scans_per_call.pending	0	scans/call	0.5	
+probe.wh_perspective_events.tuples_read_per_call.drained	0	tuples/call	100	was 20400 for a single existence question
+probe.wh_perspective_events.tuples_read_per_call.fresh	0	tuples/call	100	
+probe.wh_perspective_events.tuples_read_per_call.pending	0	tuples/call	100	
+
+# --- Ephemeral reap, empty answer ------------------------------------------------------------
+ephemeral_reap.no_index.wh_event_store.tuples_read_per_cycle	20000	tuples/cycle		recorded, not gated: this is the plan the index replaces, kept so the pair reads as a before and after
+ephemeral_reap.no_index.wh_event_body.tuples_read_per_cycle	0	tuples/cycle		recorded: this container's planner drives the join from the event store, so the body table is not scanned here. A deployed fleet's plan read it too, which is why the fix covers both sides
+ephemeral_reap.indexed.wh_event_store.tuples_read_per_cycle	0	tuples/cycle	100	GATED: a design property, not a machine property. The reap asks whether anything is reapable; with a partial index on the ephemeral flag the empty answer costs an index probe, so a sequential read of the event store means the index stopped being used
+ephemeral_reap.indexed.wh_event_body.tuples_read_per_cycle	0	tuples/cycle	100	GATED: same property on the other side of the join
+ephemeral_reap.tuples_read_per_cycle_total.no_index	20000	tuples/cycle		recorded, not gated
+ephemeral_reap.tuples_read_per_cycle_total.indexed	0	tuples/cycle	200	GATED: the whole cycle. Measured on a deployed fleet at 2,119 s of statement time and 9.6M block reads across 410 calls that returned zero rows
+
+# --- Claim write cost, narrow state row versus the wide row it replaced ------------------------
+# 20,000 rows each side, 500 stamped per measured batch. The BEFORE side is reconstructed -- a row
+# of the same width carrying the same moved columns and the indexes the cutover removed -- because
+# after the cutover the comparison no longer exists: the message row has no mutable columns left to
+# stamp. Synthetic on identity, faithful on the two dimensions that drive the cost.
+#
+# An update can only take PostgreSQL cheap in-place path when it touches NO indexed column and the
+# page has room. Claiming writes indexed columns by definition, so that path is unreachable and the
+# index count IS the cost. Blocks per row stamped, never wall clock.
+#
+# The gate is the state row INDEX COUNT, because that is the thing a future change trades away
+# without noticing: the plan carried 69 percent off every write, measured when the state table held
+# six indexes, and restoring the five priority lanes took it to eleven and the reduction to 51.
+# Twelve leaves room for one more lane while failing a drift back toward the seventeen the wide row
+# carried. The reduction percent is recorded and NOT gated, because a ceiling is an upper bound and
+# this number wants a floor; the ratio is asserted in the test instead, at 1.5x.
+claim_write.wide_row.blocks_per_row	37.2	blocks/row		recorded, not gated: the shape the split replaced, kept so the pair reads as a before and after
+claim_write.wide_row.indexes	17	indexes		recorded: the index set the cutover removed
+claim_write.state_row.blocks_per_row	18.3	blocks/row		recorded, not gated: follows the index count below, which is the gate
+claim_write.state_row.indexes	11	indexes	12	GATED: a design property. The write win IS the index count on the hot table; 6 indexes gave 69 percent off, 11 gives 51, and a return toward 17 gives back the whole reason the split exists
+claim_write.reduction_percent	50.9	percent		recorded, not gated: a ceiling cannot express a floor. The test asserts the wide/narrow ratio exceeds 1.5x; measured 2.03x
+
+# --- Maintenance row-expiry reap, nothing expired ---------------------------------------------
+# 24 perspective tables holding 500 unexpired rows each, of which 2 declare a row lifetime in the
+# registry. Both discovery shapes run against the same fixture so the pair reads as a before and
+# after, the way the ephemeral reap scenario drops and recreates its index. Only wh_per_* tables are
+# measured, so the cycle's other twelve tasks stay out of the number.
+#
+# expires_at comes from the shared perspective table template, so EVERY perspective table has the
+# column whether or not its perspective declares a lifetime. Finding tables by asking the catalog for
+# that column therefore selected all of them and issued an unindexed DELETE against each. The
+# predicate matched nothing -- a perspective that declares no lifetime never stamps the column -- but
+# not matching still read every row of every table.
+#
+# Measured on a deployed service before the change: 120 tables scanned for the 3 that declare a
+# lifetime, 14,758 ms to delete zero rows, against 377 ms for the other twelve maintenance tasks
+# combined. perform_maintenance was the heaviest statement on that database by total time, averaging
+# 19.2 s and 615k buffers a call, and 98 percent of it was this one task. Two other services scanned
+# 81 tables for one declaring perspective and 32 for nine.
+#
+# The gate is TABLES SCANNED, because that is a property of the design rather than of the machine:
+# the reap has no reason to read a table whose perspective never declared a lifetime, whatever the
+# planner or the hardware does. Four leaves room for another declaring perspective in the fixture
+# while failing any drift back toward sweeping all 24. Tuples read is the same finding counted a
+# second way, gated loosely so it cannot be satisfied by reading fewer rows from more tables.
+#
+# Residual, recorded here rather than hidden: the DELETE against a DECLARING table is still
+# unindexed, because expires_at carries no index. That is proportionate now -- three tables on the
+# service above rather than a hundred and twenty -- but a service with many declaring perspectives
+# holding large tables would want an index on the column, and this is the measure that would show it.
+maintenance.ttl_reap.catalog_sweep.tables_scanned_per_cycle	24	tables/cycle		recorded, not gated: the shape the registry replaces, kept so the pair reads as a before and after
+maintenance.ttl_reap.catalog_sweep.tuples_read_per_cycle	12000	tuples/cycle		recorded, not gated: every row of every table, to prove nothing was expired
+maintenance.ttl_reap.registry.tables_scanned_per_cycle	2	tables/cycle	4	GATED: a design property. The reap reads the registry, so it touches only the perspectives that declare a row lifetime; a return toward 24 is the catalog sweep coming back
+maintenance.ttl_reap.registry.tuples_read_per_cycle	1000	tuples/cycle	3000	GATED: the declaring tables are still read in full, since expires_at is unindexed. The ceiling fails a sweep of the non-declaring ones without pretending the residual scan is free
+
+# --- Outbox claim, an urgent row behind a bulk backlog -----------------------------------------
+# 5,000 bulk rows across 500 streams, all leased by the instance and queued an hour earlier, then
+# one interactive row queued last. Arrival order alone would return the urgent row 5,001st, so it
+# would never be claimed while the backlog lasted -- which is the symptom this fix exists for: a
+# reply someone is waiting for published behind whatever bulk work was queued before it.
+#
+# The corpus rule asserts the ORDER BY exists, which is a property of the text. This measures the
+# OUTCOME, because an ORDER BY can be present and still not be honoured if a plan or an index
+# changes underneath it.
+#
+# The gate is POSITION, and it is a design property: an interactive row is the most urgent thing the
+# instance holds, so it comes first. There is no tolerance to give -- second place means the
+# ordering is in the text and not in the plan.
+#
+# Blocks and scans are RECORDED and NOT gated, deliberately. The cost property -- that a poll is
+# priced by the batch rather than by what the instance holds -- belongs to
+# ClaimWorkPlanShapeTests, which fixes row width and holdings for that purpose and which caught
+# this very change regressing to 1,272 blocks against its 1,200 ceiling on the first attempt. Two
+# ceilings on one property would drift apart, and a ceiling here would be measured against a
+# fixture chosen to demonstrate ordering rather than cost.
+outbox_priority.urgent_row_position	1	position	1	GATED: a design property. An interactive row is the most urgent thing the instance holds; arrival order alone would place it 5001st
+outbox_priority.claim.blocks_per_call	51	blocks/call		recorded, not gated: the cost gate is ClaimWorkPlanShapeTests, which fixes width and holdings for it
+outbox_priority.claim.seq_scans_per_call	1	scans/call		recorded, not gated: same reason
+
+# --- Idle band, busy poll behind a withheld backlog -----------------------------------------
+# 20,000 fresh idle-band rows behind 500 ordinary pending rows, polled as a BUSY service, so not
+# one idle row may be taken. The band adds a fourth bucket and an admission probe to a function
+# every instance calls several times a second; if either reads the band, the feature charges the
+# whole fleet for the size of the backlog it is withholding, and does so more the better it works.
+#
+# The absolute block counts are recorded without a ceiling: they move with page fill and with what
+# the fixture left behind, which is exactly the kind of number this file says not to gate on. The
+# DIFFERENCE between the two polls is a property of the design, and carries the ceiling.
+#
+# Measured: 2 sequential tuples, not 20,000 -- the probe is answered by walking an index to the
+# first qualifying entry. The withheld band cost 125 blocks, against the ~3,700 a poll costs
+# anyway.
+idle_band.busy_poll.blocks_per_call	3838	blocks/call		absolute cost moves with the machine; the delta below is the gate
+idle_band.control_poll.blocks_per_call	3713	blocks/call		the same poll with no idle band at all
+idle_band.busy_poll.seq_scans_per_call	2	scans/call	10	a sequential scan of wh_inbox_state on the claim path is a plan defect on any machine
+idle_band.busy_poll.seq_tuples_per_call	2	tuples/call	500	THE gate here, verified to fire: reverting the probe to MAX(an expression) read 20,502 and failed the run
+idle_band.withheld_backlog.extra_blocks_per_call	125	blocks/call	800	what a withheld band of 20,000 rows adds to a poll refusing to touch it; a loose backstop only -- the same regression reached 398 and stayed under it, which is why the tuple count above is the real gate

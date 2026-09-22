@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -33,9 +34,7 @@ namespace Whizbang.Data.Dapper.Postgres.Collective;
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveApplierIntegrationTests.cs:ApplyAsync_CohortLargerThanBatchSize_UpdatesEveryRowAcrossBatchesAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveUnitTests.cs:Applier_EventTypeMismatch_ThrowsArgumentAsync</tests>
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the Whizbang.Data.EFCore.Postgres CollectiveEventApplier pattern.")]
-public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
-  // Preserve PascalCase property names — they are the jsonb keys (matches CollectiveSettersRewriter).
-  private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNamingPolicy = null };
+public static class DapperCollectiveEventApplier<TModel> where TModel : class {
 
   /// <summary>
   /// Apply the collective event against the Dapper-backed perspective table. Returns the affected-row count.
@@ -75,12 +74,12 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     if (entry.EventType != evt.GetType()) {
       throw new ArgumentException(
-        $"Entry's EventType {entry.EventType.FullName} does not match the supplied event type {evt.GetType().FullName}. Registry lookup or dispatch routing is wrong.",
+        $"Entry's EventType {TypeNameFormatter.DisplayName(entry.EventType)} does not match the supplied event type {TypeNameFormatter.DisplayName(evt.GetType())}. Registry lookup or dispatch routing is wrong.",
         nameof(entry));
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {entry.ModelType.FullName} does not match TModel {typeof(TModel).FullName}. The dispatcher should fan out to DapperCollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to DapperCollectiveEventApplier<{entry.ModelType.Name}> instead.",
         nameof(entry));
     }
     if (resolver.ScopeKind != evt.Scope.ScopeKind) {
@@ -96,7 +95,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var query = new DapperCollectiveQuery(siblingTables);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
@@ -104,11 +103,11 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     var setClause = DapperCollectiveSpecCompiler<TModel>.Compile(
-      spec, _jsonOptions, parameterPrefix: "set",
+      spec, DapperCollectiveEventApplierJson.Options, parameterPrefix: "set",
       hookSetters: hookPlan.ModelFieldSetters, removedFields: hookPlan.RemovedModelFields);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
-    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where —
     // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
     // (ReplaceWhere) the cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);
@@ -135,7 +134,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var storeColumns = hookPlan.StoreColumns;
     var updateSql = "UPDATE " + tableName + " SET " + setClause.SqlFragment +
       hookPlan.RenderStoreColumnSetTail() + " WHERE id = ANY(@wb_ids)";
-    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope.ToString();
+    var scopeKey = evt.Scope.ScopeKind + ":" + evt.Scope;
     long? lockKey = effectiveOptions.SerializeApplies ? CollectiveApplyLockKey.Compute(tableName, scopeKey) : null;
 
     var total = 0;
@@ -182,7 +181,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     }
 
     // SET LOCAL statement_timeout is the only form that survives PgBouncer transaction pooling, so a runaway
-    // batch is cancelled by Postgres rather than left a zombie when the client gives up.
+    // batch is canceled by Postgres rather than left a zombie when the client gives up.
     await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
     if (options.StatementTimeoutSeconds is int secs && secs > 0) {
@@ -251,4 +250,12 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     p.Value = value;
     cmd.Parameters.Add(p);
   }
+}
+
+/// <summary>
+/// One serializer configuration for every <c>TModel</c> instantiation: PascalCase property
+/// names are preserved because they are the jsonb keys (matches CollectiveSettersRewriter).
+/// </summary>
+internal static class DapperCollectiveEventApplierJson {
+  internal static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = null };
 }

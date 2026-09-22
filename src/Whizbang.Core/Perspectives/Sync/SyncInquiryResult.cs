@@ -25,7 +25,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithPendingEventIds_StoresIdsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_WithExpectedEventIds_StoresIdsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs:SyncInquiryResult_NoPendingEvents_IsFullySyncedAsync</tests>

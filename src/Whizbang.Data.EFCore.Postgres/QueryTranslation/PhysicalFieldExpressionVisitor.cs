@@ -88,7 +88,7 @@ public class PhysicalFieldExpressionVisitor : ExpressionVisitor {
           // For Select projections, use EF.Property<Vector?>(r, "embeddings") explicitly.
           // The Whizbang vector extensions (OrderByCosineDistance, etc.) handle their own rewriting.
           //
-          // TODO: Unify shadow property type to float[]? (requires vector extension refactor).
+          // Unifying the shadow property type to float[] waits on the vector extension refactor.
           return base.VisitMember(node);
         } else {
           // Non-vector: direct EF.Property<TProperty>(r, "shadow_property_name")

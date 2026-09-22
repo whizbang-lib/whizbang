@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TUnit.Core;
 using Whizbang.Core.Audit;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.SystemEvents.Audit;
 
@@ -376,5 +377,32 @@ public class AuditEventModelTests {
       AuditEventProjection.CustomHumanizer = previousCustom;
       AuditEventProjection.CustomDescriptionHumanizer = previousDesc;
     }
+  }
+
+  /// <summary>
+  /// The audit trail's ordering key declares its own index.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every read of this table is newest-first, so <c>OccurredAt</c> is the ordering key of the whole
+  /// perspective, and an ordering is the one thing the document index cannot answer. Left undeclared
+  /// it is a sort over every row.
+  /// </para>
+  /// <para>
+  /// It has to be declared here rather than by the consumer, and that is what this test is really
+  /// pinning. The model ships with the framework, so an application ordering by it cannot add the
+  /// attribute: the index advisory would report a query whose advice the author has no way to take.
+  /// A <c>DateTimeOffset</c> is stored as a number, which is what makes the index possible at all.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task OccurredAt_DeclaresAnIndex_BecauseConsumersCannotAsync() {
+    var occurredAt = typeof(AuditEventModel).GetProperty(nameof(AuditEventModel.OccurredAt));
+
+    await Assert.That(occurredAt).IsNotNull();
+    await Assert.That(occurredAt!.GetCustomAttributes(typeof(IndexedAttribute), inherit: false))
+      .IsNotEmpty()
+      .Because("the audit trail is read newest-first and this model ships with the framework, so a "
+        + "consumer ordering by it has no way to declare the index itself");
   }
 }

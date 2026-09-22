@@ -10,8 +10,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
 /// Unit coverage for <c>MessageTypeRegistryReconciliationHostedService</c> — the
-/// hosted service that replaced the prior <c>using var populatorProvider =
-/// services.BuildServiceProvider();</c> pattern at startup (reported by a consumer
+/// hosted service that replaced the prior <code>using var populatorProvider =
+/// services.BuildServiceProvider();</code> pattern at startup (reported by a consumer
 /// whose configuration change-tokens it silently killed). Locks the contract:
 ///
 /// <list type="bullet">
@@ -144,10 +144,9 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
   public async Task ListLogger_BeginScope_ReturnsNoOpDisposableAsync() {
     var logger = new ListLogger<MessageTypeRegistryReconciliationHostedService>();
 
-    using (var scope = logger.BeginScope(new { Tag = "test" })) {
-      await Assert.That(scope).IsNotNull()
-        .Because("ILogger.BeginScope must return a non-null IDisposable to satisfy the contract; the helper's NullScope is sufficient since the SUT doesn't currently emit scoped log entries.");
-    }
+    using var scope = logger.BeginScope(new { Tag = "test" });
+    await Assert.That(scope).IsNotNull()
+      .Because("ILogger.BeginScope must return a non-null IDisposable to satisfy the contract; the helper's NullScope is sufficient since the SUT doesn't currently emit scoped log entries.");
     // The `using` above invokes NullScope.Dispose, completing coverage of all three
     // interface-contract members on the helper logger.
   }

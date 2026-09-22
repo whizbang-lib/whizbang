@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -52,7 +55,17 @@ public class DispatcherEdgeCaseCoverageTests {
   public record VoidEdgeCommand(string Data);
 
   public class VoidEdgeCommandReceptor : IReceptor<VoidEdgeCommand> {
+    /// <summary>
+    /// What the ambient <see cref="MessageContextAccessor.CurrentContext"/> looked like from inside
+    /// the receptor, keyed by the command's payload so parallel tests never read each other's run.
+    /// The void overloads return nothing, so this is the only place the caller's context is
+    /// observable at all.
+    /// </summary>
+    public static ConcurrentDictionary<string, string?> ObservedUserIds { get; } = new();
+
     public ValueTask HandleAsync(VoidEdgeCommand message, CancellationToken cancellationToken = default) {
+      ArgumentNullException.ThrowIfNull(message);
+      ObservedUserIds[message.Data] = MessageContextAccessor.CurrentContext?.UserId;
       return ValueTask.CompletedTask;
     }
   }
@@ -67,7 +80,7 @@ public class DispatcherEdgeCaseCoverageTests {
     var routedNone = Route.None();
     var options = new DispatchOptions();
 
-    // The generic typed SendAsync<TMessage> path does not unwrap IRouted;
+    // The generic typed SendAsync<TMessage> path does not unwrap IRouted —
     // it goes through _sendAsyncInternalWithOptionsAsync which tries receptor lookup directly.
     // RoutedNone has no receptor, so ReceptorNotFoundException is thrown.
     await Assert.That(async () =>
@@ -123,11 +136,11 @@ public class DispatcherEdgeCaseCoverageTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_GenericTyped_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_GenericTyped_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -136,11 +149,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_Object_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_Object_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = (object)new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -149,12 +162,12 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_WithContextAndOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithContextAndOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     var context = MessageContext.New();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -217,11 +230,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -230,11 +243,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidWithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_VoidWithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new VoidEdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -473,11 +486,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -547,7 +560,13 @@ public class DispatcherEdgeCaseCoverageTests {
 
     // Exercises _getScopeDeltaForHop with UserId set
     await dispatcher.LocalInvokeAsync(command, context);
-    // No assertion needed beyond not throwing
+
+    // The void overload returns nothing, so the receptor's own view of the ambient context is the
+    // only evidence the caller's identity survived the hop. A context that stopped flowing here
+    // would silently strip the user from everything the receptor goes on to cascade.
+    await Assert.That(VoidEdgeCommandReceptor.ObservedUserIds.TryGetValue("scope-void-test", out var seen)).IsTrue()
+      .Because("the void LocalInvokeAsync overload must actually reach the receptor");
+    await Assert.That(seen).IsEqualTo("user-789");
   }
 
   [Test]
@@ -568,13 +587,24 @@ public class DispatcherEdgeCaseCoverageTests {
   // ========================================
 
   [Test]
-  public async Task CascadeMessageAsync_WithNoneMode_DoesNotThrowAsync() {
+  public async Task CascadeMessageAsync_WithNoneMode_DispatchesToNoReceptorAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "none-mode" };
+    var noneDetail = $"none-mode-{Guid.CreateVersion7()}";
+    var controlDetail = $"none-mode-control-{Guid.CreateVersion7()}";
 
-    // DispatchModes.None should skip all dispatch paths
-    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.None);
-    // No assertion needed beyond not throwing
+    // Act - None carries no LocalDispatch flag, so nothing should reach a receptor. The control
+    // cascade that follows uses the one mode that is pure local dispatch; without it a receptor
+    // that was never wired at all would make the None assertion pass for the wrong reason.
+    await dispatcher.CascadeMessageAsync(
+      new TestCascadeEvent { Detail = noneDetail }, sourceEnvelope: null, mode: DispatchModes.None);
+    await dispatcher.CascadeMessageAsync(
+      new TestCascadeEvent { Detail = controlDetail }, sourceEnvelope: null, mode: DispatchModes.LocalNoPersist);
+
+    // Assert
+    await Assert.That(TestCascadeEventReceptor.Handled.Contains(controlDetail)).IsTrue()
+      .Because("the control proves the receptor is registered and reachable through a cascade");
+    await Assert.That(TestCascadeEventReceptor.Handled.Contains(noneDetail)).IsFalse()
+      .Because("DispatchModes.None must not invoke in-process receptors");
   }
 
   [Test]
@@ -589,11 +619,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "cancelled" };
+    var evt = new TestCascadeEvent { Detail = "canceled" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
       await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.Local, cancellationToken: cts.Token))
@@ -624,11 +654,11 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "cancelled-publish" };
+    var evt = new TestCascadeEvent { Detail = "canceled-publish" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>
@@ -728,13 +758,19 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidWithOptions_HappyPath_CompletesAsync() {
+  public async Task LocalInvokeAsync_VoidWithOptions_HappyPath_ReachesTheReceptorAsync() {
     var dispatcher = _createDispatcher();
-    var command = new VoidEdgeCommand("void-options-happy");
+    var payload = $"void-options-happy-{Guid.CreateVersion7()}";
+    var command = new VoidEdgeCommand(payload);
     var options = new DispatchOptions();
 
-    // Should complete without exception
+    // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the void overload returns nothing, so "completed" alone cannot distinguish a
+    // dispatch from a silent no-op. The receptor's own record can.
+    await Assert.That(VoidEdgeCommandReceptor.ObservedUserIds.ContainsKey(payload)).IsTrue()
+      .Because("the void + DispatchOptions overload must actually invoke the receptor");
   }
 
   [Test]
@@ -837,6 +873,21 @@ public class DispatcherEdgeCaseCoverageTests {
     public string Detail { get; set; } = "";
   }
 
+  /// <summary>
+  /// Records every cascade that actually reached a receptor, keyed by the event's Detail so
+  /// parallel tests never read each other's run. A cascade that skips local dispatch leaves
+  /// nothing else behind to observe.
+  /// </summary>
+  public class TestCascadeEventReceptor : IReceptor<TestCascadeEvent> {
+    public static ConcurrentBag<string> Handled { get; } = [];
+
+    public ValueTask HandleAsync(TestCascadeEvent message, CancellationToken cancellationToken = default) {
+      ArgumentNullException.ThrowIfNull(message);
+      Handled.Add(message.Detail);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   // ========================================
   // HELPER METHODS
   // ========================================
@@ -844,7 +895,7 @@ public class DispatcherEdgeCaseCoverageTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();

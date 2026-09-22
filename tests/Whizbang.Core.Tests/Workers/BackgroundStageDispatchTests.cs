@@ -11,15 +11,18 @@ namespace Whizbang.Core.Tests.Workers;
 /// Tests for <see cref="BackgroundStageDispatch"/>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The single contract this helper must uphold is that scheduled work runs on a dedicated
 /// (non-ThreadPool) thread. The rest of the pipeline relies on that — if the scheduler ever
 /// slips back to <see cref="Task.Run(System.Action, System.Threading.CancellationToken)"/>,
 /// CI starvation regressions like the one that produced the
 /// <c>InboxStages_FireInCorrectOrder_AllStagesInvokedAsync</c> 120s-timeout failures return.
-///
+/// </para>
+/// <para>
 /// RED/GREEN discipline: reverting <see cref="BackgroundStageDispatch.StartLongRunning"/>
 /// to <c>Task.Run(...)</c> makes <see cref="StartLongRunning_RunsBodyOnDedicatedThreadAsync"/>
 /// fail (<c>IsThreadPoolThread</c> flips to <c>true</c>). That's the test's proof-of-purpose.
+/// </para>
 /// </remarks>
 public class BackgroundStageDispatchTests {
 
@@ -126,7 +129,7 @@ public class BackgroundStageDispatchTests {
   }
 
   [Test]
-  public async Task StartLongRunning_PreCancelledToken_ReturnsCanceledTaskAsync() {
+  public async Task StartLongRunning_PreCanceledToken_ReturnsCanceledTaskAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 

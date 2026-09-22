@@ -7,6 +7,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for ModelTypeInfo - validates metadata container for perspective model types.
 /// This type is used by EFCoreServiceRegistrationGenerator to track discovered models.
 /// </summary>
+[Category("Shard2")]
 public class ModelTypeInfoTests {
   /// <summary>
   /// Test that ModelTypeInfo can be constructed with valid parameters.

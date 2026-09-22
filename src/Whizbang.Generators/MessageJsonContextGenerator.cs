@@ -56,7 +56,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
   private static bool _hasJsonIgnore(IPropertySymbol property) =>
       property.GetAttributes().Any(a =>
-          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{JSON_IGNORE_ATTRIBUTE}");
+          a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{JSON_IGNORE_ATTRIBUTE}");
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -190,21 +190,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       CancellationToken ct) {
 
     if (context.TargetSymbol is not INamedTypeSymbol sagaType || sagaType.IsGenericType) {
-      return ImmutableArray<SagaSynthesizedEvent>.Empty;
+      return [];
     }
 
     // The generated JsonTypeInfo lives in a public context class, so every link in the containment
     // chain must be public for the emitted code to compile.
     for (var scope = sagaType; scope is not null; scope = scope.ContainingType) {
       if (scope.DeclaredAccessibility != Accessibility.Public) {
-        return ImmutableArray<SagaSynthesizedEvent>.Empty;
+        return [];
       }
     }
 
-    var attribute = context.Attributes.FirstOrDefault();
-    if (attribute is null) {
-      return ImmutableArray<SagaSynthesizedEvent>.Empty;
-    }
+    // ForAttributeWithMetadataName only yields a context that carries at least one matching attribute.
+    var attribute = context.Attributes[0];
 
     var includeHooks = true;
     foreach (var namedArgument in attribute.NamedArguments) {
@@ -225,7 +223,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         ? []
         : _extractPropertiesFromType(eventBase);
 
-    var sagaFullyQualifiedName = sagaType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var sagaFullyQualifiedName = TypeNameUtilities.FullyQualified(sagaType);
     var sagaClrTypeName = _getClrTypeName(sagaType);
 
     // Inheritance the event base contributes (its own base chain and interfaces), computed once and
@@ -291,7 +289,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var builder = ImmutableArray.CreateBuilder<InheritanceInfo>();
 
     if (eventBase is not null) {
-      var eventBaseName = eventBase.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var eventBaseName = TypeNameUtilities.FullyQualified(eventBase);
       if (!_isInheritanceChainTerminator(eventBaseName)) {
         builder.Add(new InheritanceInfo(eventFullyQualifiedName, eventBaseName, IsInterface: false));
       }
@@ -305,7 +303,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var marker = compilation.GetTypeByMetadataName(shape.MarkerInterface);
     if (marker is not null) {
       foreach (var iface in new[] { marker }.Concat(marker.AllInterfaces)) {
-        var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var interfaceName = TypeNameUtilities.FullyQualified(iface);
         if (_isPolymorphicBaseInterface(interfaceName)) {
           builder.Add(new InheritanceInfo(eventFullyQualifiedName, interfaceName, IsInterface: true));
         }
@@ -330,6 +328,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static PropertyInfo[] _mergeSagaEventProperties(SagaEventShape shape, PropertyInfo[] baseProperties) {
     // Enumerable.Reverse, spelled out: the instance-method form would bind to Array.Reverse and
     // reorder the shared static shape table in place.
+    //
+    // RCS1196 ("call extension method as instance method") rewrites this to
+    // shape.Properties.Reverse() and is wrong here for exactly the reason above. It is disabled
+    // rather than merely reverted because an automated sweep reapplies it on every run: this time
+    // the receiver was an array so it failed loudly as CS0023 (Array.Reverse returns void), but on
+    // a List<T> the same rewrite compiles and silently reorders shared state.
+#pragma warning disable RCS1196
     var declared = Enumerable.Reverse(shape.Properties)
         .Select(p => new PropertyInfo(
             Name: p.Name,
@@ -338,6 +343,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             IsInitOnly: false,
             CanWrite: true))
         .ToArray();
+#pragma warning restore RCS1196
 
     var declaredNames = new HashSet<string>(declared.Select(p => p.Name), StringComparer.Ordinal);
     return [.. baseProperties.Where(p => !declaredNames.Contains(p.Name)), .. declared];
@@ -346,7 +352,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>Parses a ledger additional file into rename aliases. Returns empty on a missing/blank/malformed ledger.</summary>
   private static ImmutableArray<RenameAlias> _readLedgerAliases(AdditionalText file, System.Threading.CancellationToken ct) {
     var ledger = PinnedTypeLedger.TryParse(file.GetText(ct)?.ToString());
-    return ledger is null ? ImmutableArray<RenameAlias>.Empty : ledger.ToRenameAliases().ToImmutableArray();
+    return ledger is null ? [] : [.. ledger.ToRenameAliases()];
   }
 
   /// <summary>
@@ -391,20 +397,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <param name="typeSymbol">The type symbol to check</param>
   /// <returns>True if the type is a value type or Nullable&lt;T&gt; where T is a value type</returns>
   private static bool _isValueType(ITypeSymbol typeSymbol) {
-    // Check if the type itself is a value type
-    if (typeSymbol.IsValueType) {
-      return true;
-    }
-
-    // Check if this is Nullable<T> where T is a value type
-    // Nullable<T> is a struct (value type), but we want to know if the underlying type is a value type
-    if (typeSymbol is INamedTypeSymbol namedType &&
-        namedType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
-      // Nullable<T> is itself a value type, so return true
-      return true;
-    }
-
-    return false;
+    // Nullable<T> needs no separate arm: it is itself a struct, so IsValueType already answers
+    // true for int?, DateTime?, and every other nullable value type. A second check against
+    // System_Nullable_T underneath this one is unreachable.
+    return typeSymbol.IsValueType;
   }
 
   /// <summary>
@@ -414,18 +410,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="symbol">The type symbol</param>
   /// <returns>CLR-format type name without global:: prefix</returns>
-  private static string _getClrTypeName(INamedTypeSymbol symbol) {
-    if (symbol.ContainingType != null) {
-      // Nested type - use + separator (CLR format)
-      return _getClrTypeName(symbol.ContainingType) + "+" + symbol.Name;
-    }
-
-    if (!symbol.ContainingNamespace.IsGlobalNamespace) {
-      return symbol.ContainingNamespace.ToDisplayString() + "." + symbol.Name;
-    }
-
-    return symbol.Name;
-  }
+  /// <summary>
+  /// The CLR type name, through the shared helper only. This was a private re-implementation of
+  /// the <c>+</c> rendering (issue #697 audit): same output for non-generic types, a second place
+  /// to drift, and no generic arity, where the runtime mirror (<c>Type.FullName</c>) carries it.
+  /// </summary>
+  private static string _getClrTypeName(INamedTypeSymbol symbol) => TypeNameUtilities.BuildClrTypeName(symbol);
 
   /// <summary>
   /// Determines the message kind for diagnostic reporting.
@@ -469,25 +459,25 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Check if implements ICommand or IEvent
     bool isCommand = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMMAND}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_COMMAND}");
 
     bool isEvent = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_EVENT}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_EVENT}");
 
     // Check if implements ICompositeEvent — a wire-only event that fans out into inner events at the
     // receiver. Composites implement IMessage (NOT IEvent), so without explicit discovery they are
     // neither serialized nor registered as an IMessage derived type, and MessageEnvelope<ICompositeEvent>
     // fails to round-trip. They must register as IMessage but NOT as IEvent (never persisted).
     bool isComposite = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMPOSITE_EVENT}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_COMPOSITE_EVENT}");
 
     // Check if marked with [WhizbangSerializable] attribute
     bool isSerializable = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_SERIALIZABLE}");
+        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_SERIALIZABLE}");
 
     // Check if marked with [GraphQLName] attribute (implies GraphQL serialization needed)
     bool hasGraphQLName = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
+        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
 
     // Check if this type is a perspective model (used as TModel in IPerspectiveFor<TModel, ...>)
     // Look for sibling or nested types that implement IPerspectiveFor<ThisType, ...>
@@ -500,14 +490,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // This handles the case where TModel is a plain record with no base types/attributes
       // that would otherwise be filtered out by the syntactic predicate
       var perspectiveModelInfo = _extractPerspectiveModelFromPerspectiveClass(typeSymbol);
-      if (perspectiveModelInfo is not null) {
-        return perspectiveModelInfo;
-      }
-
-      return null;
+      return perspectiveModelInfo;
     }
 
-    var fullyQualifiedName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var fullyQualifiedName = TypeNameUtilities.FullyQualified(typeSymbol);
     var clrTypeName = _getClrTypeName(typeSymbol);
     var simpleName = typeSymbol.Name;
 
@@ -516,7 +502,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var properties = _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
@@ -867,8 +855,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
-    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
+    // MessageEnvelope<T> for actual message types (commands/events/composites), not nested types.
+    // Composites MUST be included. They implement IMessage rather than IEvent, so an IsCommand||IsEvent
+    // filter silently drops them — no lazy envelope field is emitted, while _appendEnvelopeTypeChecks
+    // below still dispatches for them, so the resolver returns null and the receive side can never bind
+    // that envelope type. A composite arriving on the wire then fails typed binding permanently, which
+    // surfaces at the broker as repeated delivery attempts against missing JsonTypeInfo rather than as
+    // anything that looks like a serialization bug. This filter must stay in step with the set covered
+    // by _appendEnvelopeTypeChecks and the RegisterTypeName envelope map.
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent || t.IsComposite)) {
       var field = envelopeFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
@@ -1115,6 +1110,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
     sb.AppendLine();
 
+    // A primitive the facade answers for itself defers to a converter registered on the options
+    // before its built-in one. A fixed built-in here meant that whenever this facade came before
+    // the framework's own contexts in a resolver chain, a converter registered for that type never
+    // ran: the persistence profile stores a date as a number through exactly such a converter, and
+    // a document serialized through a facade-first chain was written as a rendering the mapping
+    // could not read. A factory is asked for its converter as the serializer would ask it. No
+    // reflection: the candidates are the options' own list.
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// A value type info using the converter registered on the options for the type, if any, or the built-in one.");
+    sb.AppendLine("/// </summary>");
+    // Oblivious to nullability on purpose: the built-in string converter is JsonConverter<string?>
+    // and the value info is JsonTypeInfo<string>, a difference that is annotation rather than type.
+    sb.AppendLine("#nullable disable");
+    sb.AppendLine("private static JsonTypeInfo<TValue> _registeredOrBuiltIn<TValue>(JsonSerializerOptions options, JsonConverter<TValue> builtIn) {");
+    sb.AppendLine("  foreach (var candidate in options.Converters) {");
+    sb.AppendLine("    if (!candidate.CanConvert(typeof(TValue))) {");
+    sb.AppendLine("      continue;");
+    sb.AppendLine("    }");
+    sb.AppendLine("    var converter = candidate is JsonConverterFactory factory ? factory.CreateConverter(typeof(TValue), options) : candidate;");
+    sb.AppendLine("    if (converter is JsonConverter<TValue> typed) {");
+    sb.AppendLine("      return JsonMetadataServices.CreateValueInfo<TValue>(options, typed);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+    sb.AppendLine("  return JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    sb.AppendLine("}");
+    sb.AppendLine("#nullable restore");
+    sb.AppendLine();
+
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
@@ -1128,90 +1151,94 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // which would trigger a false "circular reference" error in GetOrCreateTypeInfo.
     sb.AppendLine("  // Primitive types (common property types in messages)");
     sb.AppendLine("  // Create directly using JsonMetadataServices - do NOT use GetOrCreateTypeInfo to avoid false circular reference detection");
-    sb.AppendLine("  if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
-    sb.AppendLine("  if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
-    sb.AppendLine("  if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
-    sb.AppendLine("  if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
-    sb.AppendLine("  if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
-    sb.AppendLine("  if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
-    sb.AppendLine("  if (type == typeof(TimeSpan)) return JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
-    sb.AppendLine("  if (type == typeof(DateOnly)) return JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
-    sb.AppendLine("  if (type == typeof(TimeOnly)) return JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
-    sb.AppendLine("  if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
-    sb.AppendLine("  if (type == typeof(double)) return JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
-    sb.AppendLine("  if (type == typeof(float)) return JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
-    sb.AppendLine("  if (type == typeof(byte)) return JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);");
-    sb.AppendLine("  if (type == typeof(sbyte)) return JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);");
-    sb.AppendLine("  if (type == typeof(short)) return JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);");
-    sb.AppendLine("  if (type == typeof(ushort)) return JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);");
-    sb.AppendLine("  if (type == typeof(uint)) return JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);");
-    sb.AppendLine("  if (type == typeof(ulong)) return JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);");
-    sb.AppendLine("  if (type == typeof(char)) return JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);");
+    // The built-in string converter is JsonConverter<string?>; the forgiving operator settles an
+    // annotation difference that is not a type difference.
+    sb.AppendLine("  if (type == typeof(string)) return _registeredOrBuiltIn<string>(options, JsonMetadataServices.StringConverter!);");
+    sb.AppendLine("  if (type == typeof(int)) return _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("  if (type == typeof(long)) return _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("  if (type == typeof(bool)) return _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("  if (type == typeof(Guid)) return _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("  if (type == typeof(DateTime)) return _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("  if (type == typeof(TimeSpan)) return _registeredOrBuiltIn<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
+    sb.AppendLine("  if (type == typeof(DateOnly)) return _registeredOrBuiltIn<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(TimeOnly)) return _registeredOrBuiltIn<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(decimal)) return _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("  if (type == typeof(double)) return _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("  if (type == typeof(float)) return _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("  if (type == typeof(byte)) return _registeredOrBuiltIn<byte>(options, JsonMetadataServices.ByteConverter);");
+    sb.AppendLine("  if (type == typeof(sbyte)) return _registeredOrBuiltIn<sbyte>(options, JsonMetadataServices.SByteConverter);");
+    sb.AppendLine("  if (type == typeof(short)) return _registeredOrBuiltIn<short>(options, JsonMetadataServices.Int16Converter);");
+    sb.AppendLine("  if (type == typeof(ushort)) return _registeredOrBuiltIn<ushort>(options, JsonMetadataServices.UInt16Converter);");
+    sb.AppendLine("  if (type == typeof(uint)) return _registeredOrBuiltIn<uint>(options, JsonMetadataServices.UInt32Converter);");
+    sb.AppendLine("  if (type == typeof(ulong)) return _registeredOrBuiltIn<ulong>(options, JsonMetadataServices.UInt64Converter);");
+    sb.AppendLine("  if (type == typeof(char)) return _registeredOrBuiltIn<char>(options, JsonMetadataServices.CharConverter);");
     sb.AppendLine();
     sb.AppendLine("  // Nullable primitive types - create underlying type info first, then wrap with nullable converter");
-    sb.AppendLine("  if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(double?)) { var u = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(float?)) { var u = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(byte?)) { var u = JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(short?)) { var u = JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(ushort?)) { var u = JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(uint?)) { var u = JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(ulong?)) { var u = JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(char?)) { var u = JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(int?)) { var u = _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(long?)) { var u = _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(bool?)) { var u = _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(Guid?)) { var u = _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    // The optional form falls back to the same lenient reader the required form does; a strict
+    // built-in here refused the renderings the required form accepts.
+    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter()); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = _registeredOrBuiltIn<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = _registeredOrBuiltIn<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = _registeredOrBuiltIn<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(decimal?)) { var u = _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(double?)) { var u = _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(float?)) { var u = _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(byte?)) { var u = _registeredOrBuiltIn<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = _registeredOrBuiltIn<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(short?)) { var u = _registeredOrBuiltIn<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ushort?)) { var u = _registeredOrBuiltIn<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(uint?)) { var u = _registeredOrBuiltIn<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ulong?)) { var u = _registeredOrBuiltIn<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(char?)) { var u = _registeredOrBuiltIn<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     sb.AppendLine();
 
     // List<primitive> types - needed for nested collections like List<List<string>>
     // When List<List<string>> is created, it needs JsonTypeInfo for List<string> as element type
     sb.AppendLine("  // List<primitive> types - enables nested collections like List<List<string>>");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<string>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<string>(options, JsonMetadataServices.StringConverter!);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<string>, string>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<string>> { ObjectCreator = static () => new global::System.Collections.Generic.List<string>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<int>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<int>, int>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<int>> { ObjectCreator = static () => new global::System.Collections.Generic.List<int>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<long>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<long>, long>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<long>> { ObjectCreator = static () => new global::System.Collections.Generic.List<long>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<bool>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<bool>, bool>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<bool>> { ObjectCreator = static () => new global::System.Collections.Generic.List<bool>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<Guid>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<Guid>, Guid>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<Guid>> { ObjectCreator = static () => new global::System.Collections.Generic.List<Guid>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTime>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTime>, DateTime>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTime>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTime>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTimeOffset>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTimeOffset>, DateTimeOffset>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTimeOffset>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTimeOffset>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<decimal>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<decimal>, decimal>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<decimal>> { ObjectCreator = static () => new global::System.Collections.Generic.List<decimal>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<double>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<double>, double>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<double>> { ObjectCreator = static () => new global::System.Collections.Generic.List<double>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<float>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<float>, float>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<float>> { ObjectCreator = static () => new global::System.Collections.Generic.List<float>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine();
@@ -1655,7 +1682,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
     // This is critical for self-referencing types
     sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
-    sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
+    sb.AppendLine($"  TypeInfoCacheFor(options)[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
     sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
     sb.AppendLine("  return jsonTypeInfo;");
     sb.AppendLine("}");
@@ -1751,8 +1778,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
-      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly)
-      sb.AppendLine("  var properties = new JsonPropertyInfo[5];");
+      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly, Priority)
+      sb.AppendLine("  var properties = new JsonPropertyInfo[6];");
       sb.AppendLine();
 
       // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
@@ -1812,6 +1839,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).StateOnly = value");
       sb.AppendLine(stateOnlyProperty);
+      sb.AppendLine();
+
+      // Property 5: Priority ("pri") — priority step 1. The number the producer declared rides the typed
+      // receive like Target and StateOnly; a factory that drops it hands every typed envelope to the consumer
+      // undeclared. Omitted when zero, the same as the attribute-honoring MessageEnvelope<JsonElement> shape.
+      var priorityProperty = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, "5")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "int")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "Priority")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "pri")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).Priority = value");
+      sb.AppendLine(priorityProperty);
+      sb.AppendLine("  properties[5].ShouldSerialize = static (_, value) => value is int priority && priority != 0;");
       sb.AppendLine();
 
       // Constructor parameters using snippet
@@ -2006,7 +2047,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var derivedTypeNames = new List<string>();
 
     foreach (var derivedType in derivedTypes) {
-      var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var derivedTypeName = TypeNameUtilities.FullyQualified(derivedType);
       derivedTypeNames.Add(derivedTypeName);
 
       if (processedTypes.Contains(derivedTypeName)) {
@@ -2384,8 +2425,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var converters = allTypes
         .SelectMany(type => type.Properties)
-        .Where(property => !_isPrimitiveOrFrameworkType(property.Type))
-        .Where(property => _extractElementType(property.Type) == null)
+        .Where(property => !_isPrimitiveOrFrameworkType(property.Type) && _extractElementType(property.Type) == null)
         .Select(property => {
           // Extract simple type name from fully qualified name
           // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
@@ -2977,7 +3017,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync</tests>
   private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
   }
 
   /// <summary>
@@ -3020,7 +3060,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       INamedTypeSymbol modelTypeSymbol) {
     foreach (var iface in candidateType.AllInterfaces) {
       // Check if it's a perspective interface -- use default format to match shared helper
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3054,16 +3094,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<JsonMessageTypeInfo> _extractPerspectiveEventTypes(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
-    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct) as INamedTypeSymbol;
-    if (typeSymbol is null || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+    if (context.SemanticModel.GetDeclaredSymbol(context.Node, ct) is not INamedTypeSymbol typeSymbol || typeSymbol.DeclaredAccessibility != Accessibility.Public) {
       return [];
     }
 
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
 
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3078,14 +3116,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           continue;
         }
 
-        var fullyQualifiedName = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var fullyQualifiedName = TypeNameUtilities.FullyQualified(eventType);
         var clrTypeName = _getClrTypeName(eventType);
         var simpleName = eventType.Name;
 
         var properties = _getAllPropertiesIncludingInherited(eventType)
             .Select(p => new PropertyInfo(
                 Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
                 Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
                 IsValueType: _isValueType(p.Type),
                 IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
                 CanWrite: p.SetMethod != null
@@ -3113,7 +3153,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return results.Count > 0 ? results.ToImmutable() : default;
+    return results.Count > 0 ? results.ToImmutable() : [];
   }
 
   /// <summary>
@@ -3125,7 +3165,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync</tests>
   private static JsonMessageTypeInfo? _extractPerspectiveModelFromPerspectiveClass(INamedTypeSymbol typeSymbol) {
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3144,14 +3184,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var fullyQualifiedName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var fullyQualifiedName = TypeNameUtilities.FullyQualified(modelType);
       var clrTypeName = _getClrTypeName(modelType);
       var simpleName = modelType.Name;
 
       var properties = _getAllPropertiesIncludingInherited(modelType)
           .Select(p => new PropertyInfo(
               Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
               Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
               IsValueType: _isValueType(p.Type),
               IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
               CanWrite: p.SetMethod != null
@@ -3188,7 +3230,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
   private static bool _hasJsonPolymorphicAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ==
+        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) ==
         "global::System.Text.Json.Serialization.JsonPolymorphicAttribute");
   }
 
@@ -3205,7 +3247,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var attr in polymorphicBaseType.GetAttributes()) {
       // Check for [JsonDerivedType(typeof(DerivedType), ...)]
-      if (attr.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) !=
+      if (attr.AttributeClass is not { } attributeClass || TypeNameUtilities.FullyQualified(attributeClass) !=
           "global::System.Text.Json.Serialization.JsonDerivedTypeAttribute") {
         continue;
       }
@@ -3286,7 +3328,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return [.. _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
@@ -3512,12 +3556,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static InheritanceInfo[] _extractInheritanceInfo(INamedTypeSymbol typeSymbol) {
     var inheritanceList = new List<InheritanceInfo>();
-    var derivedTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var derivedTypeName = TypeNameUtilities.FullyQualified(typeSymbol);
 
     // Walk up base type chain (classes only)
     var currentBase = typeSymbol.BaseType;
     while (currentBase != null) {
-      var baseTypeName = currentBase.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var baseTypeName = TypeNameUtilities.FullyQualified(currentBase);
 
       // Skip System.* types (object, ValueType, etc.)
       // Also skip C# keyword aliases like "object", "string" which FullyQualifiedFormat may return
@@ -3538,7 +3582,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Process interfaces (excluding core Whizbang interfaces and System interfaces)
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var interfaceName = TypeNameUtilities.FullyQualified(iface);
 
       if (!_isPolymorphicBaseInterface(interfaceName)) {
         continue;
@@ -3678,7 +3722,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _isConcretePublicType(string typeName, Compilation compilation) {
     var symbol = _tryGetTypeSymbolByName(typeName, compilation);
-    return symbol is not null && !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
+    return symbol?.IsAbstract == false && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>

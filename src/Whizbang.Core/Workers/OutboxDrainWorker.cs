@@ -41,18 +41,25 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly IOutboxCompletionChannel _completionChannel;
   private readonly IFailureChannel _failureChannel;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IMessagePublishStrategy? _publishStrategy;
+  private readonly IMessagePublishStrategy _publishStrategy;
   private readonly OutboxDrainWorkerOptions _options;
+  private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor;
+  // Cross-stream publish accumulator. Streams drain concurrently at up to the governor's width,
+  // so this is shared and guarded: a stream's rows are appended contiguously under the lock,
+  // which keeps each stream's order intact within and across batch boundaries (batches publish
+  // in the order they are taken).
+  private readonly Lock _publishBatchLock = new();
+  private readonly List<OutboxBatchRow> _publishAccumulator = [];
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IReceptorRegistryQuery? _receptorRegistry;
-  private readonly IReceptorRegistry? _runtimeReceptorRegistry;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
+  private readonly IReceptorRegistryQuery _receptorRegistry;
+  private readonly IReceptorRegistry _runtimeReceptorRegistry;
   // v0.502 slice C.4b — optional DLQ persistence + generation tag. When both wired, rows
   // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
-  private readonly IDeadLetterStore? _deadLetterStore;
-  private readonly IGenerationProvider? _generationProvider;
+  private readonly IDeadLetterStore _deadLetterStore;
+  private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
@@ -95,6 +102,46 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <docs>operations/workers/publisher-worker</docs>
   public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
 
+  /// <summary>Keyed-service key under which this worker's concurrency governor is registered. A host
+  /// that registers its own governor under this key before AddWhizbang wins; the framework default
+  /// is added with TryAdd and built by <see cref="CreateDefaultGovernor"/>.</summary>
+  public const string GOVERNOR_KEY = "outbox-drain";
+
+  /// <summary>
+  /// The governor a host gets when it supplies none: self-tuning, starting at the configured width.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The band is derived from <see cref="OutboxDrainWorkerOptions.MaxConcurrentStreams"/>:
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><description><b>Ceiling = the configured value.</b> The option is named MAXIMUM, and an
+  ///   adaptive default that grows past an explicit operator bound is how a slow drain becomes
+  ///   someone else's connection-pool exhaustion. Operators who want more headroom raise the
+  ///   option — the governor does not get to overrule them.</description></item>
+  ///   <item><description><b>Start = the configured value.</b> Cycle one behaves exactly like the
+  ///   constant this replaces. Starting lower would narrow every deployment on the restart that
+  ///   picks up the upgrade — a throughput regression arriving disguised as an improvement.</description></item>
+  ///   <item><description><b>Floor = a quarter of it.</b> Enough room to yield meaningfully when the
+  ///   shared resource pushes back, without collapsing to serial and taking hours to climb out.</description></item>
+  /// </list>
+  /// <para>
+  /// So adaptation is downward-first and earned in both directions: it gives width back under
+  /// sustained throughput decline and takes it back as throughput recovers. That asymmetry is
+  /// deliberate — overshoot costs a shared resource everyone depends on, while undershoot costs
+  /// only this worker's own latency.
+  /// </para>
+  /// </remarks>
+  public static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(OutboxDrainWorkerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var configured = Math.Max(1, options.MaxConcurrentStreams);
+    return new Whizbang.Core.Execution.ThroughputGovernor(
+      floor: Math.Max(1, configured / 4),
+      ceiling: configured,
+      start: configured);
+  }
+
+
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0290:Use primary constructor", Justification = "Explicit constructor required because dotnet format's IDE0290 rewrite collided with the leading [SuppressMessage] attribute + multi-paragraph XML doc, producing CS1587. Keeping explicit form.")]
@@ -108,13 +155,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOptions<OutboxDrainWorkerOptions> options,
     JsonSerializerOptions jsonOptions,
     ILogger<OutboxDrainWorker> logger,
-    IMessagePublishStrategy? publishStrategy = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IReceptorRegistryQuery? receptorRegistry = null,
-    IReceptorRegistry? runtimeReceptorRegistry = null,
-    IDeadLetterStore? deadLetterStore = null,
-    IGenerationProvider? generationProvider = null,
-    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
+    IMessagePublishStrategy publishStrategy,
+    ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+    IReceptorRegistryQuery receptorRegistry,
+    IReceptorRegistry runtimeReceptorRegistry,
+    IDeadLetterStore deadLetterStore,
+    IGenerationProvider generationProvider,
+    [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -122,6 +171,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    // Turn-key observability: whatever governor is in play — the keyed adaptive default or a host
+    // supplied strategy under the same key — is wrapped so its decisions and their inputs reach OpenTelemetry with no
+    // consumer wiring. A concurrency controller nobody can see is one nobody can debug.
+    _governor = governorMetrics is null
+      ? governor
+      : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", governor, governorMetrics);
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _publishStrategy = publishStrategy;
@@ -138,10 +193,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxPerStream);
 
-    if (!_options.Enabled || _publishStrategy is null) {
-      if (_publishStrategy is null) { LogNoTransportRegistered(_logger); }
+    if (!_options.Enabled || !_publishStrategy.IsConfigured) {
+      if (!_publishStrategy.IsConfigured) { LogNoTransportRegistered(_logger); }
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
       return;
     }
@@ -155,16 +210,29 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // Slice 26.6b: resolve local service identity once for the worker lifetime. Used
     // when injecting envelope SourceServiceId at publish-time; falls back to Guid.Empty
     // for legacy coordinators that don't track service identity.
+    var startupLookupFailed = false;
     try {
       await using var initScope = _scopeFactory.CreateAsyncScope();
       var initCoordinator = initScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       _localServiceId = await initCoordinator.GetLocalServiceIdAsync(stoppingToken);
     } catch (OperationCanceledException) {
       return;
-    } catch (Exception) {
+    } catch (Exception ex) {
       // Best-effort: leave _localServiceId at Guid.Empty if the lookup fails. Downstream
-      // consumers' SQL trigger then COALESCEs to their own local service.
+      // consumers' SQL trigger then COALESCEs to their own local service. But say so: a swallowed
+      // failure here is indistinguishable from the legacy path this fallback was written for, and
+      // the consequence — every envelope this instance publishes carries an empty SourceServiceId —
+      // is invisible everywhere else (issue #630).
       _localServiceId = Guid.Empty;
+      startupLookupFailed = true;
+      LogLocalServiceIdLookupFailed(_logger, ex);
+    }
+    if (!startupLookupFailed && _localServiceId == Guid.Empty) {
+      // A lookup that returned nothing is as invisible as one that threw, and until now it was also
+      // permanent: the worker never asked again, so an empty answer at startup stamped an empty
+      // source id on every envelope for the life of the process (issue #727). Say so here; the
+      // batch loop retries. The throwing case above already warned, so it is not repeated.
+      LogLocalServiceIdEmptyAtStartup(_logger);
     }
 
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
@@ -173,6 +241,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // Idle → active: each non-empty batch represents work.
         _setIdleState(active: true);
         try {
+          await _ensureLocalServiceIdAsync(stoppingToken);
           // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
           // one window (rapid heartbeats during burst load). Each unique stream is drained once.
           //
@@ -183,6 +252,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           if (distinctStreams.Count > 0) {
             await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
           }
+        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          // The mirror of InboxDrainWorker's batch guard, which this worker never had: the per-stream
+          // path isolates its own failures, but the batch envelope around it — the identity lookup,
+          // the fetch, the publish flush in its own finally — did not, and anything from there left
+          // ExecuteAsync and stopped the host under the default StopHost behavior. Outbox rows are
+          // durable and the claim backstop re-offers the streams, so reporting and continuing loses
+          // nothing; the classifier decides whether the line names the database or a defect.
+          WorkerLoopRecovery.Report(ex,
+            (transient, cause) => LogTransientBatchDrainFailed(
+              _logger, transient.Reason, transient.SqlState ?? "none", cause),
+            cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
           // next batcher iteration will rapidly flip us back to active — the fixture's
@@ -309,15 +391,58 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// error isolation so one stream's failure never stops its siblings. The batched and fallback
   /// paths differ only in whether an entry carries a prefetched page, so both route through here.
   /// </summary>
-  private Task _drainEachAsync(
+  private async Task _drainEachAsync(
       IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct) {
+    // Materialized so the governor learns how much was actually waiting — a count it cannot get
+    // from a lazily-enumerated sequence.
+    var batch = work as IReadOnlyCollection<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>>
+                ?? [.. work];
+
+    // Width is read PER CYCLE, never captured once: that is the granularity an adaptive strategy
+    // acts on, so a burst arriving between cycles can widen the next one.
     var parallelOpts = new ParallelOptions {
-      MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+      MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
       CancellationToken = ct,
     };
+
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    var completed = 0;
+    try {
+      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed))
+        .ConfigureAwait(false);
+    } finally {
+      // Ship the remainder even when the cycle threw. Rows already accumulated have been claimed
+      // and leased; stranding them in memory would let their leases lapse and spend a retry attempt
+      // they never used.
+      //
+      // Deliberately NOT wrapped in a catch. PublishBulkAsync routes every failure to the failure
+      // channel itself and propagates only OperationCanceledException on cancellation — which must
+      // keep propagating so a stopping host unwinds promptly. A catch here would be unreachable
+      // for anything else and would swallow the one exception that should escape.
+      await _flushPublishBatchAsync(ct).ConfigureAwait(false);
+      // Reported even when the cycle threw: a governor that only learns from successful cycles is
+      // blind to exactly the conditions it exists to back away from.
+      _governor.Observe(new Whizbang.Core.Execution.GovernorSignal(
+        QueuedItems: batch.Count,
+        Contended: false,
+        Elapsed: System.Diagnostics.Stopwatch.GetElapsedTime(started),
+        // Completions, not depth. Depth is what was WAITING and says nothing about what got done —
+        // a governor tuning on depth/time would be acting on a number that is not throughput.
+        CompletedItems: Volatile.Read(ref completed)));
+    }
+  }
+
+  /// <summary>The drain proper, split out so the governor bookkeeping reads as one unit.</summary>
+  private Task _drainBatchAsync(
+      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work,
+      ParallelOptions parallelOpts,
+      Action onStreamCompleted) {
     return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
         await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
+        // Counted only on success: a failed stream accomplished nothing, and counting it would
+        // report healthy throughput while the drain was actually failing.
+        onStreamCompleted();
       } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
@@ -408,8 +533,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           row.MessageId,
           row.Attempts,
           _options.MaxOutboxAttempts ?? -1,
-          _deadLetterStore is not null,
-          _generationProvider is not null);
+          _deadLetterStore.IsConfigured);
         // Control-plane traffic is DROPPED, never stored (see DeadLetterDropPolicy): the audit
         // re-issues these on its own cadence, and a stored copy is re-emitted into the inbox by
         // the recovery worker on a later boot — turning a burst of failures into a backlog that
@@ -429,8 +553,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         }
         if (_options.MaxOutboxAttempts is int maxAttempts
             && row.Attempts > maxAttempts
-            && _deadLetterStore is not null
-            && _generationProvider is not null) {
+            && _deadLetterStore.IsConfigured) {
           try {
             LogPrePublishGateFiring(_logger, row.MessageId, row.Attempts, maxAttempts);
             // Slice 1 of release/v0.648.0-alpha.1 — prefer the row's existing
@@ -476,9 +599,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // so a 49-message stream becomes 1 round-trip instead of 49. Per-stream FIFO is
       // preserved by the within-stream ordering above; per-row lifecycle hooks fire inside
       // the bulk helper around the batched publish call.
-      if (_publishStrategy!.SupportsBulkPublish && newRowList.Count > 0) {
+      if (_publishStrategy.SupportsBulkPublish && newRowList.Count > 0) {
         var publishStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await PublishBulkAsync(newRowList, ct);
+        // Accumulate ACROSS streams rather than publishing this stream's rows alone. With work
+        // spread thin — the measured shape was ~1.4 rows per stream across ~18,000 streams — a
+        // per-stream batch is a batch of one, and the drain degenerates into one broker round trip
+        // per row no matter how wide the stream concurrency is.
+        await _enqueueForPublishAsync(newRowList, ct);
         totalPublishMs += (System.Diagnostics.Stopwatch.GetTimestamp() - publishStart)
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         publishedCount += newRowList.Count;
@@ -536,6 +663,64 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <see cref="IMessagePublishStrategy.PublishBatchAsync"/> call, then fans the per-row
   /// results out to Post-Outbox lifecycle + the completion / failure channels.
   /// </summary>
+
+  /// <summary>
+  /// Adds a stream's rows to the shared publish batch, shipping it when it fills.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Per-stream ORDERING is preserved because a stream's rows are appended contiguously under the
+  /// lock and batches are published in the order they are taken — so a stream split across two
+  /// batches still arrives in sequence.
+  /// </para>
+  /// <para>
+  /// The publish itself happens OUTSIDE the lock. Holding it across a broker round trip would
+  /// serialise every concurrent stream drain behind one network call, trading the batching win for
+  /// a worse bottleneck than the one being fixed.
+  /// </para>
+  /// </remarks>
+  private async Task _enqueueForPublishAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
+    var cap = _options.MaxPublishBatchSize;
+    if (cap <= 0) {
+      // Legacy behavior, retained as an escape hatch.
+      await PublishBulkAsync(rows, ct);
+      return;
+    }
+
+    List<OutboxBatchRow>? ready = null;
+    lock (_publishBatchLock) {
+      _publishAccumulator.AddRange(rows);
+      if (_publishAccumulator.Count >= cap) {
+        ready = [.. _publishAccumulator];
+        _publishAccumulator.Clear();
+      }
+    }
+    if (ready is not null) {
+      await PublishBulkAsync(ready, ct);
+    }
+  }
+
+  /// <summary>
+  /// Ships whatever is left in the shared batch at the end of a drain cycle.
+  /// </summary>
+  /// <remarks>
+  /// A partial remainder MUST ship. Holding it for a batch that may never fill would strand the
+  /// last message of every quiet stream indefinitely — the opposite failure from the one this
+  /// batching fixes, and a worse one.
+  /// </remarks>
+  private async Task _flushPublishBatchAsync(CancellationToken ct) {
+    List<OutboxBatchRow>? ready = null;
+    lock (_publishBatchLock) {
+      if (_publishAccumulator.Count > 0) {
+        ready = [.. _publishAccumulator];
+        _publishAccumulator.Clear();
+      }
+    }
+    if (ready is not null) {
+      await PublishBulkAsync(ready, ct);
+    }
+  }
+
   internal async Task PublishBulkAsync(List<OutboxBatchRow> rows, CancellationToken ct) {
     var works = new List<OutboxWork>(rows.Count);
     var rowsByMessageId = new Dictionary<Guid, OutboxBatchRow>(rows.Count);
@@ -609,8 +794,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       try {
         // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
         // e.g., a strategy that validates inputs and throws before returning — flows into
-        // the existing catch (Exception ex) failure path instead of escaping uncaught.
-        publishTask = _publishStrategy!.PublishBatchAsync(works, ct);
+        // the existing generic-exception failure path instead of escaping uncaught.
+        publishTask = _publishStrategy.PublishBatchAsync(works, ct);
         results = publishTimeoutSeconds > 0
           ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
           : await publishTask;
@@ -623,18 +808,18 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // disappearing at GC time.
         if (publishTask is not null) {
           _ = publishTask.ContinueWith(
-            static t => { _ = t.Exception; },
+            static t => _ = t.Exception,
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
         }
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
-        foreach (var work in works) {
-          var row = rowsByMessageId[work.MessageId];
+        foreach (var (messageId, destination) in works.Select(w => (w.MessageId, w.Destination))) {
+          var row = rowsByMessageId[messageId];
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-            MessageId = work.MessageId,
+            MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
-            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={destination}",
             Reason = MessageFailureReason.TransportException,
           }, ct);
         }
@@ -642,11 +827,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } catch (Exception ex) {
         // Whole-batch failure: route every row to the failure channel so the next
         // claim_orphaned_* cycle re-leases them. Lifecycle scopes are disposed in finally.
-        foreach (var work in works) {
-          LogPublishFailed(_logger, work.MessageId, ex);
-          var row = rowsByMessageId[work.MessageId];
+        foreach (var messageId in works.Select(work => work.MessageId)) {
+          LogPublishFailed(_logger, messageId, ex);
+          var row = rowsByMessageId[messageId];
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-            MessageId = work.MessageId,
+            MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
             Error = ex.Message,
             Reason = MessageFailureReason.Unknown,
@@ -730,7 +915,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Task<MessagePublishResult>? publishTask = null;
     LogPublishOneStart(_logger, row.MessageId, publishTimeoutSeconds);
     try {
-      publishTask = _publishStrategy!.PublishAsync(work, ct);
+      publishTask = _publishStrategy.PublishAsync(work, ct);
       result = publishTimeoutSeconds > 0
         ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
         : await publishTask;
@@ -740,7 +925,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     } catch (TimeoutException) {
       if (publishTask is not null) {
         _ = publishTask.ContinueWith(
-          static t => { _ = t.Exception; },
+          static t => _ = t.Exception,
           CancellationToken.None,
           TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
           TaskScheduler.Default);
@@ -797,9 +982,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// in that case so a missing deserializer never blocks the publish path.
   /// </summary>
   private IMessageEnvelope? _tryResolveTypedEnvelope(OutboxWork work) {
-    if (_lifecycleMessageDeserializer is null) {
-      return null;
-    }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       return work.Envelope.ReconstructWithPayload(message);
@@ -832,10 +1014,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
 
     var runtimeMessageType = typedEnvelope.Payload?.GetType();
-    var hasDetached = _receptorRegistry is null || !_isGatedOutboxStage(detachedStage)
+    var hasDetached = !_isGatedOutboxStage(detachedStage)
       || _receptorRegistry.HasReceptors(detachedStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, detachedStage);
-    var hasInline = _receptorRegistry is null || !_isGatedOutboxStage(inlineStage)
+    var hasInline = !_isGatedOutboxStage(inlineStage)
       || _receptorRegistry.HasReceptors(inlineStage, work.MessageType)
       || _runtimeHasReceptors(runtimeMessageType, inlineStage);
     if (!hasDetached && !hasInline) {
@@ -886,6 +1068,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var inlineCtx = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, inlineCtx, ct);
       }
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      // A stage interrupted by shutdown is not a message that failed — it never finished being
+      // tried. Routing it below would stamp wh_outbox.error with a TaskCanceledException and burn
+      // an attempt on a message nothing rejected. The drain loop's own cancellation handling ends
+      // the pass cleanly and the row stays leased for the next claim cycle.
+      throw;
     } catch (Exception ex) {
       LogLifecycleStageError(_logger, work.MessageId, stageName, ex);
       // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):
@@ -914,7 +1102,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           or LifecycleStage.PostOutboxInline;
 
   private bool _runtimeHasReceptors(Type? messageType, LifecycleStage stage) {
-    if (_runtimeReceptorRegistry is null || messageType is null) {
+    if (messageType is null) {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
@@ -957,7 +1145,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // COALESCE: when wh_event_store.origin_service_id is non-null this event was 1:1
     // forwarded from another service — preserve the original identity. Otherwise the
     // event was originated locally; populate from the local wh_service_config.service_id.
+    // Priority step 1 on the wire: the row's number is authoritative; a row fetched before the column existed
+    // falls back to the number stored inside its envelope. The rebuilt wire envelope carries it, or every
+    // consumer receives the message undeclared and the producer's declaration never leaves this process.
+    var priority = row.Priority;
     if (envelope is MessageEnvelope<JsonElement> concrete) {
+      priority = Whizbang.Core.Priority.WorkPriority.FirstDeclared(row.Priority, concrete.Priority);
       var effectiveSourceId = row.OriginServiceId ?? _localServiceId;
       var effectiveCommitSeq = row.OriginCommitSequence ?? row.CommitSequence ?? 0L;
       envelope = new MessageEnvelope<JsonElement> {
@@ -971,11 +1164,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         SourceCommitSequence = effectiveCommitSeq,
         CausedByServiceId = concrete.CausedByServiceId,
         CausedByCommitSequence = concrete.CausedByCommitSequence,
+        Priority = priority,
       };
     }
 
     return new OutboxWork {
       MessageId = row.MessageId,
+      Priority = priority,
       Destination = row.Destination,
       Envelope = envelope,
       EnvelopeType = row.EnvelopeType ?? string.Empty,
@@ -990,6 +1185,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       MetadataJson = row.Metadata,
     };
   }
+
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "OutboxDrainWorker started: maxPerStream={MaxPerStream}")]
@@ -1013,6 +1209,59 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: batched fetch failed for {StreamCount} streams; " +
               "falling back to per-stream fetches to isolate the failure")]
   static partial void LogBatchFetchFellBackToPerStream(ILogger logger, int streamCount, Exception ex);
+
+  /// <summary>
+  /// Resolves the local service identity again when the startup lookup left it empty. A transient
+  /// failure at startup (the schema not yet reachable, the database saturated) used to stamp an empty
+  /// <c>SourceServiceId</c> on every envelope for the life of the process, which downstream consumers
+  /// record as-is: the producing service becomes unattributable. Retried before each batch until it
+  /// resolves; failures stay at Debug because the startup warning already named the consequence. A
+  /// cancellation surfaces here as a logged failure too: the batch drain that follows observes the same
+  /// token and stops the loop, so nothing is lost by not rethrowing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupKeepsFailing_RecordsEachRetryAtDebugAsync</tests>
+  private async Task _ensureLocalServiceIdAsync(CancellationToken ct) {
+    if (_localServiceId != Guid.Empty) {
+      return;
+    }
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var resolved = await coordinator.GetLocalServiceIdAsync(ct);
+      if (resolved != Guid.Empty) {
+        _localServiceId = resolved;
+        LogLocalServiceIdResolvedLate(_logger, resolved);
+      }
+    } catch (Exception ex) {
+      LogLocalServiceIdRetryFailed(_logger, ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: local service identity is empty after startup; envelopes publish with an empty " +
+              "SourceServiceId until a later batch resolves it (retried before each batch)")]
+  static partial void LogLocalServiceIdEmptyAtStartup(ILogger logger);
+
+  [LoggerMessage(EventId = 51, Level = LogLevel.Information,
+    Message = "OutboxDrainWorker: local service identity resolved to {ServiceId}; envelopes from here on carry it")]
+  static partial void LogLocalServiceIdResolvedLate(ILogger logger, Guid serviceId);
+
+  [LoggerMessage(EventId = 52, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: local service identity lookup failed again; will retry before the next batch")]
+  static partial void LogLocalServiceIdRetryFailed(ILogger logger, Exception ex);
+
+  /// <summary>Issue #630: the lookup is best-effort, but its failure must not be silent.</summary>
+  /// <docs>messaging/work-coordinator#local-service-identity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFails_LogsTheConsequenceAndKeepsDrainingAsync</tests>
+  [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: local service identity lookup failed; publishing continues, but every " +
+              "envelope this instance publishes will carry an empty SourceServiceId, so downstream consumers " +
+              "will attribute those messages to themselves. Check that wh_service_config is reachable in the " +
+              "DbContext's schema.")]
+  static partial void LogLocalServiceIdLookupFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
     Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]
@@ -1069,8 +1318,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   static partial void LogFetchBatchReturned(ILogger logger, Guid streamId, int fetchCount, int rowCount);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Debug,
-    Message = "OutboxDrainWorker: pre-publish DLQ gate eval msg={MessageId} attempts={Attempts} max={MaxAttempts} dlqStore={HasDlqStore} genProvider={HasGenerationProvider}")]
-  static partial void LogPrePublishGateEval(ILogger logger, Guid messageId, int attempts, int maxAttempts, bool hasDlqStore, bool hasGenerationProvider);
+    Message = "OutboxDrainWorker: pre-publish DLQ gate eval msg={MessageId} attempts={Attempts} max={MaxAttempts} dlqStore={HasDlqStore}")]
+  static partial void LogPrePublishGateEval(ILogger logger, Guid messageId, int attempts, int maxAttempts, bool hasDlqStore);
 
   [LoggerMessage(EventId = 34, Level = LogLevel.Debug,
     Message = "OutboxDrainWorker: pre-publish DLQ gate FIRING for {MessageId} (attempts={Attempts} > max={MaxAttempts}) — moving to wh_dead_letters")]
@@ -1127,6 +1376,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
     Message = "OutboxDrainWorker._publishOneAsync: PublishOneAsync RETURNED msg={MessageId} success={Success}")]
   static partial void LogPublishOneReturned(ILogger logger, Guid messageId, bool success);
+
+  /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
+  internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 53;
+
+  /// <summary>The event id of a drain batch lost to a failure that is this framework's own defect.</summary>
+  internal const int BATCH_DRAIN_FAILURE_EVENT_ID = 54;
+
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Outbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
+            + "the streams re-offer via the claim backstop")]
+  static partial void LogTransientBatchDrainFailed(
+    ILogger logger, string reason, string sqlState, Exception exception);
+
+  [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "
+            + "is not the database's and wants fixing")]
+  static partial void LogBatchDrainFailed(ILogger logger, Exception exception);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
@@ -1144,6 +1410,17 @@ public sealed class OutboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased outbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Largest cross-stream publish batch (default 25). Zero keeps the legacy per-stream behavior.
+  /// </summary>
+  /// <remarks>
+  /// The drain used to assemble its batch from ONE stream's rows. Measured on a producer
+  /// mid-import: 88% of "bulk" publishes carried a single message, because 98% of streams held
+  /// exactly one pending row. Per-stream ORDERING is a real invariant; per-stream BATCHING is
+  /// not implied by it.
+  /// </remarks>
+  public int MaxPublishBatchSize { get; set; } = 25;
 
   /// <summary>
   /// Cap on the total PAYLOAD BYTES fetched per stream per iteration. Default 4 MB.

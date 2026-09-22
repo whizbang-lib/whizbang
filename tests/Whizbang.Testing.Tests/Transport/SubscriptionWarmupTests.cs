@@ -156,7 +156,7 @@ public class SubscriptionWarmupTests {
   }
 
   [Test]
-  public async Task WarmupAsync_PreCancelledToken_ThrowsBeforePublishingAsync() {
+  public async Task WarmupAsync_PreCanceledToken_ThrowsBeforePublishingAsync() {
     var warmupAwaiter = new SignalAwaiter();
     var transport = new FakeTransport();
     using var cts = new CancellationTokenSource();

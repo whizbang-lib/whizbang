@@ -102,9 +102,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture what GetSecurityFromAmbient returns during cascade
     SecurityContext? capturedAmbientContext = null;
-    var cascader = new TestEventCascader(onCascade: () => {
-      capturedAmbientContext = CascadeContext.GetSecurityFromAmbient();
-    });
+    var cascader = new TestEventCascader(onCascade: () => capturedAmbientContext = CascadeContext.GetSecurityFromAmbient());
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -155,9 +153,7 @@ public class ReceptorInvokerScopePropagationTests {
 
     // Capture the message context that gets set
     IMessageContext? capturedMessageContext = null;
-    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => {
-      capturedMessageContext = ctx;
-    });
+    var messageContextAccessor = new TestMessageContextAccessor(onSet: ctx => capturedMessageContext = ctx);
 
     var services = new ServiceCollection();
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
@@ -185,15 +181,6 @@ public class ReceptorInvokerScopePropagationTests {
   }
 
   #region Test Helpers
-
-  private static MessageEnvelope<T> _createEnvelope<T>(T message) where T : notnull {
-    return new MessageEnvelope<T> {
-      MessageId = MessageId.From(TrackedGuid.NewMedo()),
-      Payload = message,
-      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-  }
 
   private static MessageEnvelope<T> _createEnvelopeWithoutScope<T>(T message) where T : notnull {
     return new MessageEnvelope<T> {
@@ -310,9 +297,7 @@ public class ReceptorInvokerScopePropagationTests {
   /// </summary>
   private sealed class InvocationTracker {
     private readonly List<(string ReceptorId, LifecycleStage Stage)> _invocations = [];
-    public List<(string ReceptorId, LifecycleStage Stage)> Invocations => _invocations;
     public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
-    public void Clear() => _invocations.Clear();
   }
 
   /// <summary>
@@ -331,7 +316,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null); // Return null (no cascade)
         }));
@@ -351,7 +336,7 @@ public class ReceptorInvokerScopePropagationTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TCommand),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(eventFactory()); // Return event for cascading
         }));
@@ -363,8 +348,10 @@ public class ReceptorInvokerScopePropagationTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

@@ -48,8 +48,10 @@ public class ReceptorFiringLockInTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -107,7 +109,7 @@ public class ReceptorFiringLockInTests {
       await Assert.That(first.Item1).IsEqualTo("DefaultReceptor");
       await Assert.That(first.Item3).IsEqualTo(LifecycleStage.LocalImmediateInline);
       // And the envelope carries exactly one record.
-      await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(1);
+      await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(1);
     }
   }
 
@@ -138,7 +140,7 @@ public class ReceptorFiringLockInTests {
       await Assert.That(sharedFires.Count).IsEqualTo(3);
       // Idempotent receptors still record each invocation so observability of the firing
       // history is preserved.
-      await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(3);
+      await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(3);
     }
   }
 
@@ -170,10 +172,10 @@ public class ReceptorFiringLockInTests {
       // Assert — exactly 100 invocations total, each envelope has exactly one record, and
       // every record's MessageId matches the envelope it's on.
       await Assert.That(sharedFires.Count).IsEqualTo(MessageCount);
-      foreach (var envelope in envelopes) {
-        await Assert.That(envelope.ReceptorInvocations).IsNotNull();
-        await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(1);
-        await Assert.That(envelope.ReceptorInvocations![0].ReceptorId).IsEqualTo("ConcurrentReceptor");
+      foreach (var invocations in envelopes.Select(envelope => envelope.ReceptorInvocations)) {
+        await Assert.That(invocations).IsNotNull();
+        await Assert.That(invocations).Count().IsEqualTo(1);
+        await Assert.That(invocations![0].ReceptorId).IsEqualTo("ConcurrentReceptor");
       }
 
       // Cross-contamination check: each MessageId appears exactly once in the fires bag.
@@ -207,7 +209,7 @@ public class ReceptorFiringLockInTests {
       await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
 
       await Assert.That(sharedFires.Count).IsEqualTo(2);
-      await Assert.That(envelope.ReceptorInvocations!).Count().IsEqualTo(2);
+      await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(2);
       var ids = envelope.ReceptorInvocations!.Select(r => r.ReceptorId).Order().ToList();
       await Assert.That(ids).IsEquivalentTo(["ReceptorA", "ReceptorB"]);
     }
@@ -236,8 +238,8 @@ public class ReceptorFiringLockInTests {
       await invoker.InvokeAsync(envelopeB, LifecycleStage.PostInboxInline);
 
       await Assert.That(sharedFires.Count).IsEqualTo(2);
-      await Assert.That(envelopeA.ReceptorInvocations!).Count().IsEqualTo(1);
-      await Assert.That(envelopeB.ReceptorInvocations!).Count().IsEqualTo(1);
+      await Assert.That(envelopeA.ReceptorInvocations).Count().IsEqualTo(1);
+      await Assert.That(envelopeB.ReceptorInvocations).Count().IsEqualTo(1);
       await Assert.That(envelopeA.ReceptorInvocations![0].ReceptorId).IsEqualTo("ReceptorX");
       await Assert.That(envelopeB.ReceptorInvocations![0].ReceptorId).IsEqualTo("ReceptorX");
       // The records' timestamps may match the Stopwatch tick but the envelope identities differ —

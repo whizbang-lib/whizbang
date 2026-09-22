@@ -18,9 +18,9 @@ namespace Whizbang.Generators.Tests;
 /// dead-lettered — never once reaching the fan-out that would have made it useful.</para>
 ///
 /// <para>Observed in production as a broker dead-letter storm:
-/// <c>MaxDeliveryAttemptsExceeded — JsonTypeInfo metadata for type
+/// <code>MaxDeliveryAttemptsExceeded — JsonTypeInfo metadata for type
 /// 'Whizbang.Core.Observability.MessageEnvelope`1[Consumer.Job.DraftJobEventsComposite]' was not
-/// provided by TypeInfoResolver</c>, alongside inbox rows dying at <c>attempts &gt; max=10</c>.</para>
+/// provided by TypeInfoResolver</code>, alongside inbox rows dying at <c>attempts &gt; max=10</c>.</para>
 /// </summary>
 [Category("SourceGenerators")]
 [Category("JsonSerialization")]
@@ -35,7 +35,7 @@ public class MessageJsonContextCompositeEnvelopeTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_CompositeInheritingBase_EmitsEnvelopeJsonTypeInfoAsync() {
-    var source = @"
+    const string source = @"
 using Whizbang.Core.Minting;
 
 namespace ConsumerApp.Job;
@@ -53,7 +53,7 @@ public sealed class DraftJobEventsComposite : CompositeEventBase {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("MessageEnvelope<global::ConsumerApp.Job.DraftJobEventsComposite>")
+    await Assert.That(code).Contains("MessageEnvelope<global::ConsumerApp.Job.DraftJobEventsComposite>")
       .Because("a composite that inherits CompositeEventBase is still a wire type; without envelope "
              + "JsonTypeInfo the receiver cannot bind it, so it fails every delivery and dead-letters "
              + "before the dispatch seam can expand it");
@@ -66,7 +66,7 @@ public sealed class DraftJobEventsComposite : CompositeEventBase {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_CompositeImplementingInterfaceDirectly_EmitsEnvelopeJsonTypeInfoAsync() {
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using Whizbang.Core;
 using Whizbang.Core.Minting;
@@ -90,7 +90,7 @@ public sealed class DirectComposite : ICompositeEvent {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("MessageEnvelope<global::ConsumerApp.Job.DirectComposite>")
+    await Assert.That(code).Contains("MessageEnvelope<global::ConsumerApp.Job.DirectComposite>")
       .Because("a directly-declared composite must get envelope JsonTypeInfo for the same reason");
   }
 }

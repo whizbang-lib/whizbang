@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// applied in arrival order, and marked processed, so that check stays silent.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind-invariants</docs>
+[Category("Shard4")]
 public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
 
   private const string EVENT_TYPE = "Whizbang.Tests.ReconcileRewindProbeEvent";
@@ -85,16 +86,15 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
       while (await r.ReadAsync()) { /* drain */ }
     }
     await using (var lease = conn.CreateCommand()) {
-      lease.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
       lease.Parameters.AddWithValue("inst", instanceId);
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();
     }
-    await using (var emit = conn.CreateCommand()) {
-      emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
-      emit.Parameters.AddWithValue("inst", instanceId);
-      _ = await emit.ExecuteScalarAsync();
-    }
+    await using var emit = conn.CreateCommand();
+    emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
+    emit.Parameters.AddWithValue("inst", instanceId);
+    _ = await emit.ExecuteScalarAsync();
   }
 
   private static async Task<(int Status, Guid? Trigger)> _cursorAsync(NpgsqlConnection conn, Guid streamId) {
@@ -106,7 +106,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     if (!await r.ReadAsync()) {
       return (0, null);
     }
-    return (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetGuid(1));
+    return (r.GetInt32(0), await r.IsDBNullAsync(1) ? null : r.GetGuid(1));
   }
 
   [Test]

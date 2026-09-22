@@ -21,18 +21,22 @@ public sealed class PostgresTableStatisticsProvider(
 
   /// <inheritdoc />
   /// <remarks>
+  /// <para>
   /// Heap bytes per live row over the width those rows should need. The expected width comes
   /// from <c>pg_stats.avg_width</c> (planner statistics, already maintained by autoanalyze) plus
   /// per-tuple overhead, so this costs nothing beyond a catalog read — unlike pgstattuple, which
   /// is exact but scans the table and needs an extension that managed Postgres may not allow.
-  ///
+  /// </para>
+  /// <para>
   /// Around 1.0 means the heap is about the size its rows need. A sustained large multiple means
   /// space that cannot be used: dead tuples awaiting vacuum, or — the case autovacuum can never
   /// fix — bytes left behind by a dropped column, which persist in every row written before the
   /// drop until the table is rewritten.
-  ///
+  /// </para>
+  /// <para>
   /// Small tables are excluded: with few rows the per-row average is dominated by page overhead
   /// and reports alarming ratios for tables measured in kilobytes.
+  /// </para>
   /// </remarks>
   public async Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, double>();
@@ -90,13 +94,28 @@ public sealed class PostgresTableStatisticsProvider(
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
     // Schema-qualify table names for multi-schema deployments
-    var inboxTable = $"{schema}.wh_inbox";
+    // 162: the inbox depth gauge counts unprocessed rows, and processed_at is work state.
+    var inboxTable = $"{schema}.wh_inbox_state";
     var outboxTable = $"{schema}.wh_outbox";
+    var deadLettersTable = $"{schema}.wh_dead_letters";
 
+    // Dead letters are a queue like any other, sliced by status because the three
+    // populations mean three different things to an operator: held is quarantine awaiting
+    // a verdict, pending is the recovery backlog, failed is the operator-decision pile.
+    // Emitted even at zero — "no quarantine" must be a positively-reported value, not an
+    // absent series (#683: only hold TRANSITIONS were counted, so a standing five-figure
+    // held population was invisible while the services that happened to be transitioning
+    // were the only ones charted). Recovered rows are receipts, not depth.
     await using var cmd = new NpgsqlCommand($"""
       SELECT 'inbox' as queue_name, COUNT(*) as depth FROM {inboxTable} WHERE processed_at IS NULL
       UNION ALL
       SELECT 'outbox', COUNT(*) FROM {outboxTable} WHERE processed_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_held', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 2
+      UNION ALL
+      SELECT 'dead_letters_pending', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 0 AND recovered_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_failed', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 4
       """, connection);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);

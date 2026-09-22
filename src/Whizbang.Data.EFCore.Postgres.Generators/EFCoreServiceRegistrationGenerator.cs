@@ -53,7 +53,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
   private const string CLOSE_BRACE_INDENT_4 = "    });";
-  private const string CLOSE_BRACE_INDENT_6 = "      });";
   private const string CLOSE_BRACE_INDENT_8 = "        });";
   private const string CLOSE_BRACE_ONLY_INDENT_6 = "      }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";
@@ -62,7 +61,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Generate marker file to confirm generator is running
     context.RegisterPostInitializationOutput(ctx => {
       ctx.AddSource("_EFCoreGenerator_Initialized.g.cs",
-        $"// EFCoreServiceRegistrationGenerator initialized at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n" +
+        $"// EFCoreServiceRegistrationGenerator initialized at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}\n" +
         "// Looking for: IPerspectiveFor<TModel> interfaces");
     });
 
@@ -260,7 +259,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var baseType = symbol.BaseType;
     bool inheritsDbContext = false;
     while (baseType != null) {
-      if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
         inheritsDbContext = true;
         break;
       }
@@ -273,7 +272,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangDbContext] attribute (explicit opt-in required)
     var attribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute"));
 
     if (attribute is null) {
       return null;  // No attribute = not discovered (opt-in required)
@@ -288,7 +287,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Extract schema from attribute's Schema property, or derive from namespace if not specified
     var schema = _extractSchemaFromAttribute(attribute);
     if (string.IsNullOrEmpty(schema)) {
-      schema = _deriveSchemaFromNamespace(symbol.ContainingNamespace.ToDisplayString());
+      // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+      // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+      schema = _deriveSchemaFromNamespace(
+        TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
     }
 
     // Extract connection string name from attribute, or derive from class name
@@ -297,8 +299,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return new DbContextInfo(
         ClassName: symbol.Name,
-        FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        FullyQualifiedName: TypeNameUtilities.FullyQualified(symbol),
+        // Empty for the global namespace (issue #707): Roslyn's display string for it is the
+        // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
+        Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
         Schema: schema ?? "public", // Should never be null, but satisfy compiler
         Keys: keys,
         ConnectionStringName: connectionStringName
@@ -359,18 +363,51 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _emitTurnkeyDbContextRegistration(
       System.Text.StringBuilder sb, string dbContextFqn, bool hasVectorFields, bool hasPhysicalFields, string indent) {
     sb.AppendLine($"{indent}services.AddDbContext<{dbContextFqn}>((sp, options) => {{");
-    sb.AppendLine($"{indent}  options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {{");
-    if (hasVectorFields) {
-      sb.AppendLine($"{indent}    npgsqlOptions.UseVector();");
-    }
-    sb.AppendLine($"{indent}    // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
-    sb.AppendLine($"{indent}    npgsqlOptions.UseWhizbangFunctions();");
-    sb.AppendLine($"{indent}    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-    sb.AppendLine($"{indent}  }});");
-    if (hasPhysicalFields) {
-      sb.AppendLine($"{indent}  options.UseWhizbangPhysicalFields();");
-    }
+    _emitNpgsqlConfiguration(
+      sb, "options", "sp.GetRequiredService<Npgsql.NpgsqlDataSource>()",
+      hasVectorFields, hasPhysicalFields, $"{indent}  ");
     sb.AppendLine($"{indent}}});");
+  }
+
+  /// <summary>
+  /// Emits the configuration every DbContext needs, wherever it is being configured.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Separate from the registration above because a context is configured in three places, and only
+  /// two of them use <c>AddDbContext</c>: the schema initializer builds its own from the
+  /// initialization connection string. That one carried none of this, which cost a whole environment
+  /// its schema the first time such a string existed. EF model validation refuses a vector property
+  /// without the mapping, so nothing could initialize at all.
+  /// </para>
+  /// <para>
+  /// <c>npgsqlOptions.UseVector()</c> is the EF type mapping and is not the same thing as
+  /// <c>NpgsqlDataSourceBuilder.UseVector()</c>, which only teaches the driver the CLR type. Both are
+  /// needed, and having only the second is what the failure looked like.
+  /// </para>
+  /// <para>
+  /// Retry is safe here even though the initializer runs explicit transactions: it uses a raw ADO.NET
+  /// transaction precisely because a retrying execution strategy refuses
+  /// <c>Database.BeginTransactionAsync</c>.
+  /// </para>
+  /// </remarks>
+  /// <param name="receiver">The options builder to configure, as it is named at the call site.</param>
+  /// <param name="dataSourceExpression">The data source expression to pass to <c>UseNpgsql</c>.</param>
+  /// <param name="indent">The leading whitespace of the <paramref name="receiver"/> lines.</param>
+  private static void _emitNpgsqlConfiguration(
+      System.Text.StringBuilder sb, string receiver, string dataSourceExpression,
+      bool hasVectorFields, bool hasPhysicalFields, string indent) {
+    sb.AppendLine($"{indent}{receiver}.UseNpgsql({dataSourceExpression}, npgsqlOptions => {{");
+    if (hasVectorFields) {
+      sb.AppendLine($"{indent}  npgsqlOptions.UseVector();");
+    }
+    sb.AppendLine($"{indent}  // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
+    sb.AppendLine($"{indent}  npgsqlOptions.UseWhizbangFunctions();");
+    sb.AppendLine($"{indent}  npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
+    sb.AppendLine($"{indent}}});");
+    if (hasPhysicalFields) {
+      sb.AppendLine($"{indent}{receiver}.UseWhizbangPhysicalFields();");
+    }
   }
 
   private static string _deriveConnectionStringName(string className) {
@@ -423,6 +460,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Always quotes to ensure safety regardless of the identifier value.
   /// Example: "user" → "\"user\"", "bff" → "\"bff\""
   /// </summary>
+  /// <summary>
+  /// The namespace the generated helpers live in: the consumer's namespace plus <c>.Generated</c>,
+  /// or just <c>Generated</c> when the consumer's type sits in the global namespace (issue #707).
+  /// </summary>
+  private static string _generatedNamespace(string consumerNamespace) =>
+    string.IsNullOrEmpty(consumerNamespace) ? "Generated" : $"{consumerNamespace}.Generated";
+
   private static string _quotePostgresIdentifier(string identifier) {
     // Double quotes are the PostgreSQL standard for quoting identifiers
     // This handles reserved keywords like "user", "table", "select", etc.
@@ -448,7 +492,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check if class implements IPerspectiveFor<TModel> base interface
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
@@ -468,7 +512,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute"));
 
     string[] keys;
     if (perspectiveAttribute is not null) {
@@ -480,16 +524,79 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return new PerspectiveModelCandidate(
-        PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PerspectiveClassName: TypeNameUtilities.FullyQualified(symbol),
+        ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
+        ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
-        NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
+        NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
+        JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        CompositeIndexes: _reachableComposites(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
+
+  /// <summary>
+  /// The declared indexes a query against this model could actually reach.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The declared indexes, or none when the model's document is stored opaquely.</returns>
+  /// <remarks>
+  /// <para>
+  /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
+  /// properties, so a filter on a field inside it never compiles to the extraction an index would be
+  /// built over. Emitting the index anyway would cost a write every time and return nothing, which
+  /// is the same waste the declaration exists to remove.
+  /// </para>
+  /// <para>
+  /// Dropping them silently would be the worse half of the trade on its own, since the author would
+  /// still believe the fields are indexed. WHIZ304 reports it at build time, which is what makes
+  /// skipping here the right thing rather than a quiet loss.
+  /// </para>
+  /// </remarks>
+  private static ImmutableArray<JsonIndexInfo> _reachableJsonIndexes(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType)
+        ? []
+        : JsonIndexDiscovery.From(modelType);
+
+  /// <summary>
+  /// The composite and partial indexes the model declares, or none when its document is stored
+  /// opaquely.
+  /// </summary>
+  /// <remarks>
+  /// Same reasoning as the single-property indexes above: a model stored as one serialized value has
+  /// no reachable path into its fields, so an index built over one would answer nothing.
+  /// </remarks>
+  /// <summary>
+  /// Appends the model's composite and partial index statements to the schema script.
+  /// </summary>
+  /// <remarks>
+  /// After the single-property indexes rather than before, so a script reads in the order an author
+  /// declared things: the per-property declarations, then the ones spanning several. Ordering has no
+  /// effect on the result, since every statement is independent and idempotent.
+  /// </remarks>
+  private static void _appendCompositeIndexes(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema, string shortName) {
+    if (perspective.CompositeIndexes.IsDefaultOrEmpty) {
+      return;
+    }
+
+    var table = $"{quotedSchema}.{perspective.TableName}";
+
+    foreach (var index in perspective.CompositeIndexes) {
+      var statement = CompositeIndexSql.CreateStatement(index, table, shortName);
+      if (!string.IsNullOrEmpty(statement)) {
+        sb.AppendLine(statement);
+      }
+    }
+  }
+
+  private static ImmutableArray<CompositeIndexInfo> _reachableComposites(INamedTypeSymbol? modelType) =>
+      MappedPathDiscovery.MustStoreOpaquely(modelType)
+        ? []
+        : JsonIndexDiscovery.CompositesFrom(modelType);
 
   /// <summary>
   /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
@@ -508,11 +615,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return new PerspectiveModelInfo(
         PerspectiveClassName: candidate.PerspectiveClassName,
         ModelTypeName: candidate.ModelTypeName,
+        ModelClrTypeName: candidate.ModelClrTypeName,
         DbSetPropertyName: candidate.DbSetPropertyName,
         TableName: tableName,
         NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
+        JsonIndexes: candidate.JsonIndexes,
+        CompositeIndexes: candidate.CompositeIndexes,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -559,9 +669,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       var physicalFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
       var vectorFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.VectorFieldAttribute");
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.VectorFieldAttribute"));
 
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
@@ -587,7 +697,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   // 10.0.10. The methods below generate per-model PerspectiveDataCoalescer registrations that restore every
   // non-nullable List<T>/array in the Data graph (and the framework's PerspectiveScope.Extensions) to empty on
   // materialization. DELETE this region, PerspectiveDataCoalescer, and its call sites (grep
-  // "WORKAROUND(dotnet/efcore#38625)") once a fixed EF Core release ships.
+  // "WORKAROUND(dotnet/efcore#38625)") once a fixed EF Core release ships. Fix status: proposed in
+  // https://github.com/dotnet/efcore/pull/39014 (targets main = EF Core 12; release/11.0 and release/10.0 backports
+  // requested there). See PerspectiveDataCoalescer for the removal checklist.
 
   /// <summary>Defensive nesting cap for the coalesce walker (real perspective models are 2–3 levels deep).</summary>
   private const int MAX_COALESCE_DEPTH = 8;
@@ -618,7 +730,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return;
     }
 
-    var typeName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(type);
     if (!typesOnPath.Add(typeName)) {
       return; // cycle guard — self/mutually-recursive model types
     }
@@ -691,7 +803,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return true;
     }
     if (type is INamedTypeSymbol { IsGenericType: true } named
-        && named.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.List<T>") {
+        && TypeNameUtilities.IsNamed(named.OriginalDefinition, "System.Collections.Generic.List<T>")) {
       elementType = named.TypeArguments[0];
       return true;
     }
@@ -703,11 +815,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static bool _isComplexModelClass(ITypeSymbol type) =>
     type.TypeKind == TypeKind.Class
     && type.SpecialType == SpecialType.None
-    && !type.ToDisplayString().StartsWith("System.", StringComparison.Ordinal);
+    && !TypeNameUtilities.Display(type).StartsWith("System.", StringComparison.Ordinal);
 
   /// <summary>Empty-collection expression matching the property's shape (List&lt;T&gt; vs array).</summary>
   private static string _emptyCollectionExpression(ITypeSymbol collectionType, ITypeSymbol elementType) {
-    var element = elementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var element = TypeNameUtilities.FullyQualified(elementType);
     return collectionType is IArrayTypeSymbol
         ? $"global::System.Array.Empty<{element}>()"
         : $"new global::System.Collections.Generic.List<{element}>()";
@@ -718,23 +830,30 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
-    // Extract named arguments
-    bool isIndexed = false;
+    // [Indexed] is the only way to ask for an index, and a promoted field uses the same attribute a
+    // document field does: [PhysicalField] says promote, [Indexed] says index, and together they say
+    // promote and index. [PhysicalField(Indexed = true)] is gone rather than deprecated, so the
+    // named arguments below are the ones that describe the column itself.
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+
     bool isUnique = false;
     string? columnName = null;
+    string? columnType = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
+          break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
           break;
       }
     }
@@ -748,12 +867,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TypeName: typeName,
         IsIndexed: isIndexed,
         IsUnique: isUnique,
-        MaxLength: null, // Not applicable for physical fields (JSONB handles length)
+        // Deliberately not read from the attribute here, though the model side reads it. This
+        // generator emits CREATE TABLE plus additive ADD COLUMN, and never ALTER COLUMN TYPE, so
+        // honouring a length that has been declarable and ignored for a long time would give a new
+        // database varchar(n) where an existing one keeps text -- the same model constrained
+        // differently depending on when its database was created, and a write that succeeds on one
+        // deployment failing on another. The disagreement is real and is filed rather than papered
+        // over, because closing it needs a migration path and not a generator tweak.
+        MaxLength: null,
         IsVector: false,
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -762,7 +889,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;
@@ -771,7 +898,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract named arguments
-    bool isIndexed = true; // Vectors are typically indexed
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     string? columnName = null;
     GeneratorVectorDistanceMetric? distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     GeneratorVectorIndexType? indexType = GeneratorVectorIndexType.IVFFlat; // Default
@@ -779,9 +906,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
           break;
@@ -854,13 +978,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    if (type.ContainingNamespace?.ToDisplayString() != "Whizbang.Core.Lenses") {
+    if (!TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
       return null;
     }
 
     // Extract model type names (fully qualified with global:: prefix)
     var modelTypeNames = type.TypeArguments
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Select(t => TypeNameUtilities.FullyQualified(t))
         .ToImmutableArray();
 
     // Get consumer class name from containing type declaration
@@ -869,7 +993,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     if (containingClass != null) {
       var classSymbol = context.SemanticModel.GetDeclaredSymbol(containingClass, ct);
       if (classSymbol != null) {
-        consumerClassName = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        consumerClassName = TypeNameUtilities.FullyQualified(classSymbol);
       }
     }
 
@@ -1054,6 +1178,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return $"vector({field.VectorDimensions.Value})";
     }
 
+    // The author's own type wins over the derived one, and is checked before the switch rather than
+    // as its default arm: that arm is text, so an unrecognized type would silently become text.
+    // This is the DDL side, and it has to agree with the EF Core side or the model and the table
+    // describe different columns.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
+    }
+
     // Map .NET types to PostgreSQL types
     // The TypeName is fully qualified with global:: prefix
     var typeName = field.TypeName
@@ -1166,7 +1298,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // File header
       sb.AppendLine(AUTO_GENERATED_HEADER);
-      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
       sb.AppendLine(DO_NOT_EDIT_COMMENT);
       sb.AppendLine(NULLABLE_ENABLE);
       sb.AppendLine();
@@ -1177,8 +1309,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Auto-generated partial class with DbSet properties for {uniqueModels.Count} perspective model(s).");
@@ -1209,6 +1343,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
       sb.AppendLine("    // Call user's extended configuration");
       sb.AppendLine("    OnModelCreatingExtended(modelBuilder);");
+      sb.AppendLine();
+      sb.AppendLine("    // Convert every date, time and duration the model maps inside a document, whatever options");
+      sb.AppendLine("    // this context was built with: a lens context built from a plain connection string carries no");
+      sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
+      sb.AppendLine("    // the walk sees what the consumer configured too.");
+      sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
@@ -1375,7 +1515,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string consumerNamespace,
       int totalUniqueModels) {
     sb.AppendLine(AUTO_GENERATED_HEADER);
-    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
     sb.AppendLine(DO_NOT_EDIT_COMMENT);
     sb.AppendLine(NULLABLE_ENABLE);
     sb.AppendLine();
@@ -1404,7 +1544,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
 
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
@@ -1454,7 +1594,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     foreach (var model in group.Models) {
-      if (model.PhysicalFields.Length > 0) {
+      // A model may declare an index over a JSON-only field without promoting anything, so the
+      // registrations are needed whenever either kind is present.
+      if (model.PhysicalFields.Length > 0 || model.JsonIndexes.Length > 0) {
         _appendPhysicalFieldRegistrations(sb, model);
       }
     }
@@ -1477,6 +1619,29 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var isVector = field.IsVector ? "true" : "false";
       sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
     }
+
+    // A declared index has to be known at run time as well as created, because the containment
+    // rewrite must stand down for such a field. Rewriting its equality filter would send the planner
+    // to the GIN index over the document and leave this index unused, which is the wasted-index
+    // situation the rewrite exists to correct rather than to cause.
+    foreach (var index in model.JsonIndexes) {
+      var kinds = new System.Collections.Generic.List<string>();
+      if (index.Ordered) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Ordered");
+      }
+      if (index.Substring) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Substring");
+      }
+
+      var kindExpression = string.Join(" | ", kinds);
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<{model.ModelTypeName}>(\"{index.PropertyName}\", {kindExpression});");
+
+      // Registered against the table as well, because the mechanism that reshapes translated SQL has
+      // a column's table in hand rather than a model type: the tree that knew which model was being
+      // queried is gone by that stage.
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.RegisterForTable(\"{model.TableName}\", \"{index.PropertyName}\", {kindExpression});");
+    }
+
     sb.AppendLine();
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
@@ -1495,7 +1660,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var rowType = $"global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>";
     sb.AppendLine("        // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent");
     sb.AppendLine("        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on");
-    sb.AppendLine("        // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream.");
+    sb.AppendLine("        // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof({rowType}), entity => {{");
     sb.AppendLine($"          var row = ({rowType})entity;");
     sb.AppendLine("          if (row.Scope is not null) { row.Scope.Extensions ??= new global::System.Collections.Generic.List<global::Whizbang.Core.Lenses.ScopeExtension>(); }");
@@ -1536,7 +1701,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     sb.AppendLine(AUTO_GENERATED_HEADER);
-    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
     sb.AppendLine(DO_NOT_EDIT_COMMENT);
     sb.AppendLine(NULLABLE_ENABLE);
     sb.AppendLine();
@@ -1549,7 +1714,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");
     }
     sb.AppendLine();
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
@@ -1653,7 +1818,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // File header
       sb.AppendLine(AUTO_GENERATED_HEADER);
-      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
       sb.AppendLine(DO_NOT_EDIT_COMMENT);
       sb.AppendLine(NULLABLE_ENABLE);
       sb.AppendLine();
@@ -1678,8 +1843,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Turnkey extension methods for registering {dbContext.ClassName} with dependency injection.");
@@ -1807,7 +1974,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
       // The library version as a VALUE (zero reflection): the same constant the migration ledger
       // records, so instance rows and the ledger can never disagree about what this binary runs.
-      sb.AppendLine($"    services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+      sb.AppendLine("    services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
       sb.AppendLine($"      new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
       sb.AppendLine();
       sb.AppendLine("    return services;");
@@ -1949,7 +2116,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
     sb.AppendLine("      services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
-    sb.AppendLine($"      services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
+    sb.AppendLine("      services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(");
     sb.AppendLine($"        new global::Whizbang.Core.Observability.LibraryVersionProvider(\"{GeneratorLibraryVersion.Get()}\"));");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
@@ -1976,9 +2143,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("        initDsBuilder.UseVector();");
     }
     sb.AppendLine("        await using var initDataSource = initDsBuilder.Build();");
-    sb.AppendLine($"        var initOptions = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<{dbContext.FullyQualifiedName}>()");
-    sb.AppendLine("            .UseNpgsql(initDataSource)");
-    sb.AppendLine("            .Options;");
+    sb.AppendLine($"        var initOptionsBuilder = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<{dbContext.FullyQualifiedName}>();");
+    // The same configuration the registered context gets. Anything missing here is missing only on
+    // the path that runs when an initialization connection string exists, which is the path no test
+    // exercised until one did.
+    _emitNpgsqlConfiguration(
+      sb, "initOptionsBuilder", "initDataSource", hasVectorFields, hasPhysicalFields, "        ");
+    sb.AppendLine("        var initOptions = initOptionsBuilder.Options;");
     sb.AppendLine($"        await using var initDbContext = new {dbContext.FullyQualifiedName}(initOptions);");
     sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, scope.ServiceProvider, ct);");
     sb.AppendLine("      } else {");
@@ -2025,6 +2196,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Load migration files (once for all DbContexts)
     // Note: Core infrastructure schema is now generated at runtime by PostgresSchemaBuilder
     string migrationsCode = _generateMigrationsCode(context);
+    // The subset that has to exist before a migrator can be elected at all. Marked in the SQL
+    // rather than listed here, because a list goes stale the first time a migration gains a
+    // dependency and a marker sits next to the statement it describes.
+    string bootstrapMigrationsCode = _generateBootstrapMigrationsCode();
 
     // Loop through each DbContext and generate extension method
     foreach (var dbContext in dbContexts) {
@@ -2046,7 +2221,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = TemplateUtilities.ReplaceRegion(
           template,
           "HEADER",
-          $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
+          $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
       );
 
       // Note: CORE_INFRASTRUCTURE_SCHEMA is no longer replaced - template calls PostgresSchemaBuilder at runtime
@@ -2056,12 +2231,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
+      // No stored-form rewrite is generated. The template derives it at runtime from the model
+      // Entity Framework built and the serializer's metadata, the two things that read a document.
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
           template,
           "MIGRATIONS",
           migrationsCode
+      );
+      // The bootstrap subset, applied before anything is elected.
+      template = TemplateUtilities.ReplaceRegion(
+          template,
+          "BOOTSTRAP_MIGRATIONS",
+          bootstrapMigrationsCode
       );
 
       // Get assembly name for service identification
@@ -2092,6 +2275,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
 
       // Replace placeholders
+      template = template.Replace("__DBCONTEXT_NAMESPACE__.Generated", _generatedNamespace(dbContext.Namespace));
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
@@ -2129,11 +2313,62 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates code for migration tuples to embed in generated file.
   /// SQL files physically live in <c>Whizbang.Data.Postgres/Migrations/</c> and are linked into
-  /// this generator's embedded resources at build time via <c>&lt;EmbeddedResource Include=...
-  /// Link="Templates\Migrations\..."/&gt;</c> in the .csproj. There is exactly ONE physical
+  /// this generator's embedded resources at build time via <code>&lt;EmbeddedResource Include=...
+  /// Link="Templates\Migrations\..."/&gt;</code> in the .csproj. There is exactly ONE physical
   /// source of truth for the SQL files — no manual sync required.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+  /// <summary>
+  /// Emits the marked bootstrap regions, in migration order.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deciding which instance migrates is a duty election, the elector records its win through
+  /// <c>record_capability</c>, and a migration is what creates that function. The cycle is broken by
+  /// applying a marked subset first, so this emits that subset as its own list alongside the full
+  /// one. The same files appear in both: the bootstrap only makes objects exist, and the ordinary
+  /// pass still applies and records them exactly as before.
+  /// </para>
+  /// <para>
+  /// Escaped identically to the full list, including the <c>__SCHEMA__</c> to
+  /// <c>__MIGRATION_SCHEMA__</c> substitution, so both go through the same runtime transform.
+  /// </para>
+  /// </remarks>
+  private static string _generateBootstrapMigrationsCode() {
+    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+
+    var entries = new List<string>();
+
+    foreach (var resourceName in assembly.GetManifestResourceNames()
+        .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal)
+                    && name.EndsWith(".sql", StringComparison.Ordinal))
+        .OrderBy(name => name, StringComparer.Ordinal)) {
+      // Non-null by contract: the name came from GetManifestResourceNames on this same assembly,
+      // so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
+      using var reader = new System.IO.StreamReader(stream);
+      var bootstrap = Whizbang.Generators.Shared.Models.MigrationBootstrapRegions.Extract(
+        reader.ReadToEnd());
+      if (bootstrap is null) {
+        // The ordinary case: all but a handful of migrations carry no bootstrap region.
+        continue;
+      }
+
+      var fileName = resourceName[resourcePrefix.Length..];
+      var escaped = bootstrap
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")
+          .Replace("\"", "\"\"")
+          .Replace("{", "{{")
+          .Replace("}", "}}");
+      entries.Add($"      (\"{fileName}\", @\"{escaped}\")");
+    }
+
+    return entries.Count == 0
+      ? "// No bootstrap regions found in embedded migrations"
+      : string.Join(",\n", entries);
+  }
+
   private static string _generateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 
@@ -2229,7 +2464,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     var sb = new StringBuilder();
     sb.AppendLine("-- Perspective Tables (auto-generated from PerspectiveRow<TModel> types)");
-    sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"-- Generated: {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
     sb.AppendLine($"-- Schema: {schema}");
     sb.AppendLine();
 
@@ -2261,6 +2496,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       _appendCreateTableSql(sb, perspective, schema, quotedSchema);
+      // Before the indexes, not after, and with a commit boundary between: an index over a key this
+      // rewrites cannot be built in the same transaction as the rewrite.
       _appendStandardIndexes(sb, perspective, quotedSchema);
       _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
     }
@@ -2286,6 +2523,34 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Records a table this release creates in the microsecond stored form, settled, before it is
+  /// created.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only at that moment can "fresh" be told from "upgraded". A table an older release created has
+  /// no ledger row and rows in the mixed-unit form; recording it as converted here would make the
+  /// rewrite skip it forever, so it is left to the rewrite, which records it after converting it.
+  /// A database without the ledger yet is left alone.
+  /// </para>
+  /// <para>
+  /// Inside a DO block, because a statement naming a table is planned when its branch first runs:
+  /// named directly, an INSERT into a ledger that is not there would fail before any guard ran.
+  /// </para>
+  /// </remarks>
+  private static void _appendFormLedgerRow(StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    sb.AppendLine("DO $wb$");
+    sb.AppendLine("BEGIN");
+    sb.AppendLine($"  IF to_regclass('{quotedSchema}.{perspective.TableName}') IS NULL AND to_regclass('{quotedSchema}.wh_perspective_forms') IS NOT NULL THEN");
+    sb.AppendLine($"    INSERT INTO {quotedSchema}.wh_perspective_forms (table_name, temporal_form, applied_at, settled_at)");
+    sb.AppendLine($"    VALUES ('{perspective.TableName}', 2, now(), now())");
+    sb.AppendLine("    ON CONFLICT (table_name) DO NOTHING;");
+    sb.AppendLine("  END IF;");
+    sb.AppendLine("END");
+    sb.AppendLine("$wb$;");
+  }
+
+  /// <summary>
   /// Appends CREATE TABLE SQL for a single perspective table.
   /// </summary>
   private static void _appendCreateTableSql(
@@ -2295,6 +2560,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string quotedSchema) {
     // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
     sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
+    _appendFormLedgerRow(sb, perspective, quotedSchema);
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     sb.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     sb.AppendLine("  data JSONB NOT NULL,");
@@ -2370,11 +2636,29 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant");
     sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
     sb.AppendLine();
+
+    // Declared indexes over JSON-only fields. The GIN index above answers containment and nothing
+    // else, so a field filtered by a range or used as a sort key is read by scanning until it has one
+    // of these. Emitted here so it is created once through the normal schema path.
+    // This is the fallback script the perspective pass applies when it cannot read the tracking
+    // tables, and it carries the same trigram indexes as the hash-tracked one, so it needs the same
+    // block: one CREATE EXTENSION per table, inside markers the pass can skip as a whole. Emitted
+    // outside a block, a trigram index reaches a server with no gin_trgm_ops operator class as an
+    // ordinary statement and fails the pass with nothing to skip.
+    JsonIndexSql.AppendScript(
+      sb, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
+    _appendCompositeIndexes(sb, perspective, quotedSchema, shortName);
+    sb.AppendLine();
   }
 
   /// <summary>
-  /// Appends indexes for physical fields marked with Indexed = true, including vector indexes.
+  /// Appends indexes for promoted fields that declared <c>[Indexed]</c>, vector fields included.
   /// </summary>
+  /// <remarks>
+  /// A vector is no longer indexed by being a vector. It asks with <c>[Indexed]</c> like every other
+  /// field, which is the opt-in principle the rest of this surface follows, so a <c>[VectorField]</c>
+  /// that declares nothing gets a column and no index.
+  /// </remarks>
   private static void _appendPhysicalFieldIndexes(
       StringBuilder sb,
       PerspectiveModelInfo perspective,
@@ -2429,6 +2713,23 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Each perspective gets its own CREATE TABLE + indexes SQL, enabling per-perspective
   /// change detection in the migration tracking system.
   /// </summary>
+  /// <summary>
+  /// Emits the guarded rewrites, one entry per perspective that has a stored format to convert.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A phase of its own because of where it has to run. An index over an extraction of a rewritten
+  /// key needs the rewrite committed; the initializer builds its indexes inside one advisory-locked
+  /// transaction; and committing from a second connection while that transaction is open deadlocks
+  /// on catalog rows it has not committed, with neither side able to move and PostgreSQL unable to
+  /// detect it because one of them waits on a client rather than a lock.
+  /// </para>
+  /// <para>
+  /// Running before that transaction opens means the tables frequently do not exist yet, which is
+  /// why every statement carries its own <c>to_regclass</c> guard rather than being ordered after
+  /// the DDL. A perspective with nothing to convert contributes nothing.
+  /// </para>
+  /// </remarks>
   private static string _generatePerspectiveEntriesCode(
       List<PerspectiveModelInfo> perspectives,
       string schema) {
@@ -2449,6 +2750,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspective = uniqueTables[i];
       var perspSql = new StringBuilder();
 
+      // No rewrite here. It runs as its own committed phase before the initializer's transaction
+      // opens, derived at runtime by CanonicalTemporalRewrite from the model and the serializer.
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
@@ -2457,7 +2760,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           .Replace("{", "{{")
           .Replace("}", "}}");
 
-      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
+      // The entry name is the per-perspective hash key the initializer records and compares
+      // (perspective:<name> in wh_schema_migrations). The table is the one name unique to a
+      // perspective within its schema: models nested under feature holders share simple names
+      // (Order.Model, Invoice.Model), and keyed by simple name they shared one hash row, so the one
+      // compared first always read as changed and every start re-applied the DDL under the lock.
+      var perspectiveName = perspective.TableName;
 
       sb.Append($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
       if (i < uniqueTables.Count - 1) {
@@ -2470,6 +2778,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   private static void _generatePerspectiveTableSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
+    // See _appendFormLedgerRow: a table this release creates is recorded as converted at creation.
+    _appendFormLedgerRow(perspSql, perspective, quotedSchema);
     perspSql.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     perspSql.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     perspSql.AppendLine("  data JSONB NOT NULL,");
@@ -2520,6 +2830,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  WHERE sys_created_at IS NULL OR sys_updated_at IS NULL;");
   }
 
+
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
@@ -2533,6 +2844,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // serve ->> equality; the tenant filter of lens + collective apply needs a btree). Kept in sync here so
     // the per-perspective schema-hash entries match the concatenated init SQL.
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
+
+    // See _appendStandardIndexes: a declared index is what makes a range or an ordering on a
+    // JSON-only field a lookup rather than a scan. The trigram indexes go inside one
+    // optional-extension block, which creates the extension once, and the schema pass skips that
+    // whole block with one warning on a server that refuses the extension.
+    JsonIndexSql.AppendScript(perspSql, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
+    _appendCompositeIndexes(perspSql, perspective, quotedSchema, shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {
@@ -2586,8 +2904,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
 
     sb.Append('{');
-    var dbClrTypeName = perspective.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "");
-    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
+    // The registry key is the CLR form (Outer+Model), the same form the runtime looks it up by
+    // (TypeNameFormatter.FormatClrTypeName). A display-string rendering (Outer.Model) matched
+    // nothing for nested models and left row retention silently un-enrolled (issue #697).
+    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelClrTypeName)}\",");
     sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
     sb.Append($"\"SchemaJson\":{schemaJson},");
     sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
@@ -2689,7 +3009,10 @@ internal sealed record DbContextInfo(
 /// Information about a discovered perspective and its TModel type.
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
-/// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="ModelTypeName">Fully qualified model type name (TModel), the form code generation needs</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types) from
+/// <c>TypeNameUtilities.BuildClrTypeName</c>: the registry key, mirrored at runtime by
+/// <c>TypeNameFormatter.FormatClrTypeName</c></param>
 /// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
@@ -2698,11 +3021,14 @@ internal sealed record DbContextInfo(
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
+    string ModelClrTypeName,
     string DbSetPropertyName,
     string TableName,
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     string CoalesceBody);
 
 /// <summary>
@@ -2711,21 +3037,26 @@ internal sealed record PerspectiveModelInfo(
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
 /// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
+    string ModelClrTypeName,
     string DbSetPropertyName,
     string TableBaseName,
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CompositeIndexInfo> CompositeIndexes,
     string CoalesceBody);
 
 /// <summary>

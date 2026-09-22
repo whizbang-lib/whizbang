@@ -75,10 +75,9 @@ public class TrackedGuidLockChangeLevelTests {
 
     for (var t = 0; t < taskCount; t++) {
       for (var i = 1; i < perThread[t].Count; i++) {
-        var cmp = string.Compare(
+        var cmp = string.CompareOrdinal(
           perThread[t][i].ToString("D"),
-          perThread[t][i - 1].ToString("D"),
-          StringComparison.Ordinal);
+          perThread[t][i - 1].ToString("D"));
         await Assert.That(cmp).IsGreaterThan(0)
           .Because($"Thread {t}: position {i} must be > position {i - 1}.");
       }
@@ -98,9 +97,9 @@ public class TrackedGuidLockChangeLevelTests {
     }
 
     for (var i = 1; i < ids.Length; i++) {
-      var cmp = string.Compare(ids[i].ToString("D"), ids[i - 1].ToString("D"), StringComparison.Ordinal);
+      var cmp = string.CompareOrdinal(ids[i].ToString("D"), ids[i - 1].ToString("D"));
       await Assert.That(cmp).IsGreaterThan(0)
-        .Because($"Sequential single-thread NewMedo() must remain strictly monotonic after the lock fix.");
+        .Because("Sequential single-thread NewMedo() must remain strictly monotonic after the lock fix.");
     }
   }
 
@@ -125,7 +124,7 @@ public class TrackedGuidLockChangeLevelTests {
 
     await Assert.That(outer).IsNotNull();
     await Assert.That(inner).IsNotNull();
-    var cmp = string.Compare(inner!.Value.ToString("D"), outer!.Value.ToString("D"), StringComparison.Ordinal);
+    var cmp = string.CompareOrdinal(inner!.Value.ToString("D"), outer!.Value.ToString("D"));
     await Assert.That(cmp).IsGreaterThan(0);
   }
 }

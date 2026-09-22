@@ -11,8 +11,10 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Observability;
 
@@ -35,7 +37,8 @@ namespace Whizbang.Core.Tests.Observability;
 /// <list type="bullet">
 /// <item><description>Counter name <c>whizbang.dead_letters.added</c> on meter
 /// <c>Whizbang.DeadLetters</c>.</description></item>
-/// <item><description>Value is +1 per promotion (one row → one metric event).</description></item>
+/// <item><description>Value is +1 per promotion (one row → +1 on the cumulative series the
+/// passive counter reports at collection, #711).</description></item>
 /// <item><description>Tagged <c>source_table=wh_outbox</c> + <c>reason=MaxAttemptsExceeded</c>
 /// so PromQL queries can slice by failure-mode + source.</description></item>
 /// </list>
@@ -52,7 +55,7 @@ public class DeadLetterMetricsEmissionTests {
 
   // --- fakes (compact copies of Slice 3b's fixtures; tests stay self-contained) ---
 
-  private sealed class _FakeWorkChannelWriter : IWorkChannelWriter {
+  private sealed class FakeWorkChannelWriter : IWorkChannelWriter {
     private readonly Channel<OutboxWork> _channel = Channel.CreateUnbounded<OutboxWork>();
     public ChannelReader<OutboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
@@ -68,22 +71,22 @@ public class DeadLetterMetricsEmissionTests {
     public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
-  private sealed class _NoOpCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _NoOpFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpFailureChannel : IFailureChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FailingPublishStrategy : IMessagePublishStrategy {
+  private sealed class FailingPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> AttemptedPublish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       AttemptedPublish.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -95,7 +98,7 @@ public class DeadLetterMetricsEmissionTests {
     }
   }
 
-  private sealed class _CapturingDeadLetterStore : IDeadLetterStore {
+  private sealed class CapturingDeadLetterStore : IDeadLetterStore {
     public TaskCompletionSource<Guid> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation,
@@ -105,7 +108,7 @@ public class DeadLetterMetricsEmissionTests {
     }
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -118,16 +121,19 @@ public class DeadLetterMetricsEmissionTests {
     };
   }
 
-  private sealed class _FakeGenerationProvider(string value) : IGenerationProvider {
+  private sealed class FakeGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
 
-  private sealed record _MetricRecording(string InstrumentName, long Value, IReadOnlyDictionary<string, object?> Tags);
+  private sealed record MetricRecording(string InstrumentName, long Value, IReadOnlyDictionary<string, object?> Tags);
 
-  private static MeterListener _attachListener(ConcurrentBag<_MetricRecording> recordings) {
+  // Filters by meter INSTANCE, not name: every DeadLetterMetrics in the process shares the meter
+  // name, and a passive counter (#711) reports EVERY enabled instance's series at collection —
+  // a name filter would fold parallel tests' promotions into this one's count.
+  private static MeterListener _attachListener(ConcurrentBag<MetricRecording> recordings, TestMeterFactory factory) {
     var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (instrument.Meter.Name == DeadLetterMetrics.METER_NAME) {
+        if (factory.CreatedMeters.Contains(instrument.Meter)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -135,11 +141,26 @@ public class DeadLetterMetricsEmissionTests {
     listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => {
       var dict = new Dictionary<string, object?>(tags.Length);
       foreach (var kvp in tags) { dict[kvp.Key] = kvp.Value; }
-      recordings.Add(new _MetricRecording(instrument.Name, value, dict));
+      recordings.Add(new MetricRecording(instrument.Name, value, dict));
     });
     listener.Start();
     return listener;
   }
+
+  /// <summary>
+  /// Collects the passive counters (#711): discards any earlier reading and returns the current
+  /// cumulative value of every series — the untagged one, the constructor's zero seeds per
+  /// source_table/reason, and one per tag set a promotion added.
+  /// </summary>
+  private static List<MetricRecording> _collect(MeterListener listener, ConcurrentBag<MetricRecording> recordings) {
+    recordings.Clear();
+    listener.RecordObservableInstruments();
+    return [.. recordings];
+  }
+
+  /// <summary>The <c>whizbang.dead_letters.added</c> series that actually counted something.</summary>
+  private static List<MetricRecording> _added(IEnumerable<MetricRecording> readings) =>
+    [.. readings.Where(r => r.InstrumentName == "whizbang.dead_letters.added" && r.Value > 0)];
 
   private static OutboxWork _work(int attempts) {
     var msgId = (Guid)TrackedGuid.NewMedo();
@@ -166,31 +187,41 @@ public class DeadLetterMetricsEmissionTests {
 
   [Test]
   public async Task OutboxPublishWorker_PromotesToDlq_EmitsAddedCounterTaggedSourceTableAndReasonAsync() {
-    var recordings = new ConcurrentBag<_MetricRecording>();
-    using var listener = _attachListener(recordings);
-
-    var whizbangMetrics = new WhizbangMetrics();
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
     var dlqMetrics = new DeadLetterMetrics(whizbangMetrics);
+    var recordings = new ConcurrentBag<MetricRecording>();
+    using var listener = _attachListener(recordings, factory);
 
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _NoOpCompletionChannel();
-    var failure = new _NoOpFailureChannel();
-    var renewal = new _NoOpLeaseRenewalChannel();
+    var channel = new FakeWorkChannelWriter();
+    var completion = new NoOpCompletionChannel();
+    var failure = new NoOpFailureChannel();
+    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var strategy = new _FailingPublishStrategy();
-    var dlqStore = new _CapturingDeadLetterStore();
+    var strategy = new FailingPublishStrategy();
+    var dlqStore = new CapturingDeadLetterStore();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
-      NullLogger<OutboxPublishWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      instanceProvider: new _FakeServiceInstanceProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider("test-gen"),
+      generationProvider: new FakeGenerationProvider("test-gen"),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate(),
       dlqMetrics: dlqMetrics);
 
     using var cts = new CancellationTokenSource();
@@ -198,17 +229,20 @@ public class DeadLetterMetricsEmissionTests {
     await channel.WriteAsync(_work(attempts: 2), cts.Token);
 
     await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    // The metric increment fires immediately after MoveAsync returns. Yield once to let
-    // the worker finish the rest of _routeResultAsync before sampling.
+    // The metric increment fires immediately after MoveAsync returns, on the worker's own
+    // continuation. A passive counter (#711) shows nothing until collected, so yield and
+    // re-collect until the promotion's series reads non-zero (bounded).
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    while (recordings.IsEmpty && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+    while (_added(_collect(listener, recordings)).Count == 0 && sw.Elapsed < TimeSpan.FromSeconds(2)) {
       await Task.Yield();
     }
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    var addedEvents = recordings.Where(r => r.InstrumentName == "whizbang.dead_letters.added").ToList();
+    // Final cumulative reading once the worker is quiescent. The constructor seeds every counter
+    // with zeros (#711); only series that actually counted a promotion are considered here.
+    var addedEvents = _added(_collect(listener, recordings));
     await Assert.That(addedEvents.Count).IsEqualTo(1)
       .Because("OutboxPublishWorker's DLQ promotion path MUST fire whizbang.dead_letters.added exactly once per row promoted — without it, operator dashboards never reflect production-style stuck-row clearance.");
     await Assert.That(addedEvents[0].Value).IsEqualTo(1L)
@@ -225,33 +259,43 @@ public class DeadLetterMetricsEmissionTests {
 
   [Test]
   public async Task OutboxPublishWorker_NoPromotion_NoAddedCounterEmissionAsync() {
-    var recordings = new ConcurrentBag<_MetricRecording>();
-    using var listener = _attachListener(recordings);
-
-    var whizbangMetrics = new WhizbangMetrics();
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
     var dlqMetrics = new DeadLetterMetrics(whizbangMetrics);
+    var recordings = new ConcurrentBag<MetricRecording>();
+    using var listener = _attachListener(recordings, factory);
 
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _NoOpCompletionChannel();
-    var failure = new _NoOpFailureChannel();
-    var renewal = new _NoOpLeaseRenewalChannel();
+    var channel = new FakeWorkChannelWriter();
+    var completion = new NoOpCompletionChannel();
+    var failure = new NoOpFailureChannel();
+    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var strategy = new _FailingPublishStrategy();
-    var dlqStore = new _CapturingDeadLetterStore();
+    var strategy = new FailingPublishStrategy();
+    var dlqStore = new CapturingDeadLetterStore();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
       // MaxOutboxAttempts deliberately UNSET (default null in this test scenario)
       // — promotion gate disabled; failure-channel routing only.
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = null }),
-      NullLogger<OutboxPublishWorker>.Instance,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = null }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      instanceProvider: new _FakeServiceInstanceProvider(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider("test-gen"),
+      generationProvider: new FakeGenerationProvider("test-gen"),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate(),
       dlqMetrics: dlqMetrics);
 
     using var cts = new CancellationTokenSource();
@@ -264,8 +308,10 @@ public class DeadLetterMetricsEmissionTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    var addedEvents = recordings.Where(r => r.InstrumentName == "whizbang.dead_letters.added").ToList();
+    // The constructor seeds every counter with zeros (#711); a promotion would show as a
+    // non-zero added series at collection, so the cumulative reading must hold none.
+    var addedEvents = _added(_collect(listener, recordings));
     await Assert.That(addedEvents).IsEmpty()
-      .Because("With MaxOutboxAttempts unset, no DLQ promotion fires, so the Added counter MUST stay silent — emitting a spurious +1 would inflate dashboards for ops who never opted into DLQ.");
+      .Because("With MaxOutboxAttempts unset, no DLQ promotion fires, so the Added counter MUST stay at zero on every series — a spurious +1 would inflate dashboards for ops who never opted into DLQ.");
   }
 }

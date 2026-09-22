@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("VectorSearch")]
+[Category("Shard2")]
 public class VectorSearchIntegrationTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;
@@ -31,14 +32,17 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Test model with two vector columns for column-comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class VectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? Embedding { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? ReferenceEmbedding { get; set; }
 
     public string Name { get; set; } = "";
@@ -47,11 +51,13 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Second test model for cross-table comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class SecondVectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? TargetEmbedding { get; set; }
 
     public string Label { get; set; } = "";
@@ -174,7 +180,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }
@@ -730,7 +736,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
     // Act & Assert - Lambda that isn't a property access should throw immediately during expression building
     await Assert.That(() => context.VectorTestRows
-        .OrderByCosineDistance(m => new float[] { 1, 0, 0 }, searchVector)) // Not a property!
+        .OrderByCosineDistance(_ => new float[] { 1, 0, 0 }, searchVector)) // Not a property!
         .Throws<ArgumentException>();
   }
 

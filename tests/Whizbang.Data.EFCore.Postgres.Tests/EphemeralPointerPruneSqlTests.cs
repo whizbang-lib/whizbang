@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// SQL (check_function_bodies=on) runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard3")]
 public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
   private static string _commitRequest(Guid instanceId, Guid eventId, Guid streamId, string eventType, int flags) => $$"""
     {
@@ -189,13 +190,12 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
         .Because("the fold ran BEFORE the discard, over the full pointer sequence — pruning must "
                + "never silently erase a stream from the flow census");
     }
-    await using (var wm = connection.CreateCommand()) {
-      wm.CommandText = "SELECT count(*) FROM wh_apply_fold_watermarks WHERE stream_id = @sid";
-      wm.Parameters.AddWithValue("sid", streamId);
-      await Assert.That((long)(await wm.ExecuteScalarAsync())!).IsEqualTo(1L)
-        .Because("the prune's fold is watermarked like every other fold site — a later settled "
-               + "sweep or re-close cannot double-count the stream");
-    }
+    await using var wm = connection.CreateCommand();
+    wm.CommandText = "SELECT count(*) FROM wh_apply_fold_watermarks WHERE stream_id = @sid";
+    wm.Parameters.AddWithValue("sid", streamId);
+    await Assert.That((long)(await wm.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("the prune's fold is watermarked like every other fold site — a later settled "
+             + "sweep or re-close cannot double-count the stream");
   }
 
   [Test]
@@ -337,9 +337,9 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
     }
     await _enableDeepMaintenanceAsync(connection, true);
 
-    var first = await _pruneAsync(connection);
-    await Assert.That(first.Status).IsEqualTo("ok");
-    await Assert.That(first.Rows).IsEqualTo(2L);
+    var (Rows, Status) = await _pruneAsync(connection);
+    await Assert.That(Status).IsEqualTo("ok");
+    await Assert.That(Rows).IsEqualTo(2L);
 
     // Immediately calling again: the 30-day self-gate interval has not elapsed since the first run.
     var second = await _pruneAsync(connection);

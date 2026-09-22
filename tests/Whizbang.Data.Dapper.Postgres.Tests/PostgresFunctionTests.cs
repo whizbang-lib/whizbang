@@ -127,8 +127,13 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId = outboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, instance_id, lease_expiry, received_at)
-      VALUES (@messageId, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @instanceId, @leaseExpiry, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at)
+        VALUES (@messageId, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @instanceId, @leaseExpiry FROM m",
       new { messageId = inboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
     await connection.ExecuteAsync(@"
@@ -164,7 +169,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(outboxInstanceId).IsNull();
 
     var inboxInstanceId = await connection.QuerySingleOrDefaultAsync<Guid?>(@"
-      SELECT instance_id FROM wh_inbox WHERE message_id = @messageId",
+      SELECT instance_id FROM wh_inbox_state WHERE message_id = @messageId",
       new { messageId = inboxMessageId });
     await Assert.That(inboxInstanceId).IsNull();
   }
@@ -500,8 +505,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert inbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at)
-      VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, @streamId, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1 FROM m",
       new { messageId, streamId, now });
 
     // Prepare completion with EventStored flag (2)
@@ -732,13 +742,15 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// v0.671 — multi-pair regression lock for the bulk INSERT/UPDATE refactor of
   /// <c>update_perspective_cursors</c>. The current PL/pgSQL FOR-loop
   /// implementation does FOUR statements per (StreamId, PerspectiveName) pair
   /// (latest-gap-free SELECT, is-complete NOT EXISTS, UPDATE, conditional
   /// INSERT). Bulk pattern collapses that to two statements (one UPDATE for
   /// existing cursors, one INSERT for new pairs), regardless of M.
-  ///
+  /// </para>
+  /// <para>
   /// Mixed-state scenario this test locks:
   ///   - pair A: existing cursor, gap-free progress to event2 → advance
   ///     last_event_id, status stays incomplete (event3 still pending)
@@ -747,6 +759,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   ///   - pair C: existing cursor, no events with processed_at NOT NULL,
   ///     but pending events exist → no change (last_event_id unchanged,
   ///     status unchanged)
+  /// </para>
   /// </summary>
   [Test]
   public async Task UpdatePerspectiveCursors_MultiPair_MixedStates_RetainOldSemanticsAsync() {
@@ -825,12 +838,12 @@ public class PostgresFunctionTests : PostgresTestBase {
       SELECT update_perspective_cursors(@completedEvents::jsonb, false)",
       new { completedEvents });
 
-    var cursorA = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
+    var (LastEventId, Status) = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
       SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
       new { s = streamA, p = perspName });
-    await Assert.That(cursorA.LastEventId).IsEqualTo((Guid)eA2)
+    await Assert.That(LastEventId).IsEqualTo((Guid)eA2)
       .Because("Pair A: events 1&2 processed, gap-free run ends at eA2 (eA3 still pending). Cursor must advance to eA2.");
-    await Assert.That((int)cursorA.Status).IsEqualTo(0)
+    await Assert.That((int)Status).IsEqualTo(0)
       .Because("Pair A is not complete (eA3 still pending), status must stay at 0.");
 
     var cursorB = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
@@ -904,18 +917,18 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(results[0].was_deleted).IsFalse()
       .Because("Debug mode MUST report was_deleted=FALSE — the row was UPDATEd in place, not deleted.");
 
-    var row = await connection.QuerySingleAsync<(int Status, DateTime? ProcessedAt, Guid? InstanceId, DateTime? LeaseExpiry)>(@"
+    var (Status, ProcessedAt, InstanceId, LeaseExpiry) = await connection.QuerySingleAsync<(int Status, DateTime? ProcessedAt, Guid? InstanceId, DateTime? LeaseExpiry)>(@"
       SELECT status, processed_at, instance_id, lease_expiry
       FROM wh_perspective_events WHERE event_work_id = @w",
       new { w = workId });
 
-    await Assert.That(row.Status).IsEqualTo(3)
+    await Assert.That(Status).IsEqualTo(3)
       .Because("Debug mode MUST OR p_completions[i].StatusFlags with existing status: 1 (existing) | 2 (new) = 3.");
-    await Assert.That(row.ProcessedAt).IsNotNull()
+    await Assert.That(ProcessedAt).IsNotNull()
       .Because("Debug mode MUST stamp processed_at = p_now so update_perspective_cursors' gap-free SELECT sees this row as processed.");
-    await Assert.That(row.InstanceId).IsNull()
+    await Assert.That(InstanceId).IsNull()
       .Because("Debug mode MUST clear instance_id so claim_orphaned_perspective_events doesn't try to re-claim the row.");
-    await Assert.That(row.LeaseExpiry).IsNull()
+    await Assert.That(LeaseExpiry).IsNull()
       .Because("Debug mode MUST clear lease_expiry for the same reason — row is no longer leased.");
 
     var stillExists = await connection.QuerySingleAsync<int>(@"
@@ -936,12 +949,14 @@ public class PostgresFunctionTests : PostgresTestBase {
   /// gap-free event and status derived from is_complete.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The WHERE NOT EXISTS clause in the function's `needed_inserts` CTE filters
   /// to pairs without a cursor; the `WHERE new_last_event_id IS NOT NULL` filter
   /// further restricts to pairs with progress to record (the NOT NULL constraint
   /// on <c>wh_perspective_cursors.last_event_id</c> would error on a null).
   /// Both invariants get exercised here:
-  ///
+  /// </para>
+  /// <para>
   ///   - newPair: no cursor exists; events 1 and 2 processed, 3 pending
   ///     → INSERT a new cursor with last_event_id = event2Id and status = 0
   ///       (NOT complete because event3 is still pending).
@@ -951,6 +966,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   ///     <c>store_perspective_events</c> creates the cursor when the first
   ///     event is stored; but the function must safely no-op rather than fail
   ///     the entire batch on this corner.)
+  /// </para>
   /// </remarks>
   [Test]
   public async Task UpdatePerspectiveCursors_InsertPath_NewPairWithGapFreeProgress_CreatesCursorAsync() {
@@ -1079,7 +1095,7 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(status & 32768).IsEqualTo(32768); // Failed flag set
 
-    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting;
+    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting —
     // process_outbox_failures records the error + releases the lease without bumping
     // attempts. The initial attempts=0 stays 0 until a subsequent claim_orphaned_outbox
     // re-claims this row.
@@ -1147,8 +1163,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert inbox message with high attempt count
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, attempts, received_at)
-      VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @highAttempts, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, @streamId, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @highAttempts FROM m",
       new { messageId, streamId, highAttempts, now });
 
     // Prepare failure
@@ -1163,7 +1184,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Assert - scheduled_for should be capped at approximately 5 minutes
     var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset>(@"
-      SELECT scheduled_for FROM wh_inbox WHERE message_id = @messageId",
+      SELECT scheduled_for FROM wh_inbox_state WHERE message_id = @messageId",
       new { messageId });
 
     // Maximum backoff is 30s * 10 = 300s = 5 minutes
@@ -1176,12 +1197,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
   [Test]
   public async Task ProcessPerspectiveEventFailures_CapsExponentialBackoffAt5MinutesAsync() {
-    // Arrange - Event with high attempts count that would overflow without cap
+    // Arrange - Event with a high failure count that would overflow without cap. Migration 139:
+    // the perspective backoff escalates on failures (apply failures), never on attempts (leases).
     var workId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
     var now = DateTimeOffset.UtcNow;
-    const int highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+    const int highFailures = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
@@ -1191,11 +1213,11 @@ public class PostgresFunctionTests : PostgresTestBase {
       VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now });
 
-    // Insert perspective event with high attempt count
+    // Insert perspective event with a high failure count and a single lease
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
-      VALUES (@workId, @streamId, 'TestPerspective', @eventId, 1, @highAttempts, @now)",
-      new { workId, streamId, eventId, highAttempts, now });
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, failures, created_at)
+      VALUES (@workId, @streamId, 'TestPerspective', @eventId, 1, 1, @highFailures, @now)",
+      new { workId, streamId, eventId, highFailures, now });
 
     // Prepare failure
     var failures = JsonSerializer.Serialize(new[] {
@@ -1468,10 +1490,15 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert orphaned inbox messages for different streams
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at, instance_id, lease_expiry)
-      VALUES
-        (@message1Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream1Id, @now, NULL, NULL),
-        (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream2Id, @now, NULL, NULL)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES
+          (@message1Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @stream1Id, @now),
+          (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @stream2Id, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, NULL::uuid, NULL::timestamptz FROM m",
       new { message1Id, message2Id, stream1Id, stream2Id, now });
 
     // Register both instances as heartbeating so the claim's liveness check treats them as live.
@@ -1666,27 +1693,6 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(count).IsEqualTo(1);
   }
-
-  // Helper record types for query results
-  private sealed record WorkBatchRow(
-    int? instance_rank,
-    int? active_instance_count,
-    string source,
-    Guid work_id,
-    Guid? work_stream_id,
-    int? partition_number,
-    string? destination,
-    string? message_type,
-    string? envelope_type,
-    string? message_data,
-    string? metadata,
-    int status,
-    int attempts,
-    bool is_newly_stored,
-    bool is_orphaned,
-    string? error,
-    int? failure_reason,
-    string? perspective_name);
 
   /// <summary>
   /// claim_work short-circuits and returns before it ranks when every queue is empty, so a test

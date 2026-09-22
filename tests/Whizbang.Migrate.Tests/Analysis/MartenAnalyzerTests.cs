@@ -73,13 +73,13 @@ public class MartenAnalyzerTests {
       public class OrderProjection : SingleStreamProjection<Order> {
         public void Apply(OrderCreated @event, Order state) { }
         public void Apply(OrderUpdated @event, Order state) { }
-        public void Apply(OrderCancelled @event, Order state) { }
+        public void Apply(OrderCanceled @event, Order state) { }
       }
 
       public class Order { }
       public record OrderCreated(string Id);
       public record OrderUpdated(string Id);
-      public record OrderCancelled(string Id);
+      public record OrderCanceled(string Id);
       """;
 
     // Act
@@ -89,7 +89,7 @@ public class MartenAnalyzerTests {
     await Assert.That(result.Projections[0].EventTypes.Count).IsEqualTo(3);
     await Assert.That(result.Projections[0].EventTypes).Contains("OrderCreated");
     await Assert.That(result.Projections[0].EventTypes).Contains("OrderUpdated");
-    await Assert.That(result.Projections[0].EventTypes).Contains("OrderCancelled");
+    await Assert.That(result.Projections[0].EventTypes).Contains("OrderCanceled");
   }
 
   [Test]
@@ -282,4 +282,49 @@ public class MartenAnalyzerTests {
     // Assert
     await Assert.That(result.Projections.Count).IsEqualTo(2);
   }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_DetectsEveryArtefactKindAsync() {
+    // The four lists drive both the report and the migration plan. A detector that silently
+    // stopped finding one kind would produce an analysis claiming a project has no projections
+    // -- and a migration that then leaves them behind.
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-kinds-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      await File.WriteAllTextAsync(Path.Combine(dir, "Everything.cs"), """
+        using Marten;
+        using Marten.Events.Aggregation;
+
+        public class OrderProjection : SingleStreamProjection<OrderModel> {
+          public void Apply(OrderPlaced @event, OrderModel state) { state.Status = "placed"; }
+        }
+
+        public class OrderRepository {
+          private readonly IDocumentSession _session;
+          public OrderRepository(IDocumentSession session) { _session = session; }
+        }
+
+        public static class Startup {
+          public static void Configure(IServiceCollection services) {
+            services.AddMarten(o => { });
+          }
+        }
+
+        public class OrderModel { public string Status { get; set; } = ""; }
+        public record OrderPlaced(string Id);
+        """);
+
+      var result = await new MartenAnalyzer().AnalyzeProjectAsync(dir);
+
+      await Assert.That(result.Projections.Count).IsGreaterThan(0)
+        .Because("SingleStreamProjection<T> is the primary Marten projection shape");
+      await Assert.That(result.EventStoreUsages.Count).IsGreaterThan(0)
+        .Because("an IDocumentSession dependency is what makes a class an event-store consumer");
+      await Assert.That(result.DIRegistrations.Count).IsGreaterThan(0)
+        .Because("AddMarten is the registration a migration has to replace");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }

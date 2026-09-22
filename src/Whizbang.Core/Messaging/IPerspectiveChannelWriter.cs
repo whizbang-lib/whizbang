@@ -10,6 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// Implementations are typically singleton and shared between WorkBatchCoordinator and PerspectiveWorker.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveChannelWriterTests.cs</tests>
+/// <docs>operations/workers/perspective-worker</docs>
 public interface IPerspectiveChannelWriter {
   /// <summary>
   /// Gets the channel reader for consumers (PerspectiveWorker).

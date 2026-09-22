@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+[Category("Shard4")]
 public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
   private const string PERSPECTIVE = "action_test";
@@ -64,34 +65,34 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
   /// The bare in-memory store answers null for both, which is the stamper-lag shape — these
   /// scenarios need the settled shape.
   /// </summary>
-  private sealed class _stampingEventStore(
+  private sealed class StampingEventStore(
       InMemoryEventStore inner, IReadOnlyDictionary<Guid, long?> stamps) : IEventStore {
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
-      inner.AppendAsync(streamId, envelope, ct);
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
-      inner.AppendAsync(streamId, message, ct);
-    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken ct = default) =>
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
+      inner.AppendAsync(streamId, envelope, cancellationToken);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
+      inner.AppendAsync(streamId, message, cancellationToken);
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(stamps.TryGetValue(eventId, out var v) ? v : null);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
         Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
-      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
         if (stamps.TryGetValue(envelope.MessageId.Value, out var seq)) {
           envelope.LocalCommitSequence = seq;
         }
         yield return envelope;
       }
     }
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
-      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
-      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
-      inner.GetLastSequenceAsync(streamId, ct);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      inner.GetLastSequenceAsync(streamId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -133,7 +134,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     var createdId = Guid.Parse("019e8000-0000-7000-8000-000000000001");
     var newerId = Guid.Parse("019e9000-0000-7000-8000-000000000002");
     var backfilledOldId = Guid.Parse("019e8800-0000-7000-8000-000000000003");
-    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
       [createdId] = 100,
       [newerId] = 200,
       [backfilledOldId] = 300,
@@ -172,7 +173,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
       .Because("the transient arrival-order state — this is what the declared rewind corrects");
 
     // The declared rewind: migration 100 flags the cursor at work-item creation (the
-    // straggler's id slots below the cursor — proven by ReconcileRewindDeclarationSqlTests);
+    // straggler's id slots below the cursor — proven by ReconcileRewindDeclarationSqlTests) —
     // the worker's RewindRequired routing then invokes exactly this call.
     await using (var ctx3 = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx3, PERSPECTIVE);
@@ -204,7 +205,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
     var newerId = Guid.Parse("019e9000-0000-7000-8000-000000000011");
     var backfilledInitId = Guid.Parse("019e8000-0000-7000-8000-000000000012");
-    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
       [newerId] = 200,
       [backfilledInitId] = 300,
     });
@@ -259,7 +260,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
     var createdId = Guid.Parse("019e8000-0000-7000-8000-000000000021");
     var backfilledId = Guid.Parse("019e8800-0000-7000-8000-000000000022");
-    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
       [createdId] = 100,
       [backfilledId] = 250,
     });
@@ -327,7 +328,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     // before created, and created's Value=1 clobbers updated's 999.
     var createdId = Guid.Parse("019eff00-0000-7000-8000-0000000000ff");   // lex-LARGE
     var updatedId = Guid.Parse("019e0000-0000-7000-8000-000000000001");   // lex-SMALL
-    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
       [createdId] = 100,
       [updatedId] = 200,
     });
@@ -371,7 +372,7 @@ public class ReconcileRewindScenarioTests : EFCoreTestBase {
     var createdId = Guid.Parse("019e1000-0000-7000-8000-000000000001");
     var stragglerId = Guid.Parse("019e2000-0000-7000-8000-000000000002");
     var newerId = Guid.Parse("019f0000-0000-7000-8000-000000000003");
-    var stamped = new _stampingEventStore(eventStore, new Dictionary<Guid, long?> {
+    var stamped = new StampingEventStore(eventStore, new Dictionary<Guid, long?> {
       [createdId] = 100,
       [newerId] = 200,
       [stragglerId] = 300,

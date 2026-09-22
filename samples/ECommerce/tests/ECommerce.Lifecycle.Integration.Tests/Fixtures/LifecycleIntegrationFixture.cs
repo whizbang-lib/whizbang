@@ -11,6 +11,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Configuration;
@@ -19,11 +21,13 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Hosting.RabbitMQ;
 using Whizbang.Testing.Lifecycle;
+using Whizbang.Testing.Workers;
 using Whizbang.Transports.RabbitMQ;
 
 namespace ECommerce.Lifecycle.Integration.Tests.Fixtures;
@@ -199,8 +203,9 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     // Publish strategy
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()));
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance));
 
     // Work channel
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
@@ -238,15 +243,24 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        consumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()));
+        transport: sp.GetRequiredService<ITransport>(),
+        options: consumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        routingOptions: Options.Create(new RoutingOptions()),
+        workChannelWriter: new WorkChannelWriter(),
+        claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        controlClass: Options.Create(new ControlClassOptions())));
 
     // Logging
     builder.Services.AddLogging(logging => {

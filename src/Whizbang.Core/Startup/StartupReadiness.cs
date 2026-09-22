@@ -89,14 +89,14 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
   public StartupReadyService(
       IStartupPipelineState pipelineState,
       StartupReadySignal signal,
-      IReadOnlyList<IStartupReadinessContributor>? contributors = null,
-      ILogger<StartupReadyService>? logger = null) {
+      IReadOnlyList<IStartupReadinessContributor> contributors,
+      ILogger<StartupReadyService> logger) {
     ArgumentNullException.ThrowIfNull(pipelineState);
     ArgumentNullException.ThrowIfNull(signal);
     _pipelineState = pipelineState;
     _signal = signal;
-    _contributors = contributors ?? [];
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StartupReadyService>.Instance;
+    _contributors = contributors;
+    _logger = logger;
   }
 
   /// <summary>
@@ -132,7 +132,7 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
           .ConfigureAwait(false);
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-      LogCancelledDuringStartup(_logger, watch.Elapsed.TotalSeconds);
+      LogCanceledDuringStartup(_logger, watch.Elapsed.TotalSeconds);
       return;
     }
 
@@ -194,7 +194,7 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
   static partial void LogStillWaiting(ILogger logger, double elapsedSeconds, string waiting);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
-    Message = "Startup cancelled after {ElapsedSeconds:F0}s while waiting for readiness — the host is "
+    Message = "Startup canceled after {ElapsedSeconds:F0}s while waiting for readiness — the host is "
             + "stopping. Readiness was never signalled (the composite is fail-closed); shutting down cleanly")]
-  static partial void LogCancelledDuringStartup(ILogger logger, double elapsedSeconds);
+  static partial void LogCanceledDuringStartup(ILogger logger, double elapsedSeconds);
 }

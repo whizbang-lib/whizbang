@@ -30,7 +30,7 @@ public class MaintenanceWorkerPointerPruneTests {
       return Task.FromResult(PruneResult);
     }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
     // Unused IWorkCoordinator surface for this test.
@@ -42,8 +42,6 @@ public class MaintenanceWorkerPointerPruneTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static MaintenanceWorker _buildWorker(FakeCoordinator coord) {
@@ -86,7 +84,7 @@ public class MaintenanceWorkerPointerPruneTests {
     public Task<EphemeralPointerPruneResult> PruneAncientEphemeralPointersAsync(CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("prune blew up");
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       MaintenanceRan = true;
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
     }
@@ -100,8 +98,6 @@ public class MaintenanceWorkerPointerPruneTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static MaintenanceWorker _buildWorker2(ThrowingPruneCoordinator coord) {

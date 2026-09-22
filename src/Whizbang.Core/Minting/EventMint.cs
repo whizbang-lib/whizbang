@@ -8,26 +8,21 @@ namespace Whizbang.Core.Minting;
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#minting</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs:EventMint_ExposesTheConstructedFamilies_UnchangedAsync</tests>
-public sealed class EventMint : IEventMint {
-  /// <summary>Aggregates the resolved family services.</summary>
-  /// <param name="composites">The composite family.</param>
-  /// <param name="collective">The collective family (placeholder until phase 6).</param>
-  /// <param name="checkpoints">The checkpoint family (control-class TTL minting).</param>
-  /// <exception cref="ArgumentNullException">Thrown when any family is null.</exception>
-  public EventMint(ICompositeFactory composites, ICollectiveMint collective, ICheckpointMint checkpoints) {
-    Composites = composites ?? throw new ArgumentNullException(nameof(composites));
-    Collective = collective ?? throw new ArgumentNullException(nameof(collective));
-    Checkpoints = checkpoints ?? throw new ArgumentNullException(nameof(checkpoints));
-  }
+/// <remarks>Aggregates the resolved family services.</remarks>
+/// <param name="composites">The composite family.</param>
+/// <param name="collective">The collective family (placeholder until phase 6).</param>
+/// <param name="checkpoints">The checkpoint family (control-class TTL minting).</param>
+/// <exception cref="ArgumentNullException">Thrown when any family is null.</exception>
+public sealed class EventMint(ICompositeFactory composites, ICollectiveMint collective, ICheckpointMint checkpoints) : IEventMint {
 
   /// <inheritdoc />
-  public ICompositeFactory Composites { get; }
+  public ICompositeFactory Composites { get; } = composites ?? throw new ArgumentNullException(nameof(composites));
 
   /// <inheritdoc />
-  public ICollectiveMint Collective { get; }
+  public ICollectiveMint Collective { get; } = collective ?? throw new ArgumentNullException(nameof(collective));
 
   /// <inheritdoc />
-  public ICheckpointMint Checkpoints { get; }
+  public ICheckpointMint Checkpoints { get; } = checkpoints ?? throw new ArgumentNullException(nameof(checkpoints));
 }
 
 /// <summary>
@@ -36,5 +31,4 @@ public sealed class EventMint : IEventMint {
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
-public sealed class CollectiveMint : ICollectiveMint {
-}
+public sealed class CollectiveMint : ICollectiveMint;

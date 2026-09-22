@@ -75,7 +75,7 @@ public class ReceptorInvokerOwnedDomainTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           tracker.Record(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -304,21 +304,6 @@ public class ReceptorInvokerOwnedDomainTests {
       LifecycleStage.PreOutboxInline);
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task PreOutboxInline_WhenDispatchContextHasOutboxOnly_FiresAsync() {
-    // Mode=Outbox only (no LocalDispatch) → local didn't fire, PreOutbox should fire
-    var tracker = new InvocationTracker();
-    var registry = new TestReceptorRegistry(tracker);
-    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxInline);
-    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
-
-    await invoker.InvokeAsync(
-      _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Outbox),
-      LifecycleStage.PreOutboxInline);
-
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   // ========================================

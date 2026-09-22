@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Paired with the unit tests in Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs.
 /// </summary>
 [Category("Integration")]
+[Category("Shard2")]
 public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   private const string RebuildBalancePerspectiveName =
@@ -72,32 +73,34 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   /// Reused from scenario 4. Kept inside the test class since it has no production value.
   /// </summary>
   private sealed class PoisonEventStore(IEventStore inner, HashSet<Guid> poisonStreams) : IEventStore {
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
-        inner.AppendAsync(streamId, envelope, ct);
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
-        inner.AppendAsync(streamId, message, ct);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
-        inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
-        inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
+        inner.AppendAsync(streamId, envelope, cancellationToken);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
+        inner.AppendAsync(streamId, message, cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+        inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+        inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
 
+#pragma warning disable RCS1227 // not argument validation: the simulated read failure must surface during enumeration, where a real store's read fails
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
         Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
       if (poisonStreams.Contains(streamId)) {
         throw new InvalidOperationException($"Simulated read failure for poison stream {streamId}");
       }
-      await foreach (var env in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+      await foreach (var env in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
         yield return env;
       }
     }
+#pragma warning restore RCS1227
 
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
-        inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
-        inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
-        inner.GetLastSequenceAsync(streamId, ct);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+        inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+        inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+        inner.GetLastSequenceAsync(streamId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
         inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -468,7 +471,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(inventoryRow!.Data.OnHand).IsEqualTo(driftedValue);
 
     // Assert: balance projection reflects its own event stream (99).
-    // Note on 198 vs 99: the balance stream was seeded before inventory's baseline rebuild;
+    // Note on 198 vs 99: the balance stream was seeded before inventory's baseline rebuild —
     // the inventory rebuild iterates ALL streams in the event store but resolves the balance
     // runner against the InventoryModel store, so it does nothing persistent for the balance
     // stream (the inventory runner doesn't handle RebuildCreditedEvent). Only the explicit
@@ -926,9 +929,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     cmd.Parameters.Add(nameParam);
     await using var reader = await cmd.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
-    await Assert.That(reader.IsDBNull(0)).IsTrue();
-    await Assert.That(reader.IsDBNull(1)).IsTrue();
-    await Assert.That(reader.IsDBNull(2)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(0)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(2)).IsTrue();
   }
 
   // ==========================================================================

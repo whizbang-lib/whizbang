@@ -77,7 +77,7 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
     ArgumentNullException.ThrowIfNull(dbContextOrSession);
 
     var eventType = evt.GetType();
-    var eventTypeName = eventType.FullName ?? eventType.Name;
+    var eventTypeName = TypeNameFormatter.DisplayName(eventType);
     var eventNamespace = eventType.Namespace ?? string.Empty;
 
     // OTel span for the whole fan-out: this is what surfaces a single slow collective event in a trace
@@ -208,6 +208,6 @@ public sealed class CollectiveDispatcher : ICollectiveDispatcher {
       }
     }
     throw new InvalidOperationException(
-      $"No ICollectiveEventExecutor registered for ModelType='{modelType.FullName}'. Register an EFCoreCollectiveEventExecutor<{modelType.Name}> (or driver-equivalent) for each TModel that has a [CollectiveApplyFor] handler.");
+      $"No ICollectiveEventExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. Register an EFCoreCollectiveEventExecutor<{modelType.Name}> (or driver-equivalent) for each TModel that has a [CollectiveApplyFor] handler.");
   }
 }

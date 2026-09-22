@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// Translates <see cref="WhizbangJsonDbFunctions.AllowedPrincipalsContainsAny"/> to PostgreSQL's ?| operator.
 /// </summary>
 /// <remarks>
-/// Generates SQL like: <c>scope->'AllowedPrincipals' ?| ARRAY['user:alice', 'group:sales']</c>
+/// Generates SQL like: <c>scope->'ap' ?| ARRAY['user:alice', 'group:sales']</c>
 /// This is much more efficient than multiple OR'd @> containment checks for large arrays.
 /// </remarks>
 /// <docs>fundamentals/security/security#principal-filtering</docs>
@@ -23,7 +23,7 @@ public class JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpres
   private static readonly MethodInfo _allowedPrincipalsContainsAnyMethod =
     typeof(WhizbangJsonDbFunctions).GetMethod(
       nameof(WhizbangJsonDbFunctions.AllowedPrincipalsContainsAny),
-      [typeof(DbFunctions), typeof(PerspectiveScope), typeof(string[])])!;
+      [typeof(DbFunctions), typeof(List<string>), typeof(string[])])!;
 
   private readonly NpgsqlSqlExpressionFactory _sqlExpressionFactory = sqlExpressionFactory;
 
@@ -38,23 +38,22 @@ public class JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpres
     }
 
     // arguments[0] is DbFunctions (unused)
-    // arguments[1] is the Scope JSONB column (e.g., r.Scope)
-    // arguments[2] is the string[] values to check
+    // arguments[1] is the allowed-principals MEMBER, already rendered by EF as a traversal into the
+    // scope document (scope->'ap' — EF uses the serialized name from [JsonPropertyName]).
+    // arguments[2] is the string[] values to check.
 
-    var scopeColumn = arguments[1];
+    // The member, not the whole complex type. PerspectiveScope is mapped with
+    // ComplexProperty().ToJson(), so it is a STRUCTURAL type: EF cannot render it as the scalar
+    // SqlExpression a DbFunction argument has to be, and abandons translation before any
+    // method-call translator is consulted — which is why this function never worked while taking
+    // the scope itself. Its collection member does render, so EF hands us the traversal already
+    // built and correctly keyed, and all that remains is the operator.
+    var allowedPrincipalsPath = arguments[1];
     var values = arguments[2];
 
-    // First, extract the AllowedPrincipals array from the Scope JSONB column
-    // This generates: scope->'AllowedPrincipals'
-    var allowedPrincipalsPath = _sqlExpressionFactory.JsonTraversal(
-      scopeColumn,
-      [_sqlExpressionFactory.Constant("AllowedPrincipals")],
-      returnsText: false,  // Returns JSONB, not text
-      typeof(string),
-      scopeColumn.TypeMapping);
-
-    // Then apply the ?| operator: scope->'AllowedPrincipals' ?| ARRAY[...]
-    // The ?| operator checks if any of the text array elements exist in the JSONB array
+    // scope->'ap' ?| ARRAY[...] — the ?| operator asks whether any element of the right-hand text
+    // array exists in the left-hand JSONB array, and is GIN-indexable, which is the whole reason
+    // this function exists rather than a per-row unnest.
     return _sqlExpressionFactory.MakePostgresBinary(
       PgExpressionType.JsonExistsAny,
       allowedPrincipalsPath,

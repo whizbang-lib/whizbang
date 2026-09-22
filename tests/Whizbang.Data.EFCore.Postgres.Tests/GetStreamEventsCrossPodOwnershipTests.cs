@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// a live instance must not be re-claimed by another instance on lease-expiry alone (only on owner
 /// death / clean handoff).</para>
 /// </summary>
+[Category("Shard3")]
 public class GetStreamEventsCrossPodOwnershipTests : EFCoreTestBase {
 
   [Test]

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Diagnostics;
 /// </para>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private readonly DebuggerAwareClockOptions _options;
   private readonly Channel<bool> _pauseStateChannel;
@@ -41,7 +41,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       FullMode = BoundedChannelFullMode.DropOldest
     });
     _process = Process.GetCurrentProcess();
-    _lastCpuSample = _process.TotalProcessorTime;
+    _lastCpuSample = _readCpuTime();
     _lastSampleTime = DateTime.UtcNow;
 
     // Start sampling timer if using CPU time sampling mode
@@ -50,6 +50,9 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _sampler = new Timer(_sampleCpuTime, null, interval, interval);
     }
   }
+
+  /// <summary>Reads accumulated CPU time from the configured source, or the process.</summary>
+  private TimeSpan _readCpuTime() => _options.CpuTimeSource?.Invoke() ?? _process.TotalProcessorTime;
 
   /// <inheritdoc />
   public DebuggerDetectionMode Mode => _options.Mode;
@@ -113,7 +116,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     TimeSpan currentCpu;
 
     try {
-      currentCpu = _process.TotalProcessorTime;
+      currentCpu = _readCpuTime();
     } catch (InvalidOperationException) {
       // Process may have exited
       return;
@@ -180,7 +183,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _wallStopwatch = Stopwatch.StartNew();
 
       try {
-        _startCpuTime = clock._process.TotalProcessorTime;
+        _startCpuTime = clock._readCpuTime();
       } catch (InvalidOperationException) {
         _startCpuTime = TimeSpan.Zero;
       }
@@ -254,7 +257,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       // Use CPU time sampling to calculate active time
       TimeSpan currentCpuTime;
       try {
-        currentCpuTime = _clock._process.TotalProcessorTime;
+        currentCpuTime = _clock._readCpuTime();
       } catch (InvalidOperationException) {
         // Process info not available, fall back to wall time
         return _wallStopwatch.Elapsed;
@@ -286,6 +289,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 #pragma warning disable S4487 // Field keeps background task rooted to prevent GC collection
     private readonly Task _readTask;
 #pragma warning restore S4487
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PauseStateSubscription"/> class.
@@ -298,9 +302,16 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     }
 
     public void Dispose() {
+      // Guarded because Dispose must be safe to call twice: Cancel() on an already-disposed
+      // source throws, and a `using` around a subscription the caller also released explicitly
+      // is an ordinary shape — the second release would then fault the caller's scope exit.
+      if (_disposed) {
+        return;
+      }
+      _disposed = true;
       _cts.Cancel();
       _cts.Dispose();
-      // Don't wait for task - it will complete when cancelled
+      // Don't wait for task - it will complete when canceled
     }
 
     private static async Task _readLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {

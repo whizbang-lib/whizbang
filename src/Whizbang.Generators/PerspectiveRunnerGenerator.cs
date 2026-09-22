@@ -104,7 +104,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var modelTypeName = TypeNameUtilities.FullyQualified(modelType);
 
     // Extract event types from all interfaces (using combined interfaces)
     var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(combinedSingleStreamInterfaces, globalInterfaces);
@@ -150,9 +150,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           explicitSeconds = sec;
         }
       }
-      var explicitTtl = explicitSeconds >= 0 ? explicitSeconds
-          : explicitDays >= 0 ? explicitDays * 86400
-          : -1;
+      var explicitTtl = -1;
+      if (explicitSeconds >= 0) {
+        explicitTtl = explicitSeconds;
+      } else if (explicitDays >= 0) {
+        explicitTtl = explicitDays * 86400;
+      }
       if (explicitTtl >= 0) {
         ttlRowSeconds = explicitTtl;
       }
@@ -283,7 +286,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
-            ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            ClassName: TypeNameUtilities.FullyQualified(classSymbol),
             SimpleName: simpleName,
             ClrTypeName: clrTypeName,
             InterfaceTypeArguments: typeArguments,
@@ -301,11 +304,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
+            IsFullHistory: isFullHistory
+,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
-            StreamGroupSpec: streamGroupSpec,
-            IsFullHistory: isFullHistory
-        ),
+            StreamGroupSpec: streamGroupSpec),
         Warning: null
     );
   }
@@ -349,7 +352,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       foreach (var member in type.GetMembers()) {
         if (member is IPropertySymbol property) {
           var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
+              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"));
 
           if (hasStreamIdAttribute) {
             return property.Name;
@@ -522,6 +525,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "REPLAY_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "REBUILD_EVENT_TYPES", eventTypesArray.ToString());
+    // Issue #696: the resurrection-on-wake probe carries the handled event types (static array).
+    result = TemplateUtilities.ReplaceRegion(result, "HANDLED_EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "RESOLVE_TARGET_STREAM_ID", resolveTargetStreamId.ToString());
@@ -744,7 +749,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static List<INamedTypeSymbol> _extractSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
     return [.. classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveFor / IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return (originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                || originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal))
@@ -758,7 +763,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static List<INamedTypeSymbol> _extractGlobalInterfaces(INamedTypeSymbol classSymbol) {
     return [.. classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
@@ -772,7 +777,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static List<INamedTypeSymbol> _extractWithActionsInterfaces(INamedTypeSymbol classSymbol) {
     return [.. classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
@@ -785,7 +790,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static bool _hasScopeForInterface(INamedTypeSymbol classSymbol) {
     return classSymbol.AllInterfaces
         .Any(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           return originalDef == PERSPECTIVE_SCOPE_FOR_INTERFACE_NAME + "<TModel>"
                  && i.TypeArguments.Length == 1;
         });
@@ -815,14 +820,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract from single-stream: skip TModel (index 0), all others are events
     var singleStreamEvents = singleStreamInterfaces
         .SelectMany(iface => iface.TypeArguments.Skip(1))
-        .Select(symbol => (symbol, fqn: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+        .Select(symbol => (symbol, fqn: TypeNameUtilities.FullyQualified(symbol)))
         .GroupBy(x => x.fqn)
         .Select(g => g.First());
 
     // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
     var globalEvents = globalInterfaces
         .SelectMany(iface => iface.TypeArguments.Skip(2))
-        .Select(symbol => (symbol, fqn: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+        .Select(symbol => (symbol, fqn: TypeNameUtilities.FullyQualified(symbol)))
         .GroupBy(x => x.fqn)
         .Select(g => g.First());
 
@@ -831,8 +836,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         .GroupBy(x => x.fqn)
         .Select(g => g.First())
         .ToList();
-    var eventTypes = allEvents.Select(x => x.fqn).ToList();
-    var eventTypeSymbols = allEvents.Select(x => x.symbol).ToList();
+    var eventTypes = allEvents.ConvertAll(x => x.fqn);
+    var eventTypeSymbols = allEvents.ConvertAll(x => x.symbol);
 
     return (eventTypes, eventTypeSymbols);
   }
@@ -883,7 +888,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// implementation did for unwritable properties).
   /// </summary>
   private static string? _buildStreamKeyInitExpression(ITypeSymbol propertyType) {
-    var displayName = propertyType.ToDisplayString();
+    var displayName = TypeNameUtilities.Display(propertyType);
     if (displayName is "System.Guid") {
       return "streamId";
     }
@@ -900,10 +905,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         m.IsStatic
         && m.DeclaredAccessibility == Accessibility.Public
         && m.Parameters.Length == 1
-        && m.Parameters[0].Type.ToDisplayString() == "System.Guid"
+        && TypeNameUtilities.IsNamed(m.Parameters[0].Type, "System.Guid")
         && SymbolEqualityComparer.Default.Equals(m.ReturnType, propertyType));
     if (hasFromFactory) {
-      return $"{propertyType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.From(streamId)";
+      return $"{TypeNameUtilities.FullyQualified(propertyType)}.From(streamId)";
     }
 
     return null;
@@ -913,7 +918,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
         var hasStreamIdAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
+            .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"));
 
         if (hasStreamIdAttribute) {
           return property.Name;
@@ -965,11 +970,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Use shared utility to include inherited Apply methods from base classes
     foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
       var hasMustExist = method.GetAttributes()
-          .Any(a => a.AttributeClass?.ToDisplayString() == MUST_EXIST_ATTRIBUTE_NAME);
+          .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, MUST_EXIST_ATTRIBUTE_NAME));
 
       if (hasMustExist && method.Parameters.Length >= 2) {
         // Second parameter is the event type
-        var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
         if (eventTypes.Contains(eventType)) {
           mustExistEvents.Add(eventType);
         }
@@ -997,7 +1002,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
 
       // Second parameter is the event type
-      var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
       if (!eventTypes.Contains(eventType)) {
         continue;
       }
@@ -1013,7 +1018,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Classifies the return type of an Apply method.
   /// </summary>
   private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType) {
-    var returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var returnTypeName = TypeNameUtilities.FullyQualified(returnType);
 
     // Check for ModelAction
     if (returnTypeName == "global::Whizbang.Core.Perspectives.ModelAction") {
@@ -1029,7 +1034,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (returnType is INamedTypeSymbol namedType &&
         namedType.IsTupleType &&
         namedType.TupleElements.Length == 2) {
-      var secondElement = namedType.TupleElements[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var secondElement = TypeNameUtilities.FullyQualified(namedType.TupleElements[1].Type);
       if (secondElement == "global::Whizbang.Core.Perspectives.ModelAction") {
         return ApplyReturnType.Tuple;
       }
@@ -1104,7 +1109,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
 
     foreach (var attribute in property.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass?.ToDisplayString();
+      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
 
       if (attrClassName != PHYSICAL_FIELD_ATTRIBUTE && attrClassName != VECTOR_FIELD_ATTRIBUTE) {
         continue;

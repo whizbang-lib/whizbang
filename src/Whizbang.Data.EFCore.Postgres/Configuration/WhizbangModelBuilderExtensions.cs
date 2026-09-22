@@ -9,9 +9,6 @@ namespace Whizbang.Data.EFCore.Postgres.Configuration;
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs</tests>
 public static class WhizbangModelBuilderExtensions {
-  private const string COLUMN_TYPE_JSONB = "jsonb";
-  private const string COLUMN_NAME_METADATA = "metadata";
-  private const string COLUMN_NAME_STREAM_ID = "stream_id";
 
   extension(ModelBuilder modelBuilder) {
 
@@ -30,18 +27,25 @@ public static class WhizbangModelBuilderExtensions {
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter retained for backward compatibility with generated code")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     public ModelBuilder ConfigureWhizbangInfrastructure(string? schema = null) {
-      _configureInbox(modelBuilder);
-      _configureOutbox(modelBuilder);
-      _configureEventStore(modelBuilder);
-      _configureServiceInstance(modelBuilder);
-      _configureMessageDeduplication(modelBuilder);
-      _configureMessageAssociations(modelBuilder);
-      _configurePerspectiveCursors(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureInbox(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureOutbox(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureEventStore(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureServiceInstance(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureMessageDeduplication(modelBuilder);
+      WhizbangInfrastructureModel.ConfigureMessageAssociations(modelBuilder);
+      WhizbangInfrastructureModel.ConfigurePerspectiveCursors(modelBuilder);
       return modelBuilder;
     }
   }
+}
 
-  private static void _configureInbox(ModelBuilder modelBuilder) {
+/// <summary>The entity configuration for each Whizbang infrastructure table.</summary>
+static file class WhizbangInfrastructureModel {
+  private const string COLUMN_TYPE_JSONB = "jsonb";
+  private const string COLUMN_NAME_METADATA = "metadata";
+  private const string COLUMN_NAME_STREAM_ID = "stream_id";
+
+  internal static void ConfigureInbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<InboxRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_inbox");
@@ -53,24 +57,31 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
-      entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
-      entity.Property(e => e.Attempts).HasColumnName("attempts");
-      entity.Property(e => e.Error).HasColumnName("error");
       entity.Property(e => e.ReceivedAt).HasColumnName("received_at").IsRequired();
-      entity.Property(e => e.ProcessedAt).HasColumnName("processed_at");
-      entity.Property(e => e.InstanceId).HasColumnName("instance_id");
-      entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
       entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID);
-      entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
-      entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
-      entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
 
-      entity.HasIndex(e => e.StatusFlags);
+      // 162: the work-state columns moved to wh_inbox_state, so this entity must stop claiming
+      // them or the model describes a shape the database does not have. They are ignored rather
+      // than removed from InboxRecord, which is a public type: the record still carries them for
+      // callers that build one, and EF simply does not map them. Nothing queries this entity
+      // through EF today (there is no DbSet<InboxRecord> and no Set<InboxRecord>() anywhere) so
+      // this is a correctness repair to a declaration rather than a change to a live read path,
+      // and it is made so the declaration cannot mislead the next reader.
+      entity.Ignore(e => e.StatusFlags);
+      entity.Ignore(e => e.Attempts);
+      entity.Ignore(e => e.Error);
+      entity.Ignore(e => e.ProcessedAt);
+      entity.Ignore(e => e.InstanceId);
+      entity.Ignore(e => e.LeaseExpiry);
+      entity.Ignore(e => e.PartitionNumber);
+      entity.Ignore(e => e.FailureReason);
+      entity.Ignore(e => e.ScheduledFor);
+
       entity.HasIndex(e => e.ReceivedAt);
     });
   }
 
-  private static void _configureOutbox(ModelBuilder modelBuilder) {
+  internal static void ConfigureOutbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<OutboxRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_outbox");
@@ -101,7 +112,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureEventStore(ModelBuilder modelBuilder) {
+  internal static void ConfigureEventStore(ModelBuilder modelBuilder) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_event_store");
@@ -143,7 +154,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureServiceInstance(ModelBuilder modelBuilder) {
+  internal static void ConfigureServiceInstance(ModelBuilder modelBuilder) {
     modelBuilder.Entity<ServiceInstanceRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_service_instances");
@@ -163,7 +174,7 @@ public static class WhizbangModelBuilderExtensions {
   }
 
 
-  private static void _configureMessageDeduplication(ModelBuilder modelBuilder) {
+  internal static void ConfigureMessageDeduplication(ModelBuilder modelBuilder) {
     modelBuilder.Entity<MessageDeduplicationRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_message_deduplication");
@@ -176,7 +187,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureMessageAssociations(ModelBuilder modelBuilder) {
+  internal static void ConfigureMessageAssociations(ModelBuilder modelBuilder) {
     modelBuilder.Entity<MessageAssociationRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_message_associations");
@@ -199,7 +210,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configurePerspectiveCursors(ModelBuilder modelBuilder) {
+  internal static void ConfigurePerspectiveCursors(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveCursorRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_perspective_cursors");

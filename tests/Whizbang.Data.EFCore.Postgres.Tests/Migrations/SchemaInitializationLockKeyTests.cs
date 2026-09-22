@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaInitializationLockKey.cs</code-under-test>
 [Category("Migrations")]
+[Category("Shard4")]
 public class SchemaInitializationLockKeyTests {
 
   // ── process stability ───────────────────────────────────────────────────

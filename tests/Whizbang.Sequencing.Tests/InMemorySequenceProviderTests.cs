@@ -275,9 +275,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     var workItems = streamKeys.SelectMany(key =>
       Enumerable.Range(0, callsPerStream).Select(_ => key)).ToArray();
 
-    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => {
-      await provider.GetNextAsync(streamKey, ct);
-    });
+    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => await provider.GetNextAsync(streamKey, ct));
 
     // Assert - Verify each stream reached expected count (correctness, not timing)
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
@@ -318,12 +316,12 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   }
 
   [Test]
-  public async Task CancellationToken_Cancelled_ShouldThrowAsync() {
+  public async Task CancellationToken_Canceled_ShouldThrowAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
     const string streamKey = "cancellation-test-stream";
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(

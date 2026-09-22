@@ -1,15 +1,23 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -50,8 +58,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10));
     await harness.EnqueueWorkAsync(_work(streamId), cts.Token);
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — both batches completed even though the gate was evicted + disposed between them
     await Assert.That(coordinator.Completions.Count).IsEqualTo(2)
@@ -93,8 +101,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await harness.EnqueueWorkAsync(_work(streamId), cts.Token);
     await coordinator.WaitForCompletionsAsync(3, TimeSpan.FromSeconds(10));
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — all three passes completed; the eviction cascade did not strand the stream
     await Assert.That(coordinator.Completions.Count).IsEqualTo(3);
@@ -127,8 +135,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await harness.EnqueueWorkAsync(_work(streamId), cts.Token);
     await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await idled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(started.Task.IsCompleted).IsTrue();
@@ -166,8 +174,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(_work(streamId, PerspectiveProcessingStatus.RewindRequired), cts.Token);
     await coordinator.WaitForCompletionsAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the keepalive renewed at least once while the rewind ran, then released
     await Assert.That(locker.RenewCallCount).IsGreaterThanOrEqualTo(1)
@@ -211,8 +219,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
     await invoker.WaitForThrowsAsync(2, TimeSpan.FromSeconds(10));
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
 
     // Assert — both batches completed and the worker shut down cleanly despite two faulted
@@ -225,7 +233,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
   }
 
   [Test]
-  public async Task Worker_CancelledDuringSlidingWindowAccumulation_ShutsDownPromptlyAsync() {
+  public async Task Worker_CanceledDuringSlidingWindowAccumulation_ShutsDownPromptlyAsync() {
     // Arrange — a long sliding window (30 s). After the first drain signal is consumed the
     // worker parks inside the accumulation window; cancelling must exit promptly instead of
     // waiting out the window.
@@ -251,7 +259,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId, cts.Token);
     await drainChannel.ReaderImpl.WindowWaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
     try {
@@ -259,7 +267,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     } catch (OperationCanceledException) {
       // Cancellation surfacing through the execute task is acceptable shutdown behavior.
     }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the worker exited well before the 30 s window elapsed
     await Assert.That(executeTask.IsCompleted).IsTrue()
@@ -287,6 +295,12 @@ public class PerspectiveWorkerDeepPathMiscTests {
     var runner = new MiscRunner();
     var registry = new MiscRegistry(PERSPECTIVE, runner, [typeof(MiscDeepEvent)]);
     var drainChannel = new SignalingDrainChannel();
+    // The accumulation window is timed THROUGH this clock, so it cannot close on its own. Before
+    // PerspectiveWorker passed its injected provider into the accumulator, that loop read
+    // TimeProvider.System directly and this test had to land stream B inside a 150 ms wall-clock
+    // window -- a race a loaded CI runner loses, and one that dequeued a green pull request from
+    // the merge queue. Nothing here waits on elapsed real time now.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
     var (worker, _, _) = _createWorker(
       coordinator, eventStore, registry,
       configure: opts => {
@@ -297,7 +311,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
           MaxSize = 10
         };
       },
-      drainChannelOverride: drainChannel);
+      drainChannelOverride: drainChannel,
+      timeProvider: clock);
 
     // Act — write A, wait until the worker is inside the accumulation window, then write B
     using var cts = new CancellationTokenSource();
@@ -305,9 +320,14 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await drainChannel.WriteAsync(streamA, cts.Token);
     await drainChannel.ReaderImpl.WindowWaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
     await drainChannel.WriteAsync(streamB, cts.Token);
+    // Entry two proves B was drained and the window re-armed. Advancing before that is proven would
+    // race the reader and could close the window on a signal written but not yet read.
+    await drainChannel.ReaderImpl.WindowWaitEnteredAtLeast(2).WaitAsync(TimeSpan.FromSeconds(10));
+    // Now close the window deliberately, past the sliding bound and short of MaxWait.
+    clock.Advance(TimeSpan.FromMilliseconds(200));
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — one fetch covered both streams (coalesced batch), then both applied
     await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(1)
@@ -348,8 +368,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
       PartitionNumber = 1
     }, cts.Token);
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the sink consulted the cursor, dispatched nothing, and enqueued no work-row deletions
     await Assert.That(coordinator.GetPerspectiveCursorCallCount).IsGreaterThanOrEqualTo(1)
@@ -413,11 +433,13 @@ public class PerspectiveWorkerDeepPathMiscTests {
       PerspectiveStreamLockOptions? streamLockOptions = null,
       IReceptorInvoker? receptorInvoker = null,
       ICollectiveDispatcher? collectiveDispatcher = null,
-      IPerspectiveDrainChannel? drainChannelOverride = null) {
+      IPerspectiveDrainChannel? drainChannelOverride = null,
+      TimeProvider? timeProvider = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -442,20 +464,38 @@ public class PerspectiveWorkerDeepPathMiscTests {
     };
     configure?.Invoke(options);
 
+    // Named arguments follow the constructor's parameter order (RCS1205): schemaReadyGate is the
+    // fourth parameter and timeProvider precedes the channels.
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
+      instanceProvider: instanceProvider,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
-      streamLocker: streamLocker,
-      streamLockOptions: streamLockOptions is null ? null : Options.Create(streamLockOptions),
-      streamAffinityOptions: affinityOptions is null ? null : Options.Create(affinityOptions),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: streamLocker ?? NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: (streamLockOptions is null ? null : Options.Create(streamLockOptions)) ?? Options.Create(new PerspectiveStreamLockOptions()) ?? Options.Create(new PerspectiveStreamLockOptions()) ?? Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: (affinityOptions is null ? null : Options.Create(affinityOptions)) ?? Options.Create(new PerspectiveStreamAffinityOptions()) ?? Options.Create(new PerspectiveStreamAffinityOptions()) ?? Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel);
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      timeProvider: timeProvider);
     return (worker, harness, provider);
   }
 
@@ -533,7 +573,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
@@ -578,14 +618,14 @@ public class PerspectiveWorkerDeepPathMiscTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
   }
 
-  private sealed class MiscRegistry(string perspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry, IEventTypeProvider {
-    public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
-      name == perspectiveName ? runner : null;
+  private sealed class MiscRegistry(string registeredPerspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
+      perspectiveName == registeredPerspectiveName ? runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo(
-        perspectiveName,
-        $"global::{perspectiveName}",
+        registeredPerspectiveName,
+        $"global::{registeredPerspectiveName}",
         "global::Test.MiscDeepModel",
         [.. eventTypes.Select(TypeNameFormatter.Format)])];
 
@@ -604,7 +644,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     public int RewindCallCount => Volatile.Read(ref _rewindCallCount);
     public Type PerspectiveType => typeof(MiscRunner);
 
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _runCallCount);
       return Task.FromResult(_completed(streamId, perspectiveName, Guid.CreateVersion7()));
     }
@@ -715,10 +755,33 @@ public class PerspectiveWorkerDeepPathMiscTests {
     public bool TryWrite(Guid streamId) => _inner.Writer.TryWrite(streamId);
 
     internal sealed class SignalingReader(ChannelReader<Guid> inner) : ChannelReader<Guid> {
-      private readonly TaskCompletionSource _windowWaitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+      private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource> _gates = new();
       private int _readCount;
+      private int _windowWaits;
 
-      public Task WindowWaitEntered => _windowWaitEntered.Task;
+      /// <summary>Completes the first time the accumulator waits inside its window.</summary>
+      public Task WindowWaitEntered => WindowWaitEnteredAtLeast(1);
+
+      /// <summary>
+      /// Completes once the accumulator has entered its window wait <paramref name="times"/> times.
+      /// </summary>
+      /// <remarks>
+      /// The second entry is the signal that matters, and one-shot was not enough to write this
+      /// test honestly. Entry two happens only after the accumulator has drained what the channel
+      /// held and re-armed, so awaiting it proves the second stream id is IN the batch. Advancing a
+      /// fake clock before that is proven races the reader and can close the window on a signal that
+      /// was written but not yet read -- the very thing the test claims cannot happen.
+      /// </remarks>
+      public Task WindowWaitEnteredAtLeast(int times) {
+        var gate = _gates.GetOrAdd(
+          times, static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        // A gate registered AFTER its count was already reached would otherwise never complete, and
+        // the test would hang on something that has already happened.
+        if (Volatile.Read(ref _windowWaits) >= times) {
+          gate.TrySetResult();
+        }
+        return gate.Task;
+      }
 
       public override bool TryRead(out Guid item) {
         var read = inner.TryRead(out item);
@@ -730,7 +793,12 @@ public class PerspectiveWorkerDeepPathMiscTests {
 
       public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
         if (Volatile.Read(ref _readCount) > 0) {
-          _windowWaitEntered.TrySetResult();
+          var entered = Interlocked.Increment(ref _windowWaits);
+          foreach (var gate in _gates) {
+            if (gate.Key <= entered) {
+              gate.Value.TrySetResult();
+            }
+          }
         }
         return inner.WaitToReadAsync(cancellationToken);
       }
@@ -741,7 +809,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
     private int _callCount;
     public int CallCount => Volatile.Read(ref _callCount);
 
-    public Task<CollectiveDispatchResult> DispatchAsync(ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+    public Task<CollectiveDispatchResult> DispatchAsync(ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _callCount);
       return Task.FromResult(new CollectiveDispatchResult(1, 1));
     }

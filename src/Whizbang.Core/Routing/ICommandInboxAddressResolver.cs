@@ -31,3 +31,20 @@ public interface ICommandInboxAddressResolver {
   /// <returns>The flipped inbox entity name, or null to keep the default address.</returns>
   string? ResolveFlippedCommandInboxAddress(string? contractNamespace);
 }
+
+/// <summary>
+/// The resolver registered when the active outbox strategy does not resolve command inbox
+/// addresses (the domain-topic strategy does not). Flipping is unavailable, reported as a null
+/// resolution exactly as a null resolver was; the default address is the shared inbox the
+/// namespace strategy also defaults to.
+/// </summary>
+/// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+public sealed class NullCommandInboxAddressResolver : ICommandInboxAddressResolver, INullDefault {
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullCommandInboxAddressResolver Instance { get; } = new();
+  private NullCommandInboxAddressResolver() { }
+  /// <inheritdoc />
+  public string DefaultCommandInboxAddress => SharedTopicOutboxStrategy.DefaultInboxTopic;
+  /// <inheritdoc />
+  public string? ResolveFlippedCommandInboxAddress(string? contractNamespace) => null;
+}

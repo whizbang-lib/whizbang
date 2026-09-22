@@ -42,6 +42,15 @@ public sealed partial class IntegrityCheckpointReceptor(
       return;
     }
 
+    // Announce this cycle so the cleanup sweep defers to it. Held for the whole handler: the two
+    // walk the same tables, and overlapping them adds housekeeping-versus-housekeeping contention
+    // on top of whatever live work already competes for those locks. A refused scope (another
+    // cycle already running) is a no-op hold rather than a skip -- checkpoints arrive per origin
+    // and dropping one would trade a lock collision for a missed gap.
+    using var integrityHold =
+      services.GetService<Whizbang.Core.Workers.HousekeepingCoordinator>()?.BeginIntegrityScope()
+      ?? default;
+
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     if (message.OriginServiceId == self) {
       // Own checkpoint: locally-originated events persist NO origin stamp, so a self-count would
@@ -53,30 +62,135 @@ public sealed partial class IntegrityCheckpointReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
+
+    // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
+    // CheckpointIntervalSeconds, so on its own that bounds the storm's RATE and not its size: a
+    // bucket whose events are genuinely gone never heals, is re-confirmed on every checkpoint, and
+    // is re-requested for as long as the service runs. The repair ledger is what bounds the repeat,
+    // through RepairRequestBackoffSeconds and MaxRepairAttemptsPerBucket, and the manifest path has
+    // always consulted it. Same guard here, so both rungs are bounded in both dimensions.
+    var ledger = services.GetService<IIntegrityRepairLedger>()
+      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
+      ?? new IntegrityRepairLedger();
+    var repairBackoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
+    var repairNow = DateTimeOffset.UtcNow;
+
+    // The full repair-decision policy for issue #582: three service-wide settledness signals
+    // (depth, lag, live leases — any one vetoes, because each alone is fooled), a per-window
+    // attempt budget that resets while the window is healing, and a global bound on how many
+    // windows may be under repair at once. It existed, fully tested, with no caller; the storm it
+    // was written to prevent happened anyway. The fallback keeps state per process so an unwired
+    // host still gets bounded behavior rather than none.
+    var repairPolicy = services.GetService<IntegrityRepairPolicy>() ?? _processFallbackPolicy;
+
+    // Settledness is measured ONCE per checkpoint, service-wide. A consumer that is merely BEHIND
+    // reports the same deficit on both confirmation cycles and confirms a gap while nothing has
+    // been lost — the events are queued, not missing. Repairing then re-delivers work that is
+    // already coming, which lengthens the queue that produced the false gap.
+    //
+    // null means the backend cannot answer. That is UNMEASURED, never settled: "nothing
+    // outstanding" and "nobody looked" are the same value and opposite facts.
+    var backlog = await coordinator.CountServiceBacklogAsync(cancellationToken).ConfigureAwait(false);
+
+    // UNMEASURED falls back to the previous behavior rather than gating. A backend that has not
+    // implemented the count would otherwise have self-healing silently switched off by a package
+    // upgrade — the same silent-disable this codebase refuses elsewhere ("the 0s are precisely the
+    // silent-disable this method exists to make impossible"). Stores that CAN report get the gate —
+    // stores that cannot get a loud one-line warning and the old behavior.
+    var measurable = backlog is not null;
+    // IsQuiescent, not IsSettled: since 167 the latter ignores the idle band, and a gap check that
+    // ran while idle work was still queued could call a row missing that is merely not yet run.
+    // IsQuiescent is the pre-167 meaning of IsSettled, so this gate is unchanged.
+    var settled = backlog?.IsQuiescent != false;
+    if (!measurable) {
+      LogSettlednessUnmeasurable(logger, message.OriginServiceName);
+    }
     var gapReportCap = Math.Max(1, options.MaxGapReportsPerCheckpoint);
     var gapReportsPublished = 0;
     var confirmedGaps = 0;
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
+      // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
+      // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
+      // Inside the cooldown the gap stays known and reported from its last confirmation; only the
+      // repeated scan is skipped, and the window re-registers from the current checkpoint as usual.
+      if (!repairPolicy.ShouldRecount(
+            pending.OriginServiceId, pending.EventType, pending.TenantScope,
+            pending.FromCommitSequence, pending.ToCommitSequence, repairNow)) {
+        continue;
+      }
       var recount = await coordinator
         .CountReceivedFromOriginAsync(pending.OriginServiceId, pending.FromCommitSequence, pending.ToCommitSequence, cancellationToken)
         .ConfigureAwait(false);
       var actual = _bucketCount(recount, pending.TenantScope, pending.EventType);
+      var observation = new IntegrityRepairPolicy.GapObservation(
+        pending.OriginServiceId, pending.EventType, pending.TenantScope,
+        pending.FromCommitSequence, pending.ToCommitSequence,
+        pending.ExpectedCount, actual,
+        ServiceBacklogDepth: (int)Math.Min(backlog?.UnprocessedInboxRows ?? 0, int.MaxValue),
+        ConsumerLag: backlog?.OldestUnprocessedAge ?? TimeSpan.Zero,
+        ActiveLeaseCount: (int)Math.Min(backlog?.ActiveLeasedRows ?? 0, int.MaxValue));
       if (actual >= pending.ExpectedCount) {
-        continue;   // healed in flight — the straggler arrived between checkpoints
+        // Healed in flight — the straggler arrived between checkpoints. Releasing the window's
+        // repair slot is what lets the global budget breathe: a slot held by a healed window would
+        // starve a genuinely stuck one. Confirmation memory clears too, so a genuine
+        // regression of the same window warns afresh.
+        repairPolicy.RecordHealed(observation);
+        tracker.ClearConfirmed(pending);
+        continue;
       }
 
-      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+      // #667: a deficit measured while the service is VISIBLY behind is expected
+      // back-pressure, not loss — during a bulk ingest the producer runs ahead by design
+      // and every in-flight window would read "expected N, have 0". CONFIRMED must mean
+      // the pipeline is drained and the events are genuinely absent, so an unsettled
+      // service defers: no confirmation, no warning, the pending carries to a later
+      // cycle. UNMEASURED (backlog null) keeps the old behavior — same rationale as the
+      // repair gate above: a store that cannot report must not have detection silently
+      // switched off by an upgrade.
+      if (measurable && !settled) {
+        tracker.AddPending(pending);
+        LogGapDeferredConsumerBehind(logger, pending.EventType, pending.TenantScope,
+          pending.OriginServiceName, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+        continue;
+      }
+
+      if (repairPolicy.RecordRecount(observation, repairNow)) {
+        LogRecountCooldownArmed(
+          logger, pending.EventType, pending.TenantScope, pending.OriginServiceName, actual, pending.ExpectedCount);
+      }
+
+      // The policy decides from the SERVICE's settledness, never this instance's. Any of depth,
+      // lag or live leases vetoes; a window that stopped healing exhausts its attempt budget; and
+      // the global budget bounds how many windows may be under repair at once — the only cap that
+      // limits the RATE at which repair adds load, since per-checkpoint caps reset every cadence.
+      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped
+                    && repairBudget > 0
+                    && repairPolicy.Evaluate(observation).ShouldRequestRepair;
       metrics?.GapsDetected.Add(1,
         new KeyValuePair<string, object?>("origin", pending.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", pending.EventType));
+      if (autoRepair) {
+        // Burns an attempt against this bucket, returning false once it has spent
+        // MaxRepairAttemptsPerBucket or is still inside its backoff window. Consulted only after the
+        // cheaper gates: a grant records an attempt, so a grant we then discard would spend the
+        // bucket's budget on a request that was never sent.
+        autoRepair = await ledger.TryBeginRepairAsync(
+          new IntegrityRepairLedger.DivergenceKey(
+            pending.OriginServiceId, pending.TenantScope, pending.EventType, Guid.Empty),
+          repairNow, repairBackoff, options.MaxRepairAttemptsPerBucket, cancellationToken)
+          .ConfigureAwait(false);
+      }
       if (autoRepair) {
         repairBudget--;
         metrics?.RepairsRequested.Add(1,
           new KeyValuePair<string, object?>("source", "checkpoint"),
           new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
         await _sendRepairRequestAsync(services, options, pending, cancellationToken).ConfigureAwait(false);
+        // Charged only for a request that was actually sent, so the per-checkpoint budget and the
+        // ledger cannot burn this window's attempt budget on requests that never left.
+        repairPolicy.RecordRequested(observation);
       }
       // Each report is a durable outbox write and pendings are keyed by (tenant, event type), so
       // their number grows with the deployment rather than with any batch size. Past the cap we
@@ -84,12 +198,18 @@ public sealed partial class IntegrityCheckpointReceptor(
       // the condition keeps surfacing until it is genuinely repaired.
       confirmedGaps++;
 
-      // Log the confirmation for EVERY gap, before the publish gate. It used to sit after it, so a
-      // capped report also lost its log line — the operator-facing record thinned out precisely
-      // when there was most to say, and turning publishing off would have removed it altogether
-      // instead of only the durable writes.
-      LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
-        pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+      // Log the confirmation before the publish gate (a capped report must not lose its log
+      // line) — but WARN only on the window's FIRST confirmation (#667). An origin that
+      // keeps checkpointing the same watermark re-registers the same deficit every cycle —
+      // per-cycle repeats of an identical warning bury the log precisely when there is most
+      // to read. Re-confirmations stay visible at Debug and countable on the meter.
+      if (tracker.MarkConfirmed(pending)) {
+        LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
+          pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+      } else {
+        LogGapReconfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
+          pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual);
+      }
 
       // Opt-in: nothing consumes these and each mints its own stream. See
       // StreamIntegrityOptions.PublishReportEvents.
@@ -147,6 +267,11 @@ public sealed partial class IntegrityCheckpointReceptor(
 
   /// <summary>Wire-only, directed at the origin — the pump's own publish pattern. A lost request
   /// re-fires on the next confirmation cycle, so no outbox durability is needed.</summary>
+  // Per-process fallback for hosts that did not register the policy. Static so its window state
+  // survives across checkpoints, which is the entire point; a per-call instance would evaluate
+  // every checkpoint against an empty table and never exhaust anything.
+  private static readonly IntegrityRepairPolicy _processFallbackPolicy = new(new IntegrityRepairPolicy.Settings());
+
   private async Task _sendRepairRequestAsync(
       IServiceProvider services, StreamIntegrityOptions options,
       IntegrityGapTracker.PendingGap pending, CancellationToken cancellationToken) {
@@ -162,6 +287,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = pending.TenantScope,
@@ -172,11 +298,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         Topic = topic,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = services.GetService<IServiceInstanceProvider>()?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), services.GetService<IServiceInstanceProvider>(), DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = pending.OriginServiceName,
@@ -201,7 +323,7 @@ public sealed partial class IntegrityCheckpointReceptor(
 
   private static HashSet<string> _subscribedTypeNames(IServiceProvider services) {
     var provider = services.GetService<IEventTypeProvider>();
-    if (provider is null) {
+    if (provider is not { IsAvailable: true }) {
       return [];
     }
     // Wire form ("Type, Assembly") — checkpoint buckets carry wh_event_store.event_type values,
@@ -221,6 +343,34 @@ public sealed partial class IntegrityCheckpointReceptor(
   static partial void LogGapConfirmed(ILogger logger, string eventType, string? tenantScope, string originServiceName,
     long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount, bool autoRepairRequested);
 
+  [LoggerMessage(EventId = 60, Level = LogLevel.Warning,
+    Message = "Cannot measure whether this service has settled (the store does not implement "
+            + "CountServiceBacklogAsync), so auto-repair for origin '{OriginServiceName}' proceeds "
+            + "UNGATED. A consumer that is merely behind may confirm false gaps and re-deliver work "
+            + "that is already queued. Implement the count, or set RepairMode=ReportOnly.")]
+  static partial void LogSettlednessUnmeasurable(ILogger logger, string originServiceName);
+
+  // EventId 59 (auto-repair withheld while the consumer is behind) is retired: the deferral guard
+  // returns before a confirmation, so that line could never fire (issue #708). Its content, that a
+  // service deliberately withholding repair while it drains is not one with repair disabled, is
+  // carried by the deferral line (62) instead. Do not reuse the id.
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Debug,
+    Message = "Integrity deficit for {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' deferred: "
+            + "consumer visibly behind (unprocessed={UnprocessedRows}, leased={LeasedRows}) — in-flight lag, not loss; "
+            + "repair is withheld until this service settles (repairing now would re-deliver work already in flight); "
+            + "re-evaluated when settled. A value of -1 means the backend could not report, which is treated as NOT settled")]
+  static partial void LogGapDeferredConsumerBehind(ILogger logger, string eventType, string? tenantScope,
+    string originServiceName, long unprocessedRows, long leasedRows);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Debug,
+    Message = "Integrity gap re-confirmed (already warned): {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' "
+            + "window ({FromCommitSequence}, {ToCommitSequence}] — expected {ExpectedCount}, have {ActualCount}")]
+#pragma warning disable S107 // the log line names every fact of the gap; a parameter object would hide them from the message template
+  static partial void LogGapReconfirmed(ILogger logger, string eventType, string? tenantScope,
+    string originServiceName, long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount);
+#pragma warning restore S107
+
   [LoggerMessage(EventId = 51, Level = LogLevel.Warning,
     Message = "Auto-repair request to '{OriginServiceName}' skipped — missing infrastructure " +
               "(transport={TransportMissing}, serializer={SerializerMissing}, requester={RequesterMissing}, topic={TopicMissing})")]
@@ -231,4 +381,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Recount cooldown armed for {EventType} (tenant {TenantScope}) from origin {OriginServiceName}: the count has not moved ({Actual}/{Expected}) across the configured threshold. The gap stays reported; one recount runs per cooldown period, and any improvement lifts it immediately")]
+  static partial void LogRecountCooldownArmed(
+    ILogger logger, string eventType, string? tenantScope, string originServiceName, int actual, int expected);
 }

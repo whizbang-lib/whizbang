@@ -32,7 +32,6 @@ namespace Whizbang.Offloads.AzureBlob;
 /// <docs>fundamentals/offloads/providers/azure-blob</docs>
 public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   private readonly AzureBlobOffloadOptions _options;
-  private readonly ILogger<AzureBlobMessageBodyStore>? _logger;
   private readonly BlobContainerClient _containerClient;
   private int _containerEnsured;
 
@@ -41,8 +40,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   /// </summary>
   public AzureBlobMessageBodyStore(
       [ServiceKey] string providerName,
-      IOptionsMonitor<AzureBlobOffloadOptions> options,
-      ILogger<AzureBlobMessageBodyStore>? logger = null) {
+      IOptionsMonitor<AzureBlobOffloadOptions> options) {
     ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
     ArgumentNullException.ThrowIfNull(options);
     ProviderName = providerName;
@@ -51,7 +49,6 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
       // Fall back to the unnamed default binding for tests / single-provider setups.
       _options = options.CurrentValue;
     }
-    _logger = logger;
 
     if (string.IsNullOrWhiteSpace(_options.ConnectionString)) {
       throw new InvalidOperationException(
@@ -71,12 +68,10 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
   internal AzureBlobMessageBodyStore(
       string providerName,
       AzureBlobOffloadOptions options,
-      BlobContainerClient containerClient,
-      ILogger<AzureBlobMessageBodyStore>? logger = null) {
+      BlobContainerClient containerClient) {
     ProviderName = providerName;
     _options = options;
     _containerClient = containerClient;
-    _logger = logger;
   }
 
   /// <inheritdoc />
@@ -109,7 +104,7 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
     }
     uploadOptions.Metadata["whizbang_content_hash"] = hash;
 
-    using var stream = _toReadOnlyStream(body);
+    await using var stream = _toReadOnlyStream(body);
     await blobClient.UploadAsync(stream, uploadOptions, cancellationToken);
 
     return new MessageBodyClaim(

@@ -78,12 +78,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   }
 
   private static OutboxMessage _makeOutbox(
-      Guid msgId, Guid streamId, List<MessageHop> hops, bool isEvent = false, string? destination = "orders-topic") {
+      Guid msgId, Guid streamId, List<MessageHop> hops, bool isEvent = false, string? destination = "orders-topic", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
       JsonDocument.Parse("{\"k\":1}").RootElement,
-      hops);
+      hops) { Priority = priority };
     return new OutboxMessage {
+      Priority = priority,
       MessageId = msgId,
       Destination = destination,
       Envelope = envelope,
@@ -97,12 +98,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   }
 
   private static InboxMessage _makeInbox(
-      Guid msgId, Guid streamId, List<MessageHop> hops, string messageType = "Test.X, Test") {
+      Guid msgId, Guid streamId, List<MessageHop> hops, string messageType = "Test.X, Test", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
       JsonDocument.Parse("{\"p\":1}").RootElement,
-      hops);
+      hops) { Priority = priority };
     return new InboxMessage {
+      Priority = priority,
       MessageId = msgId,
       HandlerName = "TestHandler",
       Envelope = envelope,
@@ -117,14 +119,16 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
 
   private static async Task _seedEventStoreRowAsync(
       NpgsqlConnection conn, Guid eventId, Guid streamId, int version, long? commitSequence) {
-    await conn.ExecuteAsync(@"
+    await conn.ExecuteAsync("""
+
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
          scope, created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @version, 'Test.OrderCreated, Test',
-              '{""t"": ""tenant-7""}'::jsonb, NOW(), @cs);
+              '{"t": "tenant-7"}'::jsonb, NOW(), @cs);
       INSERT INTO wh_event_body (event_id, event_data, metadata)
-      VALUES (@id, '{""amount"": 42}'::jsonb, '{""Hops"": [{""to"": ""seeded""}]}'::jsonb)",
+      VALUES (@id, '{"amount": 42}'::jsonb, '{"Hops": [{"to": "seeded"}]}'::jsonb)
+""",
       new { id = eventId, stream = streamId, version, cs = commitSequence });
   }
 
@@ -313,6 +317,45 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(rowB.Error).IsNull();
   }
 
+  /// <summary>Priority step 1 on the wire: the number stored on the row comes back on the fetched row, outbox and inbox.</summary>
+  [Test]
+  public async Task FetchOutboxBatchAsync_ReturnsTheRowsPriorityAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var rows = await c.FetchOutboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(rows.Single().Priority).IsEqualTo(250)
+      .Because("the drain publishes the row's number; a fetch that drops it ships every message undeclared");
+  }
+
+  [Test]
+  public async Task FetchInboxBatchAsync_ReturnsTheRowsPriorityAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var rows = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(rows.Single().Priority).IsEqualTo(250)
+      .Because("the dispatch worker enters the handling with the row's number; inheritance reads it from there");
+  }
+
   [Test]
   public async Task FetchInboxBatchAsync_PopulatedRow_MapsAllColumnsAsync() {
     var c = _build();
@@ -326,7 +369,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(@"
-      UPDATE wh_inbox
+      UPDATE wh_inbox_state
       SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', error = 'handler blew up'
       WHERE message_id = @m",
       new { i = instanceId, m = msgId });
@@ -734,6 +777,33 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     var c = _build();
     var n = await c.NotifyScheduledRetryDueAsync();
     await Assert.That(n).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task NotifyScheduledRetryDueAsync_DueWork_ReturnsTheStreamCountAndRingsAsync() {
+    // A scheduled retry whose time has come, on a stream, is what the probe wakes owners for. The
+    // count it returns is also what decides whether the queued doorbells are rung (#720).
+    var c = _build();
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(@"
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        VALUES (@mid, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, NOW() - INTERVAL '2 minutes',
+                @sid, TRUE)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, scheduled_for)
+      SELECT message_id, stream_id, received_at, priority, is_event, 0, 1, 0, NOW() - INTERVAL '1 minute' FROM m",
+      new { mid = (Guid)TrackedGuid.NewMedo(), sid = (Guid)TrackedGuid.NewMedo() });
+
+    var n = await c.NotifyScheduledRetryDueAsync();
+
+    await Assert.That(n).IsGreaterThanOrEqualTo(1)
+      .Because("one stream holds a retry that is due; the probe reports it and rings the doorbells it queued");
   }
 
   // ----- FetchEventsByIdsAsync row mapping -----

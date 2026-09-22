@@ -49,6 +49,16 @@ public sealed partial class RedeliveryRequestReceptor(
 
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.RedeliveryRequestsReceived.Add(1);
+
+    // Report-only is bilateral: serving a re-delivery request is the repair act on the origin side (and
+    // the memory-heavy one), so an origin that opted down declines. Returning completes the inbox row; a
+    // declined request is discarded, never retried.
+    var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
+    if (!RepairTraffic.IsRepairEnabled(integrity)) {
+      metrics?.RepairTrafficDiscarded.Add(1, new KeyValuePair<string, object?>("role", "origin_request"));
+      LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
+      return;
+    }
     var buildTimer = System.Diagnostics.Stopwatch.StartNew();
     var options = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var cap = options.MaxEventsPerRequest;
@@ -62,8 +72,16 @@ public sealed partial class RedeliveryRequestReceptor(
       var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
       var pump = new RedeliveryPump(
         transport, envelopeSerializer,
-        services.GetService<IServiceInstanceProvider>(), options,
-        compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>());
+        // A host with no telemetry identity still redelivers; the bundle names an explicitly
+        // unknown origin, which is what passing null used to produce. Requiring the provider
+        // here turned an absent identity into a failed redelivery.
+        services.GetService<IServiceInstanceProvider>()
+          ?? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance,
+        // A host that never registered the event mint still redelivers with the default grouping,
+        // which is what the pump's own fallback used to supply.
+        compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>()
+          ?? new Whizbang.Core.Minting.CompositeFactory(),
+        options: options);
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter
       // how wide the request is — materializing the whole cap at once has OOM-killed origins.
@@ -119,4 +137,8 @@ public sealed partial class RedeliveryRequestReceptor(
   [LoggerMessage(EventId = 49, Level = LogLevel.Information,
     Message = "Re-delivered {EventCount} events as {CompositeCount} composites to {RequesterService} on {Topic}")]
   static partial void LogRedeliveryPublished(ILogger logger, int eventCount, int compositeCount, string requesterService, string topic);
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Information,
+    Message = "Re-delivery request from {RequesterService} on {Topic} declined: RepairMode is ReportOnly, so this origin serves no repair (the request is discarded, not retried)")]
+  static partial void LogRepairRequestDeclined(ILogger logger, string requesterService, string topic);
 }

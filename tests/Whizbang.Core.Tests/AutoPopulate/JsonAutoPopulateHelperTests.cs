@@ -27,13 +27,13 @@ public class JsonAutoPopulateHelperTests {
 
   [Test]
   public async Task PopulateTimestamp_NoRegistrations_ReturnsOriginalPayloadAsync() {
-    // _NoRegistrationsMessage has no [PopulateTimestamp] attribute and no fake
+    // NoRegistrationsMessage has no [PopulateTimestamp] attribute and no fake
     // registry registers anything for it.
     var payload = _parseObject("""{"foo":"bar"}""");
     var ts = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
-      payload, typeof(_NoRegistrationsMessage), TimestampKind.QueuedAt, ts);
+      payload, typeof(NoRegistrationsMessage), TimestampKind.QueuedAt, ts);
 
     await Assert.That(result.GetRawText()).IsEqualTo(payload.GetRawText());
   }
@@ -51,8 +51,8 @@ public class JsonAutoPopulateHelperTests {
 
   [Test]
   public async Task PopulateTimestamp_RegistrationMatches_StampsPropertyOnObjectAsync() {
-    using var _ = _FakeRegistry.Install(new AutoPopulateRegistration {
-      MessageType = typeof(_QueuedAtMessage),
+    using var _ = FakeRegistry.Install(new AutoPopulateRegistration {
+      MessageType = typeof(QueuedAtMessage),
       PropertyName = "QueuedAt",
       PropertyType = typeof(DateTimeOffset?),
       PopulateKind = PopulateKind.Timestamp,
@@ -63,7 +63,7 @@ public class JsonAutoPopulateHelperTests {
     var ts = new DateTimeOffset(2026, 5, 28, 12, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
-      payload, typeof(_QueuedAtMessage), TimestampKind.QueuedAt, ts);
+      payload, typeof(QueuedAtMessage), TimestampKind.QueuedAt, ts);
 
     var doc = JsonDocument.Parse(result.GetRawText());
     await Assert.That(doc.RootElement.GetProperty("existing").GetString()).IsEqualTo("value");
@@ -72,8 +72,8 @@ public class JsonAutoPopulateHelperTests {
 
   [Test]
   public async Task PopulateTimestampByName_MatchesByFullName_StampsPropertyAsync() {
-    using var _ = _FakeRegistry.Install(new AutoPopulateRegistration {
-      MessageType = typeof(_DeliveredAtMessage),
+    using var _ = FakeRegistry.Install(new AutoPopulateRegistration {
+      MessageType = typeof(DeliveredAtMessage),
       PropertyName = "DeliveredAt",
       PropertyType = typeof(DateTimeOffset?),
       PopulateKind = PopulateKind.Timestamp,
@@ -84,7 +84,7 @@ public class JsonAutoPopulateHelperTests {
     var ts = new DateTimeOffset(2026, 5, 28, 13, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestampByName(
-      payload, typeof(_DeliveredAtMessage).FullName!, TimestampKind.DeliveredAt, ts);
+      payload, typeof(DeliveredAtMessage).FullName!, TimestampKind.DeliveredAt, ts);
 
     var doc = JsonDocument.Parse(result.GetRawText());
     await Assert.That(doc.RootElement.GetProperty("DeliveredAt").GetDateTimeOffset()).IsEqualTo(ts);
@@ -94,8 +94,8 @@ public class JsonAutoPopulateHelperTests {
   public async Task PopulateTimestamp_WithMismatchedKind_LeavesPayloadUntouchedAsync() {
     // Registry has a QueuedAt registration; caller asks for DeliveredAt → empty
     // post-filter result → fast-return original payload.
-    using var _ = _FakeRegistry.Install(new AutoPopulateRegistration {
-      MessageType = typeof(_QueuedAtMessage),
+    using var _ = FakeRegistry.Install(new AutoPopulateRegistration {
+      MessageType = typeof(QueuedAtMessage),
       PropertyName = "QueuedAt",
       PropertyType = typeof(DateTimeOffset?),
       PopulateKind = PopulateKind.Timestamp,
@@ -106,7 +106,7 @@ public class JsonAutoPopulateHelperTests {
     var ts = new DateTimeOffset(2026, 5, 28, 14, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
-      payload, typeof(_QueuedAtMessage), TimestampKind.DeliveredAt, ts);
+      payload, typeof(QueuedAtMessage), TimestampKind.DeliveredAt, ts);
 
     await Assert.That(result.GetRawText()).IsEqualTo(payload.GetRawText());
   }
@@ -115,8 +115,8 @@ public class JsonAutoPopulateHelperTests {
   public async Task PopulateTimestamp_NonObjectPayload_ReturnsOriginalAsync() {
     // Helper internally guards `if (node is not JsonObject obj)` and returns the
     // input untouched. Easiest non-object: a top-level JSON array.
-    using var _ = _FakeRegistry.Install(new AutoPopulateRegistration {
-      MessageType = typeof(_QueuedAtMessage),
+    using var _ = FakeRegistry.Install(new AutoPopulateRegistration {
+      MessageType = typeof(QueuedAtMessage),
       PropertyName = "QueuedAt",
       PropertyType = typeof(DateTimeOffset?),
       PopulateKind = PopulateKind.Timestamp,
@@ -127,7 +127,7 @@ public class JsonAutoPopulateHelperTests {
     var ts = new DateTimeOffset(2026, 5, 28, 15, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
-      payload, typeof(_QueuedAtMessage), TimestampKind.QueuedAt, ts);
+      payload, typeof(QueuedAtMessage), TimestampKind.QueuedAt, ts);
 
     await Assert.That(result.GetRawText()).IsEqualTo(payload.GetRawText());
   }
@@ -135,16 +135,16 @@ public class JsonAutoPopulateHelperTests {
   [Test]
   public async Task PopulateTimestamp_MultipleRegistrationsForSameKind_StampsAllPropertiesAsync() {
     // Two properties, same TimestampKind → both should be written in one call.
-    using var _ = _FakeRegistry.Install(
+    using var _ = FakeRegistry.Install(
       new AutoPopulateRegistration {
-        MessageType = typeof(_DualStampMessage),
+        MessageType = typeof(DualStampMessage),
         PropertyName = "QueuedAt",
         PropertyType = typeof(DateTimeOffset?),
         PopulateKind = PopulateKind.Timestamp,
         TimestampKind = TimestampKind.QueuedAt,
       },
       new AutoPopulateRegistration {
-        MessageType = typeof(_DualStampMessage),
+        MessageType = typeof(DualStampMessage),
         PropertyName = "QueuedAtAlias",
         PropertyType = typeof(DateTimeOffset?),
         PopulateKind = PopulateKind.Timestamp,
@@ -155,7 +155,7 @@ public class JsonAutoPopulateHelperTests {
     var ts = new DateTimeOffset(2026, 5, 28, 16, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(
-      payload, typeof(_DualStampMessage), TimestampKind.QueuedAt, ts);
+      payload, typeof(DualStampMessage), TimestampKind.QueuedAt, ts);
 
     var doc = JsonDocument.Parse(result.GetRawText());
     await Assert.That(doc.RootElement.GetProperty("QueuedAt").GetDateTimeOffset()).IsEqualTo(ts);
@@ -163,10 +163,10 @@ public class JsonAutoPopulateHelperTests {
   }
 
   // --- Test message marker types ---
-  private sealed record _NoRegistrationsMessage;
-  private sealed record _QueuedAtMessage;
-  private sealed record _DeliveredAtMessage;
-  private sealed record _DualStampMessage;
+  private sealed record NoRegistrationsMessage;
+  private sealed record QueuedAtMessage;
+  private sealed record DeliveredAtMessage;
+  private sealed record DualStampMessage;
 
   /// <summary>
   /// Test-only <see cref="IAutoPopulateRegistry"/> that surfaces a fixed list
@@ -174,10 +174,10 @@ public class JsonAutoPopulateHelperTests {
   /// fake registries across the suite is harmless — a query for marker type
   /// X only sees the fake that was installed for X.
   /// </summary>
-  private sealed class _FakeRegistry : IAutoPopulateRegistry, IDisposable {
+  private sealed class FakeRegistry : IAutoPopulateRegistry, IDisposable {
     private readonly AutoPopulateRegistration[] _registrations;
 
-    private _FakeRegistry(AutoPopulateRegistration[] registrations) {
+    private FakeRegistry(AutoPopulateRegistration[] registrations) {
       _registrations = registrations;
     }
 
@@ -193,8 +193,8 @@ public class JsonAutoPopulateHelperTests {
 
     public void Dispose() { /* no-op — registrations are bound to private marker types */ }
 
-    public static _FakeRegistry Install(params AutoPopulateRegistration[] registrations) {
-      var reg = new _FakeRegistry(registrations);
+    public static FakeRegistry Install(params AutoPopulateRegistration[] registrations) {
+      var reg = new FakeRegistry(registrations);
       // Priority 50 (lower than the 100 contracts convention) so this fake is
       // tried before any real registries that may be ambient at test time.
       AutoPopulateRegistry.Register(reg, priority: 50);

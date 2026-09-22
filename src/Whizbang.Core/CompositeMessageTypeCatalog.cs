@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Whizbang.Core;
 
@@ -22,11 +23,7 @@ public sealed class CompositeMessageTypeCatalog : IMessageTypeCatalog {
     var seen = new HashSet<Type>();
     var entries = new List<MessageTypeCatalogEntry>();
     foreach (var catalog in catalogs) {
-      foreach (var entry in catalog.GetAll()) {
-        if (seen.Add(entry.Type)) {
-          entries.Add(entry);
-        }
-      }
+      entries.AddRange(catalog.GetAll().Where(entry => seen.Add(entry.Type)));
     }
     _entries = entries;
   }

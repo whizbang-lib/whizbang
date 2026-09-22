@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tags;
@@ -128,12 +129,10 @@ public sealed class CoalesceGroupResolver {
 
     var groupByType = new Dictionary<Type, string>();
     if (enabledTags.Count > 0) {
-      foreach (var registration in _registrationSource()) {
-        if (enabledTags.Contains(registration.Tag)) {
-          // Startup validation (TagPolicyValidator) guarantees at most one enabled binding
-          // per message type, so a plain assignment cannot lose information.
-          groupByType[registration.MessageType] = registration.Tag;
-        }
+      foreach (var registration in _registrationSource().Where(r => enabledTags.Contains(r.Tag))) {
+        // Startup validation (TagPolicyValidator) guarantees at most one enabled binding
+        // per message type, so a plain assignment cannot lose information.
+        groupByType[registration.MessageType] = registration.Tag;
       }
     }
 

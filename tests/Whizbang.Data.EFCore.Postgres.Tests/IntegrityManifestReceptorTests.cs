@@ -15,6 +15,7 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Priority;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -30,18 +31,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 [NotInParallel("IntegrityManifestGates")]   // the receptors' per-process gates are shared state
+[Category("Shard3")]
 public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_SendsChunkedTargetedManifestsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream1 = TrackedGuid.NewMedo().Value;
     var stream2 = TrackedGuid.NewMedo().Value;
     var stream3 = TrackedGuid.NewMedo().Value;
     coordinator.OwnDigests = [
       _digest(stream1, 11, 21, 2), _digest(stream2, 12, 22, 1), _digest(stream3, 13, 23, 3),
     ];
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -66,8 +68,8 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_NothingEmitted_StaysSilentAsync() {
-    var coordinator = new _auditCoordinator();   // OwnDigests empty
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator();   // OwnDigests empty
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -80,11 +82,11 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_IdenticalFolds_StaySilentAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(stream, 11, 21, 2)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -110,10 +112,11 @@ public class IntegrityManifestReceptorTests {
     // and must be bounded the same way. Every existing comparator test runs at N=2-3, which is
     // exactly why this class of defect reached production: the behavior was correct, the VOLUME
     // was never asserted.
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedDigests = [];                       // every incoming stream is a divergence
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var coordinator = new AuditCoordinator {
+      ReceivedDigests = []                       // every incoming stream is a divergence
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     const int cap = 10;
     var sp = _provider(coordinator, transport,
@@ -160,11 +163,11 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_ByDefault_DetectsAndRepairsButPublishesNoReportsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var mismatched = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     // No PublishReportEvents — the production default.
     var sp = _provider(coordinator, transport,
@@ -194,13 +197,13 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_ReportsDisabled_DoesNotWarnReportsCappedAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var mismatched = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
-    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
     // No PublishReportEvents — the production default.
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -218,12 +221,12 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_Divergence_ReportsAndCappedRepairsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var mismatched = TrackedGuid.NewMedo().Value;
     var missing = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];   // fold differs; `missing` absent
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
@@ -247,17 +250,79 @@ public class IntegrityManifestReceptorTests {
     var command = (RequestRedeliveryCommand)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)transport.Published[0].Envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-    await Assert.That(command.StreamIds!).IsEquivalentTo([mismatched])
+    await Assert.That(command.StreamIds).IsEquivalentTo([mismatched])
       .Because("audit repair is STREAM-scoped — exactly the divergent bucket, nothing broader.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo(["Contracts.TypeX"]);
+    await Assert.That(command.EventTypes).IsEquivalentTo(["Contracts.TypeX"]);
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(command.StateOnly).IsFalse()
       .Because("audit repair is REPAIR semantics — the delivery a live subscriber missed, receptors and all.");
   }
 
+  /// <summary>
+  /// Priority step 1: every request the manifest receptor sends to an origin is background by construction, on the
+  /// envelope it publishes. A repair replays history to this service, a drill-down asks for more detail, a bulk
+  /// backfill is the largest replay the framework asks for; none of them may be served ahead of the origin's live work.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_Divergence_TheRepairRequestIsBackgroundAsync() {
+    var mismatched = TrackedGuid.NewMedo().Value;
+    var coordinator = new AuditCoordinator { ReceivedDigests = [_digest(mismatched, 99, 21, 1)] };
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
+      new CaptureDispatcher(), tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(mismatched, 11, 21, 2)]));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("the repair replays history to this service; the origin must not serve it ahead of its live work, and the replay must arrive here declared background");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_TheDrillDownRequestIsBackgroundAsync() {
+    var coordinator = new AuditCoordinator { ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)] };
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1, PublishReportEvents = true }, new CaptureDispatcher(), tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5), _typeDigest("Contracts.TypeY", 51, 52, 2)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a drill-down asks the origin for more detail on a mismatch; it is served from the origin's inbox behind live work");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelBulkDeficit_TheBackfillRequestIsBackgroundAsync() {
+    var coordinator = new AuditCoordinator { WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 } };
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.BigType", 41, 42, 2500)], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    });
+
+    var (bulkEnvelope, _, _) = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true);
+    await Assert.That(bulkEnvelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a whole-type backfill is the largest replay the framework asks for; it is background by definition");
+  }
+
   [Test]
   public async Task Registrar_RegistersBothReceptorsAtThreeStagesAsync() {
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var services = new ServiceCollection();
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
@@ -276,9 +341,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_TypesLevel_AnswersFromTypeTableAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)];
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator {
+      OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)]
+    };
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -301,11 +367,11 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_TypesLevelWithRecompute_RollsUpComputedRowsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var s1 = TrackedGuid.NewMedo().Value;
     var s2 = TrackedGuid.NewMedo().Value;
     coordinator.OwnDigests = [_digest(s1, 0b1100, 0b0110, 2), _digest(s2, 0b1010, 0b0011, 3)];
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -329,9 +395,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_TypesLevelRecompute_RollsUpAtTheStoreAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator {
+      OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)]
+    };
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -352,11 +419,12 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_ConcurrentRequests_AnswerOneAtATimeAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)];
+    var coordinator = new AuditCoordinator {
+      OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 1, 2, 1)]
+    };
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     coordinator.BlockFirstCompute = gate;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -392,10 +460,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelRecomputed_UsesStoreRollUpAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var streamId = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(streamId, 1, 2, 1)];
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -424,10 +492,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_ConcurrentManifests_CompareOneAtATimeAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     coordinator.BlockFirstCompute = gate;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -466,10 +534,11 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMatch_NoDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)]
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -484,10 +553,11 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_SendsCappedDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs; TypeY missing
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs; TypeY missing
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1, PublishReportEvents = true }, dispatcher, tracker: tracker);
@@ -513,9 +583,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevel_SettleSkipsFreshBucketsAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs...
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs...
+    };
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -531,14 +602,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_StreamLevel_TableMode_ComparesAgainstTableAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     // The TABLE lane disagrees with the origin; the recompute lane would agree — the report
     // proves table-driven manifests compare against the consumer's TABLE.
     coordinator.ReceivedTableDigests = [_digest(stream, 99, 21, 1)];
     coordinator.ReceivedDigests = [_digest(stream, 11, 21, 2)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -552,14 +623,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_StreamLevel_RecomputedManifest_ComparesAgainstRecomputeAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     // Inverse of the table-mode test: recompute agrees, table disagrees — a sweep manifest
     // (Recomputed=true) must stay silent because it compares against the consumer's recompute.
     coordinator.ReceivedTableDigests = [_digest(stream, 99, 21, 1)];
     coordinator.ReceivedDigests = [_digest(stream, 11, 21, 2)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -574,14 +645,14 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_Divergence_BatchesRepairsIntoOneDirectedRequestAsync() {
-    var coordinator = new _auditCoordinator();   // nothing local — every origin bucket diverges
+    var coordinator = new AuditCoordinator();   // nothing local — every origin bucket diverges
     var s1 = TrackedGuid.NewMedo().Value;
     var s2 = TrackedGuid.NewMedo().Value;
     var s3 = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
-    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -592,7 +663,7 @@ public class IntegrityManifestReceptorTests {
       .Because("divergent streams of one (tenant, type) batch into ONE repair request — " +
                "per-stream commands multiplied every storm by the stream count.");
     var command = _deserializeRedelivery(transport.Published[0].Envelope);
-    await Assert.That(command.StreamIds!).IsEquivalentTo([s1, s2, s3]);
+    await Assert.That(command.StreamIds).IsEquivalentTo([s1, s2, s3]);
     await Assert.That(transport.Published[0].Destination.Address).IsEqualTo("origin.requests")
       .Because("the request publishes to the ORIGIN-carried address — never anywhere else.");
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
@@ -600,13 +671,13 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_RepeatedManifest_SuppressesReportsAndRepairsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
-    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -627,10 +698,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_UnknownOriginRequestTopic_SkipsRepairPublishAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -647,9 +718,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_UnknownOriginTopic_SkipsDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]
+    };
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -670,12 +742,13 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_DrillDownCap_RotatesAcrossCycles_NoTypeStarvesAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [
-      _typeDigest("Contracts.TypeX", 99, 42, 4),   // differs from origin
-      _typeDigest("Contracts.TypeY", 98, 41, 3),   // differs from origin
-    ];
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [
+        _typeDigest("Contracts.TypeX", 99, 42, 4),   // differs from origin
+        _typeDigest("Contracts.TypeY", 98, 41, 3),   // differs from origin
+      ]
+    };
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1, PublishReportEvents = true }, tracker: tracker);
@@ -709,12 +782,12 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_UnlearnedTopicSkip_DoesNotBurnTheRepairAttemptAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, tracker: tracker);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]);
@@ -747,12 +820,13 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_EmptyWindowedAnswer_LocalHasBuckets_DoesNotAdvanceTheSealAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],   // the consumer HOLDS data here
-      ComputedThrough = 300,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],   // the consumer HOLDS data here
+        ComputedThrough = 300,
+      }
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -777,13 +851,13 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_DrainMode_RecordsAndStampsWindows_NeverSendsFromTheCompareAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.WindowedStreamResult = new WindowedDigestResult {
       Digests = [],   // nothing local — a pure deficit
       ComputedThrough = 300,
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { PublishReportEvents = false }, tracker: tracker);
@@ -814,15 +888,16 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_TypeLevelBulkDeficit_SendsOneBulkBackfill_NotDrillDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [],   // the consumer holds NOTHING for this type in the window
-      ComputedThrough = 5000,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds NOTHING for this type in the window
+        ComputedThrough = 5000,
+      }
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -863,12 +938,13 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_ExhaustedBulkLane_StillDrillsDownAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [],   // the consumer holds nothing — a pure, huge deficit
-      ComputedThrough = 5000,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds nothing — a pure, huge deficit
+        ComputedThrough = 5000,
+      }
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     IIntegrityRepairLedger ledger = new IntegrityRepairLedger();
     var sp = _provider(coordinator, transport,
@@ -918,10 +994,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_HealedBucket_ForgetsLedgerStateAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
@@ -948,13 +1024,13 @@ public class IntegrityManifestReceptorTests {
     // payload, and when arrivals outpace one comparison the queue IS the heap (observed live as
     // a fleet-wide OOM-crashloop). A skipped chunk is the documented benign case — its buckets
     // re-audit next cycle.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [];
     var blockFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     coordinator.BlockForChunk = blockFirst;
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly },
       dispatcher, tracker: new IntegrityGapTracker());
@@ -987,14 +1063,14 @@ public class IntegrityManifestReceptorTests {
     // The per-bucket consult made a 500-bucket chunk up to ~1000 sequential round trips — each
     // comparison took seconds, arrivals outpaced service, and the resulting in-memory queue was
     // the OOM. One batched consult per decision kind, per chunk.
-    var ledger = new _countingLedger();
-    var coordinator = new _auditCoordinator();
+    var ledger = new CountingLedger();
+    var coordinator = new AuditCoordinator();
     var s1 = TrackedGuid.NewMedo().Value;
     var s2 = TrackedGuid.NewMedo().Value;
     var s3 = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(s3, 13, 23, 4)];   // s3 heals; s1/s2 are deficits
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -1016,37 +1092,37 @@ public class IntegrityManifestReceptorTests {
       .Because("both deficits repair through the batched decisions — batching must not blunt repair");
   }
 
-  private sealed class _countingLedger : IIntegrityRepairLedger {
+  private sealed class CountingLedger : IIntegrityRepairLedger {
     public int SingleCalls;
     public int ReportBatchCalls;
     public int RepairBatchCalls;
     public int HealedBatchCalls;
 
-    public ValueTask<bool> TryBeginReportAsync(IntegrityRepairLedger.DivergenceKey key, long ol, long oh, long ll, long lh,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+    public ValueTask<bool> TryBeginReportAsync(IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       SingleCalls++;
       return ValueTask.FromResult(true);
     }
     public ValueTask<bool> TryBeginRepairAsync(IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now,
-        TimeSpan baseBackoff, int maxAttempts, CancellationToken ct = default) {
+        TimeSpan baseBackoff, int maxAttempts, CancellationToken cancellationToken = default) {
       SingleCalls++;
       return ValueTask.FromResult(true);
     }
-    public ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) {
+    public ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
       SingleCalls++;
       return ValueTask.CompletedTask;
     }
     public ValueTask<IReadOnlyList<bool>> TryBeginReportBatchAsync(IReadOnlyList<IntegrityReportObservation> observations,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       ReportBatchCalls++;
       return ValueTask.FromResult<IReadOnlyList<bool>>([.. observations.Select(_ => true)]);
     }
     public ValueTask<IReadOnlyList<bool>> TryBeginRepairBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
-        DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants, CancellationToken ct = default) {
+        DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants, CancellationToken cancellationToken = default) {
       RepairBatchCalls++;
       return ValueTask.FromResult<IReadOnlyList<bool>>([.. keys.Select((_, i) => i < maxGrants)]);
     }
-    public ValueTask MarkHealedBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken ct = default) {
+    public ValueTask MarkHealedBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, CancellationToken cancellationToken = default) {
       HealedBatchCalls++;
       return ValueTask.CompletedTask;
     }
@@ -1060,12 +1136,12 @@ public class IntegrityManifestReceptorTests {
     // manifests, and the local compare folded the WHOLE window — every stream in the lane — to
     // check one 500-stream chunk. Pods OOMed in seconds, on every service at once. The local
     // side only ever needs the streams THE CHUNK NAMES.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var s1 = TrackedGuid.NewMedo().Value;
     var s2 = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(s1, 11, 21, 2)];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -1083,8 +1159,8 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(coordinator.ForChunkStreamsSeen).IsNotNull()
       .Because("the chunk-bounded fold is the ONLY acceptable local read at stream level");
-    await Assert.That(coordinator.ForChunkStreamsSeen!.OrderBy(s => s).ToList())
-      .IsEquivalentTo(new[] { s1, s2 }.OrderBy(s => s).ToList())
+    await Assert.That(coordinator.ForChunkStreamsSeen!.Order().ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.Order().ToList())
       .Because("exactly the chunk's streams — folding the lane to check a chunk is the OOM this fixes");
     await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(100L);
     await Assert.That(coordinator.ForChunkUntilSeen).IsEqualTo(300L)
@@ -1098,11 +1174,11 @@ public class IntegrityManifestReceptorTests {
     // The pre-windowed shape of the same OOM: a legacy manifest against an unpopulated digest
     // lane fell back to a WHOLE-STORE recompute per chunk. The bounded fold answers the same
     // question for just the named streams.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(stream, 99, 21, 1)];   // deficit vs origin's 2
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -1113,7 +1189,7 @@ public class IntegrityManifestReceptorTests {
 
     await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
 
-    await Assert.That(coordinator.ForChunkStreamsSeen!).IsEquivalentTo([stream]);
+    await Assert.That(coordinator.ForChunkStreamsSeen).IsEquivalentTo([stream]);
     await Assert.That(coordinator.ForChunkSinceSeen).IsNull()
       .Because("a legacy manifest has no window — full history, but only for the named streams");
     await Assert.That(coordinator.StreamComputeCalls).IsEqualTo(0)
@@ -1126,10 +1202,10 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_StampsTheOriginGeneration_OnEveryAnswerAsync() {
-    var coordinator = new _auditCoordinator { OriginGeneration = 7 };
+    var coordinator = new AuditCoordinator { OriginGeneration = 7 };
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.OwnDigests = [_digest(stream, 11, 21, 2)];
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1146,11 +1222,11 @@ public class IntegrityManifestReceptorTests {
     // The origin's history legitimately moved (a close, a reclassification). This round's
     // comparison was aligned to the OLD world — running it would alarm on deliberate change.
     // The guard resets the seal; the next audit re-verifies from the beginning.
-    var coordinator = new _auditCoordinator { SealGenerationCoherent = false };
+    var coordinator = new AuditCoordinator { SealGenerationCoherent = false };
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
@@ -1172,11 +1248,11 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_GenerationUnchanged_ComparesNormallyAsync() {
-    var coordinator = new _auditCoordinator { SealGenerationCoherent = true };
+    var coordinator = new AuditCoordinator { SealGenerationCoherent = true };
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [];   // missing bucket → deficit → repair
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -1200,11 +1276,11 @@ public class IntegrityManifestReceptorTests {
     // the consumer holds the same NUMBER of events with different IDENTITY. Redelivery re-ships
     // what the origin has, dedup drops what the consumer already holds, the fold never moves —
     // and the repair loop retries forever. Identity damage needs a human, not a redelivery.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(stream, 99, 98, 2)];   // count 2, folds differ
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
@@ -1229,11 +1305,11 @@ public class IntegrityManifestReceptorTests {
     // The consumer holds MORE than the origin claims. Redelivery only ever adds — it cannot
     // converge a surplus — and auto-deleting local history on a remote's say-so is not a thing
     // the framework will ever do. Investigation item.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var stream = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [_digest(stream, 99, 98, 5)];   // 5 held, origin claims 2
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true },
@@ -1255,11 +1331,11 @@ public class IntegrityManifestReceptorTests {
     // WINDOW — the repair request carries the range, so the origin re-ships a slice instead of a
     // stream's whole history. [since, until) maps to the redelivery command's exclusive-floor /
     // inclusive-ceiling pair.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var missing = TrackedGuid.NewMedo().Value;
     coordinator.ReceivedDigests = [];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped },
@@ -1292,13 +1368,14 @@ public class IntegrityManifestReceptorTests {
     // The seal-advance rule: every bucket in the window matched, the answer was ONE complete
     // chunk with no resume cursor — only then has the whole window provably been verified, and
     // only then may the next audit start past it.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
-      ComputedThrough = 300,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+        ComputedThrough = 300,
+      }
     };
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1320,13 +1397,14 @@ public class IntegrityManifestReceptorTests {
     // A mismatch means the window is NOT verified: the seal stays put (the same window re-audits
     // after repair), and the drill-down inherits the window so the stream-level exchange — and
     // the repairs it spawns — stay bounded to the range that actually disagreed.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 99, 98, 5)],   // fold differs
-      ComputedThrough = 300,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 5)],   // fold differs
+        ComputedThrough = 300,
+      }
     };
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -1357,13 +1435,14 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_MultiChunkWindow_NeverAdvancesTheSealAsync() {
     // Chunks carry no assembly protocol — a lost chunk's buckets simply never arrive. With more
     // than one chunk this receiver cannot know it saw the whole window, so it must not certify it.
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult {
-      Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
-      ComputedThrough = 300,
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
+        ComputedThrough = 300,
+      }
     };
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1394,13 +1473,13 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task RequestReceptor_WindowedTypesAsk_AnswersFromTheWindowedRead_WithTheWatermarkAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult {
         Digests = [_typeDigest("Contracts.TypeX", 71, 72, 4)],
         ComputedThrough = 900,
       },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1430,10 +1509,10 @@ public class IntegrityManifestReceptorTests {
     // A window with no matching events is NOT the legacy nothing-emitted case: coverage advanced
     // even though no digests exist, and only an answer can carry that watermark. Legacy silence
     // here would freeze the asker's seal forever on a quiet type.
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 500 },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1457,10 +1536,10 @@ public class IntegrityManifestReceptorTests {
   public async Task RequestReceptor_WindowedNothingNewSettled_StaysSilentAsync() {
     // ComputedThrough == since means the origin has nothing settled beyond the asker's watermark.
     // There is no progress to report — the asker simply re-asks on its next cadence.
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 100 },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1480,14 +1559,14 @@ public class IntegrityManifestReceptorTests {
   public async Task RequestReceptor_WindowedStreamsAsk_CarriesTheResumeCursorAsync() {
     var stream = TrackedGuid.NewMedo().Value;
     var cursor = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedStreamResult = new WindowedDigestResult {
         Digests = [_digest(stream, 11, 21, 2)],
         ComputedThrough = 300,
         ResumeAfterStreamId = cursor,
       },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1516,10 +1595,10 @@ public class IntegrityManifestReceptorTests {
     // The DIM default returns null = "cannot window". The honest fallback is the legacy full
     // answer (correct, just unbounded) — never a fabricated watermark the engine cannot stand
     // behind.
-    var coordinator = new _auditCoordinator {   // WindowedTypeResult stays null
+    var coordinator = new AuditCoordinator {   // WindowedTypeResult stays null
       OwnTypeDigests = [_typeDigest("Contracts.TypeX", 41, 42, 5)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport);
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
@@ -1550,10 +1629,10 @@ public class IntegrityManifestReceptorTests {
     // audit forever, and the seal could never certify the window.
     var cursor = TrackedGuid.NewMedo().Value;
     var stream = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       ReceivedDigests = [_digest(stream, 41, 42, 5)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -1583,10 +1662,10 @@ public class IntegrityManifestReceptorTests {
   [Test]
   public async Task ManifestReceptor_StreamAnswerWithoutCursor_DoesNotFollowAsync() {
     var stream = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       ReceivedDigests = [_digest(stream, 41, 42, 5)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -1609,10 +1688,10 @@ public class IntegrityManifestReceptorTests {
     // a chunk compare, so a million-stream lane must not turn one audit into an unbounded chain.
     // Whatever the cap leaves unfollowed re-audits from the seal next cycle.
     var stream = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       ReceivedDigests = [_digest(stream, 41, 42, 5)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { MaxManifestPagesPerAudit = 2 }, tracker: tracker);
@@ -1638,10 +1717,10 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_CursorWithoutOriginTopic_SkipsFollowAsync() {
     // Directed or not at all — the same rule every other origin-bound request obeys.
     var stream = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       ReceivedDigests = [_digest(stream, 41, 42, 5)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _provider(coordinator, transport, tracker: new IntegrityGapTracker());
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1656,6 +1735,63 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse();
   }
 
+  [Test]
+  public async Task ManifestReceptor_CursorFollowBudgets_AreEvictedOnceTheyOutgrowTheirBoundAsync() {
+    // The page-budget map is a per-process static keyed by (origin, window). Windows advance every
+    // audit cycle and origins come and go, so every key it holds is dead within a cycle or two —
+    // but nothing removes them on that schedule: a complete answer removes its own key and an
+    // incomplete one does not. In a consumer auditing many origins over a long uptime the map is
+    // therefore append-only, and the bound is the only thing that keeps a diagnostic counter from
+    // growing for the life of the process. Eviction is observable because a budget the map has
+    // forgotten starts over.
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new AuditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],   // folds match — only the paging is under test
+    };
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxManifestPagesPerAudit = 1 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    int follows() => transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Count(r => r is not null);
+
+    async Task followAsync(long since, long through) =>
+      await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+        SinceSequence = since,
+        ComputedThrough = through,
+        ChunkCount = 1,
+        ResumeAfterStreamId = TrackedGuid.NewMedo().Value,
+      });
+
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(1);
+
+    // The budget for this window is now spent, and stays spent while the map remembers it.
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(1)
+      .Because("without a live budget entry for this window the rest of the test would prove "
+             + "nothing — the second follow has to be refused before eviction can be seen");
+
+    // Enough distinct windows to carry the map past its bound whatever it already held. Each one
+    // is a fresh key, so each is allowed its first page.
+    const int floodWindows = 300;
+    for (var i = 0; i < floodWindows; i++) {
+      await followAsync(1000 + i, 5000);
+    }
+    await Assert.That(follows()).IsEqualTo(1 + floodWindows)
+      .Because("each distinct window gets its own budget; eviction resets counters, it does not "
+             + "refuse pages");
+
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(2 + floodWindows)
+      .Because("the original window's spent budget was evicted with the rest — an unbounded map "
+             + "would still be refusing this page, and would still be holding every dead key "
+             + "behind it for the life of the process");
+  }
+
   // ── bulk-deficit escalation: big type-level deficits skip the drip ──────
 
   [Test]
@@ -1664,16 +1800,16 @@ public class IntegrityManifestReceptorTests {
     // path days: 500-stream pages, 25 repairs per cycle. One state-only range-bounded redelivery
     // of the whole (tenant, type) window covers it in a single request — and state-only means the
     // backfilled history builds state without re-firing trigger receptors.
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult {
         Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],   // local: 100 events
         ComputedThrough = 300,
       },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1704,13 +1840,13 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeDeficitBelowThreshold_KeepsTheDrillDownAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult {
         Digests = [_typeDigest("Contracts.TypeX", 99, 98, 4500)],   // deficit 500 < 1000
         ComputedThrough = 300,
       },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
@@ -1734,17 +1870,17 @@ public class IntegrityManifestReceptorTests {
     // The synthetic (origin, tenant, type, empty-stream) ledger key applies the same attempt
     // backoff every stream-level repair gets — without it every audit cycle re-ships the whole
     // window while the first backfill is still in flight.
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       WindowedTypeResult = new WindowedDigestResult {
         Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],
         ComputedThrough = 300,
       },
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker, ledger: ledger);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000 }, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1760,6 +1896,420 @@ public class IntegrityManifestReceptorTests {
     var bulkCount = transport.Published.Count(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true);
     await Assert.That(bulkCount).IsEqualTo(1)
       .Because("the second sighting inside the backoff re-ships nothing — the first backfill is in flight");
+  }
+
+  // ── coverage round 23: fail-closed paths when required infrastructure is absent ────
+
+  // If the origin cannot resolve its own coordinator, transport, or serializer, answering a
+  // request anyway would either throw mid-pipeline or fabricate an answer nobody can trust. The
+  // origin must drop the request AND say why — a silent drop here would look identical to "we
+  // have nothing to report," burying a broken deployment instead of surfacing it.
+  [Test]
+  public async Task RequestReceptor_MissingInfrastructure_LogsAndDropsTheRequestAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("origin-svc"));
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    var sp = services.BuildServiceProvider();
+    var logger = new CapturingLogger<IntegrityManifestRequestReceptor>();
+    var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("required infrastructure is missing")))
+      .IsTrue().Because("a request the origin cannot answer must be visibly dropped, not silently ignored");
+  }
+
+  // A manifest that arrives after an operator explicitly disabled the deep audit must not be
+  // compared anyway — resurrecting reports and repairs behind a switch the operator turned off
+  // is exactly the "half-obeyed kill switch" that makes an incident worse mid-rollback.
+  [Test]
+  public async Task ManifestReceptor_AuditDisabled_IgnoresIncomingManifestAsync() {
+    var coordinator = new AuditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];   // would otherwise report a deficit for the bucket
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { AuditEnabled = false, PublishReportEvents = true }, dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("AuditEnabled=false must fully disable comparison — not just new audits, incoming manifests too");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // A manifest a service somehow receives FROM ITSELF (topology misconfiguration, a broadcast
+  // that fans back to the sender) must never be compared — a self-loop would otherwise read as a
+  // total deficit against buckets that were never actually foreign, manufacturing an alarm and a
+  // repair request the service would send to itself.
+  [Test]
+  public async Task ManifestReceptor_OwnManifestLoopedBack_IgnoresItAsync() {
+    var coordinator = new AuditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    // OriginServiceId is the CONSUMER's own LocalServiceId, not coordinator.OriginId — a looped
+    // manifest. Without the self-check this compares as a total deficit (nothing local is ever
+    // recorded under an origin id nobody actually tracks) and alarms/repairs against itself.
+    var selfManifest = new IntegrityManifest {
+      ManifestStreamId = coordinator.LocalServiceId,
+      OriginServiceId = coordinator.LocalServiceId,
+      OriginServiceName = "self-svc",
+      Digests = [_digest(stream, 11, 21, 2)],
+    };
+    await receptor.HandleAsync(selfManifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("a self-looped manifest has nothing foreign to compare against — it must be ignored, not alarmed on");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // If this engine cannot fold the manifest's exact stream-level window, comparing against a
+  // differently-scoped local fold would fabricate mismatches on any stream with prior history —
+  // a false-alarm storm rather than an honest "cannot verify this cycle."
+  [Test]
+  public async Task ManifestReceptor_WindowedStreamCompare_EngineCannotFold_SkipsInsteadOfAlarmingAsync() {
+    var coordinator = new AuditCoordinator { ForChunkReturnsNull = true };
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("an unfoldable window must never alarm on incomparable ranges");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no repair may go out for a comparison that never actually ran");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("cannot fold the manifest's window"))).IsTrue()
+      .Because("a skipped audit must be visible in logs — silence here reads identical to 'no problems found'");
+  }
+
+  // A stream that simply has not settled locally yet must never read as divergence — otherwise
+  // every in-flight delivery falsely alarms and can drive a needless redelivery request for a
+  // stream that is actually fine and just landed moments ago.
+  [Test]
+  public async Task ManifestReceptor_StreamLevel_SettleSkipsFreshBucketsAsync() {
+    var coordinator = new AuditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    // ReceivedDigests / ReceivedTableDigests both default empty — nothing locally for this bucket yet.
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    // ...but the origin's bucket changed moments ago — in-flight, not divergence.
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _digest(stream, 11, 21, 2) with { UpdatedAt = DateTimeOffset.UtcNow },
+    ]));
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("a bucket updated inside the settle window must never alarm — the stream-level twin of the type-level settle skip");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // Without a resolvable requester identity, a resume-cursor follow-up cannot be addressed at
+  // all. The rest of a wide lane's window must simply wait for the next audit cycle — it must
+  // not be dropped in a way indistinguishable from "the window answered completely."
+  [Test]
+  public async Task ManifestReceptor_ResumeCursor_MissingRequesterIdentity_CannotFollowAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var cursor = TrackedGuid.NewMedo().Value;
+    var coordinator = new AuditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the follow-up cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+      ResumeAfterStreamId = cursor,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse()
+      .Because("the follow-up cannot be addressed without a requester identity and must not be silently abandoned");
+  }
+
+  // Same hazard as the stream-level windowed skip, one level up: comparing a type-level window
+  // this engine cannot actually fold would alarm on ranges that were never truly compared.
+  [Test]
+  public async Task ManifestReceptor_TypeLevelWindowedCompare_EngineCannotFold_SkipsInsteadOfAlarmingAsync() {
+    var coordinator = new AuditCoordinator();   // WindowedTypeResult stays null — "cannot window"
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("cannot fold the manifest's window"))).IsTrue()
+      .Because("a skipped type-level audit must be visible — a silent return here would report a false all-clear");
+  }
+
+  // Without a resolvable requester identity, a type-level mismatch cannot be escalated to a
+  // stream-level drill-down at all. The mismatch must stay live for the next audit cycle rather
+  // than being silently dropped in a way indistinguishable from "everything matched."
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_NoRequesterIdentity_SkipsDrillDownAsync() {
+    var coordinator = new AuditCoordinator {
+      ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)]   // differs
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the drill-down cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    services.AddSingleton(new IntegrityGapTracker());
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no drill-down can be addressed without a requester identity");
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("type-level mismatches only ever escalate; they never report directly");
+  }
+
+  // An unpopulated type-digest table must never read as "nothing to compare" — the honest
+  // fallback is the store recompute. Treating an empty table as a clean match would mean a
+  // broken digest-maintenance path audits identical to a genuinely quiet type.
+  [Test]
+  public async Task ManifestReceptor_TypeLevel_UnpopulatedTable_FallsBackToRecomputeAsync() {
+    var coordinator = new AuditCoordinator();
+    // OwnTypeDigests / ReceivedTypeDigests both default empty — the table lane is unpopulated.
+    var s1 = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(s1, 99, 98, 3)];   // recompute source; folds differently than origin
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 5 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeComputeCalls).IsEqualTo(1)
+      .Because("an unpopulated type-digest table must fall back to the store recompute, never a pre-verified empty match");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the recompute fallback still finds and escalates the mismatch — an unpopulated table must not audit as clean");
+  }
+
+  // Directed-or-not-at-all applies to the bulk path exactly as it does to the per-stream repair
+  // and the drill-down: without the origin's carried request address, broadcasting anywhere else
+  // risks flooding every other service on that topic. The deficit waits for the next checkpoint.
+  [Test]
+  public async Task ManifestReceptor_BulkBackfillDeficit_UnknownOriginTopic_WithholdsTheBackfillAsync() {
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds nothing for this type — a pure, huge deficit
+        ComputedThrough = 5000,
+      },
+    };
+    var transport = new CaptureTransport();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
+      tracker: new IntegrityGapTracker());   // no checkpoint recorded — origin's address is unlearned
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [
+      _typeDigest("Contracts.BigType", 41, 42, 2500),
+    ], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no bulk backfill may broadcast off any topic but the origin's own carried address");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("no origin-carried request address"))).IsTrue()
+      .Because("the withheld backfill must be visible in logs, not a silent no-op");
+  }
+
+  // A stream-scoped deficit that cannot be addressed (no requester identity) must not silently
+  // look like "handled" — only the wire send is withheld; the deficit re-offers on the next
+  // comparison once the identity is fixed.
+  [Test]
+  public async Task ManifestReceptor_StreamDeficit_MissingRequesterIdentity_WithholdsTheRepairAsync() {
+    var coordinator = new AuditCoordinator();   // nothing local — every origin bucket diverges
+    var stream = TrackedGuid.NewMedo().Value;
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the repair request cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = false }));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("the repair cannot be addressed without a requester identity — sending nowhere would look identical to a healthy audit");
+  }
+
+  // A GRANTED bulk backfill whose origin has not yet taught its request address must be withheld
+  // at the send, after the ledger has already recorded the attempt. Distinct from the drill-down
+  // withhold beside it: that one is a stream-page ask, this one is the whole window's redelivery,
+  // and only this path can put a range-bounded RequestRedeliveryCommand on the wire.
+  [Test]
+  public async Task ManifestReceptor_GrantedBulkBackfill_WithNoOriginRequestAddress_WithholdsTheSendAsync() {
+    var coordinator = new AuditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],   // local holds 100 of 5000
+        ComputedThrough = 300,
+      },
+    };
+    var transport = new CaptureTransport();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
+    // A tracker with NO checkpoint recorded: the origin's request address is unlearned, which is
+    // the normal state for the first cycle after a consumer starts or an origin is redeployed.
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions {
+        RepairMode = IntegrityRepairMode.AutoRepairCapped,
+        BulkBackfillThresholdEvents = 1000,
+      },
+      tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(
+      _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5000)], ManifestLevel.Types) with {
+        SinceSequence = 100,
+        ComputedThrough = 300,
+        ChunkCount = 1,
+      });
+
+    await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true))
+      .IsFalse()
+      .Because("a redelivery of a whole 4900-event window may go to the origin's own carried "
+             + "address or nowhere; the only other topic on hand is the requester's own shared "
+             + "one, and publishing a backfill there fans it out to every service on it");
+
+    // The zero stream count is what makes this the BULK site and not the stream-scoped one: the
+    // stream path only ever withholds a request that names at least one stream, and it is not
+    // even reachable from a type-level manifest.
+    await Assert.That(logger.Entries.Any(e =>
+        e.Message.Contains("Repair request to 'origin-svc' withheld (Contracts.TypeX, 0 stream(s))",
+          StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the ledger has already burned an attempt on this bucket, so a silent withhold "
+             + "would leave the deficit un-backfilled and the spent attempt unexplained");
+  }
+
+  // The stream-scoped repair has no infrastructure check before it is called — its own guard is
+  // the only thing between an unaddressable repair and a NullReferenceException out of a
+  // background audit. Withholding must also stay silent about the address, because the address is
+  // fine here; it is this service's own identity that is missing.
+  [Test]
+  public async Task ManifestReceptor_GrantedStreamRepair_WithNoRequesterIdentity_WithholdsTheSendAsync() {
+    var coordinator = new AuditCoordinator();   // nothing local — the origin bucket diverges
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var logger = new CapturingLogger<IntegrityManifestReceptor>();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider: the repair request has no requester name to carry, so the
+    // origin would have nowhere to send the redelivery back to.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainEnabled = false,
+      PublishReportEvents = true,
+    }));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    // Repair was GRANTED — this is what proves the send was actually attempted rather than the
+    // whole repair path being skipped, which is how an unaddressable repair looks identical to a
+    // healthy audit.
+    var reports = dispatcher.Published.Cast<IntegrityDivergenceDetected>().ToList();
+    await Assert.That(reports.Count).IsEqualTo(1)
+      .Because("the divergence itself is still real and still reported — only the wire send is "
+             + "withheld");
+    await Assert.That(reports[0].AutoRepairRequested).IsTrue()
+      .Because("the ledger granted the repair, so the batch reached the send; without that grant "
+             + "this test would pass on a path that never tried to publish anything");
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("a repair request that cannot name its requester cannot be answered — the origin "
+             + "would have no return address, so sending it is worse than withholding it");
+    await Assert.That(logger.Entries.Any(e =>
+        e.Message.Contains("no origin-carried request address", StringComparison.Ordinal)))
+      .IsFalse()
+      .Because("the origin's address was learned; blaming it would send an operator chasing the "
+             + "origin's checkpoints instead of this service's own missing identity");
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
@@ -1783,7 +2333,7 @@ public class IntegrityManifestReceptorTests {
   };
 
   private static IntegrityManifest _manifest(
-      _auditCoordinator coordinator, List<StreamDigest> digests,
+      AuditCoordinator coordinator, List<StreamDigest> digests,
       ManifestLevel level = ManifestLevel.Streams, bool recomputed = false) => new() {
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
@@ -1808,15 +2358,15 @@ public class IntegrityManifestReceptorTests {
   }
 
   private static ServiceProvider _provider(
-      _auditCoordinator coordinator, _captureTransport transport,
-      StreamIntegrityOptions? options = null, _captureDispatcher? dispatcher = null,
+      AuditCoordinator coordinator, CaptureTransport transport,
+      StreamIntegrityOptions? options = null, CaptureDispatcher? dispatcher = null,
       IntegrityGapTracker? tracker = null, IIntegrityRepairLedger? ledger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IDispatcher>(dispatcher ?? new _captureDispatcher());
+    services.AddSingleton<IDispatcher>(dispatcher ?? new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
     // Report publishing is OFF by default in production (nothing consumes the events, and each
     // one mints its own stream). These tests exercise the opt-in publish path, so the fallback
     // turns it on; the default-off contract has its own tests below.
@@ -1840,7 +2390,7 @@ public class IntegrityManifestReceptorTests {
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -1853,7 +2403,7 @@ public class IntegrityManifestReceptorTests {
     };
   }
 
-  private sealed class _auditCoordinator : IWorkCoordinator {
+  private sealed class AuditCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
     public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, long From, long Until)> StampedWindows { get; } = [];
@@ -1901,8 +2451,6 @@ public class IntegrityManifestReceptorTests {
     public WindowedDigestResult? WindowedTypeResult { get; set; }
     public WindowedDigestResult? WindowedStreamResult { get; set; }
     public long? WindowedSinceSeen;
-    public long? WindowedUntilSeen;
-    public Guid? WindowedResumeSeen;
     public int? WindowedMaxSeen;
     public long? SealAdvancedTo;
     public Guid? SealAdvancedOrigin;
@@ -1929,7 +2477,6 @@ public class IntegrityManifestReceptorTests {
       Guid? originServiceId, IReadOnlyList<string>? eventTypes,
       long sinceSequence, long? untilSequence, TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       WindowedSinceSeen = sinceSequence;
-      WindowedUntilSeen = untilSequence;
       return Task.FromResult(WindowedTypeResult);
     }
 
@@ -1938,8 +2485,6 @@ public class IntegrityManifestReceptorTests {
       long sinceSequence, long? untilSequence, Guid? resumeAfterStreamId, int maxDigests,
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       WindowedSinceSeen = sinceSequence;
-      WindowedUntilSeen = untilSequence;
-      WindowedResumeSeen = resumeAfterStreamId;
       WindowedMaxSeen = maxDigests;
       return Task.FromResult(WindowedStreamResult);
     }
@@ -1950,6 +2495,10 @@ public class IntegrityManifestReceptorTests {
     public int ForChunkCalls;
     public TaskCompletionSource? BlockForChunk { get; set; }
     public TaskCompletionSource ForChunkEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>When true, simulates an engine that cannot fold the manifest's window — the
+    /// honest "I cannot answer this" signal, distinct from an empty-but-answerable fold.</summary>
+    public bool ForChunkReturnsNull { get; set; }
 
     public async Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
       Guid originServiceId, IReadOnlyList<Guid> streamIds,
@@ -1963,7 +2512,10 @@ public class IntegrityManifestReceptorTests {
       if (BlockForChunk is { } gate) {
         await gate.Task;
       }
-      return ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList();
+      if (ForChunkReturnsNull) {
+        return null;
+      }
+      return [.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))];
     }
 
     public Task<IReadOnlyList<StreamDigest>> GetStreamDigestsAsync(
@@ -1974,21 +2526,19 @@ public class IntegrityManifestReceptorTests {
       Guid? originServiceId, IReadOnlyList<string>? eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(originServiceId is null ? OwnTypeDigests : ReceivedTypeDigests);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -2003,7 +2553,7 @@ public class IntegrityManifestReceptorTests {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       Registered.Add((typeof(TMessage), stage));
@@ -2014,12 +2564,12 @@ public class IntegrityManifestReceptorTests {
   }
 
   /// <summary>Captures PublishAsync payloads; every other dispatcher member is unused here.</summary>
-  private sealed class _captureDispatcher : IDispatcher {
+  private sealed class CaptureDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) => PublishAsync(eventData);
@@ -2045,7 +2595,6 @@ public class IntegrityManifestReceptorTests {
     public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
@@ -2055,7 +2604,7 @@ public class IntegrityManifestReceptorTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;
@@ -2071,10 +2620,11 @@ public class IntegrityManifestReceptorTests {
   public async Task ManifestReceptor_ReportOnly_StillPublishesReportsAsync() {
     // ReportOnly is the operator's explicit report-and-decide opt-down. Bounding reports by
     // repairs must not silence the mode whose entire purpose is reporting without repairing.
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedDigests = [];
-    var transport = new _captureTransport();
-    var dispatcher = new _captureDispatcher();
+    var coordinator = new AuditCoordinator {
+      ReceivedDigests = []
+    };
+    var transport = new CaptureTransport();
+    var dispatcher = new CaptureDispatcher();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
       new StreamIntegrityOptions {
@@ -2098,18 +2648,18 @@ public class IntegrityManifestReceptorTests {
   }
 
   /// <summary>Minimal capturing logger — records level/message for assertions on log output.</summary>
-  private sealed class _capturingLogger<T> : Microsoft.Extensions.Logging.ILogger<T> {
+  private sealed class CapturingLogger<T> : Microsoft.Extensions.Logging.ILogger<T> {
     public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _nullScope.Instance;
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
         Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter)
       => Entries.Add((logLevel, formatter(state, exception)));
+  }
 
-    private sealed class _nullScope : IDisposable {
-      public static readonly _nullScope Instance = new();
-      public void Dispose() { }
-    }
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 }

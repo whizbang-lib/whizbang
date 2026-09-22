@@ -16,8 +16,7 @@ using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Targeted tests for <see cref="DapperSqliteEventStore"/> covering the paths the
@@ -34,7 +33,7 @@ namespace Whizbang.Data.Tests;
 /// that current behavior; legacy-format rows are seeded via raw SQL to exercise the
 /// deeper skip branches.
 /// </remarks>
-public class DapperSqliteEventStorePolymorphicTests : IDisposable {
+public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -504,7 +503,7 @@ public class DapperSqliteEventStorePolymorphicTests : IDisposable {
   }
 
   private async Task _seedRawEnvelopeRowAsync(Guid streamId, long sequenceNumber, string envelopeJson) {
-    using var command = _testBase.Connection.CreateCommand();
+    await using var command = _testBase.Connection.CreateCommand();
     command.CommandText = @"
       INSERT INTO whizbang_event_store (stream_id, sequence_number, envelope, created_at)
       VALUES (@StreamId, @SequenceNumber, @Envelope, datetime('now'))";
@@ -515,7 +514,7 @@ public class DapperSqliteEventStorePolymorphicTests : IDisposable {
   }
 
   private async Task<long> _countRowsAsync(Guid streamId) {
-    using var command = _testBase.Connection.CreateCommand();
+    await using var command = _testBase.Connection.CreateCommand();
     command.CommandText = "SELECT COUNT(*) FROM whizbang_event_store WHERE stream_id = @StreamId";
     command.Parameters.AddWithValue("@StreamId", streamId.ToString());
     var result = await command.ExecuteScalarAsync();

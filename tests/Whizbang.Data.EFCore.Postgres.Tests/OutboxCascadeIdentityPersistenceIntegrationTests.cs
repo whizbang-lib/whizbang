@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -37,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
 
   public record IdentityTestEvent([property: StreamId] Guid Id) : IEvent;
@@ -94,7 +97,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
       var sentAt = payload.TryGetProperty("SentAt", out var s) && s.ValueKind == JsonValueKind.String
         ? s.GetDateTimeOffset()
         : default;
-      await Assert.That(sentAt).IsNotEqualTo(default(DateTimeOffset))
+      await Assert.That(sentAt).IsNotEqualTo(default)
         .Because("PublishAsync must run the same SentAt-phase AutoPopulate as dispatch — SentAt was left at 0001-01-01 (the production signature).");
     } finally {
       ScopeContextAccessor.CurrentInitiatingContext = null;
@@ -297,9 +300,10 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddScoped(_ => CreateDbContext());
 
@@ -323,11 +327,12 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
-        coordinator,
-        instanceProvider,
+        coordinator: coordinator,
+        instanceProvider: instanceProvider,
         workChannelWriter: null,
-        options,
-        logger
+        options: options,
+        logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+        inboxChannelWriter: new InboxChannelWriter()
       );
     });
 

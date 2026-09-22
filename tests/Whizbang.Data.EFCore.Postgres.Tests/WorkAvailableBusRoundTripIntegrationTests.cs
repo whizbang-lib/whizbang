@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the wire-name "outbox" round-trips to <see cref="WorkOutboxAvailableSignal"/> automatically.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard1")]
 public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
   private async Task _pinStreamToInstanceAsync(Guid streamId, Guid instanceId) {
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -43,11 +44,14 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand("SELECT notify_instance_owners(@payload, @stream_ids)", conn);
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.Add(new NpgsqlParameter("stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = new[] { streamId },
     });
     await cmd.ExecuteNonQueryAsync();
+    // 146 (#720): the doorbell was queued, not notified; the driver rings after the commit, modeled here.
+    await using var ring = new NpgsqlCommand("SELECT ring_doorbells()", conn);
+    _ = await ring.ExecuteScalarAsync();
   }
 
   [Test]
@@ -74,19 +78,25 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkOutboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkOutboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);   // LISTEN resync
+
+    // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
+    // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
+    // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
+    // listened removes the race outright, rather than re-emitting until one attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
 
     // Pin a stream to this pod's instance and invoke notify_instance_owners — the exact call the
     // existing SQL emitters make today. If the wire-name / registry / transport chain is intact,
     // the bus subscriber receives WorkOutboxAvailableSignal without any SQL change on the emit side.
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
+
     await _invokeNotifyInstanceOwnersAsync("outbox", streamId);
 
     await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
@@ -118,16 +128,22 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkInboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkInboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);
+
+    // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
+    // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
+    // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
+    // listened removes the race outright, rather than re-emitting until one attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
+
     await _invokeNotifyInstanceOwnersAsync("inbox", streamId);
 
     await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
@@ -159,16 +175,22 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);
+
+    // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
+    // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
+    // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
+    // listened removes the race outright, rather than re-emitting until one attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
+
     await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
     await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
@@ -213,6 +235,10 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(instance);
     services.AddSingleton<ISharedNotifyConnection>(shared);
     services.AddWhizbangSignalBus();
+    // The first liveness probe is a real round trip through the database's LISTEN path; its
+    // production window is 5 s, which a loaded test machine can miss while the signal itself still
+    // arrives. The test asserts the probe's verdict, not its speed, so give it a wide window.
+    services.Configure<Whizbang.Core.Signals.SignalBusOptions>(o => o.ProbeTimeoutMilliseconds = 30_000);
     services.AddSingleton<ISignalTransport, PostgresSignalTransport>();
     await using var provider = services.BuildServiceProvider();
 
@@ -224,10 +250,16 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     foreach (var hosted in provider.GetServices<IHostedService>()) {
       await hosted.StartAsync(cts.Token);
     }
-    await Task.Delay(200, cts.Token);   // LISTEN resync
+
+    // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
+    // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
+    // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
+    // listened removes the race outright, rather than re-emitting until one attempt happens to win.
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
+
     await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
     await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
@@ -243,4 +275,5 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     }
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
+
 }

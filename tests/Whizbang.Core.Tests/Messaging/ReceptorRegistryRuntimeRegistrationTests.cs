@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -119,7 +120,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
 
     // Act - invoke the delegate stored in the registry
     // Use a scoped provider since ILifecycleContextAccessor is registered as scoped
-    using var sp = _createServiceProvider();
+    await using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
     await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
@@ -199,7 +200,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     var testMessage = new RuntimeRegistrationTestCommand("test-data");
 
     // Act
-    using var sp = _createServiceProvider();
+    await using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
     var result = await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
@@ -265,7 +266,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     // ILifecycleContextAccessor is registered by AddWhizbang() (core services), so we register it
     // manually here since we only use AddReceptors()/AddWhizbangDispatcher() in these tests.
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped<ILifecycleContextAccessor, AsyncLocalLifecycleContextAccessor>();
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -275,7 +276,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
       StreamId = Guid.CreateVersion7()
     };
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var scopedProvider = scope.ServiceProvider;
 
@@ -304,7 +305,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
   /// </summary>
   private static IReceptorRegistry _createRegistry() {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -317,7 +318,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
   /// </summary>
   private static ServiceProvider _createServiceProvider() {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider();

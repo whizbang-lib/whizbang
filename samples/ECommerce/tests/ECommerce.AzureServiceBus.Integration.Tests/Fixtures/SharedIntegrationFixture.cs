@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.MsSql;
 using Testcontainers.ServiceBus;
@@ -303,8 +304,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -333,12 +335,19 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
       )
     );
 
@@ -429,8 +438,9 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -465,12 +475,19 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        // Pass JSON options for event deserialization
+        logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
+        receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
+        runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
+        eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
       )
     );
 
@@ -682,11 +699,15 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
     // Query 1: Check inbox for event
+    // 162 split the inbox: status is work state and moved to wh_inbox_state, the rest describe the
+    // message and stayed. LEFT JOIN so a message row missing its state row shows up as a diagnostic
+    // finding rather than disappearing from the diagnostic.
     var inboxQuery = @"
-      SELECT message_id, message_type, stream_id, is_event, status, received_at
-      FROM inventory.wh_inbox
-      WHERE message_type LIKE '%' || {0} || '%'
-      ORDER BY received_at DESC
+      SELECT i.message_id, i.message_type, i.stream_id, i.is_event, s.status, i.received_at
+      FROM inventory.wh_inbox i
+      LEFT JOIN inventory.wh_inbox_state s ON s.message_id = i.message_id
+      WHERE i.message_type LIKE '%' || {0} || '%'
+      ORDER BY i.received_at DESC
       LIMIT 5";
 
     var inboxResults = await dbContext.Database

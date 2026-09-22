@@ -20,7 +20,7 @@ public class MessageTagAttributeTests {
 
   // Test concrete implementation for testing the abstract base class
   [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
-  private sealed class TestTagAttribute : MessageTagAttribute { }
+  private sealed class TestTagAttribute : MessageTagAttribute;
 
   [Test]
   public async Task MessageTagAttribute_IsAbstract_CannotBeInstantiatedDirectlyAsync() {

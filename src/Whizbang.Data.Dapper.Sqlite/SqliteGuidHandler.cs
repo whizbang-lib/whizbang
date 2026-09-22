@@ -8,14 +8,14 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// SQLite stores Guids as TEXT, so we need to handle conversion.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperTestBase.cs:SetupAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public class SqliteGuidHandler : SqlMapper.TypeHandler<Guid> {
   /// <summary>
   /// Parses a database value to a Guid, handling both string and Guid types.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override Guid Parse(object value) {
     if (value is string str) {
@@ -30,7 +30,7 @@ public class SqliteGuidHandler : SqlMapper.TypeHandler<Guid> {
   /// <summary>
   /// Sets a Guid value on a database parameter, converting it to a string for SQLite storage.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override void SetValue(IDbDataParameter parameter, Guid value) {
     parameter.Value = value.ToString();

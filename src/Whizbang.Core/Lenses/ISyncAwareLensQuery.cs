@@ -19,7 +19,7 @@ namespace Whizbang.Core.Lenses;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:SyncAwareLensQuery_GetByIdAsync_WaitsForSyncBeforeQueryingAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:SyncAwareLensQuery_GetByIdAsync_ReturnsModelFromUnderlyingQueryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs:SyncAwareLensQuery_Query_ReturnsDelegatedQueryAsync</tests>

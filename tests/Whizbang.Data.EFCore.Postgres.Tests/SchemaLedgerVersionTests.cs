@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationVersionGuard.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class SchemaLedgerVersionTests : EFCoreTestBase {
 
   /// <summary>A version that outranks whatever this build stamps, so the ledger looks "newer".</summary>
@@ -33,7 +34,7 @@ public class SchemaLedgerVersionTests : EFCoreTestBase {
   /// </summary>
   private const string ANCIENT_VERSION = "0.0.0-0";
 
-  private async Task<(string FileName, string Hash)> _pickTrackedMigrationAsync(
+  private static async Task<(string FileName, string Hash)> _pickTrackedMigrationAsync(
       NpgsqlConnection conn, CancellationToken ct) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"SELECT file_name, content_hash FROM wh_schema_migrations

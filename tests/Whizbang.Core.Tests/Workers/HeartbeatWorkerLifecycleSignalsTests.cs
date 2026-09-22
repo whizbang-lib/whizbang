@@ -37,7 +37,7 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     public TaskCompletionSource<HeartbeatRequest> FirstHeartbeat { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int HeartbeatCount { get; private set; }
 
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       var c = Interlocked.Increment(ref _count);
       HeartbeatCount = c;
       FirstHeartbeat.TrySetResult(request);
@@ -45,16 +45,14 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     }
     private int _count;
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class CapturingBus : ISignalBus {
@@ -69,6 +67,145 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
+  /// <summary>A bus whose publishes fail, to exercise the non-fatal announce paths.</summary>
+  private sealed class FailingBus(Exception failure) : ISignalBus {
+    public int Attempts;
+    private int _leavingAttempts;
+
+    /// <summary>Completes on the first publish attempt — a deterministic "the heartbeat loop
+    /// reached the announce" signal to wait on instead of a fixed delay.</summary>
+    public TaskCompletionSource FirstAttempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>How many <see cref="InstanceLeavingSignal"/> publishes were attempted — the
+    /// goodbye is best-effort, so its only observable trace is the attempt itself.</summary>
+    public int LeavingAttempts => Volatile.Read(ref _leavingAttempts);
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      Interlocked.Increment(ref Attempts);
+      if (typeof(TSignal) == typeof(InstanceLeavingSignal)) {
+        Interlocked.Increment(ref _leavingAttempts);
+      }
+      FirstAttempt.TrySetResult();
+      return ValueTask.FromException(failure);
+    }
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
+      => new NoopSub();
+    private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
+  }
+
+  /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the worker is parked at the barrier" signal. Since .NET 10
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>, so StartAsync returning proves only that the body was
+  /// scheduled; a token canceled before the work item is dequeued settles the task Canceled and
+  /// the delegate never runs at all.
+  /// </summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private static HeartbeatWorker _createWith(ISignalBus bus, ISchemaReadyGate? gate = null) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new HeartbeatCoordinator());
+    var sp = services.BuildServiceProvider();
+    var schemaGate = gate ?? new SchemaReadyGate();
+    if (gate is null) { ((SchemaReadyGate)schemaGate).MarkReady(); }
+    return new HeartbeatWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: bus);
+  }
+
+  [Test]
+  public async Task AFailedJoinAnnounce_IsSurvivedSoTheInstanceStillHeartbeatsAsync() {
+    // Announcing is an optimization: reconciling consumers pick a new instance up from the
+    // heartbeat scan anyway. Letting a failed announce kill the worker would trade a slower
+    // rebalance for an instance that never heartbeats at all and gets reaped as stale.
+    var bus = new FailingBus(new InvalidOperationException("signal transport down"));
+    var worker = _createWith(bus);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Wait on the attempt itself rather than on a duration — a fixed delay either flakes under
+    // load or slows every run to cover the worst case.
+    await bus.FirstAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(bus.Attempts).IsGreaterThan(0)
+      .Because("the announce must actually have been attempted for its failure path to mean anything");
+  }
+
+  [Test]
+  public async Task AFailedLeavingAnnounce_DoesNotBlockShutdownAsync() {
+    // The InstanceDied monitor still detects departure through lease and heartbeat expiry, so a
+    // failed goodbye costs a slower rebalance — never a shutdown that hangs or throws.
+    var bus = new FailingBus(new InvalidOperationException("signal transport down"));
+    var worker = _createWith(bus);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Stop a worker that is actually heartbeating, not one the thread pool may never have
+    // started: since .NET 10 StartAsync only queues ExecuteAsync, so without this wait the test
+    // exercises shutdown of a worker that did nothing — and the leaving announce would then be
+    // the only thing this test ever touched.
+    await bus.FirstAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(bus.LeavingAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("the goodbye is best-effort and swallowed, so the attempt is its only trace — a "
+             + "shutdown that skipped it would look identical to one whose publish merely failed");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a failed goodbye must not turn an ordinary stop into a faulted hosted service");
+  }
+
+  [Test]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate at startup. A pod stopped while still waiting has
+    // nothing to report and no schema to write to, so the exit must be silent rather than an error
+    // on every fast restart.
+    var gate = new BlockingGate();   // never opens, and says when the worker arrives
+    var bus = new CapturingBus();
+    var worker = _createWith(bus, gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    int joinCount;
+    lock (bus.Published) { joinCount = bus.Published.Count(t => t == typeof(InstanceJoinedSignal)); }
+    await Assert.That(joinCount).IsEqualTo(0)
+      .Because("a pod that never recorded a heartbeat has no row in wh_service_instances to "
+             + "announce — announcing a join here tells peers to route work at an instance that "
+             + "cannot write to the schema it is still waiting for");
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("the parked worker must unpark on stop rather than hanging shutdown");
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("stopping mid-migration is an ordinary fast restart, not a crash to report");
+  }
+
   private static (HeartbeatWorker Worker, HeartbeatCoordinator Coord, CapturingBus Bus) _create() {
     var coord = new HeartbeatCoordinator();
     var services = new ServiceCollection();
@@ -78,11 +215,16 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     schemaGate.MarkReady();
     var bus = new CapturingBus();
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      schemaGate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),   // long interval — first heartbeat only
-      NullLogger<HeartbeatWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
+      // long interval — first heartbeat only
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: bus);
     return (worker, coord, bus);
   }

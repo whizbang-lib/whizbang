@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Dispatch;
 /// <docs>fundamentals/dispatcher/publish-once</docs>
 [Category("Integration")]
 [Category("Dispatcher")]
+[Category("Shard1")]
 public class ClaimedEmissionStoreTests : EFCoreTestBase {
 
   // ── Schema invariant ──────────────────────────────────────────────────

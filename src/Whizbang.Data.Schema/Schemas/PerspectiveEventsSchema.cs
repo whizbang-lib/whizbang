@@ -95,6 +95,12 @@ public static class PerspectiveEventsSchema {
         Name: "failure_reason",
         DataType: WhizbangDataType.INTEGER,
         Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: Columns.PRIORITY,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(150)
       )
     ),
     Indexes:
@@ -135,5 +141,10 @@ public static class PerspectiveEventsSchema {
     public const string PROCESSED_AT = "processed_at";
     public const string SCHEDULED_FOR = "scheduled_for";
     public const string FAILURE_REASON = "failure_reason";
+    /// <summary>
+    /// The row's effective priority (priority step 1): one integer, lower is more urgent, 150 is the standard
+    /// band a row nothing classified lands in. The claim orders streams by it.
+    /// </summary>
+    public const string PRIORITY = "priority";
   }
 }

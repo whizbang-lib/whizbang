@@ -14,6 +14,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <typeparam name="T">Item type the channel carries.</typeparam>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BatchFlusherRetryTests.cs</tests>
 public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private readonly Channel<T> _channel;
   private readonly Func<IReadOnlyList<T>, CancellationToken, Task> _flush;
@@ -29,8 +30,26 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   /// <summary>Total flush calls invoked (observability).</summary>
   public long FlushCallCount { get; private set; }
 
-  /// <summary>Producer-side writer for callers to enqueue items.</summary>
+  /// <summary>Items dropped after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failed flushes (diagnostic).</summary>
+  public long ItemsDropped { get; private set; }
+
+  /// <summary>Producer-side writer for callers to enqueue items. Items written here are not counted in <see cref="Pending"/>; use <see cref="EnqueueAsync"/> for that.</summary>
   public ChannelWriter<T> Writer => _channel.Writer;
+
+  private long _accepted;
+
+  /// <summary>Enqueues one item and counts it toward <see cref="Pending"/> until it is flushed or dropped.</summary>
+  public ValueTask EnqueueAsync(T item, CancellationToken cancellationToken = default) {
+    Interlocked.Increment(ref _accepted);
+    return _channel.Writer.WriteAsync(item, cancellationToken);
+  }
+
+  /// <summary>
+  /// Items accepted through <see cref="EnqueueAsync"/> that are neither flushed nor dropped yet: what waits
+  /// in the channel plus what the loop has taken up and is flushing. Counted on the producer side so a
+  /// reading never misses an item the loop has read but not yet flushed.
+  /// </summary>
+  public long Pending => Math.Max(0, Interlocked.Read(ref _accepted) - ItemsFlushed - ItemsDropped);
 
   /// <summary>
   /// Creates the flusher and starts the background coalescing loop.
@@ -89,18 +108,48 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
         }
 
         try {
-          await _flush(batch, ct);
-          FlushCallCount++;
-          ItemsFlushed += batch.Count;
+          await _flushWithRetryAsync(batch, ct);
         } catch (OperationCanceledException) {
           break;
-        } catch (Exception ex) {
-          LogFlushError(_logger, batch.Count, ex);
-          // Items are lost on flush failure — caller's responsibility to make the flush idempotent.
         }
       }
     } finally {
       _stoppedSignal.TrySetResult();
+    }
+  }
+
+  /// <summary>
+  /// A failed flush is retried in place with a backoff instead of being discarded. The items are
+  /// completions, lease renewals and failures: losing them leaves rows leased until expiry and
+  /// re-claimed afterwards, which is how one transient timeout turned into lease churn under a bulk
+  /// import. The flush is idempotent by contract, so retrying after a partial success is safe. Only
+  /// after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failures is the batch
+  /// dropped, at Error, with the consequence named.
+  /// </summary>
+  private async Task _flushWithRetryAsync(List<T> batch, CancellationToken ct) {
+    var maxAttempts = Math.Max(1, _options.MaxFlushAttempts);
+    var attempts = 0;
+    while (true) {
+      attempts++;
+      try {
+        await _flush(batch, ct);
+        FlushCallCount++;
+        ItemsFlushed += batch.Count;
+        return;
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        if (attempts >= maxAttempts) {
+          ItemsDropped += batch.Count;
+          LogBatchDropped(_logger, batch.Count, attempts, ex);
+          return;
+        }
+        var backoffMs = Math.Min(
+          Math.Max(1, _options.FlushRetryBackoffMs) * (1 << Math.Min(attempts - 1, 6)),
+          Math.Max(1, _options.FlushRetryMaxBackoffMs));
+        LogFlushRetry(_logger, batch.Count, attempts, maxAttempts, backoffMs, ex);
+        await Task.Delay(backoffMs, ct);
+      }
     }
   }
 
@@ -117,18 +166,49 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       await _stoppedSignal.Task.ConfigureAwait(false);
       return;
     }
+
+    // Completing the writer is what lets the loop DRAIN: ReadAsync throws ChannelClosedException
+    // only once the channel is both completed and empty, so the loop finishes the work already
+    // queued and then exits on its own. Cancelling first -- as this used to -- makes ReadAsync
+    // throw immediately and silently discards whatever had not been read yet. Five workers share
+    // this flusher (lease renewals, inbox handler commits, perspective completions, outbox
+    // completions, message failures), so that discard showed up as expired leases, reprocessed
+    // messages, stalled cursors and messages stuck in-flight, once per graceful shutdown.
     _channel.Writer.TryComplete();
-    await _stop.CancelAsync();
-    try { await _loop; } catch (OperationCanceledException) { }
+    try {
+      // CancellationToken.None is deliberate and load-bearing: _stop is what this method cancels
+      // *after* the drain gives up, so flowing it in here would let an external cancel abort the
+      // drain early and discard the buffered work this whole path exists to flush.
+      await _loop
+        .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), CancellationToken.None)
+        .ConfigureAwait(false);
+    } catch (TimeoutException) {
+      // A flush callback that will not return must not hold host shutdown open forever.
+      LogDrainTimeout(_logger, _options.DrainTimeoutMs);
+      await _stop.CancelAsync().ConfigureAwait(false);
+      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
+    }
+
+    if (!_stop.IsCancellationRequested) {
+      await _stop.CancelAsync().ConfigureAwait(false);
+    }
     _stop.Dispose();
   }
 
   /// <summary>Test/diagnostic hook: completes when the loop has exited.</summary>
   public Task StoppedSignal => _stoppedSignal.Task;
 
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "BatchFlusher drain exceeded {DrainTimeoutMs}ms during shutdown; remaining items dropped")]
+  static partial void LogDrainTimeout(ILogger logger, int drainTimeoutMs);
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-    Message = "BatchFlusher flush failed for batch of {Count}; items lost (caller flush should be idempotent)")]
-  static partial void LogFlushError(ILogger logger, int count, Exception ex);
+    Message = "BatchFlusher flush failed for batch of {Count} (attempt {Attempt} of {MaxAttempts}); retrying the same batch in {BackoffMs}ms")]
+  static partial void LogFlushRetry(ILogger logger, int count, int attempt, int maxAttempts, int backoffMs, Exception ex);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Error,
+    Message = "BatchFlusher dropped a batch of {Count} after {Attempts} failed flushes; the rows behind these items stay leased until their lease expires and are then re-claimed and redone (the flush is idempotent)")]
+  static partial void LogBatchDropped(ILogger logger, int count, int attempts, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="BatchFlusher{T}"/>.</summary>
@@ -145,4 +225,20 @@ public sealed class BatchFlusherOptions {
 
   /// <summary>If batch reaches this size before the window closes, flush immediately. Default 250.</summary>
   public int ImmediateFlushThreshold { get; set; } = 250;
+
+  /// <summary>
+  /// How long shutdown waits for queued items to drain before giving up and cancelling.
+  /// Bounds the case where a flush callback never returns; reaching it drops the remainder
+  /// and logs a warning, which is strictly better than blocking host shutdown indefinitely.
+  /// </summary>
+  public int DrainTimeoutMs { get; set; } = 5_000;
+
+  /// <summary>Consecutive failed flushes of one batch before it is dropped. Default 5.</summary>
+  public int MaxFlushAttempts { get; set; } = 5;
+
+  /// <summary>Backoff before the first retry of a failed flush, doubled per attempt. Default 250 ms.</summary>
+  public int FlushRetryBackoffMs { get; set; } = 250;
+
+  /// <summary>Cap on the retry backoff. Default 5000 ms.</summary>
+  public int FlushRetryMaxBackoffMs { get; set; } = 5_000;
 }

@@ -2,154 +2,45 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using TUnit.Core;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Tests for IntervalUnitOfWorkStrategy.
-/// Includes all contract tests (manually copied) plus interval strategy-specific behavior tests.
+/// Inherits the contract tests (IUnitOfWorkStrategyContractTests) and adds the interval strategy's own behavior tests.
 /// Key behavior: Accumulates messages, flushes on timer tick using PeriodicTimer.
-/// NOTE: Contract tests manually copied instead of using [InheritsTests] due to TUnit issue with background tasks.
 /// </summary>
-public class IntervalUnitOfWorkStrategyTests {
-  private IntervalUnitOfWorkStrategy _createStrategy() {
+[InheritsTests]
+public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests {
+  /// <inheritdoc />
+  protected override IUnitOfWorkStrategy CreateStrategy() => _createStrategy();
+
+  private static IntervalUnitOfWorkStrategy _createStrategy() {
     // Use VERY long interval for contract tests (30 seconds) to prevent timer ticks during tests
     // Interval-specific tests use shorter intervals and explicit Task.Delay for timing
     return new IntervalUnitOfWorkStrategy(TimeSpan.FromSeconds(30));
   }
 
-  // ========================================
-  // CONTRACT TESTS (manually copied from IUnitOfWorkStrategyContractTests)
-  // ========================================
-
-  [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(message);
-
-    // Assert
-    await Assert.That(unitId).IsNotEqualTo(Guid.Empty);
-  }
-
-  [Test]
-  public async Task QueueMessageAsync_StoresMessageAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(message);
-    var messages = strategy.GetMessagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsGreaterThanOrEqualTo(1);
-    await Assert.That(messages).Contains(message);
-  }
-
-  [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(
-      message,
-      LifecycleStage.PreDistributeDetached
-    );
-    var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
-  }
-
-  [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    var nonExistentUnitId = Guid.NewGuid();
-
-    // Act
-    var messages = strategy.GetMessagesForUnit(nonExistentUnitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    var nonExistentUnitId = Guid.NewGuid();
-
-    // Act
-    var lifecycleStages = strategy.GetLifecycleStagesForUnit(nonExistentUnitId);
-
-    // Assert
-    await Assert.That(lifecycleStages.Count).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-    var unitId = await strategy.QueueMessageAsync(message);
-
-    // Act
-    await strategy.CancelUnitAsync(unitId);
-    var messages = strategy.GetMessagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsEqualTo(0);
-  }
-
   [Test]
   public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a real, in-flight unit alongside the unknown id, so "did nothing" is visible.
     await using var strategy = _createStrategy();
+    strategy.OnFlushRequested += async (_, _) => await Task.CompletedTask;
+    var liveUnitId = await strategy.QueueMessageAsync(new TestMessage { Value = "keep me" });
     var nonExistentUnitId = Guid.NewGuid();
 
-    // Act & Assert (should not throw)
-    await strategy.CancelUnitAsync(nonExistentUnitId);
-  }
-
-  [Test]
-  public async Task OnFlushRequested_CanBeWiredAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    Guid? callbackUnitId = null;
-
-    strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackUnitId = unitId;
-      await Task.CompletedTask;
-    };
-
-    var message = new TestMessage { Value = "test" };
-
     // Act
-    var unitId = await strategy.QueueMessageAsync(message);
+    await strategy.CancelUnitAsync(nonExistentUnitId);
 
-    // Allow async operations to complete (some strategies flush immediately, others don't)
-    await Task.Delay(100);
-
-    // Assert - Callback was successfully wired (no exception thrown)
-    // Actual invocation timing varies by strategy (Immediate invokes immediately, others don't)
-    await Assert.That(unitId).IsNotEqualTo(Guid.Empty);
+    // Assert - cancelling an id nobody owns must not discard the batch that IS open. The guard
+    // that makes this true is a single `_currentUnit?.UnitId == unitId` check; drop it and every
+    // cancel silently drops the in-flight messages of an unrelated unit.
+    await Assert.That(strategy.GetMessagesForUnit(liveUnitId).Count).IsEqualTo(1)
+      .Because("the open unit is untouched by a cancel aimed at an id that was never queued");
+    await Assert.That(strategy.GetMessagesForUnit(nonExistentUnitId).Count).IsEqualTo(0)
+      .Because("and the unknown id still resolves to nothing rather than being created by the cancel");
   }
 
   // ========================================
@@ -250,7 +141,7 @@ public class IntervalUnitOfWorkStrategyTests {
     var callbackCount = 0;
     var callbackUnitIds = new List<Guid>();
 
-    strategy.OnFlushRequested += async (unitId, ct) => {
+    strategy.OnFlushRequested += async (unitId, _) => {
       callbackCount++;
       callbackUnitIds.Add(unitId);
       callbackTriggered.TrySetResult(unitId); // Signal first callback
@@ -353,7 +244,7 @@ public class IntervalUnitOfWorkStrategyTests {
     var firstFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    strategy.OnFlushRequested += async (unitId, ct) => {
+    strategy.OnFlushRequested += async (unitId, _) => {
       var messages = strategy.GetMessagesForUnit(unitId);
       flushedUnitIds.Add(unitId);
       flushedMessageCounts.Add(messages.Count);
@@ -367,14 +258,14 @@ public class IntervalUnitOfWorkStrategyTests {
     };
 
     // Act - Queue first batch
-    var unitId1 = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
+    _ = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
     await strategy.QueueMessageAsync(new TestMessage { Value = "1b" });
 
     // Wait for first flush (signal-based)
     await firstFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Queue second batch
-    var unitId2 = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
+    _ = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
 
     // Wait for second flush (signal-based)
     await secondFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));

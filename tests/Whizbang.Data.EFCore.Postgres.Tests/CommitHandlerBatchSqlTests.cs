@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+[Category("Shard2")]
 public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
   /// <summary>
@@ -57,11 +58,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -89,7 +96,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
         results.Add((
           reader.GetGuid(0),
           reader.GetBoolean(1),
-          reader.IsDBNull(2) ? null : reader.GetString(2)));
+          await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
       }
     }
 
@@ -99,7 +106,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
     // Verify all three inbox rows are now processed.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var processedCount = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(processedCount).IsEqualTo(3L);
@@ -125,11 +132,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -161,19 +174,19 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
         results.Add((
           reader.GetGuid(0),
           reader.GetBoolean(1),
-          reader.IsDBNull(2) ? null : reader.GetString(2)));
+          await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
       }
     }
 
     await Assert.That(results.Count).IsEqualTo(3);
-    var (handlerId, success, error) = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
+    var (_, success, error) = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
     await Assert.That(success).IsFalse();
     await Assert.That(error).IsNotNull();
     await Assert.That(results.Where(r => r.handlerId != failingHandlerId).All(r => r.success)).IsTrue();
 
     // Verify SAVEPOINT isolation: handlers 0 and 2 applied; handler 1 (failing) did NOT.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT message_id, processed_at IS NOT NULL FROM wh_inbox WHERE message_id = ANY(@ids) ORDER BY message_id";
+    verify.CommandText = "SELECT message_id, processed_at IS NOT NULL FROM wh_inbox_state WHERE message_id = ANY(@ids) ORDER BY message_id";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var states = new Dictionary<Guid, bool>();
     await using (var reader = await verify.ExecuteReaderAsync()) {
@@ -238,11 +251,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -270,7 +289,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     // happy path (processed_at stamped via the debug-mode test DB) but without
     // per-handler savepoint overhead.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var processed = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(processed).IsEqualTo(3L)
@@ -298,11 +317,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -338,10 +363,124 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
     // Zero rows applied: all three inbox completions rolled back atomically.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NULL";
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var stillPending = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(stillPending).IsEqualTo(3L)
       .Because("All three inbox rows remain unprocessed because the bulk transaction rolled back on the malformed-UUID handler. Tier 2 (savepoint loop) then handles per-handler isolation — proven separately by the OneHandlerFails_OthersSucceedSavepointIsolation test.");
   }
+
+  [Test]
+  public async Task CommitHandlerBatch_TierOneFallback_SurfacesTierAndReasonAsync() {
+    // #573: the Tier-1 exception handler was WHEN OTHERS THEN NULL — the orchestrator fell
+    // back silently, the reason was discarded, and a deployment running permanently on the
+    // slow per-handler path was indistinguishable from a healthy one. The result rows now
+    // carry the tier and the bulk failure reason, and the failure is written to wh_log.
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+    var instanceId = Guid.NewGuid();
+    var msgIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    foreach (var msgId in msgIds) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+    var resultsJson = $$"""
+      [
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[0]}}", "Status": 4}, "new_outbox_messages": []},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[1]}}", "Status": 4},
+         "new_outbox_messages": [{"MessageId": "not-a-valid-uuid", "Destination": "x", "MessageType": "x",
+           "Envelope": {}, "Metadata": {}, "Scope": null, "StreamId": null, "IsEvent": false}]},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[2]}}", "Status": 4}, "new_outbox_messages": []}
+      ]
+      """;
+
+    var rows = new List<(bool Success, int Tier, string? BulkError)>();
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = "SELECT success, tier, bulk_error FROM commit_handler_batch(@req::jsonb)";
+      cmd.Parameters.AddWithValue("req", resultsJson);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        rows.Add((reader.GetBoolean(0), reader.GetInt32(1), await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
+      }
+    }
+
+    await Assert.That(rows.Count).IsEqualTo(3);
+    await Assert.That(rows.All(r => r.Tier == 2)).IsTrue()
+      .Because("the bulk tier failed, so every row was committed by the per-handler fallback "
+             + "— and the caller can finally SEE that");
+    await Assert.That(rows.Any(r => r.BulkError?.Contains("22P02") == true)).IsTrue()
+      .Because("the Tier-1 SQLSTATE is the diagnosis (#573's third ask): a malformed UUID is "
+             + "22P02 invalid_text_representation, and discarding it made the slow path "
+             + "undiagnosable for the life of the deployment");
+
+    await using var logQ = connection.CreateCommand();
+    logQ.CommandText = "SELECT count(*) FROM wh_log WHERE source = 'commit_handler_batch'";
+    await Assert.That((long)(await logQ.ExecuteScalarAsync() ?? 0L)).IsGreaterThanOrEqualTo(1L)
+      .Because("the fallback reason is durable in wh_log, queryable after the fact");
+  }
+
+  [Test]
+  public async Task CommitHandlerBatch_BulkSuccess_ReportsTierOneAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+    var instanceId = Guid.NewGuid();
+    var msgId = Guid.NewGuid();
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+    var resultsJson = $$"""
+      [{"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+        "inbox_completion": {"MessageId": "{{msgId}}", "Status": 4}, "new_outbox_messages": []}]
+      """;
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT tier, bulk_error FROM commit_handler_batch(@req::jsonb)";
+    cmd.Parameters.AddWithValue("req", resultsJson);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await Assert.That(await reader.ReadAsync()).IsTrue();
+    await Assert.That(reader.GetInt32(0)).IsEqualTo(1)
+      .Because("the healthy path is the bulk tier — tier 1 on every row is the fleet-wide "
+             + "normal an operator baselines against");
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
+  }
+
 }

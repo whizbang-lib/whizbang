@@ -140,9 +140,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("EphemeralSnapshotEveryNEvents")
+    await Assert.That(runnerSource).Contains("EphemeralSnapshotEveryNEvents")
       .Because("An ephemeral perspective snapshots on the aggressive ephemeral cadence.");
-    await Assert.That(runnerSource!).Contains("EphemeralMaxSnapshotsPerStream")
+    await Assert.That(runnerSource).Contains("EphemeralMaxSnapshotsPerStream")
       .Because("An ephemeral perspective prunes to the single-slot ephemeral retention.");
   }
 
@@ -178,9 +178,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = true;")
+    await Assert.That(runnerSource).Contains("private const bool _isEphemeralPerspective = true;")
       .Because("An ephemeral perspective marks itself ephemeral so the rewind fallback guard fires.");
-    await Assert.That(runnerSource!).Contains("_isEphemeralPerspective && !hasSnapshot")
+    await Assert.That(runnerSource).Contains("_isEphemeralPerspective && !hasSnapshot")
       .Because("The rewind fallback is guarded so an ephemeral stream never replays from zero over reaped bodies.");
   }
 
@@ -215,9 +215,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
+    await Assert.That(runnerSource).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
       .Because("A TtlRow perspective registers its row TTL via a module initializer.");
-    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.ThreadModel), 7776000)")
+    await Assert.That(runnerSource).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.ThreadModel), 7776000)")
       .Because("The registration carries the perspective's model type and its resolved row TTL in seconds.");
   }
 
@@ -251,7 +251,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).DoesNotContain("PerspectiveTtlRegistry.Register")
+    await Assert.That(runnerSource).DoesNotContain("PerspectiveTtlRegistry.Register")
       .Because("A non-TtlRow perspective's rows never expire, so no TTL is registered.");
   }
 
@@ -289,8 +289,57 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SourcedThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.SourcedThreadModel), 5184000)")
+    await Assert.That(runnerSource).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.SourcedThreadModel), 5184000)")
       .Because("[RowTtl(Days = 60)] registers 60 days in seconds with no ephemeral involvement.");
+  }
+
+  [Test]
+  public async Task PerspectiveRunnerGenerator_Runner_ProbesHistoryWithItsHandledEventTypesAsync() {
+    // Issue #696: the resurrection-on-wake probe must ask about the event types THIS perspective
+    // folds. The generator already knows them (they drive the Apply overloads); it emits them as
+    // a static array and passes it to the typed probe.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadArchived : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ThreadRenamed : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ProbedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Days = 60)]
+  public class ProbedThreadPerspective : IPerspectiveFor<ProbedThreadModel, ThreadArchived, ThreadRenamed> {
+    public ProbedThreadModel Apply(ProbedThreadModel currentData, ThreadArchived @event) => currentData;
+    public ProbedThreadModel Apply(ProbedThreadModel currentData, ThreadRenamed @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProbedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    var arrayStart = runnerSource!.IndexOf("_handledEventTypes = new global::System.Type[]", StringComparison.Ordinal);
+    await Assert.That(arrayStart).IsGreaterThanOrEqualTo(0)
+      .Because("the runner declares the handled event types once, as a static array");
+    var arrayEnd = runnerSource.IndexOf("};", arrayStart, StringComparison.Ordinal);
+    var array = runnerSource[arrayStart..arrayEnd];
+    await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadArchived)");
+    await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadRenamed)");
+
+    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+      .Because("the probe asks about the handled event types only (issue #696)");
   }
 
   [Test]
@@ -325,7 +374,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "GroupedThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"chat\", true, true, false)")
       .Because("the first membership keeps the defaults: announce on, follow on, bridge OFF");
     await Assert.That(runnerSource)
@@ -359,7 +408,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LonePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).DoesNotContain("PerspectiveStreamGroupRegistry")
+    await Assert.That(runnerSource).DoesNotContain("PerspectiveStreamGroupRegistry")
       .Because("an ungrouped perspective registers nothing — it must stay untouchable by cascades");
   }
 
@@ -396,7 +445,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "CappedChatPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.CappedChatModel), 200, \"u\")")
       .Because("a declared cap must register itself, partitioned per (tenant, user) — a cap nothing "
         + "registers is a declaration the reaper never sees");
@@ -432,7 +481,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TenantRunPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.TenantRunModel), 50, \"t\")");
   }
 
@@ -464,7 +513,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PlainPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).DoesNotContain("PerspectiveRowCapRegistry.Register")
+    await Assert.That(runnerSource).DoesNotContain("PerspectiveRowCapRegistry.Register")
       .Because("an undeclared cap must emit nothing at all — registering 0 or -1 would be a cap "
         + "meaning 'evict everything' or a lie the reconciler then syncs");
   }
@@ -502,9 +551,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OverriddenThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.OverriddenThreadModel), 42)")
+    await Assert.That(runnerSource).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.OverriddenThreadModel), 42)")
       .Because("the explicit [RowTtl] outranks the ephemeral-derived TTL on the override ladder.");
-    await Assert.That(runnerSource!).DoesNotContain(", 7776000)")
+    await Assert.That(runnerSource).DoesNotContain(", 7776000)")
       .Because("the derived value must not leak through when an explicit declaration exists.");
   }
 
@@ -539,9 +588,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LedgerListPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("FullHistoryPerspectiveRegistry.Register(")
+    await Assert.That(runnerSource).Contains("FullHistoryPerspectiveRegistry.Register(")
       .Because("A [FullHistory] perspective registers its name via a module initializer for the A1 close guard.");
-    await Assert.That(runnerSource!).Contains("LedgerListPerspective")
+    await Assert.That(runnerSource).Contains("LedgerListPerspective")
       .Because("The registration carries the perspective's name (its association target_name).");
   }
 
@@ -574,7 +623,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BalancePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).DoesNotContain("FullHistoryPerspectiveRegistry.Register")
+    await Assert.That(runnerSource).DoesNotContain("FullHistoryPerspectiveRegistry.Register")
       .Because("A resumable (unmarked) perspective needs no full-history guard registration.");
   }
 
@@ -605,11 +654,11 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
+    await Assert.That(runnerSource).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
       .Because("A Sourced perspective uses the standard snapshot cadence.");
-    await Assert.That(runnerSource!).DoesNotContain("EphemeralSnapshotEveryNEvents")
+    await Assert.That(runnerSource).DoesNotContain("EphemeralSnapshotEveryNEvents")
       .Because("A Sourced perspective does not use the ephemeral cadence.");
-    await Assert.That(runnerSource!).Contains("private const bool _isEphemeralPerspective = false;")
+    await Assert.That(runnerSource).Contains("private const bool _isEphemeralPerspective = false;")
       .Because("A Sourced perspective is not ephemeral, so the rewind fallback guard stays inert and it always replays.");
   }
 
@@ -1406,7 +1455,7 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -1418,8 +1467,8 @@ namespace TestNamespace {
     public DateTimeOffset? DeletedAt { get; init; }
   }
 
-  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCancelledEvent> {
-    public ModelAction Apply(OrderModel currentData, OrderCancelledEvent @event) {
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCanceledEvent> {
+    public ModelAction Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ModelAction.Delete;
     }
   }
@@ -1583,7 +1632,7 @@ namespace TestNamespace {
     public Guid OrderId { get; init; }
   }
 
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -1597,7 +1646,7 @@ namespace TestNamespace {
 
   public class OrderPerspective :
     IPerspectiveFor<OrderModel, OrderCreatedEvent>,
-    IPerspectiveFor<OrderModel, OrderCancelledEvent> {
+    IPerspectiveFor<OrderModel, OrderCanceledEvent> {
 
     // Standard return - returns model
     public OrderModel Apply(OrderModel? currentData, OrderCreatedEvent @event) {
@@ -1605,7 +1654,7 @@ namespace TestNamespace {
     }
 
     // Action return - returns ModelAction for deletion
-    public ModelAction Apply(OrderModel currentData, OrderCancelledEvent @event) {
+    public ModelAction Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ModelAction.Delete;
     }
   }
@@ -1620,7 +1669,7 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
     await Assert.That(runnerSource).Contains("OrderCreatedEvent");
-    await Assert.That(runnerSource).Contains("OrderCancelledEvent");
+    await Assert.That(runnerSource).Contains("OrderCanceledEvent");
   }
 
   [Test]
@@ -1912,6 +1961,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embeddings { get; init; }
   }
 
@@ -1958,7 +2008,8 @@ namespace TestNamespace {
     [StreamId]
     public Guid Id { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public string Status { get; init; } = "";
   }
 
@@ -2049,10 +2100,12 @@ namespace TestNamespace {
     [StreamId]
     public Guid Id { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public string Sku { get; init; } = "";
 
     [VectorField(768)]
+    [Indexed]
     public float[]? DescriptionEmbedding { get; init; }
 
     [PhysicalField]
@@ -2105,6 +2158,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(1536, ColumnName = "custom_embedding_col")]
+    [Indexed]
     public float[]? Vector { get; init; }
   }
 
@@ -2148,6 +2202,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(512)]
+    [Indexed]
     public static float[]? StaticVector { get; set; }  // Static - should be ignored
 
     public string Name { get; init; } = "";
@@ -2389,7 +2444,7 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -2405,8 +2460,8 @@ namespace TestNamespace {
     public string Status { get; init; } = "";
   }
 
-  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderCancelledEvent, OrderArchivedEvent> {
-    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCancelledEvent @event) {
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderCanceledEvent, OrderArchivedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ApplyResult<OrderModel>.Delete();
     }
 
@@ -2426,7 +2481,7 @@ namespace TestNamespace {
 
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("OrderCancelledEvent");
+    await Assert.That(runnerSource).Contains("OrderCanceledEvent");
     await Assert.That(runnerSource).Contains("OrderArchivedEvent");
   }
 
@@ -2811,6 +2866,7 @@ namespace TestNamespace {
     public string Status { get; init; } = "";
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embedding { get; init; }
   }
 
@@ -2862,6 +2918,7 @@ namespace TestNamespace {
     public string Status { get; set; } = "";
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embedding { get; set; }
   }
 

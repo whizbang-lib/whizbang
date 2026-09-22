@@ -57,7 +57,7 @@ public interface IEventCompletionAwaiter : IAwaiterIdentity {
   /// </para>
   /// <list type="bullet">
   ///   <item><description>The timeout expires before all perspectives finish</description></item>
-  ///   <item><description>The cancellation token is cancelled</description></item>
+  ///   <item><description>The cancellation token is canceled</description></item>
   /// </list>
   /// </remarks>
   Task<bool> WaitForEventsAsync(

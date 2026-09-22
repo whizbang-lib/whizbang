@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security;
 /// Default implementation of IScopeContext.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
 public sealed class ScopeContext : IScopeContext {
   /// <inheritdoc />
   public required PerspectiveScope Scope { get; init; }

@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -136,13 +137,13 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     var events = new List<INamedTypeSymbol>();
     var seen = new HashSet<string>(System.StringComparer.Ordinal);
     foreach (var iface in perspective.AllInterfaces) {
-      var def = iface.OriginalDefinition.ToDisplayString();
+      var def = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!def.StartsWith(PERSPECTIVE_BASE + "<TModel, TEvent", System.StringComparison.Ordinal)
           || iface.TypeArguments.Length < 2) {
         continue;
       }
       foreach (var arg in iface.TypeArguments.Skip(1)) {
-        if (arg is INamedTypeSymbol evt && seen.Add(evt.ToDisplayString())) {
+        if (arg is INamedTypeSymbol evt && seen.Add(TypeNameUtilities.Display(evt))) {
           events.Add(evt);
         }
       }

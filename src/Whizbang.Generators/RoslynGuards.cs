@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -225,6 +226,6 @@ public static class RoslynGuards {
 
     // Check if Nullable<expectedType>
     return namedType.TypeArguments.Length > 0 &&
-           namedType.TypeArguments[0].ToDisplayString() == expectedTypeName;
+           TypeNameUtilities.IsNamed(namedType.TypeArguments[0], expectedTypeName);
   }
 }

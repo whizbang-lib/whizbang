@@ -34,12 +34,17 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore,
-    ILogger<SystemEventEmitter>? logger = null) : ISystemEventEmitter {
+    IServiceInstanceProvider instanceProvider,
+    ILogger<SystemEventEmitter> logger) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<SystemEventEmitter> _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
+
+  // Optional by design: a service with no telemetry identity wired must still produce audit
+  // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -174,14 +179,26 @@ public sealed class SystemEventEmitter(
 
     // Create envelope for the system event
     var envelope = new MessageEnvelope<TSystemEvent> {
+      // Per type, not one band for all of them. Audit follows SystemEventOptions.AuditPriority,
+      // which is the idle band by default; a security record never does, because the idle band is
+      // withheld exactly when a security record matters most. See SystemEventPriorities.
+      Priority = SystemEventPriorities.For(typeof(TSystemEvent), _options),
       MessageId = MessageId.New(),
       Payload = systemEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          // Names the instance that wrote the record. Unknown is not a safe default here: it is
+          // indistinguishable from an instance that genuinely could not be identified, so a
+          // divergence between instances cannot be attributed to either of them.
+          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,
+          Scope = AuditRecordScope.For(systemEvent switch {
+              EventAudited e => e.TenantId,
+              CommandAudited c => c.TenantId,
+              _ => null,
+            }),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -200,5 +217,6 @@ public sealed class SystemEventEmitter(
 
     return attribute?.Exclude == true;
   }
+
 
 }

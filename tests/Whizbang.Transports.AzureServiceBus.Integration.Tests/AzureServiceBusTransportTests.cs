@@ -26,7 +26,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)] // 240s timeout for integration tests (emulator initialization ~72s + test execution)
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -269,7 +269,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -298,7 +298,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     var destination = new TransportDestination("topic-00", "sub-00-a");
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -330,7 +330,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
 
     var destination = new TransportDestination("topic-00", "sub-00-a");
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 

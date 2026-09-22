@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("TurnkeyVector")]
+[Category("Shard4")]
 public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;
@@ -71,7 +72,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }
@@ -285,7 +286,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
         FROM pg_stat_activity
         WHERE pg_stat_activity.datname = '{freshDbName}'
         AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
     }
   }
 
@@ -339,7 +340,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
         FROM pg_stat_activity
         WHERE pg_stat_activity.datname = '{freshDbName}'
         AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
     }
   }
 
@@ -432,7 +433,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
         FROM pg_stat_activity
         WHERE pg_stat_activity.datname = '{freshDbName}'
         AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
     }
   }
 

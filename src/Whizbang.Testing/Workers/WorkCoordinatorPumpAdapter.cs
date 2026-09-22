@@ -11,7 +11,7 @@ namespace Whizbang.Testing.Workers;
 /// <c>ClaimWorker</c> had claimed the work and routed it.
 /// </summary>
 /// <remarks>
-/// Loops every <c>cycleDelayMs</c> milliseconds (20 by default) until cancelled. Each cycle: invoke
+/// Loops every <c>cycleDelayMs</c> milliseconds (20 by default) until canceled. Each cycle: invoke
 /// <see cref="IWorkCoordinator.ClaimWorkAsync"/> with a stub request (the same call the production
 /// ClaimWorker makes), then write every PerspectiveWork item and drain stream-id into the harness channels.
 /// </remarks>

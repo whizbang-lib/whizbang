@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// 3. FilterByUserOrPrincipals implements "my records or shared" pattern correctly
 /// </remarks>
 [Category("Integration")]
+[Category("Shard2")]
 public class PrincipalFilterExtensionsTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

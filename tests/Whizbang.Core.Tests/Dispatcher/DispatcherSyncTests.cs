@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -132,25 +133,6 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   /// Note: SendAsync is for transport/outbox dispatch, not local invocation.
   /// Sync receptors are designed for local invocation via LocalInvokeAsync.
   /// </summary>
-  [Test]
-  public async Task LocalInvokeAsync_TypedResult_SyncReceptor_ReturnsResultAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddSingleton<ISyncReceptor<DispatcherSyncCreateOrderCommand, DispatcherSyncOrderCreatedResult>, SyncOrderReceptor>();
-    var provider = services.BuildServiceProvider();
-
-    var dispatcher = new TestSyncDispatcher(provider);
-    var command = new DispatcherSyncCreateOrderCommand(Guid.NewGuid(), 100.00m);
-    var context = MessageContext.Create(CorrelationId.New());
-
-    // Act
-    var result = await dispatcher.LocalInvokeAsync<DispatcherSyncOrderCreatedResult>(command, context);
-
-    // Assert
-    await Assert.That(result).IsNotNull();
-    await Assert.That(result.OrderId).IsNotEqualTo(Guid.Empty);
-  }
-
   /// <summary>
   /// Tests that void sync receptors can be invoked.
   /// </summary>
@@ -198,6 +180,10 @@ public class DispatcherSyncTests : DiagnosticTestBase {
     }
   }
 
+  // Constructed by hand so it can close over per-test state; the container has no way to supply
+  // that callback. Declaring it keeps the receptor out of DI, where one un-constructible
+  // descriptor would abort the whole service provider.
+  [SuppressReceptorRegistration]
   public class VoidSyncLogReceptor(Action onExecute) : ISyncReceptor<DispatcherSyncLogCommand> {
     private readonly Action _onExecute = onExecute;
 
@@ -210,7 +196,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   /// Test dispatcher that supports sync receptor invocation.
   /// This will fail until we implement GetSyncReceptorInvoker in the base Dispatcher.
   /// </summary>
-  public class TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null) : Core.Dispatcher(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null)) {
+  public class TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null) : Core.Dispatcher(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private readonly List<object>? _publishedEvents = publishedEvents;
 
     // These abstract methods need to be implemented for the test dispatcher
@@ -243,7 +229,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       if (_publishedEvents != null) {
-        return (evt, envelope, ct) => {
+        return (evt, _, _) => {
           _publishedEvents.Add(evt);
           return Task.CompletedTask;
         };

@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// items. Verified against a real Postgres so the migration SQL (check_function_bodies=on) runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard3")]
 public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   private static string _commitRequest(Guid instanceId, Guid eventId, Guid streamId, string eventType, int flags) => $$"""
     {
@@ -235,12 +236,11 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
       .Because("Once every consuming perspective has processed the event, the ephemeral body is reaped.");
 
     // The pointer stays — a pointer with no body row is the deterministic rebuild-guard signal, not a lost event.
-    await using (var ptr = connection.CreateCommand()) {
-      ptr.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
-      ptr.Parameters.AddWithValue("id", eventId);
-      await Assert.That((long)(await ptr.ExecuteScalarAsync())!).IsEqualTo(1L)
-        .Because("The wh_event_store pointer row survives the reap; only the wh_event_body row is deleted.");
-    }
+    await using var ptr = connection.CreateCommand();
+    ptr.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";
+    ptr.Parameters.AddWithValue("id", eventId);
+    await Assert.That((long)(await ptr.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("The wh_event_store pointer row survives the reap; only the wh_event_body row is deleted.");
   }
 
   [Test]
@@ -468,12 +468,11 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
 
     await _runMaintenanceAsync(connection);
 
-    await using (var v = connection.CreateCommand()) {
-      v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_body WHERE event_id = @id";
-      v.Parameters.AddWithValue("id", eventId);
-      var body = (string?)await v.ExecuteScalarAsync();
-      await Assert.That(body).IsEqualTo("42")
-        .Because("Maintenance never deletes a Sourced event's body — the reaper is gated on flags&8.");
-    }
+    await using var v = connection.CreateCommand();
+    v.CommandText = "SELECT (event_data->>'OrderId') FROM wh_event_body WHERE event_id = @id";
+    v.Parameters.AddWithValue("id", eventId);
+    var body = (string?)await v.ExecuteScalarAsync();
+    await Assert.That(body).IsEqualTo("42")
+      .Because("Maintenance never deletes a Sourced event's body — the reaper is gated on flags&8.");
   }
 }

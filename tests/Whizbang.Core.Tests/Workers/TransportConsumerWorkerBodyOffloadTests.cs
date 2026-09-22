@@ -2,21 +2,26 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -75,9 +80,14 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await Assert.That(stored.EnvelopeType).IsEqualTo(originalTypeName)
       .Because("After rehydrate the inbox row must use the ORIGINAL envelope type, not the claim sentinel type.");
 
-    var rehydrated = metricHelper.GetByName("whizbang.transport.body_claim.rehydrated.count");
+    // Passive counter: the untagged series always reports (at zero); the type-tagged series is
+    // the one the rehydration counted.
+    var rehydrated = metricHelper.GetByName("whizbang.transport.body_claim.rehydrated.count")
+      .Where(m => m.Value > 0)
+      .ToList();
     await Assert.That(rehydrated).Count().IsEqualTo(1)
       .Because("The rehydrator must observe the rehydration through the worker's DI scope.");
+    await Assert.That(rehydrated[0].Value).IsEqualTo(1d);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -105,7 +115,7 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await worker.StartAsync(cts.Token);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-    var (claimEnvelope, originalMessageId, _, _) =
+    var (claimEnvelope, _, _, _) =
       await _uploadOriginalEnvelopeAsync(store, jsonOptions);
 
     // Faithful to the wire: the transport hands the worker the CLAIM envelope's type as EnvelopeType
@@ -156,7 +166,11 @@ public class TransportConsumerWorkerBodyOffloadTests {
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
       .Because("A claim whose provider is unknown MUST be dropped (dead-letter path) — storing it without its body would poison downstream processing.");
-    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed");
+    // Passive counter: the untagged series always reports (at zero); the series that counted the
+    // drop is the one that proves the path ran.
+    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed")
+      .Where(m => m.Value > 0)
+      .ToList();
     await Assert.That(failed).Count().IsEqualTo(1)
       .Because("The rehydrate dead-letter path must record the drop in the failed-messages counter.");
     await Assert.That(failed[0].Value).IsEqualTo(1d);
@@ -335,12 +349,24 @@ public class TransportConsumerWorkerBodyOffloadTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("offload-topic"));
     return new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: metrics,
-      logger ?? NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: receptorRegistry);
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: metrics,
+      logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   /// <summary>Registry that consumes NOTHING — mirrors a real service that has no receptor for the
@@ -356,6 +382,7 @@ public class TransportConsumerWorkerBodyOffloadTests {
       JsonSerializerOptions jsonOptions,
       Action<ServiceCollection>? configure = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     // The worker only enters the rehydrate seam when JsonSerializerOptions resolves from DI.
     services.AddSingleton(jsonOptions);

@@ -88,7 +88,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var tenantId = streamEvents[0].GetCurrentScope()?.Scope?.TenantId;
     // The event store persists EventType via TypeNameFormatter ("Namespace.TypeName, AssemblyName"), not
     // Type.FullName — match that format so the filter finds the collective streams.
-    var typeNames = collectiveTypes.Select(TypeNameFormatter.Format).ToList();
+    var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);
 
     var streamIds = await _toListAsync(
       _eventStoreQuery.Query
@@ -104,13 +104,12 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     foreach (var streamId in streamIds) {
       await foreach (var envelope in _eventStore
           .ReadPolymorphicAsync(streamId, null, collectiveTypes, cancellationToken)
+          .Where(e => e.Payload is ICollectiveEvent)
           .ConfigureAwait(false)) {
-        if (envelope.Payload is ICollectiveEvent) {
-          merged.Add(envelope);
-        }
+        merged.Add(envelope);
       }
     }
-    return merged.OrderByMessageId().ToList();
+    return [.. merged.OrderByMessageId()];
   }
 
   /// <inheritdoc/>
@@ -134,7 +133,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
         continue;
       }
       var handler = _services.GetRequiredService(entry.HandlerType);
-      var spec = entry.Invoker(handler, evt, _NoReplayQuery.Instance);
+      var spec = entry.Invoker(handler, evt, NoReplayQuery.Instance);
       model = executor.ApplyToRow(spec, model, streamId);
     }
     return model;
@@ -147,7 +146,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       }
     }
     throw new InvalidOperationException(
-      $"No ICollectiveInMemoryExecutor registered for ModelType='{modelType.FullName}'. " +
+      $"No ICollectiveInMemoryExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. " +
       $"AddCollectiveExecutorEFCore<{modelType.Name}>()/AddCollectiveExecutorDapper<{modelType.Name}>() registers it " +
       "alongside the SQL executor — required so this model's collective events survive a perspective rebuild.");
   }
@@ -168,8 +167,8 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
 
   // A collective apply reaching replay is guaranteed self-referential by WHIZ106, so it never queries siblings.
   // If one does, fail loudly rather than silently produce a wrong rebuild.
-  private sealed class _NoReplayQuery : ICollectiveQuery {
-    public static readonly _NoReplayQuery Instance = new();
+  private sealed class NoReplayQuery : ICollectiveQuery {
+    public static readonly NoReplayQuery Instance = new();
     public IQueryable<PerspectiveRow<TOther>> Of<TOther>() where TOther : class =>
       throw new NotSupportedException(
         "A collective apply reached the in-memory replay path but called ICollectiveQuery.Of<>() — an apply-time " +

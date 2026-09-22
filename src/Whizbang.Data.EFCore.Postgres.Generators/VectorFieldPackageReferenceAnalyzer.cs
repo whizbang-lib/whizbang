@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -23,8 +24,8 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz070</docs>
-/// <docs>diagnostics/WHIZ071</docs>
-/// <tests>VectorFieldPackageReferenceAnalyzerTests.cs</tests>
+/// <docs>operations/diagnostics/whiz071</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
   private const string PGVECTOR_ASSEMBLY = "Pgvector";
@@ -113,7 +114,7 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
 
   private static bool _hasSuppressAttribute(Compilation compilation) {
     return compilation.Assembly.GetAttributes()
-        .Any(attr => attr.AttributeClass?.ToDisplayString() == SUPPRESS_ATTRIBUTE);
+        .Any(attr => TypeNameUtilities.IsNamed(attr.AttributeClass, SUPPRESS_ATTRIBUTE));
   }
 
   private static bool _hasAssemblyReference(Compilation compilation, string assemblyName) {
@@ -129,7 +130,7 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
 
       // Check for [VectorField] attribute
       foreach (var attr in member.GetAttributes()) {
-        if (attr.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE) {
+        if (TypeNameUtilities.IsNamed(attr.AttributeClass, VECTOR_FIELD_ATTRIBUTE)) {
           return true;
         }
       }

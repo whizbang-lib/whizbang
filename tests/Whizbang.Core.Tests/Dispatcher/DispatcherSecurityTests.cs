@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -38,10 +40,16 @@ public class DispatcherSecurityTests {
   }
 
   public class SecureVoidCommandReceptor : IReceptor<SecureVoidCommand> {
+    /// <summary>Payloads of every command actually handled. Static because the dispatcher resolves
+    /// the receptor from DI, so a test never holds the instance that ran — and the void overload
+    /// returns nothing, making this the only evidence the message was delivered at all.</summary>
+    public static ConcurrentBag<string> Handled { get; } = [];
+
     public int InvokedCount { get; private set; }
 
     public ValueTask HandleAsync(SecureVoidCommand message, CancellationToken cancellationToken = default) {
       InvokedCount++;
+      Handled.Add(message.Data);
       return ValueTask.CompletedTask;
     }
   }
@@ -147,7 +155,10 @@ public class DispatcherSecurityTests {
     // Act - void invocation with Priority 1 path
     await dispatcher.LocalInvokeAsync((object)command, context);
 
-    // No result to assert - just verify it doesn't throw
+    // Assert - the void overload returns nothing, so the receptor's own record is the only proof the
+    // message was DELIVERED rather than dropped while the tenant scope delta was being applied.
+    await Assert.That(SecureVoidCommandReceptor.Handled).Contains("void-tenant-data")
+      .Because("applying a security scope for the hop must not swallow the invocation.");
   }
 
   [Test]
@@ -199,7 +210,7 @@ public class DispatcherSecurityTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider().GetRequiredService<IDispatcher>();

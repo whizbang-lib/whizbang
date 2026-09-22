@@ -63,7 +63,7 @@ public class SubscribeBatchTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       destination,
       batchOptions
     );
@@ -85,7 +85,7 @@ public class SubscribeBatchTests {
     var batchReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (batch, _) => {
         receivedBatches.Add(batch);
         batchReceived.TrySetResult();
         return Task.CompletedTask;
@@ -124,7 +124,7 @@ public class SubscribeBatchTests {
     var batchReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (batch, _) => {
         receivedBatches.Add(batch);
         batchReceived.TrySetResult();
         return Task.CompletedTask;
@@ -147,18 +147,18 @@ public class SubscribeBatchTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_WithCancelledToken_ThrowsAsync() {
+  public async Task SubscribeBatchAsync_WithCanceledToken_ThrowsAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
     var batchOptions = new TransportBatchOptions();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         destination,
         batchOptions,
         cts.Token
@@ -175,7 +175,7 @@ public class SubscribeBatchTests {
     var batchCount = 0;
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (_, ct) => {
         Interlocked.Increment(ref batchCount);
         return Task.CompletedTask;
       },
@@ -207,7 +207,7 @@ public class SubscribeBatchTests {
     var secondCallReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (_, ct) => {
         var count = Interlocked.Increment(ref callCount);
         if (count == 1) {
           throw new InvalidOperationException("Simulated handler failure");

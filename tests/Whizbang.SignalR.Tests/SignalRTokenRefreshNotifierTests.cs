@@ -55,7 +55,7 @@ public class SignalRTokenRefreshNotifierTests {
 
   // ===== Test hub + capturing mock =====
 
-  public sealed class TestHub : Hub { }
+  public sealed class TestHub : Hub;
 
   private sealed class CapturingHubContext<THub>(List<(string UserId, string Method, object?[] Args)> sent)
       : IHubContext<THub> where THub : Hub {

@@ -18,9 +18,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
 [Category("Integration")]
+[Category("Shard1")]
 public class PacedRepairDrainSqlTests : EFCoreTestBase {
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin, Guid stream) =>
@@ -37,7 +38,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var keys = Enumerable.Range(0, 2).Select(_ => _key(origin, Guid.NewGuid())).ToList();
     var now = DateTimeOffset.UtcNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, keys.Select(_obs).ToList(), now, TimeSpan.FromMinutes(60));
+      origin, keys.ConvertAll(_obs), now, TimeSpan.FromMinutes(60));
 
     await coordinator.IntegrityStampRepairWindowsAsync(
       origin, keys, windowFrom: 100, windowUntil: 500);
@@ -84,7 +85,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var now = DateTimeOffset.UtcNow;
     var learnedKeys = Enumerable.Range(0, 3).Select(_ => _key(learned, Guid.NewGuid())).ToList();
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      learned, learnedKeys.Select(_obs).ToList(), now, TimeSpan.FromMinutes(60));
+      learned, learnedKeys.ConvertAll(_obs), now, TimeSpan.FromMinutes(60));
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       unlearned, [_obs(_key(unlearned, Guid.NewGuid()))], now, TimeSpan.FromMinutes(60));
 

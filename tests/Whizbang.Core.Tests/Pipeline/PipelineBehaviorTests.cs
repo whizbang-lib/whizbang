@@ -86,10 +86,10 @@ public class PipelineBehaviorTests {
   private sealed class TestPipelineBehavior : PipelineBehavior<string, string> {
     public override async Task<string> HandleAsync(
       string request,
-      Func<Task<string>> next,
+      Func<Task<string>> continuation,
       CancellationToken cancellationToken = default
     ) {
-      var result = await ExecuteNextAsync(next);
+      var result = await ExecuteNextAsync(continuation);
       return $"{result}-processed";
     }
   }
@@ -101,21 +101,21 @@ public class PipelineBehaviorTests {
 
     public override async Task<string> HandleAsync(
       string request,
-      Func<Task<string>> next,
+      Func<Task<string>> continuation,
       CancellationToken cancellationToken = default
     ) {
       _log.Add("pre-process");
-      return await next();
+      return await continuation();
     }
   }
 
   private sealed class PostProcessingBehavior : PipelineBehavior<string, string> {
     public override async Task<string> HandleAsync(
       string request,
-      Func<Task<string>> next,
+      Func<Task<string>> continuation,
       CancellationToken cancellationToken = default
     ) {
-      var result = await next();
+      var result = await continuation();
       return $"{result}-modified";
     }
   }
@@ -123,10 +123,10 @@ public class PipelineBehaviorTests {
   private sealed class ShortCircuitBehavior : PipelineBehavior<string, string> {
     public override Task<string> HandleAsync(
       string request,
-      Func<Task<string>> next,
+      Func<Task<string>> continuation,
       CancellationToken cancellationToken = default
     ) {
-      // Short-circuit - don't call next
+      // Short-circuit - don't call continuation
       return Task.FromResult("short-circuited");
     }
   }

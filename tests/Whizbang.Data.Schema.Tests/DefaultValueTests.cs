@@ -283,9 +283,8 @@ public class DefaultValueTests {
 
   [Test]
   public async Task DefaultValue_IsRecordAsync() {
-    // Arrange & Act - Records have compiler-generated EqualityContract property
-    var hasEqualityContract = typeof(DefaultValue).GetProperty("EqualityContract",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null;
+    // Arrange & Act - Records carry the compiler-generated public clone method
+    var hasEqualityContract = typeof(DefaultValue).GetMethod("<Clone>$") is not null;
 
     // Assert
     await Assert.That(hasEqualityContract).IsTrue();

@@ -65,7 +65,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task NoData_ShouldBeMetadataPlusScopePlusSystemFieldsAsync() {
     // Arrange
-    var expected = GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
+    const GraphQLLensScopes expected = GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
     var noData = GraphQLLensScopes.NoData;
 
     // Act & Assert
@@ -75,7 +75,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task All_ShouldIncludeAllComponentsAsync() {
     // Arrange
-    var expected = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
+    const GraphQLLensScopes expected = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
     var all = GraphQLLensScopes.All;
 
     // Act & Assert
@@ -85,7 +85,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Flags_ShouldBeComposableAsync() {
     // Arrange & Act
-    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
+    const GraphQLLensScopes combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
     var hasData = combined.HasFlag(GraphQLLensScopes.Data);
     var hasMetadata = combined.HasFlag(GraphQLLensScopes.Metadata);
     var hasScope = combined.HasFlag(GraphQLLensScopes.Scope);
@@ -101,7 +101,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task CustomCombination_DataPlusSystemFields_ShouldWorkAsync() {
     // Arrange & Act
-    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields;
+    const GraphQLLensScopes combined = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields;
     var intValue = (int)combined;
     var hasData = combined.HasFlag(GraphQLLensScopes.Data);
     var hasSystemFields = combined.HasFlag(GraphQLLensScopes.SystemFields);
@@ -145,7 +145,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Default_ShouldNotHaveAnyFlagsAsync() {
     // Arrange & Act
-    var defaultScope = GraphQLLensScopes.None;
+    const GraphQLLensScopes defaultScope = GraphQLLensScopes.None;
     var hasData = defaultScope.HasFlag(GraphQLLensScopes.Data);
     var hasMetadata = defaultScope.HasFlag(GraphQLLensScopes.Metadata);
     var hasScope = defaultScope.HasFlag(GraphQLLensScopes.Scope);
@@ -179,7 +179,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task BitwiseAnd_ShouldExtractFlagsAsync() {
     // Arrange
-    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
+    const GraphQLLensScopes combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
 
     // Act & Assert
     var extractedData = (combined & GraphQLLensScopes.Data) == GraphQLLensScopes.Data;

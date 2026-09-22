@@ -117,7 +117,7 @@ public class RabbitMQNamespaceRoutingRegistrationTests {
     await using var provider = _offline(services).BuildServiceProvider();
     var router = await Assert.That(provider.GetRequiredService<ITransport>()).IsTypeOf<NamespaceRoutingTransport>();
 
-    await Assert.That(router!.NamespaceKeys).IsEquivalentTo(new[] { TransportNamespaces.DefaultKey, "bulk" });
+    await Assert.That(router!.NamespaceKeys).IsEquivalentTo([TransportNamespaces.DefaultKey, "bulk"]);
   }
 
   [Test]
@@ -136,7 +136,7 @@ public class RabbitMQNamespaceRoutingRegistrationTests {
 
     await Assert.That(router.Transports.Count).IsEqualTo(2);
     await Assert.That(router.Transports.All(t => t is RabbitMQTransport)).IsTrue();
-    await Assert.That(factory.Requested).IsEquivalentTo(new[] { ("bulk", BULK_VHOST_URI) })
+    await Assert.That(factory.Requested).IsEquivalentTo([("bulk", BULK_VHOST_URI)])
       .Because("the DEFAULT namespace keeps using the container's IConnection — only class namespaces are opened here");
   }
 
@@ -204,9 +204,7 @@ public class RabbitMQNamespaceRoutingRegistrationTests {
     await using var provider = _offline(services).BuildServiceProvider();
     var strategy = provider.GetRequiredService<Whizbang.Core.Workers.IMessagePublishStrategy>();
 
-    var field = typeof(Whizbang.Core.Workers.TransportPublishStrategy)
-      .GetField("_transportNamespaces", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-    await Assert.That(field!.GetValue(strategy)).IsNotNull();
+    await Assert.That(((Whizbang.Core.Workers.TransportPublishStrategy)strategy).NamespaceResolver).IsNotNull();
   }
 
   [Test]
@@ -226,7 +224,7 @@ public class RabbitMQNamespaceRoutingRegistrationTests {
     await using var provider = _offline(services).BuildServiceProvider();
     var router = (NamespaceRoutingTransport)provider.GetRequiredService<ITransport>();
 
-    await Assert.That(router.NamespaceKeys).IsEquivalentTo(new[] { TransportNamespaces.DefaultKey, "bulk" });
+    await Assert.That(router.NamespaceKeys).IsEquivalentTo([TransportNamespaces.DefaultKey, "bulk"]);
   }
 
   #endregion

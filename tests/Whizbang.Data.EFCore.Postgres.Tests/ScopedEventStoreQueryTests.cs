@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("EventStoreQuery")]
+[Category("Shard4")]
 public class ScopedEventStoreQueryTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 
@@ -161,14 +162,14 @@ public class ScopedEventStoreQueryTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task QueryAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task QueryAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     await using var provider = BuildServiceProvider();
     var sut = CreateSut(provider);
     await _seedEventAsync(_idProvider.NewGuid(), "Event1", 1);
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act
     OperationCanceledException? caught = null;

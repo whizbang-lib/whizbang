@@ -32,22 +32,22 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
   private static readonly TimeSpan _writeTimeout = TimeSpan.FromSeconds(5);
 
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider? _instanceProvider;
-  private readonly ILibraryVersionProvider? _versionProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly ILibraryVersionProvider _versionProvider;
   private readonly ILogger<InstanceStateRunControl> _logger;
 
   /// <summary>Creates the participant over the scope factory the coordinator resolves from.
   /// Inert without an instance provider — no identity means no row to record on.</summary>
   public InstanceStateRunControl(
       IServiceScopeFactory scopeFactory,
-      IServiceInstanceProvider? instanceProvider = null,
-      ILibraryVersionProvider? versionProvider = null,
-      ILogger<InstanceStateRunControl>? logger = null) {
+      IServiceInstanceProvider instanceProvider,
+      ILibraryVersionProvider versionProvider,
+      ILogger<InstanceStateRunControl> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     _instanceProvider = instanceProvider;
     _versionProvider = versionProvider;
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<InstanceStateRunControl>.Instance;
+    _logger = logger;
   }
 
   /// <inheritdoc />
@@ -67,7 +67,7 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
       using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
       timeout.CancelAfter(_writeTimeout);
       var recorded = await coordinator.RecordInstanceStateAsync(
-        _instanceProvider.InstanceId, phase.ToString(), _versionProvider?.LibraryVersion,
+        _instanceProvider.InstanceId, phase.ToString(), _versionProvider.LibraryVersion,
         timeout.Token).ConfigureAwait(false);
       if (!recorded) {
         // Expected before the first heartbeat registers the row; the next transition lands.

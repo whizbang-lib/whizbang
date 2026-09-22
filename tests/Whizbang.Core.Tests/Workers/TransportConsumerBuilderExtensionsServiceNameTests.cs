@@ -51,6 +51,7 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithoutRouting_ThrowsOnResolutionAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("TestSvc"));
 
@@ -74,18 +75,15 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
-    builder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-key"));
-    });
+    builder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-key")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -109,13 +107,12 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_WithConfigureAction_AddsDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider>(new TestProvider("MySvc"));
 
     var whizbangBuilder = new WhizbangBuilder(services);
-    whizbangBuilder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    whizbangBuilder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -144,12 +141,11 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_WithoutServiceInstanceProvider_UsesAssemblyNameFallbackAsync() {
     // Arrange - No IServiceInstanceProvider registered
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -168,12 +164,11 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_WithoutServiceInstanceProvider_ResolvesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
 
     var whizbangBuilder = new WhizbangBuilder(services);
-    whizbangBuilder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    whizbangBuilder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 

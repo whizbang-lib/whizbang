@@ -45,6 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// behavior is identical to v0.681 — the alive-lock guard is the sole bypass condition.</description></item>
 /// </list>
 /// </summary>
+[Category("Shard3")]
 public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
 
   [Test]

@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>wh_outbox.error</c> is populated.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard4")]
 public class FetchOutboxBatchErrorFieldSqlTests : EFCoreTestBase {
 
   [Test]

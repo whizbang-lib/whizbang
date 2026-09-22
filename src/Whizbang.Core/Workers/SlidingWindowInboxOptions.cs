@@ -18,28 +18,28 @@ public sealed record SlidingWindowInboxOptions {
   /// Default: 300 ms (slice 23). Matches the apply-boundary window so a hot stream
   /// receiving cross-producer events sees them all in one apply cycle.
   /// </summary>
-  public TimeSpan SlidingWindow { get; init; } = TimeSpan.FromMilliseconds(300);
+  public TimeSpan SlidingWindow { get; set; } = TimeSpan.FromMilliseconds(300);
 
   /// <summary>
   /// Hard cap on time from the first append in a batch (per stream). A continuously-busy
   /// stream still flushes within this window. Default: 3 s (slice 23).
   /// </summary>
-  public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(3);
+  public TimeSpan MaxWait { get; set; } = TimeSpan.FromSeconds(3);
 
   /// <summary>
   /// Maximum messages per stream batch. The stream's batch flushes immediately when this is
   /// reached. Default: 1000 (slice 23 — raised from 100 to accommodate larger fan-in bursts).
   /// </summary>
-  public int MaxSize { get; init; } = 1000;
+  public int MaxSize { get; set; } = 1000;
 
   /// <summary>
   /// A stream's per-stream buffer is evicted when no items have been appended for this
   /// duration. Bounds memory under workloads with many short-lived streams. Default: 30 s.
   /// </summary>
-  public TimeSpan IdleEvictionWindow { get; init; } = TimeSpan.FromSeconds(30);
+  public TimeSpan IdleEvictionWindow { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
   /// How often the idle sweep runs to find and dispose evicted streams. Default: 10 s.
   /// </summary>
-  public TimeSpan IdleSweepInterval { get; init; } = TimeSpan.FromSeconds(10);
+  public TimeSpan IdleSweepInterval { get; set; } = TimeSpan.FromSeconds(10);
 }

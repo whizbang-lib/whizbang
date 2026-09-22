@@ -17,6 +17,109 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 [Category("Workers")]
 public sealed class InboxHandlerWorkerTests {
+  // ── Killswitch visibility (B) ────────────────────────────────────────────────────────────────
+  // A commit accepted and then never applied is the worst shape a durable path can take: the caller
+  // believes the row is finished, it is not, and nothing says so. It sits unprocessed, is re-claimed
+  // on every lease expiry, and spends a retry attempt each time until its budget is gone.
+  //
+  // Disabling commits is a legitimate operator action. Losing the work silently is not: the enqueue
+  // had no Enabled guard at all (it wrote into a channel nothing would drain) and the flush dropped
+  // its batch with a bare return. Neither logged.
+
+  private sealed class VisibilityLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+    public List<string> Messages { get; } = [];
+
+    private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private string? _fragment;
+
+    /// <summary>
+    /// Returns a task that completes on the first message containing <paramref name="fragment"/>.
+    /// The killswitch log is ExecuteAsync's first statement on the disabled path, so waiting for it
+    /// is a deterministic "the body actually ran" signal: on .NET 10 the base class dispatches
+    /// ExecuteAsync through Task.Run, and StartAsync returning proves only that it was scheduled.
+    /// </summary>
+    public Task WaitFor(string fragment) {
+      lock (Messages) {
+        _fragment = fragment;
+        if (Messages.Any(m => m.Contains(fragment, StringComparison.OrdinalIgnoreCase))) {
+          _matched.TrySetResult();
+        }
+      }
+      return _matched.Task;
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      lock (Messages) {
+        Messages.Add(message);
+        if (_fragment is not null && message.Contains(_fragment, StringComparison.OrdinalIgnoreCase)) {
+          _matched.TrySetResult();
+        }
+      }
+    }
+  }
+
+  private static HandlerCommitRequest _visibilityRequest() => new(
+    HandlerId: Guid.CreateVersion7(),
+    InstanceId: Guid.CreateVersion7(),
+    ServiceName: "test",
+    HostName: "test-host",
+    ProcessId: 1,
+    PartitionCount: 10_000,
+    InboxCompletion: new HandlerInboxCompletion(Guid.CreateVersion7(), 2));
+
+  [Test]
+  public async Task DisabledCommits_EnqueueSaysSo_RatherThanSilentlyAcceptingWorkAsync() {
+    var log = new VisibilityLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
+
+    await worker.EnqueueAsync(_visibilityRequest());
+
+    var said = log.Messages.Any(m =>
+      m.Contains("commit", StringComparison.OrdinalIgnoreCase)
+      && m.Contains("disabled", StringComparison.OrdinalIgnoreCase));
+
+    await Assert.That(said).IsTrue()
+      .Because("accepting a commit while disabled and saying nothing leaves the caller believing the "
+             + "row is durable — it is not, and it will be re-claimed until its retry budget is gone");
+  }
+
+  [Test]
+  public async Task DisabledCommits_MessageNamesTheConsequenceNotJustTheStateAsync() {
+    var log = new VisibilityLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
+
+    await worker.EnqueueAsync(_visibilityRequest());
+
+    // "commits are disabled" is a STATE. What an operator needs is what it COSTS — the rows will not
+    // complete and will be re-claimed. A message that reports only its own state reads as
+    // informational and gets filtered out of exactly the incident it was meant to explain.
+    var namesConsequence = log.Messages.Any(m =>
+      m.Contains("re-claim", StringComparison.OrdinalIgnoreCase)
+      || m.Contains("never complete", StringComparison.OrdinalIgnoreCase)
+      || m.Contains("not be committed", StringComparison.OrdinalIgnoreCase));
+
+    await Assert.That(namesConsequence).IsTrue()
+      .Because("a killswitch warning naming only its own state is indistinguishable from noise; the "
+             + "operator needs to know the rows will not complete");
+  }
+
   private static InboxHandlerWorkerOptions _enabledOptions() => new() {
     Enabled = true,
     Flusher = new BatchFlusherOptions {
@@ -44,8 +147,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullScopeFactoryAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      null!, new CapturingFailureChannel(), new SchemaReadyGate(), options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: null!,
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -53,8 +160,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullFailureChannelAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), null!, new SchemaReadyGate(), options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: null!,
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -62,16 +173,24 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullSchemaGateAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), null!, options,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: null!,
+      options: options,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_ThrowsOnNullOptionsAsync() {
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), new SchemaReadyGate(), null!,
-      NullLogger<InboxHandlerWorker>.Instance))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: null!,
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -79,8 +198,12 @@ public sealed class InboxHandlerWorkerTests {
   public async Task Constructor_ThrowsOnNullLoggerAsync() {
     var options = Options.Create(_enabledOptions());
     await Assert.That(() => new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), new SchemaReadyGate(), options,
-      null!))
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: new SchemaReadyGate(),
+      options: options,
+      logger: null!,
+      pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -94,18 +217,32 @@ public sealed class InboxHandlerWorkerTests {
     var opts = _enabledOptions();
     opts.Enabled = false;
     var coordinator = new StubCoordinator();
+    var log = new VisibilityLogger();
+    var reachedDisabledArm = log.WaitFor("disabled via options");
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), new CapturingFailureChannel(), _markedReadyGate(),
-      Options.Create(opts), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(opts),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
-    // Act - Start (invokes ExecuteAsync -> disabled arm), enqueue a request, then stop.
+    // Act - Start, wait for ExecuteAsync's disabled arm to actually log (the body's first
+    // statement on this path), enqueue a request, then stop. Without that wait a zero-commit
+    // assertion is satisfied just as well by a body the thread pool never started.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await reachedDisabledArm.WaitAsync(TimeSpan.FromSeconds(10));
     await worker.EnqueueAsync(_request(Guid.NewGuid(), Guid.NewGuid()), cts.Token);
-    await worker.StopAsync(cts.Token);
+    await worker.StopAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - the disabled flush-callback early-returns; coordinator never invoked.
-    await Assert.That(coordinator.CallCount).IsEqualTo(0);
+    await Assert.That(coordinator.CallCount).IsEqualTo(0)
+      .Because("a disabled worker that still committed would make the operator's killswitch a lie");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a parked, disabled worker must unpark and return cleanly on stop rather than "
+             + "surfacing the shutdown cancellation as a crashed hosted service");
   }
 
   // ==========================================================================
@@ -124,8 +261,12 @@ public sealed class InboxHandlerWorkerTests {
     });
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -149,8 +290,12 @@ public sealed class InboxHandlerWorkerTests {
       [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: "commit exploded")]);
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -176,8 +321,12 @@ public sealed class InboxHandlerWorkerTests {
       [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: null)]);
     var failures = new CapturingFailureChannel();
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(coordinator), failures, _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -194,8 +343,12 @@ public sealed class InboxHandlerWorkerTests {
   [Test]
   public async Task EnqueueAsync_ThrowsOnNullRequestAsync() {
     var worker = new InboxHandlerWorker(
-      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(), _markedReadyGate(),
-      Options.Create(_enabledOptions()), NullLogger<InboxHandlerWorker>.Instance);
+      scopeFactory: new StubScopeFactory(new StubCoordinator()),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: NullLogger<InboxHandlerWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
 
     await Assert.That(async () => await worker.EnqueueAsync(null!)).Throws<ArgumentNullException>();
   }
@@ -259,20 +412,20 @@ public sealed class InboxHandlerWorkerTests {
       IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<HandlerBatchResult>>([]);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default)
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [], SyncInquiryResults = null });
 
     public Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
       IReadOnlyList<SyncInquiry> inquiries, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<SyncInquiryResult>>([]);
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
@@ -281,7 +434,7 @@ public sealed class InboxHandlerWorkerTests {
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 

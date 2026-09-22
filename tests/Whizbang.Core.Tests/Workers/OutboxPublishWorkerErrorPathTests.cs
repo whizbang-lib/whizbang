@@ -1,18 +1,22 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -40,7 +44,7 @@ public class OutboxPublishWorkerErrorPathTests {
   // Channel fakes
   // ============================================================
 
-  private sealed class _FakeWorkChannelWriter : IWorkChannelWriter {
+  private sealed class FakeWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel =
       System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>();
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader => _channel.Reader;
@@ -48,7 +52,10 @@ public class OutboxPublishWorkerErrorPathTests {
     public bool TryWrite(OutboxWork work) => _channel.Writer.TryWrite(work);
     public void Complete() => _channel.Writer.Complete();
     public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
+    /// <summary>In-flight slots released without completing — how the deferred path settles.</summary>
+    public ConcurrentBag<Guid> RemovedInFlight { get; } = [];
+
+    public void RemoveInFlight(Guid messageId) => RemovedInFlight.Add(messageId);
     public void ClearInFlight() { }
     public bool ShouldRenewLease(Guid messageId) => false;
     public event Action? OnNewWorkAvailable;
@@ -57,18 +64,34 @@ public class OutboxPublishWorkerErrorPathTests {
     public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
-  private sealed class _RecordingCompletionChannel : IOutboxCompletionChannel {
+  private sealed class RecordingCompletionChannel : IOutboxCompletionChannel, IDisposable {
+    private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     public ConcurrentBag<Guid> Completed { get; } = [];
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      Completed.Add(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      Completed.Add(outboxMessageId);
+      _signal.Release();
       return ValueTask.CompletedTask;
     }
+    /// <summary>Signal-based wait for N completion enqueues — no polling.</summary>
+    /// <remarks>
+    /// The publish signal fires INSIDE the transport call; the completion is enqueued after that
+    /// call returns. Asserting on the bag straight after awaiting the publish therefore races the
+    /// worker and fails intermittently — the assertion has to wait for its own signal.
+    /// </remarks>
+    public async Task WaitForCountAsync(int count, TimeSpan timeout) {
+      for (var i = 0; i < count; i++) {
+        if (!await _signal.WaitAsync(timeout)) {
+          throw new TimeoutException($"Only saw {i} of {count} completion enqueues within {timeout}");
+        }
+      }
+    }
+    public void Dispose() => _signal.Dispose();
   }
 
-  private sealed class _RecordingFailureChannel : IFailureChannel, IDisposable {
+  private sealed class RecordingFailureChannel : IFailureChannel, IDisposable {
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       _signal.Release();
       return ValueTask.CompletedTask;
@@ -84,10 +107,10 @@ public class OutboxPublishWorkerErrorPathTests {
     public void Dispose() => _signal.Dispose();
   }
 
-  private sealed class _RecordingLeaseRenewalChannel : ILeaseRenewalChannel, IDisposable {
+  private sealed class RecordingLeaseRenewalChannel : ILeaseRenewalChannel, IDisposable {
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     public ConcurrentBag<(WorkCategory Category, Guid Id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
       All.Add((category, id));
       _signal.Release();
       return ValueTask.CompletedTask;
@@ -106,12 +129,28 @@ public class OutboxPublishWorkerErrorPathTests {
   // Publish strategy fakes
   // ============================================================
 
+  /// <summary>Publishes successfully and records what it was asked to publish.</summary>
+  private sealed class RecordingStrategy : IMessagePublishStrategy {
+    public ConcurrentBag<Guid> Published { get; } = [];
+
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
+      Published.Add(work.MessageId);
+      return Task.FromResult(new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = true,
+        CompletedStatus = work.Status,
+      });
+    }
+  }
+
   /// <summary>Reports not-ready for the first N readiness checks, then ready; publishes successfully.</summary>
-  private sealed class _FlipReadyStrategy(int notReadyCount) : IMessagePublishStrategy {
+  private sealed class FlipReadyStrategy(int notReadyCount) : IMessagePublishStrategy {
     private int _readyChecks;
     public TaskCompletionSource NotReadySeen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource<OutboxWork> Published { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       var check = Interlocked.Increment(ref _readyChecks);
       if (check <= notReadyCount) {
         NotReadySeen.TrySetResult();
@@ -119,7 +158,7 @@ public class OutboxPublishWorkerErrorPathTests {
       }
       return Task.FromResult(true);
     }
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -130,24 +169,24 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   /// <summary>Never ready — used to park the worker in the not-ready retry delay.</summary>
-  private sealed class _NeverReadyStrategy : IMessagePublishStrategy {
+  private sealed class NeverReadyStrategy : IMessagePublishStrategy {
     public TaskCompletionSource NotReadySeen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       NotReadySeen.TrySetResult();
       return Task.FromResult(false);
     }
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("PublishAsync must not run when the transport is never ready");
   }
 
   /// <summary>Bulk strategy that reports not-ready for the first N checks, then publishes the batch successfully.</summary>
-  private sealed class _FlipReadyBulkStrategy(int notReadyCount) : IMessagePublishStrategy, IDisposable {
+  private sealed class FlipReadyBulkStrategy(int notReadyCount) : IMessagePublishStrategy, IDisposable {
     private int _readyChecks;
     public bool SupportsBulkPublish => true;
     public TaskCompletionSource NotReadySeen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<Guid> PublishedIds { get; } = [];
     private readonly SemaphoreSlim _publishSignal = new(0, int.MaxValue);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       var check = Interlocked.Increment(ref _readyChecks);
       if (check <= notReadyCount) {
         NotReadySeen.TrySetResult();
@@ -155,11 +194,11 @@ public class OutboxPublishWorkerErrorPathTests {
       }
       return Task.FromResult(true);
     }
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("Bulk strategy — PublishBatchAsync is the exercised path");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      var results = new List<MessagePublishResult>(works.Count);
-      foreach (var w in works) {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      var results = new List<MessagePublishResult>(workItems.Count);
+      foreach (var w in workItems) {
         PublishedIds.Add(w.MessageId);
         results.Add(new MessagePublishResult { MessageId = w.MessageId, Success = true, CompletedStatus = w.Status });
         _publishSignal.Release();
@@ -177,36 +216,36 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   /// <summary>Bulk strategy that returns an EMPTY result list, forcing the fabricated per-item failure.</summary>
-  private sealed class _EmptyResultBulkStrategy : IMessagePublishStrategy {
+  private sealed class EmptyResultBulkStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("Bulk strategy — PublishBatchAsync is the exercised path");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct)
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken)
       => Task.FromResult<IReadOnlyList<MessagePublishResult>>([]);
   }
 
   /// <summary>Bulk strategy that throws from PublishBatchAsync.</summary>
-  private sealed class _ThrowingBulkStrategy(string message) : IMessagePublishStrategy {
+  private sealed class ThrowingBulkStrategy(string message) : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("Bulk strategy — PublishBatchAsync is the exercised path");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct)
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken)
       => throw new InvalidOperationException(message);
   }
 
   /// <summary>Bulk strategy that blocks until its cancellation token fires (no Task.Delay — pure signal).</summary>
-  private sealed class _BlockUntilCancelledBulkStrategy : IMessagePublishStrategy {
+  private sealed class BlockUntilCanceledBulkStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
     public TaskCompletionSource PublishEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("Bulk strategy — PublishBatchAsync is the exercised path");
-    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
       PublishEntered.TrySetResult();
       var blocked = new TaskCompletionSource<IReadOnlyList<MessagePublishResult>>(TaskCreationOptions.RunContinuationsAsynchronously);
-      await using var _ = ct.Register(() => blocked.TrySetCanceled(ct));
+      await using var _ = cancellationToken.Register(() => blocked.TrySetCanceled(cancellationToken));
       return await blocked.Task;
     }
   }
@@ -214,13 +253,13 @@ public class OutboxPublishWorkerErrorPathTests {
   /// <summary>Always-ready, always-successful singular strategy.</summary>
   /// <summary>Signals when PublishAsync is entered, then blocks until released — lets tests
   /// flip state at a provable point mid-publish without any timing assumptions.</summary>
-  private sealed class _GatedPublishStrategy : IMessagePublishStrategy {
+  private sealed class GatedPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource PublishEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ReleasePublish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       PublishEntered.TrySetResult();
-      await ReleasePublish.Task.WaitAsync(ct);
+      await ReleasePublish.Task.WaitAsync(cancellationToken);
       return new MessagePublishResult {
         MessageId = work.MessageId,
         Success = true,
@@ -229,10 +268,10 @@ public class OutboxPublishWorkerErrorPathTests {
     }
   }
 
-  private sealed class _SucceedingStrategy : IMessagePublishStrategy {
+  private sealed class SucceedingStrategy : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> Published { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -246,7 +285,7 @@ public class OutboxPublishWorkerErrorPathTests {
   // Lifecycle fakes
   // ============================================================
 
-  private sealed class _SpyLifecycleTracking(Guid eventId, List<LifecycleStage> advancedStages, bool throwOnAdvance = false) : ILifecycleTracking {
+  private sealed class SpyLifecycleTracking(Guid eventId, List<LifecycleStage> advancedStages, bool throwOnAdvance = false) : ILifecycleTracking {
     public Guid EventId { get; } = eventId;
     public LifecycleStage CurrentStage { get; private set; }
     public bool IsComplete { get; private set; }
@@ -266,7 +305,7 @@ public class OutboxPublishWorkerErrorPathTests {
     public ValueTask DrainDetachedAsync() => ValueTask.CompletedTask;
   }
 
-  private sealed class _SpyLifecycleCoordinator : ILifecycleCoordinator {
+  private sealed class SpyLifecycleCoordinator : ILifecycleCoordinator {
     public List<LifecycleStage> AdvancedStages { get; } = [];
     public ConcurrentBag<Guid> AbandonedIds { get; } = [];
     public LifecycleStage CapturedEntryStage { get; private set; }
@@ -279,7 +318,7 @@ public class OutboxPublishWorkerErrorPathTests {
       BeginTrackingCount++;
       CapturedEntryStage = entryStage;
       CapturedSource = source;
-      return new _SpyLifecycleTracking(eventId, AdvancedStages);
+      return new SpyLifecycleTracking(eventId, AdvancedStages);
     }
 
     public ILifecycleTracking? GetTracking(Guid eventId) => null;
@@ -294,10 +333,10 @@ public class OutboxPublishWorkerErrorPathTests {
     public int CleanupStaleTracking(TimeSpan inactivityThreshold) => 0;
   }
 
-  private sealed class _RecordingReceptorInvoker : IReceptorInvoker {
+  private sealed class RecordingReceptorInvoker : IReceptorInvoker {
     private readonly object _gate = new();
     private readonly List<LifecycleStage> _stages = [];
-    public IReadOnlyList<LifecycleStage> Stages { get { lock (_gate) { return _stages.ToList(); } } }
+    public List<LifecycleStage> Stages() { lock (_gate) { return [.. _stages]; } }
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope, LifecycleStage stage,
         ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
@@ -308,7 +347,7 @@ public class OutboxPublishWorkerErrorPathTests {
     }
   }
 
-  private sealed class _FakeLifecycleDeserializer : ILifecycleMessageDeserializer {
+  private sealed class FakeLifecycleDeserializer : ILifecycleMessageDeserializer {
     private int _callCount;
     public int CallCount => _callCount;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) {
@@ -329,7 +368,7 @@ public class OutboxPublishWorkerErrorPathTests {
     }
   }
 
-  private sealed class _FakeDiscardPolicy(bool shouldDiscard) : IMessageDiscardPolicy {
+  private sealed class FakeDiscardPolicy(bool shouldDiscard) : IMessageDiscardPolicy {
     public int RecordDiscardCount { get; private set; }
     public MessageDiscardGate? RecordedGate { get; private set; }
     public IReadOnlyDictionary<string, object?>? RecordedTags { get; private set; }
@@ -385,25 +424,26 @@ public class OutboxPublishWorkerErrorPathTests {
     };
   }
 
-  private sealed record _Fixture(
+  private sealed record Fixture(
     OutboxPublishWorker Worker,
-    _FakeWorkChannelWriter Channel,
-    _RecordingCompletionChannel Completion,
-    _RecordingFailureChannel Failure,
-    _RecordingLeaseRenewalChannel Renewal,
+    FakeWorkChannelWriter Channel,
+    RecordingCompletionChannel Completion,
+    RecordingFailureChannel Failure,
+    RecordingLeaseRenewalChannel Renewal,
     OutboxPublishWorkerOptions Options,
     SchemaReadyGate Gate);
 
-  private static _Fixture _build(
+  private static Fixture _build(
       IMessagePublishStrategy strategy,
       int transportNotReadyRetryDelayMs = 0,
       IServiceProvider? serviceProvider = null,
       ILifecycleMessageDeserializer? lifecycleDeserializer = null,
-      bool markGateReady = true) {
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _RecordingCompletionChannel();
-    var failure = new _RecordingFailureChannel();
-    var renewal = new _RecordingLeaseRenewalChannel();
+      bool markGateReady = true,
+      IOccurrencePublishGate? occurrenceGate = null) {
+    var channel = new FakeWorkChannelWriter();
+    var completion = new RecordingCompletionChannel();
+    var failure = new RecordingFailureChannel();
+    var renewal = new RecordingLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     if (markGateReady) {
       gate.MarkReady();
@@ -416,13 +456,25 @@ public class OutboxPublishWorkerErrorPathTests {
       TransportNotReadyRetryDelayMilliseconds = transportNotReadyRetryDelayMs,
     };
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel, completion, failure, renewal, gate,
-      Options.Create(options),
-      NullLogger<OutboxPublishWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: completion,
+      failureChannel: failure,
+      leaseRenewalChannel: renewal,
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
-      lifecycleMessageDeserializer: lifecycleDeserializer);
-    return new _Fixture(worker, channel, completion, failure, renewal, options, gate);
+      lifecycleMessageDeserializer: lifecycleDeserializer ?? new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: occurrenceGate ?? new NoOpOccurrencePublishGate());
+    return new Fixture(worker, channel, completion, failure, renewal, options, gate);
   }
 
   // ============================================================
@@ -431,7 +483,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task SingularPublish_TransportNotReadyOnce_RequeuesAndPublishesOnRetryAsync() {
-    var strategy = new _FlipReadyStrategy(notReadyCount: 1);
+    var strategy = new FlipReadyStrategy(notReadyCount: 1);
     var fx = _build(strategy, transportNotReadyRetryDelayMs: 0);
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
@@ -457,7 +509,7 @@ public class OutboxPublishWorkerErrorPathTests {
   public async Task SingularPublish_TransportNotReadyWithRetryDelay_PublishesAfterDelayAsync() {
     // Non-zero delay exercises the Task.Delay branch in _handleTransportNotReadyAsync (production
     // pacing, not test polling — the test itself waits on the publish signal).
-    var strategy = new _FlipReadyStrategy(notReadyCount: 1);
+    var strategy = new FlipReadyStrategy(notReadyCount: 1);
     var fx = _build(strategy, transportNotReadyRetryDelayMs: 1);
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
@@ -468,6 +520,10 @@ public class OutboxPublishWorkerErrorPathTests {
     var published = await strategy.Published.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(published.MessageId).IsEqualTo(work.MessageId)
       .Because("After the configured retry delay elapses, the re-buffered row must be published.");
+
+    // The publish signal fires inside the transport call, before the worker enqueues the
+    // completion — wait for the completion's own signal rather than racing it.
+    await fx.Completion.WaitForCountAsync(1, TimeSpan.FromSeconds(5));
     await Assert.That(fx.Completion.Completed).Contains(work.MessageId)
       .Because("A successful retry publish must enqueue the outbox completion for the DB flush worker.");
 
@@ -476,10 +532,10 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   [Test]
-  public async Task SingularPublish_CancelledWhileTransportNotReady_StopsCleanlyAsync() {
+  public async Task SingularPublish_CanceledWhileTransportNotReady_StopsCleanlyAsync() {
     // Large delay parks the worker inside the not-ready Task.Delay; cancellation must
     // propagate out as OperationCanceledException and end the loop without faulting.
-    var strategy = new _NeverReadyStrategy();
+    var strategy = new NeverReadyStrategy();
     var fx = _build(strategy, transportNotReadyRetryDelayMs: 600_000);
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
@@ -503,7 +559,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task BulkPublish_TransportNotReady_RequeuesWholeBatchAndPublishesOnRetryAsync() {
-    var strategy = new _FlipReadyBulkStrategy(notReadyCount: 1);
+    var strategy = new FlipReadyBulkStrategy(notReadyCount: 1);
     var fx = _build(strategy, transportNotReadyRetryDelayMs: 0);
 
     var work1 = _work();
@@ -533,7 +589,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task BulkPublish_EmptyResultList_FabricatesFailurePerItemAsync() {
-    var strategy = new _EmptyResultBulkStrategy();
+    var strategy = new EmptyResultBulkStrategy();
     var fx = _build(strategy);
 
     var work1 = _work();
@@ -563,7 +619,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task BulkPublish_PublishBatchThrowsWithoutDlqWiring_RoutesEveryRowToFailureChannelAsync() {
-    var strategy = new _ThrowingBulkStrategy("simulated bulk transport meltdown");
+    var strategy = new ThrowingBulkStrategy("simulated bulk transport meltdown");
     var fx = _build(strategy);
 
     var work1 = _work();
@@ -592,8 +648,8 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   [Test]
-  public async Task BulkPublish_CancelledMidPublish_StopsCleanlyAsync() {
-    var strategy = new _BlockUntilCancelledBulkStrategy();
+  public async Task BulkPublish_CanceledMidPublish_StopsCleanlyAsync() {
+    var strategy = new BlockUntilCanceledBulkStrategy();
     var fx = _build(strategy);
 
     fx.Channel.TryWrite(_work());
@@ -622,7 +678,7 @@ public class OutboxPublishWorkerErrorPathTests {
     // The worker is provably INSIDE PublishAsync when the killswitch flips: the gated strategy
     // signals entry and blocks until released, so Enabled=false is guaranteed to be observed
     // by _routeResultAsync (post-publish) and by nothing earlier — no start-order assumptions.
-    var strategy = new _GatedPublishStrategy();
+    var strategy = new GatedPublishStrategy();
     var fx = _build(strategy);
     var publishedEvents = new ConcurrentBag<OutboxMessagePublishedEvent>();
     fx.Worker.OnOutboxMessagePublished += e => publishedEvents.Add(e);
@@ -660,12 +716,13 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task SingularPublish_LifecycleCoordinatorWired_AdvancesAllOutboxAndPostLifecycleStagesAsync() {
-    var strategy = new _SucceedingStrategy();
-    var deserializer = new _FakeLifecycleDeserializer();
-    var invoker = new _RecordingReceptorInvoker();
-    var coordinator = new _SpyLifecycleCoordinator();
+    var strategy = new SucceedingStrategy();
+    var deserializer = new FakeLifecycleDeserializer();
+    var invoker = new RecordingReceptorInvoker();
+    var coordinator = new SpyLifecycleCoordinator();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddScoped<ILifecycleCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
@@ -711,11 +768,12 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task SingularPublish_NoCoordinator_InvokesLifecycleReceptorsDirectlyAsync() {
-    var strategy = new _SucceedingStrategy();
-    var deserializer = new _FakeLifecycleDeserializer();
-    var invoker = new _RecordingReceptorInvoker();
+    var strategy = new SucceedingStrategy();
+    var deserializer = new FakeLifecycleDeserializer();
+    var invoker = new RecordingReceptorInvoker();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     // No ILifecycleCoordinator — the direct receptor-invocation fallback runs.
     var sp = services.BuildServiceProvider();
@@ -730,7 +788,7 @@ public class OutboxPublishWorkerErrorPathTests {
     await publishedEvent.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Each of the 4 outbox stages chains an ImmediateDetached invocation in the same closure.
-    await Assert.That(invoker.Stages).IsEquivalentTo([
+    await Assert.That(invoker.Stages()).IsEquivalentTo([
       LifecycleStage.PreOutboxDetached, LifecycleStage.ImmediateDetached,
       LifecycleStage.PreOutboxInline, LifecycleStage.ImmediateDetached,
       LifecycleStage.PostOutboxDetached, LifecycleStage.ImmediateDetached,
@@ -743,12 +801,13 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task SingularPublish_EventStoreOnlyRow_SkipsOutboxLifecycleEntirelyAsync() {
-    var strategy = new _SucceedingStrategy();
-    var deserializer = new _FakeLifecycleDeserializer();
-    var invoker = new _RecordingReceptorInvoker();
-    var coordinator = new _SpyLifecycleCoordinator();
+    var strategy = new SucceedingStrategy();
+    var deserializer = new FakeLifecycleDeserializer();
+    var invoker = new RecordingReceptorInvoker();
+    var coordinator = new SpyLifecycleCoordinator();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddScoped<ILifecycleCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
@@ -767,7 +826,7 @@ public class OutboxPublishWorkerErrorPathTests {
       .Because("Event-store-only rows skip lifecycle before any deserialization work is spent.");
     await Assert.That(coordinator.BeginTrackingCount).IsEqualTo(0)
       .Because("No lifecycle tracking may be opened for rows with no transport destination.");
-    await Assert.That(invoker.Stages).IsEmpty()
+    await Assert.That(invoker.Stages()).IsEmpty()
       .Because("Neither the coordinator nor the direct path may invoke receptors for event-store-only rows.");
 
     await cts.CancelAsync();
@@ -788,7 +847,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task ShouldSkipOutboxPublish_EmptyMessageType_ReturnsFalseWithoutEvaluatingAsync() {
-    var policy = new _FakeDiscardPolicy(shouldDiscard: true);
+    var policy = new FakeDiscardPolicy(shouldDiscard: true);
     var skip = OutboxPublishWorker.ShouldSkipOutboxPublish(
       policy, messageType: "", messageId: Guid.CreateVersion7());
     await Assert.That(skip).IsFalse()
@@ -799,7 +858,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task ShouldSkipOutboxPublish_PolicyKeeps_ReturnsFalseWithoutRecordingAsync() {
-    var policy = new _FakeDiscardPolicy(shouldDiscard: false);
+    var policy = new FakeDiscardPolicy(shouldDiscard: false);
     var skip = OutboxPublishWorker.ShouldSkipOutboxPublish(
       policy, messageType: "Test.SomeEvent, Test", messageId: Guid.CreateVersion7());
     await Assert.That(skip).IsFalse()
@@ -810,7 +869,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
   [Test]
   public async Task ShouldSkipOutboxPublish_PolicyDiscards_RecordsWithMessageIdTagAndReturnsTrueAsync() {
-    var policy = new _FakeDiscardPolicy(shouldDiscard: true);
+    var policy = new FakeDiscardPolicy(shouldDiscard: true);
     var messageId = Guid.CreateVersion7();
     var skip = OutboxPublishWorker.ShouldSkipOutboxPublish(
       policy, messageType: "Test.SomeEvent, Test", messageId: messageId);
@@ -822,5 +881,94 @@ public class OutboxPublishWorkerErrorPathTests {
       .Because("The discard must be attributed to the Outbox gate for the skipped-counter tags.");
     await Assert.That(policy.RecordedTags!["message_id"]).IsEqualTo((object?)messageId)
       .Because("The message_id tag lets operators trace which row was suppressed.");
+  }
+
+  // ============================================================
+  // The schedule-occurrence pre-fire gate
+  // ============================================================
+  //
+  // A scheduled job's occurrence runs the consumer's own fire hook before it publishes, so the
+  // hook can check authority, skip the run, or push it to a later time. Both non-Proceed
+  // decisions have to leave the row in a settled state: a dropped occurrence that stays in the
+  // outbox is published on the next pass — running the job the hook just refused — and a deferred
+  // one that is completed here loses the reschedule the hook already made.
+
+  private sealed class DecidingGate(OccurrencePublishDecision decision) : IOccurrencePublishGate {
+    public int Evaluations { get; private set; }
+    public ValueTask<OccurrencePublishDecision> EvaluateAsync(
+        OutboxWork work, CancellationToken cancellationToken = default) {
+      Evaluations++;
+      return ValueTask.FromResult(decision);
+    }
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateDrops_CompletesTheRowWithoutPublishingAsync(CancellationToken testToken) {
+    var strategy = new RecordingStrategy();
+    var gate = new DecidingGate(OccurrencePublishDecision.Drop);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+    while (!fx.Completion.Completed.Contains(work.MessageId) && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(gate.Evaluations).IsGreaterThan(0);
+    await Assert.That(strategy.Published).IsEmpty()
+      .Because("the hook refused this run — publishing anyway would execute the job it declined");
+    await Assert.That(fx.Completion.Completed).Contains(work.MessageId)
+      .Because("a dropped occurrence left in the outbox is published on the next pass");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateDefers_LetsGoWithoutCompletingOrPublishingAsync(CancellationToken testToken) {
+    // Deferred means the gate already rescheduled the message. Completing it here would delete
+    // the row the reschedule points at; publishing it would run the job at the time the hook
+    // just moved it away from.
+    var strategy = new RecordingStrategy();
+    var gate = new DecidingGate(OccurrencePublishDecision.Deferred);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+
+    // The deferred path settles by releasing the in-flight slot rather than completing.
+    while (!fx.Channel.RemovedInFlight.Contains(work.MessageId) && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(strategy.Published).IsEmpty();
+    await Assert.That(fx.Completion.Completed).DoesNotContain(work.MessageId)
+      .Because("completing a deferred occurrence deletes the row its reschedule points at");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateProceeds_PublishesNormallyAsync(CancellationToken testToken) {
+    // The control: the gate is on the hot path for every outbox row, so a Proceed must be
+    // indistinguishable from having no gate at all.
+    var strategy = new RecordingStrategy();
+    var gate = new DecidingGate(OccurrencePublishDecision.Proceed);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+    while (strategy.Published.IsEmpty && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(strategy.Published).IsNotEmpty();
   }
 }

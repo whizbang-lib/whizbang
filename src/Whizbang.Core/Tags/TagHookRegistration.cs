@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#hook-registration</docs>
-/// <tests>Whizbang.Core.Tests/Tags/TagHookRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagHookRegistrationTests.cs</tests>
 /// <param name="AttributeType">The tag attribute type this hook handles (e.g., typeof(SignalTagAttribute)).</param>
 /// <param name="HookType">The hook implementation type (e.g., typeof(SignalRNotificationHook)).</param>
 /// <param name="Priority">Execution priority. Lower values execute first. Default is -100.</param>

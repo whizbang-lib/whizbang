@@ -14,9 +14,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Polling-side method; non-empty mapping lands in Phase C worker integration.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+[Category("Shard4")]
 public class EFCoreClaimWorkTests : EFCoreTestBase {
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
     new(ctx, JsonContextRegistry.CreateCombinedOptions());
 
   [Test]
@@ -89,13 +90,20 @@ public class EFCoreClaimWorkTests : EFCoreTestBase {
     // by all the inbox predicates, but its event_id is already in wh_event_store.
     await using (var inbox = conn.CreateCommand()) {
       inbox.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, scope,
-           stream_id, instance_id, lease_expiry, processed_at, is_event,
-           status, attempts, received_at, partition_number)
-        VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
-                @stream, @inst, NOW() + INTERVAL '5 minutes', NULL, true,
-                0, 0, NOW(), 1)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, scope,
+             stream_id, is_event, received_at)
+          VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
+                  @stream, true, NOW())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           instance_id, lease_expiry, processed_at, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               @inst, NOW() + INTERVAL '5 minutes', NULL, 0, 0, 1
+        FROM m";
       inbox.Parameters.AddWithValue("mid", (Guid)eventId);
       inbox.Parameters.AddWithValue("stream", (Guid)streamId);
       inbox.Parameters.AddWithValue("inst", (Guid)instanceId);

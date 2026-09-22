@@ -25,12 +25,12 @@ public class CollectiveSpecContractTests {
   [Test]
   public async Task ICollectiveSpec_Setters_IsLinqExpressionTreeAsync() {
     // The spec's only payload is an Expression<Action<ICollectiveSetters<TModel>>>.
-    // Driver adapters (EF, Dapper) walk this expression with ExpressionVisitor;
+    // Driver adapters (EF, Dapper) walk this expression with ExpressionVisitor —
     // emitting a delegate instead of an expression would break the adapter
     // contract and trip AOT trim warnings on reflection-based fallbacks.
-    Expression<Action<ICollectiveSetters<_jobModel>>> setters =
+    Expression<Action<ICollectiveSetters<JobModel>>> setters =
       s => s.SetProperty(j => j.Status, "Archived");
-    ICollectiveSpec<_jobModel> spec = new _archiveSpec(setters);
+    ICollectiveSpec<JobModel> spec = new ArchiveSpec(setters);
 
     await Assert.That(spec.Setters).IsNotNull();
     await Assert.That(spec.Setters).IsSameReferenceAs(setters)
@@ -41,7 +41,7 @@ public class CollectiveSpecContractTests {
   public async Task ICollectiveSetters_ConstantSetProperty_OverloadCompilesAsync() {
     // Overload (a): SetProperty(selector, value). The constant overload
     // is the most common shape — "set field X to value V."
-    Expression<Action<ICollectiveSetters<_jobModel>>> expr =
+    Expression<Action<ICollectiveSetters<JobModel>>> expr =
       s => s.SetProperty(j => j.Status, "Archived");
 
     // The expression compiled — the SetProperty(selector, value) overload
@@ -56,7 +56,7 @@ public class CollectiveSpecContractTests {
     // accepts an Expression<Func<TModel, TProp>> for the new value, which
     // lets the spec reference the row's CURRENT property values — needed
     // for increment, append, conditional-rewrite patterns.
-    Expression<Action<ICollectiveSetters<_jobModel>>> expr =
+    Expression<Action<ICollectiveSetters<JobModel>>> expr =
       s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
 
     await Assert.That(expr).IsNotNull();
@@ -68,7 +68,7 @@ public class CollectiveSpecContractTests {
     // distinguishes the collective Apply path from the existing per-row
     // IPerspectiveFor.Apply path. Source generators (Slice 5) discover
     // these handlers by matching on this constraint.
-    ICollectiveApplyFor<_jobModel, _archiveCollectiveEvent> apply = new _archiveApply();
+    ICollectiveApplyFor<JobModel, ArchiveCollectiveEvent> apply = new ArchiveApply();
 
     // Compile-time proof: the type system accepts a TEvent that implements
     // ICollectiveEvent. A non-collective TEvent would not compile.
@@ -81,7 +81,7 @@ public class CollectiveSpecContractTests {
     // payload so DI registration can key on a stable string. Multiple
     // resolvers for the same kind would be an error at registration time
     // (deferred to Slice 4); the contract just requires the property.
-    ICollectiveScopeResolver resolver = new _tenantResolverStub();
+    ICollectiveScopeResolver resolver = new TenantResolverStub();
 
     await Assert.That(resolver.ScopeKind).IsEqualTo("tenant");
   }
@@ -120,24 +120,24 @@ public class CollectiveSpecContractTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = "Draft";
-    public int ViewCount { get; set; }
+    public int ViewCount { get; }
   }
 
-  private sealed record _archiveCollectiveEvent(
+  private sealed record ArchiveCollectiveEvent(
     CollectiveScope Scope,
     IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
-  private sealed record _archiveSpec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
-    : ICollectiveSpec<_jobModel>;
+  private sealed record ArchiveSpec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+    : ICollectiveSpec<JobModel>;
 
-  private sealed class _archiveApply : ICollectiveApplyFor<_jobModel, _archiveCollectiveEvent> {
-    public ICollectiveSpec<_jobModel> Apply(_archiveCollectiveEvent evt, ICollectiveQuery query) =>
-      new _archiveSpec(s => s.SetProperty(j => j.Status, "Archived"));
+  private sealed class ArchiveApply : ICollectiveApplyFor<JobModel, ArchiveCollectiveEvent> {
+    public ICollectiveSpec<JobModel> Apply(ArchiveCollectiveEvent evt, ICollectiveQuery query) =>
+      new ArchiveSpec(s => s.SetProperty(j => j.Status, "Archived"));
   }
 
-  private sealed class _tenantResolverStub : ICollectiveScopeResolver {
+  private sealed class TenantResolverStub : ICollectiveScopeResolver {
     public string ScopeKind => "tenant";
 
     public bool AcceptsPerspective<TModel>() where TModel : class => true;
@@ -145,11 +145,11 @@ public class CollectiveSpecContractTests {
     public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
       where TModel : class => _ => true;
 
-    public IDisposable EnterContext(ICollectiveScope scope) => _noopDisposable.Instance;
+    public IDisposable EnterContext(ICollectiveScope scope) => NoopDisposable.Instance;
   }
 
-  private sealed class _noopDisposable : IDisposable {
-    public static readonly _noopDisposable Instance = new();
+  private sealed class NoopDisposable : IDisposable {
+    public static readonly NoopDisposable Instance = new();
     public void Dispose() { }
   }
 }

@@ -1,7 +1,9 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -21,9 +23,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Test message types
-  public record _testEvent1([StreamId] string Id = "test-1") : IEvent { }
-  public record _testEvent2([StreamId] string Id = "test-2") : IEvent { }
-  public record _testEvent3([StreamId] string Id = "test-3") : IEvent { }
+  public record TestEvent1([StreamId] string Id = "test-1") : IEvent;
+  public record TestEvent2([StreamId] string Id = "test-2") : IEvent;
+  public record TestEvent3([StreamId] string Id = "test-3") : IEvent;
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -43,10 +45,13 @@ public class ScopedWorkCoordinatorStrategyTests {
     };
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,  // IWorkChannelWriter (not needed for these tests)
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      // IWorkChannelWriter (not needed for these tests)
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     var messageId1 = _idProvider.NewGuid();
@@ -54,9 +59,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-    var envelope1 = new MessageEnvelope<_testEvent1> {
+    var envelope1 = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId1),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -89,9 +94,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope2 = new MessageEnvelope<_testEvent2> {
+    var envelope2 = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(messageId2),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -146,19 +151,22 @@ public class ScopedWorkCoordinatorStrategyTests {
     };
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,  // IWorkChannelWriter (not needed for these tests)
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      // IWorkChannelWriter (not needed for these tests)
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -222,10 +230,13 @@ public class ScopedWorkCoordinatorStrategyTests {
     };
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,  // IWorkChannelWriter (not needed for these tests)
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      // IWorkChannelWriter (not needed for these tests)
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     var outboxId1 = _idProvider.NewGuid();
@@ -237,9 +248,9 @@ public class ScopedWorkCoordinatorStrategyTests {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     // Queue multiple types of operations
-    var envelope1 = new MessageEnvelope<_testEvent1> {
+    var envelope1 = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(outboxId1),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -271,9 +282,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope2 = new MessageEnvelope<_testEvent2> {
+    var envelope2 = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(outboxId2),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -305,9 +316,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope3 = new MessageEnvelope<_testEvent3> {
+    var envelope3 = new MessageEnvelope<TestEvent3> {
       MessageId = MessageId.From(inboxId1),
-      Payload = new _testEvent3(),
+      Payload = new TestEvent3(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -369,10 +380,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      disposableCoordinator,
-      instanceProvider,
-      null,
-      options
+      coordinator: disposableCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     _queueTestOutboxMessage(sut);
@@ -403,10 +416,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      coordinator,
-      instanceProvider,
-      null,
-      options
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Simulate a typical request: multiple publishes via BestEffort
@@ -447,10 +462,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var trackingScopeFactory = new TrackingScopeFactory();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,
-      options,
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
       }
@@ -485,10 +502,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var trackingScopeFactory = new TrackingScopeFactory();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,
-      options,
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
       }
@@ -529,7 +548,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     systemEventOptions.EnableEventAudit();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options,
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
       }
@@ -565,10 +589,12 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ScopedWorkCoordinatorStrategy(
-      null!,
-      instanceProvider,
-      null,
-      options
+      coordinator: null!,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -580,10 +606,12 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      null!,
-      null,
-      options
+      coordinator: fakeCoordinator,
+      instanceProvider: null!,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -595,10 +623,12 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator,
-      instanceProvider,
-      null,
-      null!
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: null!,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -613,14 +643,14 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -647,14 +677,14 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -678,7 +708,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -693,7 +723,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -708,7 +738,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -723,7 +753,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -738,7 +768,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -746,21 +776,32 @@ public class ScopedWorkCoordinatorStrategyTests {
       .ThrowsExactly<ObjectDisposedException>();
   }
 
+  /// <summary>
+  /// Repeated disposal is not merely non-throwing: the disposal drain must persist queued work
+  /// exactly once. A second drain would write the same outbox row again, which is a duplicate
+  /// publish downstream — so the queued message is what makes "idempotent" observable here.
+  /// </summary>
   [Test]
-  public async Task DisposeAsync_CalledMultipleTimes_DoesNotThrowAsync() {
+  public async Task DisposeAsync_CalledMultipleTimes_FlushesQueuedWorkExactlyOnceAsync() {
     // Arrange
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+
+    _queueTestOutboxMessage(sut);
 
     // Act - Dispose multiple times
     await sut.DisposeAsync();
     await sut.DisposeAsync();
     await sut.DisposeAsync();
 
-    // Assert - Should not throw
+    // Assert - the drain reached the coordinator (so the count below is not vacuously zero) and
+    // it reached it exactly once across three disposals.
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("repeated disposal must not re-persist already-drained outbox work");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
   }
 
   // ========================================
@@ -788,7 +829,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     systemEventOptions.EnableEventAudit();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options,
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
       }
@@ -821,7 +867,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -848,7 +899,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -875,7 +931,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Queue a message so there is work queued
@@ -920,12 +981,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
-    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
-    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; } = [];
+    public MessageFailure[] LastInboxFailures { get; } = [];
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -944,7 +1005,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -981,9 +1042,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private void _queueTestOutboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1008,9 +1069,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private void _queueTestInboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent2> {
+    var envelope = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1040,7 +1101,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       if (_disposed) {
         throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
@@ -1054,7 +1115,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       if (_disposed) {
         throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
       }
@@ -1104,7 +1165,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -1127,7 +1193,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -1150,7 +1221,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -1173,7 +1249,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Act
@@ -1197,10 +1278,16 @@ public class ScopedWorkCoordinatorStrategyTests {
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, metrics: metrics
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics
     );
 
     _queueTestOutboxMessage(sut);
@@ -1221,10 +1308,16 @@ public class ScopedWorkCoordinatorStrategyTests {
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics());
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, metrics: metrics
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics
     );
 
     // Act - flush with empty queues
@@ -1244,7 +1337,7 @@ public class ScopedWorkCoordinatorStrategyTests {
   // IWorkFlusher EXPLICIT INTERFACE (Line 190-191)
   // ========================================
   // Deleted: FlushAsync_WithLogger_OutboxWorkReturned_LogsReturnedWorkAsync.
-  // Asserted on WorkBatch.OutboxWork.Count > 0 from the legacy claim-during-flush;
+  // Asserted on WorkBatch.OutboxWork.Count > 0 from the legacy claim-during-flush —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. Returned-work logging
   // is exercised in publisher-worker / claim-worker tests.
 
@@ -1256,7 +1349,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     _queueTestOutboxMessage(sut);
@@ -1286,7 +1384,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Queue messages but don't flush manually
@@ -1315,7 +1418,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      throwingCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: throwingCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Queue a message so DisposeAsync attempts flush
@@ -1337,8 +1445,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      throwingCoordinator, instanceProvider, null, options
-    // no logger
+      coordinator: throwingCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options, // no logger
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Queue a message so DisposeAsync attempts flush
@@ -1347,7 +1459,15 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Act - DisposeAsync should catch the exception, not throw
     await sut.DisposeAsync();
 
-    // Assert - no exception was thrown (test passes if we reach here)
+    // Assert - the drain really reached the throwing coordinator. Without this the test would still
+    // pass if the flush helper stopped calling the store at all: no exception would be raised, the
+    // catch block under test would never run, and "did not throw" would be true for the wrong reason.
+    await Assert.That(throwingCoordinator.StoreAttempts).IsGreaterThan(0)
+      .Because("the catch block under test is only exercised if the disposal drain calls the store");
+
+    // Assert - swallowing the flush failure still leaves the strategy disposed, not half-disposed.
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   // ========================================
@@ -1362,14 +1482,19 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1400,14 +1525,19 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1441,7 +1571,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     _queueTestInboxMessage(sut);
@@ -1479,7 +1614,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options,
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: null
     );
 
@@ -1495,7 +1635,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
   // ========================================
   // DELETED: FlushAsync_WithLogger_MultipleOutboxWorkReturned_LogsUpToThreeAsync.
-  // Asserted result.OutboxWork.Count == 4 against the legacy claim-during-flush path;
+  // Asserted result.OutboxWork.Count == 4 against the legacy claim-during-flush path —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H.
   // ========================================
 
@@ -1512,7 +1652,12 @@ public class ScopedWorkCoordinatorStrategyTests {
     var logger = new FakeScopedLogger();
 
     var sut = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, null, options, logger: logger
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: logger,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Queue all types of operations to ensure all counters in the warning are non-zero
@@ -1542,19 +1687,29 @@ public class ScopedWorkCoordinatorStrategyTests {
   /// Used to test DisposeAsync catch block (lines 238-241).
   /// </summary>
   private sealed class FakeThrowingWorkCoordinator : IWorkCoordinator {
+    /// <summary>
+    /// Store calls this fake received. Lets a test prove the failure seam was actually reached
+    /// rather than assuming a swallowed exception was ever raised.
+    /// </summary>
+    public int StoreAttempts { get; private set; }
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      int partitionCount,
+      CancellationToken cancellationToken = default) {
+      StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
+      StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

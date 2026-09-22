@@ -16,8 +16,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
 public static class WorkCoordinatorStrategyFactory {
   /// <summary>
   /// Creates a new work coordinator strategy instance based on the specified strategy type.
@@ -59,23 +59,23 @@ public static class WorkCoordinatorStrategyFactory {
     // Audit generation lives in the inner strategies' AddOutboxMessage path, which this
     // wrapper's outbox route bypasses — so the wrapper must build audit messages itself
     // (see QueueOutboxMessageAsync). Resolve the same options the inner strategies use.
-    var systemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value;
-    var logger = sp.GetService<ILogger<StreamAffinityWorkCoordinatorStrategy>>();
     return new StreamAffinityWorkCoordinatorStrategy(
-      inner, outboxBatch, systemEventOptions, logger,
+      inner, outboxBatch,
+      sp.GetRequiredService<ILogger<StreamAffinityWorkCoordinatorStrategy>>(),
+      systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value,
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>());
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
-    var channelWriter = sp.GetService<IWorkChannelWriter>();
+    var channelWriter = sp.GetRequiredService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
-    var logger = sp.GetService<ILogger<ScopedWorkCoordinatorStrategy>>();
+    var logger = sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>();
     var dependencies = new ScopedWorkCoordinatorDependencies {
-      ScopeFactory = sp.GetService<IServiceScopeFactory>(),
-      LifecycleMessageDeserializer = sp.GetService<ILifecycleMessageDeserializer>(),
-      TracingOptions = sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      ScopeFactory = sp.GetRequiredService<IServiceScopeFactory>(),
+      LifecycleMessageDeserializer = sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+      TracingOptions = sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       SystemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value,
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     };
@@ -85,27 +85,27 @@ public static class WorkCoordinatorStrategyFactory {
       channelWriter,
       options,
       logger,
-      dependencies,
-      inboxChannelWriter: sp.GetService<IInboxChannelWriter>()
+      inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+      dependencies: dependencies
     );
   }
 
   private static ImmediateWorkCoordinatorStrategy _createImmediate(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
-    var channelWriter = sp.GetService<IWorkChannelWriter>();
+    var channelWriter = sp.GetRequiredService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
-    var logger = sp.GetService<ILogger<ImmediateWorkCoordinatorStrategy>>();
+    var logger = sp.GetRequiredService<ILogger<ImmediateWorkCoordinatorStrategy>>();
     return new ImmediateWorkCoordinatorStrategy(
       coordinator,
       instanceProvider,
       options,
       logger,
-      scopeFactory: sp.GetService<IServiceScopeFactory>(),
-      lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
-      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
-      deferredChannel: sp.GetService<IDeferredOutboxChannel>(),
-      systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+      tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
+      systemEventOptions: sp.GetRequiredService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
       workChannelWriter: channelWriter,
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     );
@@ -114,41 +114,41 @@ public static class WorkCoordinatorStrategyFactory {
   private static IntervalWorkCoordinatorStrategy _createInterval(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
-    var channelWriter = sp.GetService<IWorkChannelWriter>();
+    var channelWriter = sp.GetRequiredService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
-    var logger = sp.GetService<ILogger<IntervalWorkCoordinatorStrategy>>();
+    var logger = sp.GetRequiredService<ILogger<IntervalWorkCoordinatorStrategy>>();
     return new IntervalWorkCoordinatorStrategy(
       coordinator,
       instanceProvider,
       options,
       logger,
-      scopeFactory: sp.GetService<IServiceScopeFactory>(),
-      lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
-      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
-      metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+      tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
-      inboxChannelWriter: sp.GetService<IInboxChannelWriter>()
+      inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+      metrics: sp.GetService<WorkCoordinatorMetrics>(),
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
   }
 
   private static BatchWorkCoordinatorStrategy _createBatch(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
-    var channelWriter = sp.GetService<IWorkChannelWriter>();
+    var channelWriter = sp.GetRequiredService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
-    var logger = sp.GetService<ILogger<BatchWorkCoordinatorStrategy>>();
+    var logger = sp.GetRequiredService<ILogger<BatchWorkCoordinatorStrategy>>();
     return new BatchWorkCoordinatorStrategy(
       coordinator,
       instanceProvider,
       options,
       logger,
-      scopeFactory: sp.GetService<IServiceScopeFactory>(),
-      lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
-      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+      tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
+      workChannelWriter: channelWriter,
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-      workChannelWriter: channelWriter
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
   }
 }

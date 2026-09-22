@@ -148,9 +148,9 @@ public class EventCompletionAwaiterTests {
     // Act - start waiting then cancel
     var waitTask = awaiter.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(30), cts.Token);
     await Task.Delay(50);
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    // Assert - should return false (cancelled)
+    // Assert - should return false (canceled)
     var result = await waitTask;
     await Assert.That(result).IsFalse();
   }

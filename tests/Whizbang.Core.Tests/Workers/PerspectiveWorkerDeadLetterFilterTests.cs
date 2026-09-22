@@ -1,12 +1,22 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -66,18 +76,42 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       DeadLetterMetrics? metrics,
       Guid instanceId) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
     return new PerspectiveWorker(
       instanceProvider: new FixedInstance(instanceId),
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts }),
-      deadLetterStore: store,
-      generationProvider: gen,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: new PerspectiveChannelWriter(),
+      perspectiveCompletionChannel: new CapturingPerspectiveCompletionChannel(),
+      failureChannel: new CapturingFailureChannel(),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: store ?? NullDeadLetterStore.Instance,
+      generationProvider: gen ?? new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value),
       deadLetterMetrics: metrics);
   }
 
-  private static StreamEventData _row(int attempts) {
+  private static StreamEventData _row(int attempts, int failures = 0) {
     return new StreamEventData {
       StreamId = (Guid)TrackedGuid.NewMedo(),
       EventId = (Guid)TrackedGuid.NewMedo(),
@@ -85,7 +119,44 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       EventData = "{}",
       EventWorkId = (Guid)TrackedGuid.NewMedo(),
       Attempts = attempts,
+      Failures = failures,
     };
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Issue #700: the decision reads failures, never the lease count. attempts is bumped by every
+  // claim, and a lease can lapse without an apply (the worker skipped the row, died mid-batch, or
+  // classified it as recently processed). Under a backlog that turned lease churn into thrash-
+  // casualty dead letters for perfectly good events.
+  // -------------------------------------------------------------------------------------------
+
+  [Test]
+  public async Task LeaseCountAboveMax_WithNoFailures_SurvivesAsync() {
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+    var churned = _row(attempts: 99, failures: 0);
+
+    var survivors = await worker.FilterDeadLetteredAsync([churned], CancellationToken.None);
+
+    await Assert.That(survivors.Count).IsEqualTo(1)
+      .Because("ninety-nine leases with no failed apply is scheduling churn, not poison");
+    await Assert.That(store.Moves.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FailuresExceedMax_WithFewLeases_MovesToDeadLetterAsync() {
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+    var poison = _row(attempts: 1, failures: 11);
+
+    var survivors = await worker.FilterDeadLetteredAsync([poison], CancellationToken.None);
+
+    await Assert.That(survivors.Count).IsEqualTo(0)
+      .Because("eleven failed applies is the threshold crossing, whatever the lease count says");
+    await Assert.That(store.Moves.Count).IsEqualTo(1);
+    await Assert.That(store.Moves[0].SourceId).IsEqualTo(poison.EventWorkId);
   }
 
   [Test]
@@ -132,8 +203,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var instanceId = (Guid)TrackedGuid.NewMedo();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("whizbang/test-gen"),
       metrics: null, instanceId: instanceId);
-    var doomed = _row(attempts: 11);
-    var keeper = _row(attempts: 3);
+    var doomed = _row(attempts: 11, failures: 11);
+    var keeper = _row(attempts: 3, failures: 3);
     var rows = new List<StreamEventData> { doomed, keeper };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -152,7 +223,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var store = new CapturingDeadLetterStore { Throw = true };
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
       metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
-    var doomed = _row(attempts: 99);
+    var doomed = _row(attempts: 99, failures: 99);
     var rows = new List<StreamEventData> { doomed };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -166,10 +237,10 @@ public class PerspectiveWorkerDeadLetterFilterTests {
   [Test]
   public async Task MetricsIncrementedOnDeadLetterAsync() {
     var store = new CapturingDeadLetterStore();
-    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
       metrics: metrics, instanceId: (Guid)TrackedGuid.NewMedo());
-    var rows = new List<StreamEventData> { _row(attempts: 11) };
+    var rows = new List<StreamEventData> { _row(attempts: 11, failures: 11) };
 
     // Smoke check: counter is wired so Add(1, ...) is reached on the dead-letter path.
     // Full metric-value assertion would require a MeterListener; the store + metrics-not-null

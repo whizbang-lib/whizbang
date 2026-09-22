@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+[Category("Shard4")]
 public class CommitHandlerResultSqlTests : EFCoreTestBase {
 
   /// <summary>
@@ -60,11 +61,17 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     // Pre-insert the inbox row that the handler is "completing" (claimed by this instance).
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               1, 0, @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", inboxMessageId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", streamId);
@@ -104,7 +111,7 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
 
     // Assert inbox row is now processed (status has bits 1+4 = 5, EventStored not set, so retained).
     await using (var verify = connection.CreateCommand()) {
-      verify.CommandText = "SELECT processed_at IS NOT NULL FROM wh_inbox WHERE message_id = @msg";
+      verify.CommandText = "SELECT processed_at IS NOT NULL FROM wh_inbox_state WHERE message_id = @msg";
       verify.Parameters.AddWithValue("msg", inboxMessageId);
       var processed = (bool)(await verify.ExecuteScalarAsync())!;
       await Assert.That(processed).IsTrue();
@@ -139,11 +146,17 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     // Pre-insert with EventStored bit (2) already set — production would DELETE on commit.
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 3, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               3, 0, @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", inboxMessageId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", streamId);
@@ -168,7 +181,10 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     }
 
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = @msg AND processed_at IS NOT NULL";
+    verify.CommandText = @"
+      SELECT count(*) FROM wh_inbox i
+      JOIN wh_inbox_state s USING (message_id)
+      WHERE i.message_id = @msg AND s.processed_at IS NOT NULL";
     verify.Parameters.AddWithValue("msg", inboxMessageId);
     var retained = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(retained).IsEqualTo(1L);
@@ -194,11 +210,17 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     // Pre-insert with EventStored bit (2) set + Stored bit (1).
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 3, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               3, 0, @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", inboxMessageId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", streamId);

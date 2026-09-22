@@ -33,7 +33,7 @@ public record PostgresRetryTestEvent : IEvent {
 /// These tests cover implementation-specific paths not exercised by contract tests.
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
-public class DapperPostgresEventStoreRetryTests : IDisposable {
+public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
 
   private PostgresTestBase _testBase = null!;
   private DapperPostgresEventStore _store = null!;

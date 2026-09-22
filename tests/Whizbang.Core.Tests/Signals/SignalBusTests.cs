@@ -19,7 +19,13 @@ public class SignalBusTests {
   private sealed class CapturingTransport : ISignalTransport {
     public List<(Type SignalType, SignalTargetKind TargetKind)> Published { get; } = [];
 
-    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    /// <summary>The sink handed to this transport by <c>SignalBus.StartAsync</c>, if it was started.</summary>
+    public ISignalSink? StartedWithSink { get; private set; }
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      StartedWithSink = sink;
+      return Task.CompletedTask;
+    }
 
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
       where TSignal : ISignal {
@@ -30,7 +36,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task ReceiveAsync_WithSubscriber_InvokesHandlerWithSignalAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     TestSignal? received = null;
     using var sub = bus.Subscribe<TestSignal>(s => {
       received = s;
@@ -45,7 +51,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task PublishAsync_ViaInMemoryTransport_DeliversToSubscriberAsync() {
-    var bus = new SignalBus([new InMemorySignalTransport()]);
+    var bus = new SignalBus(transports: [new InMemorySignalTransport()], pullSources: []);
     await bus.StartAsync();
     TestSignal? received = null;
     using var sub = bus.Subscribe<TestSignal>(s => {
@@ -61,7 +67,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task ReceiveAsync_MultipleSubscribers_AllInvokedAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var count = 0;
     using var s1 = bus.Subscribe<TestSignal>(_ => { Interlocked.Increment(ref count); return ValueTask.CompletedTask; });
     using var s2 = bus.Subscribe<TestSignal>(_ => { Interlocked.Increment(ref count); return ValueTask.CompletedTask; });
@@ -73,7 +79,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task DisposedSubscription_StopsDeliveryAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var count = 0;
     var sub = bus.Subscribe<TestSignal>(_ => { Interlocked.Increment(ref count); return ValueTask.CompletedTask; });
 
@@ -86,7 +92,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task ReceiveAsync_NoSubscribers_DoesNotThrowAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     // No subscribers yet — this receive must be a no-op, not a throw.
     await ((ISignalSink)bus).ReceiveAsync(new TestSignal(1));
 
@@ -101,7 +107,7 @@ public class SignalBusTests {
   [Test]
   public async Task PublishAsync_DefaultTarget_FlowsBroadcastToTransportAsync() {
     var transport = new CapturingTransport();
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
     await bus.StartAsync();
 
     await bus.PublishAsync(new TestSignal(1));
@@ -113,7 +119,7 @@ public class SignalBusTests {
   [Test]
   public async Task PublishAsync_TargetedSignal_WithBroadcastTarget_ThrowsAsync() {
     var transport = new CapturingTransport();
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
     await bus.StartAsync();
 
     await Assert.That(async () =>
@@ -125,7 +131,7 @@ public class SignalBusTests {
   [Test]
   public async Task PublishAsync_BroadcastSignal_WithStreamsTarget_ThrowsAsync() {
     var transport = new CapturingTransport();
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
     await bus.StartAsync();
 
     await Assert.That(async () =>
@@ -137,7 +143,7 @@ public class SignalBusTests {
   [Test]
   public async Task PublishAsync_TargetedSignal_WithStreamsTarget_FlowsToTransportAsync() {
     var transport = new CapturingTransport();
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
     await bus.StartAsync();
 
     await bus.PublishAsync(new TestTargetedSignal(1), SignalTarget.Streams([Guid.NewGuid()]));
@@ -149,7 +155,7 @@ public class SignalBusTests {
   [Test]
   public async Task PublishAsync_TargetedSignal_WithInstanceTarget_FlowsToTransportAsync() {
     var transport = new CapturingTransport();
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
     await bus.StartAsync();
 
     await bus.PublishAsync(new TestTargetedSignal(1), SignalTarget.Instance(Guid.NewGuid()));
@@ -160,7 +166,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task Ctor_NullTransports_ThrowsAsync() {
-    await Assert.That(() => new SignalBus(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new SignalBus(transports: null!, pullSources: [])).Throws<ArgumentNullException>();
   }
 
   private sealed class StartCountingTransport : ISignalTransport {
@@ -177,7 +183,7 @@ public class SignalBusTests {
   public async Task StartAsync_StartsEveryTransportAsync() {
     var a = new StartCountingTransport();
     var b = new StartCountingTransport();
-    var bus = new SignalBus([a, b]);
+    var bus = new SignalBus(transports: [a, b], pullSources: []);
 
     await bus.StartAsync();
 
@@ -189,7 +195,7 @@ public class SignalBusTests {
   public async Task PublishAsync_FanoutToEveryTransportAsync() {
     var a = new CapturingTransport();
     var b = new CapturingTransport();
-    var bus = new SignalBus([a, b]);
+    var bus = new SignalBus(transports: [a, b], pullSources: []);
     await bus.StartAsync();
 
     await bus.PublishAsync(new TestSignal(1));
@@ -200,7 +206,7 @@ public class SignalBusTests {
 
   [Test]
   public async Task Subscribe_NullHandler_ThrowsAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     await Assert.That(() => bus.Subscribe<TestSignal>(null!)).Throws<ArgumentNullException>();
   }
 
@@ -225,11 +231,15 @@ public class SignalBusTests {
   }
 
   [Test]
-  public async Task StartAsync_NoPullSources_DoesNotThrowAsync() {
+  public async Task StartAsync_NoPullSources_StillStartsTheTransportsAsync() {
     // The pullSources argument is optional; callers with no polling registered pass null (or omit).
-    var bus = new SignalBus([new CapturingTransport()]);
+    // Optional must mean "nothing extra to start", not "nothing gets started" — a transport that is
+    // never handed the sink delivers no inbound signal, silently.
+    var transport = new CapturingTransport();
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     await bus.StartAsync();
-    // No throw = pass.
+
+    await Assert.That(transport.StartedWithSink).IsSameReferenceAs(bus);
   }
 }

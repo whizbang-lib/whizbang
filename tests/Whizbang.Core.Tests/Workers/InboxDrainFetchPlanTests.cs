@@ -1,0 +1,294 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// The drain must turn a global row budget into actual fetches, not just compute a plan it ignores.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A fetch takes ONE cap for every stream in the call, so a per-stream allocation cannot be issued
+/// directly. Quantizing each allocation down to a multiple of the floor solves it: streams sharing
+/// a quantized cap travel in one fetch, which bounds the number of calls to ceiling/floor no matter
+/// how many streams are active, and rounding DOWN keeps the total inside the budget rather than
+/// drifting over it.
+/// </para>
+/// <para>
+/// Without this the drain is back to one cap for everyone, which is the failure the allocator
+/// exists to prevent: a uniform cap either starves deep streams or wastes budget on shallow ones,
+/// and which of the two it does depends entirely on a number nobody can tune for both shapes.
+/// </para>
+/// </remarks>
+/// <code-under-test>src/Whizbang.Core/Workers/InboxDrainWorker.cs</code-under-test>
+[Category("Workers")]
+public class InboxDrainFetchPlanTests {
+
+  private sealed class FakeInstance : Whizbang.Core.Observability.IServiceInstanceProvider {
+    public Guid InstanceId { get; } = Guid.NewGuid();
+    public string ServiceName => "test-svc";
+    public string HostName => "test-host";
+    public int ProcessId => 1;
+    public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = InstanceId,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId,
+    };
+  }
+
+  private sealed class DrainChannel : IInboxDrainChannel {
+    private readonly System.Threading.Channels.Channel<Guid> _c =
+      System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+    public System.Threading.Channels.ChannelReader<Guid> Reader => _c.Reader;
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _c.Writer.WriteAsync(streamId, cancellationToken);
+    public bool TryWrite(Guid streamId) => _c.Writer.TryWrite(streamId);
+  }
+
+  private sealed class InboxWriter : IInboxChannelWriter {
+    private readonly System.Threading.Channels.Channel<InboxWork> _c =
+      System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
+    public System.Threading.Channels.ChannelReader<InboxWork> Reader => _c.Reader;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _c.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _c.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _c.Writer.TryComplete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
+  private static InboxDrainWorker _worker(InboxDrainWorkerOptions o) {
+    var sp = new ServiceCollection().BuildServiceProvider();
+    return new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(), new FakeInstance(), new DrainChannel(),
+      new InboxWriter(), new SchemaReadyGate(), Options.Create(o),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<InboxDrainWorker>.Instance);
+  }
+
+  private static readonly Guid[] _ids =
+    [.. Enumerable.Range(1, 80).Select(i => Guid.Parse($"00000000-0000-0000-0000-{i:D12}"))];
+
+  private static InboxDrainWorkerOptions _opts(int floor = 100, int ceiling = 1000, int cycle = 0)
+    => new() { MaxPerStream = floor, MaxPerStreamCeiling = ceiling, MaxRowsPerCycle = cycle };
+
+  [Test]
+  public async Task EveryStreamWithWorkAppearsInSomeFetchAsync() {
+    var worker = _worker(_opts());
+    var streams = _ids.Take(30).ToList();
+
+    var plan = worker.PlanFetchesForTest(streams);
+
+    var covered = plan.SelectMany(p => p.Streams).ToHashSet();
+    await Assert.That(covered.Count).IsEqualTo(30)
+      .Because("a stream dropped from the plan is a stream that never drains — silent starvation "
+             + "that no aggregate metric distinguishes from healthy throughput");
+  }
+
+  [Test]
+  public async Task TheNumberOfFetchesStaysBoundedRegardlessOfStreamCountAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+
+    var plan = worker.PlanFetchesForTest([.. _ids]);
+
+    await Assert.That(plan.Count).IsLessThanOrEqualTo(10)
+      .Because("quantizing to multiples of the floor caps the call count at ceiling/floor; issuing "
+             + "one fetch per distinct allocation would turn eighty streams into eighty round-trips "
+             + "and be far worse than the single-cap fetch it replaced");
+  }
+
+  [Test]
+  public async Task PlannedRowsNeverExceedTheCycleBudgetAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000, cycle: 2_000));
+
+    var plan = worker.PlanFetchesForTest([.. _ids.Take(40)]);
+    var planned = plan.Sum(p => (long)p.Cap * p.Streams.Count);
+
+    await Assert.That(planned).IsLessThanOrEqualTo(2_000)
+      .Because("rounding allocations DOWN to the floor multiple is what keeps the total inside the "
+             + "budget; rounding up would drift over it on every cycle");
+  }
+
+  [Test]
+  public async Task ADeepStreamIsFetchedWithAWiderCapThanAShallowOneAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var deep = _ids[0];
+    var shallow = _ids[1];
+
+    // Teach the worker what it saw last cycle: one stream saturated, the other barely had rows.
+    worker.RecordObservedDepthForTest(deep, 5_000);
+    worker.RecordObservedDepthForTest(shallow, 3);
+
+    var plan = worker.PlanFetchesForTest([deep, shallow]);
+    var deepCap = plan.Single(p => p.Streams.Contains(deep)).Cap;
+    var shallowCap = plan.Single(p => p.Streams.Contains(shallow)).Cap;
+
+    await Assert.That(deepCap).IsGreaterThan(shallowCap)
+      .Because("this is the whole point of allocating rather than capping: the stream holding "
+             + "thousands drains in a few wide fetches while the three-row stream is not handed "
+             + "budget it cannot use");
+  }
+
+  [Test]
+  public async Task StreamsSharingAQuantizedCapTravelInOneFetchAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var streams = _ids.Take(12).ToList();
+    foreach (var s in streams) {
+      worker.RecordObservedDepthForTest(s, 4);
+    }
+
+    var plan = worker.PlanFetchesForTest(streams);
+
+    await Assert.That(plan.Count).IsEqualTo(1)
+      .Because("twelve identical shallow streams must not become twelve round-trips — amortizing "
+             + "the per-call setup across streams is exactly what the batched fetch is for");
+    await Assert.That(plan[0].Streams.Count).IsEqualTo(12);
+  }
+
+  [Test]
+  public async Task AnUnknownStreamIsStillFetchedAtTheFloorAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+
+    var plan = worker.PlanFetchesForTest([_ids[5]]);
+
+    await Assert.That(plan.Count).IsEqualTo(1);
+    await Assert.That(plan[0].Cap).IsGreaterThanOrEqualTo(100)
+      .Because("a stream nobody has measured yet must still be drained at a useful width, or a "
+             + "newly-active stream would never produce the observation that sizes it");
+  }
+
+  [Test]
+  public async Task NoStreamsMeansNoFetchesAsync() {
+    var worker = _worker(_opts());
+    await Assert.That(worker.PlanFetchesForTest([]).Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ADeepStreamGetsAWiderCapEvenAmongManyShallowOnesAsync() {
+    // The shape that exposed the defect: a realistic stream count, one genuinely deep stream.
+    // The default budget was streams x floor, which the breadth pass consumed exactly, leaving
+    // nothing for depth — so the deep stream got the same page as a one-row stream and drained in
+    // ceiling/floor sequential round-trips while the fleet sat idle.
+    // UNKNOWN depth is the production case: a stream nobody has measured is assumed floor-deep, so
+    // the breadth pass reserves a full floor for every one of them and consumes the whole budget.
+    // Known-shallow streams take only what they hold and leave room, which is why the defect hides
+    // unless the streams are unmeasured.
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var streams = _ids.Take(60).ToList();
+    var deep = streams[0];
+    worker.RecordObservedDepthForTest(deep, 16_000);
+
+    var plan = worker.PlanFetchesForTest(streams);
+    var deepCap = plan.Single(p => p.Streams.Contains(deep)).Cap;
+    var shallowCap = plan.First(p => !p.Streams.Contains(deep)).Cap;
+
+    await Assert.That(deepCap).IsGreaterThan(shallowCap)
+      .Because("depth weighting has to survive a realistic stream count — engaging only when few "
+             + "streams are active is precisely backwards, because a single deep stream among many "
+             + "is the case that serializes and needs the wider page");
+  }
+
+  [Test]
+  public async Task BreadthIsStillGuaranteedWhenOneStreamIsDeepAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var streams = _ids.Take(60).ToList();
+    worker.RecordObservedDepthForTest(streams[0], 16_000);
+
+    var plan = worker.PlanFetchesForTest(streams);
+    var covered = plan.SelectMany(p => p.Streams).ToHashSet();
+
+    await Assert.That(covered.Count).IsGreaterThan(40)
+      .Because("funding depth must not starve breadth — one deep stream absorbing the budget is "
+             + "the opposite failure, and the floor exists to prevent it");
+  }
+
+  [Test]
+  public async Task EveryPlannedCapIsAtLeastTheFloorAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000, cycle: 150));
+    var streams = _ids.Take(40).ToList();
+
+    var plan = worker.PlanFetchesForTest(streams);
+
+    await Assert.That(plan.All(p => p.Cap >= 100)).IsTrue()
+      .Because("a cap below the floor fetches a uselessly thin slice and guarantees another "
+             + "round-trip; when the budget cannot seat everyone the answer is fewer streams this "
+             + "cycle, never thinner slices for all of them");
+  }
+
+  // ============================================================
+  // Depth-map pruning
+  // ============================================================
+  //
+  // The worker remembers how deep each stream was last cycle so the next one can size its
+  // fetches. That map is keyed on stream id and nothing removes an entry when a stream goes
+  // quiet, so on a service that sees many short-lived streams it would grow for the life of the
+  // process — a slow leak that only shows up as memory on a long-running host.
+
+  [Test]
+  public async Task PruneDepth_BelowTheThreshold_KeepsEverythingAsync() {
+    // Pruning is a scan of the whole map, and it runs inside the drain cycle. Doing it while the
+    // map is small would put that scan on the hot path for no benefit.
+    var worker = _worker(_opts());
+    var ids = Enumerable.Range(0, 100).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in ids) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest([]);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(ids.Count)
+      .Because("a small map is not worth scanning — the prune is bounded work, not constant work");
+  }
+
+  [Test]
+  public async Task PruneDepth_PastTheThreshold_DropsStreamsNoLongerInPlayAsync() {
+    // The leak this exists to stop: a service whose streams are short-lived accumulates one
+    // entry per stream it has ever seen.
+    var worker = _worker(_opts());
+    var stale = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in stale) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest([]);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PruneDepth_KeepsTheStreamsStillInPlayAsync() {
+    // The kept set is the streams this cycle is about to fetch. Dropping their depths would make
+    // the very next fetch size itself from nothing, undoing the adaptation the map exists for.
+    var worker = _worker(_opts());
+    var keep = Enumerable.Range(0, 10).Select(_ => Guid.CreateVersion7()).ToList();
+    var stale = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in keep.Concat(stale)) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest(keep);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(keep.Count)
+      .Because("the streams about to be fetched must keep the depth their next fetch is sized from");
+  }
+
+  [Test]
+  public async Task PruneDepth_WithNothingStale_KeepsTheWholeMapAsync() {
+    var worker = _worker(_opts());
+    var live = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in live) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest(live);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(live.Count);
+  }
+}

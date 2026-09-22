@@ -7,11 +7,14 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -19,16 +22,19 @@ namespace Whizbang.Core.Tests.Workers;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Verifies <see cref="OutboxDrainWorker.IsIdle"/> + <see cref="OutboxDrainWorker.OnWorkProcessingIdle"/>
 /// and the sibling <see cref="InboxDrainWorker"/> contract that integration-test fixtures
 /// rely on to wait for the drain pipeline to quiesce before truncating tables.
-///
+/// </para>
+/// <para>
 /// Regression context: before this contract existed, the ECommerce RabbitMQ fixture's
 /// <c>_waitForWorkersReadyAsync</c> only polled <c>OutboxPublishWorker</c> (which Phase H
 /// step 4b defaults to disabled and reports IsIdle=true instantly) and
 /// <c>PerspectiveWorker</c>. The fixture truncated the database while the actual drain
 /// workers were still mid-flight, producing the 3-minute timeouts on
 /// <c>DistributeStages_MultipleCommands_AllStagesFireForEachAsync</c> and friends.
+/// </para>
 /// </summary>
 /// <docs>operations/workers/publisher-worker</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
@@ -42,12 +48,12 @@ public class DrainWorkerIdleSignalTests {
 
   [Test]
   public async Task OutboxDrainWorker_FiresStartedThenIdle_AroundEachBatchAsync() {
-    var coord = new _StubCoordinator();
+    var coord = new StubCoordinator();
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
     coord.OutboxRowsByStream[streamId] = [_outboxRow(msgId, streamId)];
 
-    var publish = new _StubPublisher();
+    var publish = new StubPublisher();
     var worker = _buildOutboxDrainWorker(out var drainChannel, out var completion,
       coord: coord, publish: publish);
 
@@ -77,13 +83,13 @@ public class DrainWorkerIdleSignalTests {
     // Multiple back-to-back batches should fire each transition exactly once per change
     // — idempotent _setIdleState protects fixture handlers that only want to know
     // "is the worker between batches" not "how many transitions happened".
-    var coord = new _StubCoordinator();
+    var coord = new StubCoordinator();
     var s1 = (Guid)TrackedGuid.NewMedo();
     var s2 = (Guid)TrackedGuid.NewMedo();
     coord.OutboxRowsByStream[s1] = [_outboxRow((Guid)TrackedGuid.NewMedo(), s1)];
     coord.OutboxRowsByStream[s2] = [_outboxRow((Guid)TrackedGuid.NewMedo(), s2)];
 
-    var publish = new _StubPublisher();
+    var publish = new StubPublisher();
     var worker = _buildOutboxDrainWorker(out var drainChannel, out var completion,
       coord: coord, publish: publish);
 
@@ -115,12 +121,12 @@ public class DrainWorkerIdleSignalTests {
     await Assert.That(completion.AllIds.Count).IsEqualTo(2);
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
   public async Task InboxDrainWorker_StartsIdle_AndFiresStartedThenIdle_AroundEachBatchAsync() {
-    var coord = new _StubCoordinator();
+    var coord = new StubCoordinator();
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
     coord.InboxRowsByStream[streamId] = [_inboxRow(msgId, streamId)];
@@ -144,7 +150,7 @@ public class DrainWorkerIdleSignalTests {
     await Assert.That(worker.IsIdle).IsTrue();
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
@@ -153,7 +159,7 @@ public class DrainWorkerIdleSignalTests {
     // while the worker MIGHT already be idle. The re-check after subscribe closes
     // the race. Asserting it here so a future refactor that drops the re-check
     // immediately breaks this test.
-    var coord = new _StubCoordinator();
+    var coord = new StubCoordinator();
     var worker = _buildOutboxDrainWorker(out _, out _, coord: coord);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -166,10 +172,21 @@ public class DrainWorkerIdleSignalTests {
       if (worker.IsIdle) { tcs.TrySetResult(true); }
     }
 
-    await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    var reachedIdle = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+    // The race-closing guarantee is that idleness is readable as STATE, not only as a one-shot
+    // event: a subscriber that arrives after the transition can still learn it happened. Both
+    // halves of the pattern above depend on IsIdle being true here, and it must stay true — the
+    // worker has nothing on its drain channel and must not have flipped itself busy.
+    await Assert.That(reachedIdle).IsTrue()
+      .Because("the fixture pattern must resolve through the state re-check, not only through a live event");
+    await Assert.That(worker.IsIdle).IsTrue()
+      .Because("with an empty drain channel the worker stays idle; a busy worker here means the fixture would hang on cleanup");
+    await Assert.That(coord.OutboxRowsByStream.Count).IsEqualTo(0)
+      .Because("no work was ever enqueued, so reaching idle must not have come from processing something");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // --- builders + stubs ---
@@ -178,16 +195,17 @@ public class DrainWorkerIdleSignalTests {
     Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
   private static OutboxDrainWorker _buildOutboxDrainWorker(
-      out _FakeOutboxDrainChannel drainChannel,
-      out _FakeOutboxCompletionChannel completion,
-      _StubCoordinator? coord = null,
-      _StubPublisher? publish = null) {
-    drainChannel = new _FakeOutboxDrainChannel();
-    completion = new _FakeOutboxCompletionChannel();
-    coord ??= new _StubCoordinator();
-    publish ??= new _StubPublisher();
+      out FakeOutboxDrainChannel drainChannel,
+      out FakeOutboxCompletionChannel completion,
+      StubCoordinator? coord = null,
+      StubPublisher? publish = null) {
+    drainChannel = new FakeOutboxDrainChannel();
+    completion = new FakeOutboxCompletionChannel();
+    coord ??= new StubCoordinator();
+    publish ??= new StubPublisher();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
@@ -195,27 +213,34 @@ public class DrainWorkerIdleSignalTests {
     gate.MarkReady();
 
     return new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeInstance(),
-      drainChannel,
-      completion,
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<OutboxDrainWorker>.Instance,
-      publish);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeInstance(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
   }
 
   private static InboxDrainWorker _buildInboxDrainWorker(
-      out _FakeInboxDrainChannel drainChannel,
-      out _CapturingInboxWriter inboxWriter,
-      _StubCoordinator? coord = null) {
-    drainChannel = new _FakeInboxDrainChannel();
-    inboxWriter = new _CapturingInboxWriter();
-    coord ??= new _StubCoordinator();
+      out FakeInboxDrainChannel drainChannel,
+      out CapturingInboxWriter inboxWriter,
+      StubCoordinator? coord = null) {
+    drainChannel = new FakeInboxDrainChannel();
+    inboxWriter = new CapturingInboxWriter();
+    coord ??= new StubCoordinator();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
@@ -224,7 +249,7 @@ public class DrainWorkerIdleSignalTests {
 
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeInstance(),
+      new FakeInstance(),
       drainChannel,
       inboxWriter,
       gate,
@@ -282,37 +307,37 @@ public class DrainWorkerIdleSignalTests {
     };
   }
 
-  private sealed class _FakeOutboxDrainChannel : IOutboxDrainChannel {
+  private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 
-  private sealed class _FakeInboxDrainChannel : IInboxDrainChannel {
+  private sealed class FakeInboxDrainChannel : IInboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 
-  private sealed class _FakeOutboxCompletionChannel : IOutboxCompletionChannel {
+  private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public ConcurrentBag<Guid> AllIds { get; } = [];
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default)
+  private sealed class FakeFailureChannel : IFailureChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 
-  private sealed class _StubPublisher : IMessagePublishStrategy {
+  private sealed class StubPublisher : IMessagePublishStrategy {
     public List<OutboxWork> Published { get; } = [];
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Add(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -322,7 +347,7 @@ public class DrainWorkerIdleSignalTests {
     }
   }
 
-  private sealed class _FakeInstance : IServiceInstanceProvider {
+  private sealed class FakeInstance : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -335,7 +360,7 @@ public class DrainWorkerIdleSignalTests {
     };
   }
 
-  private sealed class _CapturingInboxWriter : IInboxChannelWriter {
+  private sealed class CapturingInboxWriter : IInboxChannelWriter {
     public ConcurrentBag<Guid> WrittenIds { get; } = [];
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     public ChannelReader<InboxWork> Reader => _channel.Reader;
@@ -355,12 +380,12 @@ public class DrainWorkerIdleSignalTests {
     public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
   }
 
-  private sealed class _StubCoordinator : IWorkCoordinator {
+  private sealed class StubCoordinator : IWorkCoordinator {
     public Dictionary<Guid, List<OutboxBatchRow>> OutboxRowsByStream { get; } = [];
     public Dictionary<Guid, List<InboxBatchRow>> InboxRowsByStream { get; } = [];
 
     public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
-      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken ct = default) {
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
       var result = new List<OutboxBatchRow>();
       foreach (var sid in streamIds) {
         if (OutboxRowsByStream.TryGetValue(sid, out var rows)) {
@@ -372,7 +397,7 @@ public class DrainWorkerIdleSignalTests {
     }
 
     public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
-      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken ct = default) {
+      IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
       var result = new List<InboxBatchRow>();
       foreach (var sid in streamIds) {
         if (InboxRowsByStream.TryGetValue(sid, out var rows)) {
@@ -383,14 +408,14 @@ public class DrainWorkerIdleSignalTests {
       return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 }

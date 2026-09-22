@@ -64,8 +64,8 @@ public class TenantCollectiveScopeResolverTests {
     // The PerspectiveRow<TModel> shape always carries a Scope column, so
     // tenant filtering applies regardless of TModel. Per-model opt-out is
     // a future concern; the first cut accepts all.
-    await Assert.That(resolver.AcceptsPerspective<_jobModel>()).IsTrue();
-    await Assert.That(resolver.AcceptsPerspective<_userModel>()).IsTrue();
+    await Assert.That(resolver.AcceptsPerspective<JobModel>()).IsTrue();
+    await Assert.That(resolver.AcceptsPerspective<UserModel>()).IsTrue();
   }
 
   // ── ScopeFilter ────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ public class TenantCollectiveScopeResolverTests {
     var resolver = new TenantCollectiveScopeResolver();
     var scope = new TenantCollectiveScope("tenant-xyz");
 
-    Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = resolver.ScopeFilter<_jobModel>(scope);
+    Expression<Func<PerspectiveRow<JobModel>, bool>> filter = resolver.ScopeFilter<JobModel>(scope);
 
     await Assert.That(filter).IsNotNull();
   }
@@ -84,7 +84,7 @@ public class TenantCollectiveScopeResolverTests {
   public async Task ScopeFilter_CompiledExpression_MatchesRowsByTenantIdAsync() {
     var resolver = new TenantCollectiveScopeResolver();
     var scope = new TenantCollectiveScope("tenant-xyz");
-    var filter = resolver.ScopeFilter<_jobModel>(scope).Compile();
+    var filter = resolver.ScopeFilter<JobModel>(scope).Compile();
 
     var matching = _row(tenantId: "tenant-xyz");
     var nonMatching = _row(tenantId: "tenant-other");
@@ -101,9 +101,9 @@ public class TenantCollectiveScopeResolverTests {
   [Test]
   public async Task ScopeFilter_WithWrongScopeKind_ThrowsArgumentExceptionAsync() {
     var resolver = new TenantCollectiveScopeResolver();
-    ICollectiveScope wrongScope = new _customScope();
+    ICollectiveScope wrongScope = new CustomScope();
 
-    await Assert.That(() => resolver.ScopeFilter<_jobModel>(wrongScope))
+    await Assert.That(() => resolver.ScopeFilter<JobModel>(wrongScope))
       .ThrowsExactly<ArgumentException>()
       .Because("Defensive guard: a tenant resolver should NEVER be handed a non-tenant scope. If it is, the registration is misconfigured and silently returning a 'match all' filter would over-mutate.");
   }
@@ -150,7 +150,7 @@ public class TenantCollectiveScopeResolverTests {
   [Test]
   public async Task EnterContext_WithWrongScopeKind_ThrowsArgumentExceptionAsync() {
     var resolver = new TenantCollectiveScopeResolver();
-    ICollectiveScope wrongScope = new _customScope();
+    ICollectiveScope wrongScope = new CustomScope();
 
     await Assert.That(() => resolver.EnterContext(wrongScope))
       .ThrowsExactly<ArgumentException>()
@@ -159,22 +159,22 @@ public class TenantCollectiveScopeResolverTests {
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Title { get; set; } = string.Empty;
   }
 
-  private sealed class _userModel {
+  private sealed class UserModel {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _customScope : CollectiveScope {
+  private sealed record CustomScope : CollectiveScope {
     public override string ScopeKind => "custom-other";
   }
 
-  private static PerspectiveRow<_jobModel> _row(string? tenantId) =>
+  private static PerspectiveRow<JobModel> _row(string? tenantId) =>
     new() {
       Id = Guid.NewGuid(),
-      Data = new _jobModel { Title = "t" },
+      Data = new JobModel { Title = "t" },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope { TenantId = tenantId },
       CreatedAt = DateTime.UtcNow,

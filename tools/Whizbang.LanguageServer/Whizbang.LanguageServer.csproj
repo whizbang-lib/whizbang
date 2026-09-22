@@ -9,9 +9,6 @@
     <IsPackable>true</IsPackable>
 
     <!-- Relax analysis for tool project (OmniSharp deps trigger false positives) -->
-    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
-    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CA1305;CA1822;CA1848;CA1873;CS1591</NoWarn>
 
     <!-- Package as global .NET tool -->

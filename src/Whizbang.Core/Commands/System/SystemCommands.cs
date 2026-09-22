@@ -44,7 +44,7 @@ public record RebuildPerspectiveCommand(
 /// <summary>
 /// Command to cancel an in-progress perspective rebuild.
 /// </summary>
-/// <param name="PerspectiveName">Name of the perspective whose rebuild should be cancelled.</param>
+/// <param name="PerspectiveName">Name of the perspective whose rebuild should be canceled.</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
 /// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:CancelPerspectiveRebuildCommand_CreatesCorrectlyAsync</tests>
 [PinnedId("5b8636e8-5c28-4520-8013-bf1e95b7f783")]

@@ -29,8 +29,7 @@ public record SerializerTestCommand : ICommand {
 [JsonSerializable(typeof(SerializerTestCommand))]
 [JsonSerializable(typeof(MessageEnvelope<SerializerTestCommand>))]
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-internal sealed partial class SerializerTestJsonContext : JsonSerializerContext {
-}
+internal sealed partial class SerializerTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Tests for JsonMessageSerializer constructor validation, converter integration,
@@ -113,7 +112,6 @@ public class JsonMessageSerializerTests {
     };
     options.Converters.Add(new MessageIdConverter());
     options.Converters.Add(new CorrelationIdConverter());
-    var initialCount = options.Converters.Count;
 
     // Act
     _ = new JsonMessageSerializer(options);
@@ -794,12 +792,12 @@ public class JsonMessageSerializerTests {
     // Arrange
     var converter = new CorrelationIdConverter();
     var correlationId = CorrelationId.New();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     converter.Write(writer, correlationId, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -881,12 +879,12 @@ public class JsonMessageSerializerTests {
   public async Task MetadataConverter_Write_WithNullValue_ShouldWriteNullLiteralAsync() {
     // Arrange
     var converter = new MetadataConverter();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
 
     // Act
     converter.Write(writer, null, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -897,8 +895,8 @@ public class JsonMessageSerializerTests {
   public async Task MetadataConverter_Write_WithDictionary_ShouldWriteObjectAsync() {
     // Arrange
     var converter = new MetadataConverter();
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     var dictionary = new Dictionary<string, JsonElement> {
       ["name"] = JsonSerializer.SerializeToElement("test"),
       ["count"] = JsonSerializer.SerializeToElement(42)
@@ -906,7 +904,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     converter.Write(writer, dictionary, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -928,10 +926,10 @@ public class JsonMessageSerializerTests {
     };
 
     // Act - Write
-    using var stream = new MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
+    await using var stream = new MemoryStream();
+    await using var writer = new Utf8JsonWriter(stream);
     converter.Write(writer, original, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Act - Read
     var reader = new Utf8JsonReader(stream.ToArray());

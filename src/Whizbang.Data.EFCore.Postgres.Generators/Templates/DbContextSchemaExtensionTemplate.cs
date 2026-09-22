@@ -24,7 +24,7 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// AOT-compatible - uses PostgresSchemaBuilder instead of EF Core's GenerateCreateScript().
 /// PgBouncer-compatible - uses transaction-level advisory locks (pg_try_advisory_xact_lock).
 /// </summary>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // SHA256 digest of the canonical set of (MessageType, AssociationType, TargetName, ServiceName)
   // tuples emitted by the perspective association generator. Used to detect when the set of
@@ -73,6 +73,195 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // them would run DDL together.
     var lockId = Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("__SCHEMA__");
     var rng = new Random();
+    // Schema SQL carrying a commit boundary is applied on a connection of its own, so a way to open
+    // one is resolved up front. See SchemaBoundaryConnections for why this is a factory over a
+    // borrowed data source rather than a connection string.
+    var segmentConnectionFactory = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
+      dbContext, initConnectionString, serviceProvider);
+
+    // Everything below runs before the initializer's transaction opens, on connections of their own,
+    // each committed. Nothing may be applied that way once the transaction is open: a second
+    // connection blocks on catalog rows the transaction has not committed, while the transaction
+    // waits for that connection to return, and PostgreSQL cannot break it because one side is
+    // waiting on a client rather than on a lock.
+    if (segmentConnectionFactory is not null) {
+      try {
+        await using var schemaConnection = segmentConnectionFactory();
+        await schemaConnection.OpenAsync(cancellationToken);
+        await using var createSchema = new Npgsql.NpgsqlCommand(
+          @"CREATE SCHEMA IF NOT EXISTS __QUOTED_SCHEMA__", schemaConnection);
+        await createSchema.ExecuteNonQueryAsync(cancellationToken);
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P06") {
+        // Another instance created it between the existence check and the create. IF NOT EXISTS is
+        // not atomic, so this is the expected shape of that race rather than a failure.
+        logger?.LogDebug("Schema {Schema} was created concurrently", "__SCHEMA__");
+      } catch (Exception ex) {
+        // Not fatal on its own: the initializer's own transaction creates the schema too, and the
+        // only thing lost is the side connection's ability to address it, which is reported where
+        // that matters. Said out loud because a permission failure here is worth seeing.
+        logger?.LogWarning(ex,
+          "Could not pre-create schema {Schema} on a separate connection; schema SQL needing a "
+          + "commit boundary may not be applicable", "__SCHEMA__");
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STAGED STARTUP: bring up enough of the schema to elect a migrator, then elect one.
+    //
+    // Every replica reaches this point together, and the advisory lock below already stops two of
+    // them issuing DDL at once. What it cannot stop is all of them trying: each one scans every
+    // table a rewrite touches and each one holds a transaction to find out there is nothing to do.
+    // Electing one instance makes that one instance's work.
+    //
+    // Electing needs a registry row and a capability function, both of which a migration creates,
+    // so a marked subset is applied first by whichever instance gets there. None of this is
+    // allowed to be fatal: every failure below ends with this instance migrating under the
+    // advisory lock alone, which is exactly how it behaved before any of it existed.
+    // ═══════════════════════════════════════════════════════════════════════════
+    var staging = new Whizbang.Data.Postgres.SchemaStaging(
+      Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
+
+    if (segmentConnectionFactory is not null) {
+      try {
+        // Phase 0 — the bootstrap. Reports whether an election is actually possible now rather
+        // than whether the scripts appeared to work.
+        var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
+          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__",
+          SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+
+        // Phase 1 — join the registry, then contend for the duty. Registration has to come first:
+        // the capability function refuses an instance it cannot find, and that refusal would say
+        // nothing about contention.
+        if (canElect
+            && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+               is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
+          staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
+            serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
+              as Whizbang.Core.Startup.IDutyElector,
+            ct => Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
+              segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct),
+            "__SCHEMA__", logger, cancellationToken);
+        }
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Belt and braces. Both phases already answer rather than throw; this catches anything
+        // they could not foresee and keeps it out of the startup path.
+        logger?.LogWarning(ex,
+          "Staged startup could not be arranged for schema {Schema}; this instance will migrate "
+          + "under the advisory lock alone", "__SCHEMA__");
+      }
+    }
+
+    // Released when this method returns, however it returns. A duty still held by an instance that
+    // has finished, or failed, would leave every other instance waiting on it indefinitely.
+    await using var migratorGrant = staging.Grant;
+
+    // The stored-form rewrite, committed before the transaction that indexes its result. An index
+    // over an extraction of a rewritten key cannot be built in the transaction that did the
+    // rewriting, because the index build evaluates its expression over row versions the rewrite
+    // superseded and those stay live until it commits.
+    //
+    // After the election, because the bootstrap creates the ledger and the function it needs, and
+    // on whichever instance goes on to do the schema work: the migrator, an instance that could not
+    // be staged, or a waiter whose migrator died before finishing. Derived from the model Entity
+    // Framework built and the serializer's metadata, the two things that read a document, so what a
+    // reader reads is what the rewrite converts. Under the same schema lock the DDL phase uses,
+    // waited for rather than skipped, because the holder may be a sibling's bootstrap or DDL
+    // transaction that converts nothing.
+    //
+    // One body for both call sites, so the two cannot drift apart.
+    async Task rewriteStoredFormsAsync(Func<Npgsql.NpgsqlConnection> rewriteConnectionFactory) {
+      try {
+        // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
+        // keeps writing the old unit into a table the ledger already says is converted, and nothing
+        // can tell those rows apart afterward. The migrator cannot refuse to run, because under a
+        // rolling update the older instances stay until the newer ones are ready. It can say so.
+        if (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.ILibraryVersionProvider))
+              is Whizbang.Core.Observability.ILibraryVersionProvider libraryVersion
+            && serviceProvider.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+              is Whizbang.Core.Observability.IServiceInstanceProvider thisInstance) {
+          await using var fleetConnection = rewriteConnectionFactory();
+          await fleetConnection.OpenAsync(cancellationToken);
+          var otherReleases = await Whizbang.Data.Postgres.FleetVersions.OtherLiveVersionsAsync(
+            fleetConnection, "__SCHEMA__", thisInstance.InstanceId, libraryVersion.LibraryVersion,
+            TimeSpan.FromMinutes(2), cancellationToken);
+          if (otherReleases.Count > 0) {
+            logger?.LogWarning(
+              "Other releases are alive in the fleet for schema {Schema} while the stored-form rewrite "
+              + "runs: {Releases}. A release that changes a stored unit is deployed without a mixed fleet; "
+              + "rows an older release writes into a converted table in the old unit cannot be told apart "
+              + "afterward", "__SCHEMA__", string.Join(", ", otherReleases));
+          }
+        }
+
+        var rewrites = Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
+          dbContext.Model,
+          Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+          "__SCHEMA__");
+        await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
+          rewriteConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
+          cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Reported rather than fatal, for the same reason a single failed rewrite is: the index
+        // built over unconverted rows fails with its own reason, which is a better place to read
+        // the problem than a startup that stopped before saying what it was doing.
+        logger?.LogWarning(ex,
+          "The stored-format rewrite phase did not complete for {Schema}; an index over a "
+          + "rewritten key will fail until it does", "__SCHEMA__");
+      }
+    }
+
+    // Phase 2: whoever does the schema work rewrites first; whoever does not, waits.
+    //
+    // A waiter lost the election, so it watches the DUTY lock: the migrator holds the duty until it
+    // returns, so a holder that dies releases it and the wait ends in a takeover with no deadline
+    // to tune. How the wait ended decides one thing. Either the holder finished, and the fast path
+    // below reads clean hashes and exits in one query; or the holder is gone, or could not be
+    // watched, and this instance is about to do the schema work itself: then it rewrites first,
+    // because a migrator killed mid-rewrite leaves the remaining tables in the old form and every
+    // replacement instance is a waiter.
+    //
+    // Any other instance, the migrator or one that could not be staged, rewrites and then contends
+    // for the DDL lock. Not while another session holds the SCHEMA lock, though. That session is
+    // doing the schema work right now (its bootstrap, its rewrite, or its DDL), and the rewrite
+    // phase, which waits for the lock rather than skipping, would sit behind it for up to its whole
+    // budget to learn what this instance can simply watch for. So it watches the schema lock the way
+    // a waiter watches the duty, through the same wait, and rewrites when the wait ends, whichever
+    // way it ended: a schema brought up to date under it makes the rewrite a settled no-op and the
+    // fast path an exit, and a lock released over a schema still behind makes this the instance that
+    // does the work. The loop below then contends for the lock as it always did.
+    if (segmentConnectionFactory is not null) {
+      var isWaiter = staging.Stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
+      var doesTheWork = staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter;
+      try {
+        await using var waitConnection = segmentConnectionFactory();
+        await waitConnection.OpenAsync(cancellationToken);
+        var watchedKey = isWaiter
+          ? Whizbang.Data.Postgres.DutyLockKey.Compute("__SCHEMA__", Whizbang.Core.Startup.StartupDuties.MIGRATOR)
+          : lockId;
+        if (isWaiter
+            || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
+          var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
+            ct => _isSchemaCurrentAsync(waitConnection, ct),
+            ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, watchedKey, ct),
+            TimeProvider.System,
+            "__SCHEMA__",
+            logger,
+            cancellationToken);
+          doesTheWork = !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;
+        }
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Falling through to contend for the lock is the correct response to not being able to
+        // wait, and the lock still excludes.
+        logger?.LogWarning(ex,
+          "Could not wait for the migrator of schema {Schema}; contending for the initialization "
+          + "lock instead", "__SCHEMA__");
+        doesTheWork = true;
+      }
+
+      if (doesTheWork) {
+        await rewriteStoredFormsAsync(segmentConnectionFactory);
+      }
+    }
 
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
     // Separate from the inner advisory lock retry loop which handles normal lock contention.
@@ -101,6 +290,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // Set when the fast path found stale duplicate overloads: the in-lock hash RE-CHECK must
         // not early-out on "hashes match", because hashes cannot see the duplicates.
         var duplicateSweepPending = false;
+        // Set when the fast path found a framework function whose deployed body is not its last-word
+        // migration's body (or is missing): hashes describe the files, not the database, so the in-lock
+        // RE-CHECK must not early-out on "hashes match" either.
+        var staleDefinitionSweepPending = false;
 
         try {
           var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
@@ -118,10 +311,23 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
                 "__SCHEMA__", string.Join(", ", fastPathDuplicates));
               infraChanged = true;
             } else {
-              if (logger is not null) {
-                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+              // Hashes also cannot see a function reverted to an earlier definition by a replay that
+              // predates the redefinition closure: every file is unchanged, the database is not. One
+              // catalog query compares deployed bodies with their last-word migrations; the slow path
+              // logs and re-runs (this probe stays silent so each stale file is logged once).
+              var fastPathStale = await _getStaleFunctionDefinitionFilesAsync(connection, GetMigrationScripts(), null, cancellationToken);
+              if (fastPathStale.Count > 0) {
+                staleDefinitionSweepPending = true;
+                logger?.LogInformation(
+                  "Schema '{Schema}' is hash-clean but {Count} migration(s) hold a later definition than the database does — taking the slow path to re-apply them.",
+                  "__SCHEMA__", fastPathStale.Count);
+                infraChanged = true;
+              } else {
+                if (logger is not null) {
+                  Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+                }
+                break; // Exit retry loop — no changes, no lock needed
               }
-              break; // Exit retry loop — no changes, no lock needed
             }
           }
 
@@ -152,6 +358,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // we bypass the strategy by starting the transaction on the raw connection and telling
         // EF Core to use it via UseTransactionAsync.
         System.Data.Common.DbTransaction? dbTransaction = null;
+        // Set when the instance that won the lock finished the work while this one waited. There is
+        // then no DDL left to apply and no reason to take the lock at all.
+        var anotherInstanceMigrated = false;
         {
           var lockAttempt = 0;
           var baseDelayMs = 100;
@@ -164,22 +373,46 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             dbTransaction = await connection.BeginTransactionAsync(cancellationToken);
             await dbContext.Database.UseTransactionAsync(dbTransaction, cancellationToken);
 
-            // pg_try_advisory_xact_lock returns boolean: true if lock acquired, false if held
-            // Transaction-level: auto-releases on commit/rollback (no manual unlock needed)
-            await using var lockCmd = connection.CreateCommand();
-            lockCmd.CommandText = $"SELECT pg_try_advisory_xact_lock({lockId})";
-            var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
-            if (lockResult is true) {
-              break; // Lock acquired, transaction is active
+            // pg_try_advisory_xact_lock returns boolean: true if lock acquired, false if held.
+            // Transaction-level: auto-releases on commit/rollback (no manual unlock needed).
+            // Winning it is what makes this instance the migrator; exactly one can.
+            await using (var lockCmd = connection.CreateCommand()) {
+              lockCmd.CommandText = $"SELECT pg_try_advisory_xact_lock({lockId})";
+              var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
+              if (lockResult is true) {
+                break; // Lock acquired, transaction is active
+              }
             }
 
-            // Lock not acquired — rollback transaction to release PgBouncer backend connection
-            // during the backoff delay, freeing it for other clients
+            // Lock not acquired — rollback to give the pooled backend up. Held outside a
+            // transaction, a client connection pins no server connection at all under transaction
+            // pooling, which is why the wait below happens here rather than between attempts.
             await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
             await dbTransaction.RollbackAsync(CancellationToken.None);
             await dbTransaction.DisposeAsync();
             dbTransaction = null;
 
+            // Another instance IS the migrator, so wait for its result instead of queuing behind
+            // it. Contending would win nothing this instance wants: the prize is the in-lock hash
+            // re-check finding the work already done, and the cost is a transaction per attempt
+            // per replica. The wait ends early if the migrator dies, which the lock's own
+            // disappearance reports with no deadline to tune.
+            var deferral = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
+              ct => _isSchemaCurrentAsync(connection, ct),
+              ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(connection, lockId, ct),
+              TimeProvider.System,
+              "__SCHEMA__",
+              logger,
+              cancellationToken);
+
+            if (deferral == Whizbang.Data.Postgres.SchemaDeferralOutcome.AnotherInstanceMigrated) {
+              anotherInstanceMigrated = true;
+              break;
+            }
+
+            // The migrator is gone and the schema is still behind, so this instance takes over.
+            // Backing off first keeps a fleet that all noticed the same death from converging on
+            // the same instant.
             lockAttempt++;
             // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
             var delay = Math.Min(baseDelayMs * (1 << Math.Min(lockAttempt - 1, 20)), maxDelayMs);
@@ -192,6 +425,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
             await Task.Delay(totalDelay, cancellationToken);
           }
+        }
+
+        if (anotherInstanceMigrated) {
+          if (logger is not null) {
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
+          }
+          break; // Exit the retry loop — the migrator's commit serves this instance too
         }
 
         if (logger is not null) {
@@ -215,9 +455,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await spCmd.ExecuteNonQueryAsync(cancellationToken);
             }
             (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
-            if (duplicateSweepPending) {
+            if (duplicateSweepPending || staleDefinitionSweepPending) {
               // Another instance completing initialization does not clear stale duplicate
-              // overloads — only the sweep does, and it runs through ExecuteMigrationsAsync.
+              // overloads or a stale function definition — only the sweeps do, and they run
+              // through ExecuteMigrationsAsync.
               infraChanged = true;
             }
 
@@ -246,7 +487,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           // Set command timeout to 10 minutes for DDL operations.
           // Multiple services may be running DDL concurrently (different schemas)
           // and lock contention on catalog tables can cause delays.
-          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(600));
+          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(SCHEMA_COMMAND_TIMEOUT_SECONDS));
 
           logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__, infra={InfraChanged}, persp={PerspChanged})...",
             "__DBCONTEXT_CLASS__", infraChanged, perspChanged);
@@ -273,7 +514,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             // Step 3: Create perspective tables with per-perspective hash tracking
             logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
             phaseSw.Restart();
-            await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
+            await ExecutePerspectiveTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
             phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
           } else {
             phases.Add(("PerspectiveTables", 0, "skipped (hash match)"));
@@ -418,7 +659,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // 3. Multiple pods can run maintenance concurrently without issues
     // Gracefully handles failures so it never prevents service startup
     logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await PerformMaintenanceAsync(dbContext, logger, initConnectionString, cancellationToken);
+    await PerformMaintenanceAsync(
+      dbContext, logger, initConnectionString, serviceProvider, cancellationToken);
   }
 
   /// <summary>
@@ -475,6 +717,187 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
     duplicates.IntersectWith(frameworkNames);
     return duplicates;
+  }
+
+  /// <summary>
+  /// Returns the migration files whose last-word function definitions are not what the database holds:
+  /// a deployed body that differs from the last-word body, or a framework function that is missing.
+  /// Bodies are compared whitespace-normalized (the embedded runner indents the file text). Functions
+  /// with more than one overload are left to the duplicate-overload sweep. Logs one Information line per
+  /// stale file naming the functions that made it stale.
+  /// </summary>
+  /// <summary>
+  /// Renders the embedded migration text the way <c>ExecuteSqlRawAsync</c> renders it: the generator
+  /// doubles every brace so the text survives format-string handling, and the server receives single
+  /// braces. Comparisons against deployed bodies must see the single-brace form.
+  /// </summary>
+  /// <summary>
+  /// How long any one schema statement may take.
+  /// </summary>
+  /// <remarks>
+  /// A rewrite of a stored format is one statement over every row of a table, which legitimately
+  /// takes far longer than an ordinary command, and a schema pass that gives up half way leaves the
+  /// service unable to start. Named here because both the EF path and the boundary path need it to
+  /// be the same number.
+  /// </remarks>
+  private const int SCHEMA_COMMAND_TIMEOUT_SECONDS = 600;
+
+  private static string _renderFormatBraces(string sql) => sql.Replace("{{", "{").Replace("}}", "}");
+
+  /// <summary>
+  /// Whether the schema needs nothing applied to it, asked without taking a lock.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same three questions the fast path asks, and it has to be all three. Hashes describe the
+  /// files rather than the database, so they cannot see a stale duplicate overload left behind by an
+  /// older drop, nor a function body an out-of-order replay reverted to an earlier definition. An
+  /// instance that waited on hashes alone would stop waiting while the work it was waiting for was
+  /// still outstanding.
+  /// </para>
+  /// <para>
+  /// Quiet about what it finds, because it runs repeatedly while waiting on another instance and
+  /// the fast path's once-per-startup logging would become a stream. A failure is raised rather
+  /// than swallowed, and the caller decides what it means: on an empty database the tracking tables
+  /// this reads are themselves created by the migration being waited for, so the first answer being
+  /// unavailable is ordinary. What it must never do is report "current" because it could not tell.
+  /// </para>
+  /// </remarks>
+  private static async Task<bool> _isSchemaCurrentAsync(
+      Npgsql.NpgsqlConnection connection, CancellationToken cancellationToken) {
+    try {
+      var hashes = await _bulkGetHashesAsync(connection, cancellationToken);
+      var (infraChanged, perspChanged, associationsChanged) = _compareHashes(hashes);
+      if (infraChanged || perspChanged || associationsChanged) {
+        return false;
+      }
+
+      if ((await _getDuplicateFrameworkOverloadNamesAsync(connection, cancellationToken)).Count > 0) {
+        return false;
+      }
+
+      var stale = await _getStaleFunctionDefinitionFilesAsync(
+        connection, GetMigrationScripts(), null, cancellationToken);
+      return stale.Count == 0;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Unanswerable is not the same as current. Reported by the caller, which knows whether this
+      // was the expected first answer or a genuine problem.
+      throw new InvalidOperationException(
+        "Could not determine whether schema __SCHEMA__ is current", ex);
+    }
+  }
+
+  /// <summary>
+  /// Applies schema SQL, committing wherever the generator marked a boundary.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Most schema SQL belongs in the initializer's transaction, so SQL carrying no boundary is
+  /// applied exactly as before. A boundary says one statement can only see an earlier one's effect
+  /// once that earlier one has committed, which a single transaction cannot provide: an index over
+  /// an expression is built by evaluating it on every heap tuple that is not yet dead, and the row
+  /// version an uncommitted rewrite superseded is still live.
+  /// </para>
+  /// <para>
+  /// Applied on its own connection, so each piece commits and a rewrite that has succeeded survives
+  /// a later failure in the same pass. Without that the rollback undoes the rewrite along with the
+  /// statement that failed, and every retry starts from the state that just failed. Instances stay
+  /// mutually excluded because this runs only while the caller holds the initialization lock.
+  /// </para>
+  /// </remarks>
+  private static async Task _applySchemaSqlAsync(
+      Microsoft.EntityFrameworkCore.DbContext dbContext,
+      Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+      string sql,
+      ILogger? logger,
+      CancellationToken cancellationToken) {
+    if (Whizbang.Data.Postgres.OptionalExtensionBlocks.HasBlocks(sql)) {
+      // A block of indexes that need an extension the server may refuse. Applied as one batch, a
+      // refused CREATE EXTENSION fails the whole pass; the reader creates the extension under a
+      // savepoint, skips the block with one warning when the server refuses it, and applies the
+      // rest, so a service runs without that index family rather than without a schema.
+      var extensionConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+      var extensionTransaction = dbContext.Database.CurrentTransaction?.GetDbTransaction() as Npgsql.NpgsqlTransaction;
+      await Whizbang.Data.Postgres.OptionalExtensionBlocks.ApplyAsync(
+        extensionConnection, extensionTransaction, _renderFormatBraces(sql), SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+      return;
+    }
+
+    if (!sql.Contains(Whizbang.Data.Postgres.SchemaCommandBoundary.MARKER, StringComparison.Ordinal)) {
+      await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+      return;
+    }
+
+    if (segmentConnectionFactory is null) {
+      // Nothing to open a second connection with: no initialization string, no data source in the
+      // container, and no configured string either. Applying the script whole is what this exists
+      // to avoid, so it is said out loud: every new database succeeds either way, because there are
+      // no rows to rewrite, and one carrying rows written in an older format fails until a
+      // connection can be had.
+      logger?.LogWarning(
+        "Schema SQL for {Schema} needs a commit boundary but no connection can be opened to apply "
+        + "it across one, so it is being applied whole. A rewrite of a stored format cannot commit "
+        + "before the index built over it, so a database holding rows in the older format will fail "
+        + "to migrate. Pass an initialization connection string, or register an NpgsqlDataSource.",
+        "__SCHEMA__");
+      await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+      return;
+    }
+
+    // ExecuteSqlRawAsync reads its argument as a format string and un-doubles the braces the
+    // generator doubled. Going around it means doing that here, or a brace arrives literally.
+    await Whizbang.Data.Postgres.SchemaCommandBoundary.ApplyAsync(
+      segmentConnectionFactory,
+      _renderFormatBraces(sql),
+      SCHEMA_COMMAND_TIMEOUT_SECONDS,
+      cancellationToken);
+  }
+
+  private static async Task<System.Collections.Generic.IReadOnlyList<string>> _getStaleFunctionDefinitionFilesAsync(
+      Npgsql.NpgsqlConnection connection,
+      (string Name, string Sql)[] migrations,
+      ILogger? logger,
+      CancellationToken ct) {
+    // Compare what the database HOLDS with what the migration EXECUTES. The embedded text carries
+    // doubled braces because ExecuteSqlRawAsync treats it as a format string and un-doubles them on
+    // the way to the server; a comparison on the embedded text would report every function whose
+    // body contains a brace as stale, on every boot.
+    var lastWords = Whizbang.Data.Postgres.MigrationFunctionBodies.LastWord(
+      migrations.Select(m => (m.Name, _renderFormatBraces(_transformMigrationSql(m.Sql, "__SCHEMA__")))));
+    if (lastWords.Count == 0) {
+      return System.Array.Empty<string>();
+    }
+
+    var deployed = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IReadOnlyList<string>>(StringComparer.Ordinal);
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = @"
+        SELECT p.proname, p.prosrc FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = @schema AND p.proname = ANY(@names)";
+      var schemaName = "__SCHEMA__";
+      cmd.Parameters.AddWithValue("schema", string.IsNullOrEmpty(schemaName) ? "public" : schemaName);
+      cmd.Parameters.AddWithValue("names", lastWords.Keys.ToArray());
+      cmd.CommandTimeout = 30;
+      await using var reader = await cmd.ExecuteReaderAsync(ct);
+      while (await reader.ReadAsync(ct)) {
+        var proname = reader.GetString(0);
+        var prosrc = reader.IsDBNull(1) ? "" : reader.GetString(1);
+        if (!deployed.TryGetValue(proname, out var bodies)) {
+          bodies = new System.Collections.Generic.List<string>();
+          deployed[proname] = bodies;
+        }
+        ((System.Collections.Generic.List<string>)bodies).Add(prosrc);
+      }
+    }
+
+    var staleFunctionsByFile = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal);
+    var files = Whizbang.Data.Postgres.MigrationFunctionBodies.FilesToRerun(lastWords, deployed, staleFunctionsByFile);
+    foreach (var file in files) {
+      logger?.LogInformation(
+        "Migration {Migration}: re-running because the database's definition of {Functions} does not match this file, its last word. A replay that predates the redefinition closure left the function on an earlier definition while every hash read unchanged.",
+        file, string.Join(", ", staleFunctionsByFile[file]));
+    }
+    return files;
   }
 
   /// <summary>
@@ -642,6 +1065,7 @@ END $$;
   /// </summary>
   private static async Task ExecutePerspectiveTablesAsync(
     __DBCONTEXT_FQN__ dbContext,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
     ILogger? logger,
     CancellationToken cancellationToken) {
 
@@ -653,7 +1077,7 @@ END $$;
       const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
       if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
         try {
-          await dbContext.Database.ExecuteSqlRawAsync(PerspectiveTablesSchema, cancellationToken);
+          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
           logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
         }
@@ -672,7 +1096,7 @@ END $$;
       const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
       if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
         try {
-          await dbContext.Database.ExecuteSqlRawAsync(PerspectiveTablesSchema, cancellationToken);
+          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
           logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
         }
@@ -705,7 +1129,7 @@ END $$;
       var isUpdate = existingHash != null;
 
       try {
-        await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+        await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, sql, logger, cancellationToken);
 
         var status = isUpdate ? 2 : 1;
         var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
@@ -886,6 +1310,20 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         }
       }
 
+      // Stale-definition sweep: the hashes above describe the FILES; this compares the DATABASE. A
+      // replay that predates the redefinition closure could re-run an earlier definer after the last
+      // word, leaving a function generations old while every hash says "unchanged" forever (nothing
+      // re-runs the last word because its file never changed). For each framework function, the
+      // deployed body must match its last-word migration's body; a mismatch or a missing function
+      // puts that last-word file back into the run. Self-limiting: a database that matches its
+      // files pays one catalog query per startup and re-runs nothing.
+      var staleDefinitionFiles = await _getStaleFunctionDefinitionFilesAsync(connection, migrations, logger, cancellationToken);
+      foreach (var staleFile in staleDefinitionFiles) {
+        if (!toRun.Contains(staleFile)) {
+          toRun.Add(staleFile);
+        }
+      }
+
       closureNames = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
       foreach (var pulledIn in closureNames) {
         if (!toRun.Contains(pulledIn)) {
@@ -1059,6 +1497,60 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   }
 
   /// <summary>
+  /// The marked regions of the migrations that have to exist before a migrator can be elected.
+  /// </summary>
+  /// <remarks>
+  /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
+  /// only makes objects exist and records nothing; the ordinary pass still applies and records these
+  /// same files afterwards.
+  /// </remarks>
+  private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
+    return new[] {
+      #region BOOTSTRAP_MIGRATIONS
+      // Bootstrap regions will be embedded here by the source generator
+      #endregion
+    };
+  }
+
+  /// <summary>
+  /// Everything the bootstrap applies, in order: the core tables, then the marked migration regions.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The core infrastructure tables come first because <c>wh_service_instances</c> is one of them
+  /// and is not created by any migration. They are taken as one unit rather than picked apart: the
+  /// whole set is <c>CREATE TABLE IF NOT EXISTS</c>, none of it is expensive, and the ordinary pass
+  /// runs exactly this SQL a moment later anyway. Extracting a single table would add a code path
+  /// whose only purpose is to do less of something already cheap.
+  /// </para>
+  /// <para>
+  /// Migration text is transformed and un-doubled here because these are applied through Npgsql
+  /// directly rather than through <c>ExecuteSqlRawAsync</c>, which is what normally resolves the
+  /// schema token and the doubled braces.
+  /// </para>
+  /// </remarks>
+  /// <remarks>
+  /// Internal rather than private so a test can apply the real thing to an empty database and try
+  /// to elect against the result. A test that rebuilt this list would prove its own copy complete
+  /// and say nothing about the one that ships.
+  /// </remarks>
+  internal static System.Collections.Generic.List<(string Name, string Sql)> GetBootstrapScripts() {
+    var scripts = new System.Collections.Generic.List<(string Name, string Sql)> {
+      ("core-infrastructure-tables", PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(
+        new SchemaConfiguration(
+          InfrastructurePrefix: "wh_",
+          PerspectivePrefix: "wh_per_",
+          SchemaName: "__SCHEMA__"))),
+    };
+
+    foreach (var (name, sql) in GetBootstrapMigrationScripts()) {
+      scripts.Add((name, _renderFormatBraces(_transformMigrationSql(sql, "__SCHEMA__"))));
+    }
+
+    return scripts;
+  }
+
+  /// <summary>
   /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
   /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox".
   /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
@@ -1076,6 +1568,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     // First, ALWAYS replace __MIGRATION_SCHEMA__ placeholder (even for "public" schema)
     // This ensures the placeholder is substituted before any early returns
     var transformedSql = sql.Replace("__MIGRATION_SCHEMA__", quotedSchema);
+    // The migrations' shared literals (Migrations/constants.txt, rule 12) ride the same substitution.
+    transformedSql = Whizbang.Data.Postgres.MigrationConstants.Apply(transformedSql);
 
     // If schema is "public", no further qualification needed - table names are already valid
     if (effectiveSchema == "public") {
@@ -1272,6 +1766,12 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
             renamedCount++;
             logger?.LogWarning("Renamed perspective table: {ClrType} from {OldTable} → {NewTable}", clrType, oldTable, newTable);
             break;
+          case "renamed_key":
+            // Migration 142 (issue #697): the row was keyed in the previous display-string form and
+            // has been adopted under the CLR key; its enrollment columns are intact.
+            renamedCount++;
+            logger?.LogInformation("Perspective registry key adopted to the CLR form: {ClrType} ({Table})", clrType, newTable);
+            break;
           case "drift_detected":
             driftCount++;
             logger?.LogWarning("Schema drift detected for perspective: {ClrType} ({Table})", clrType, newTable);
@@ -1405,6 +1905,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     __DBCONTEXT_FQN__ dbContext,
     ILogger? logger,
     string? initConnectionString,
+    IServiceProvider? serviceProvider,
     CancellationToken cancellationToken) {
     try {
       // Call the maintenance function and log results
@@ -1425,30 +1926,14 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           taskName, rowsAffected, durationMs, status);
       }
 
-      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined.
-      // When an initConnectionString is provided, use it directly for VACUUM (bypasses PgBouncer).
-      // Otherwise, get NpgsqlDataSource from EF Core options which preserves full auth.
+      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined, so it needs a
+      // connection of its own. Same need, and the same sources in the same order, as schema SQL
+      // carrying a commit boundary: see SchemaBoundaryConnections for why a connection string is
+      // usually not among them.
       Npgsql.NpgsqlConnection? vacuumConn = null;
       try {
-        if (!string.IsNullOrEmpty(initConnectionString)) {
-          vacuumConn = new Npgsql.NpgsqlConnection(initConnectionString);
-        } else {
-          // When using NpgsqlDataSource (Aspire/cloud), GetConnectionString() strips the password,
-          // so creating a new NpgsqlConnection from it would fail auth.
-          // Instead, get the DbDataSource from EF Core's options extension which preserves full auth.
-          var npgsqlExt = dbContext.GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>()
-            .Extensions.OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
-            .FirstOrDefault();
-          var dataSource = npgsqlExt?.DataSource as Npgsql.NpgsqlDataSource;
-          if (dataSource != null) {
-            vacuumConn = dataSource.CreateConnection();
-          } else {
-            var connectionString = dbContext.Database.GetConnectionString();
-            if (!string.IsNullOrEmpty(connectionString)) {
-              vacuumConn = new Npgsql.NpgsqlConnection(connectionString);
-            }
-          }
-        }
+        vacuumConn = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
+          dbContext, initConnectionString, serviceProvider)?.Invoke();
 
         if (vacuumConn != null) {
           await vacuumConn.OpenAsync(cancellationToken);

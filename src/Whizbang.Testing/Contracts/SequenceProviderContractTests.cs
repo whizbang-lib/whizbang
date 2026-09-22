@@ -208,12 +208,12 @@ public abstract class SequenceProviderContractTests {
   }
 
   [Test]
-  public async Task CancellationToken_WhenCancelled_ShouldThrowAsync() {
+  public async Task CancellationToken_WhenCanceled_ShouldThrowAsync() {
     // Arrange
     var provider = CreateProvider();
     const string streamKey = TEST_STREAM_KEY;
     using var cts = new CancellationTokenSource();
-    await cts.CancelAsync(); // Already cancelled
+    await cts.CancelAsync(); // Already canceled
 
     // Act & Assert
     await Assert.That(async () => await provider.GetNextAsync(streamKey, cts.Token))

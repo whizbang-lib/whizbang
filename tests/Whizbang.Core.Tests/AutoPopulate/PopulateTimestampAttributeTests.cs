@@ -247,7 +247,6 @@ public class PopulateTimestampAttributeTests {
 
   // Derived record inherits the attribute
   private sealed record DerivedEventWithTimestamp : BaseEventWithTimestamp {
-    public string? AdditionalData { get; init; }
   }
 
   // Abstract base class pattern
@@ -257,7 +256,6 @@ public class PopulateTimestampAttributeTests {
   }
 
   private sealed record ConcreteEventWithTimestamp : AbstractEventWithTimestamp {
-    public string? Payload { get; init; }
   }
 
   // Record with multiple timestamp attributes

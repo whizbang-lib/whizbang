@@ -13,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>claim_orphaned_outbox</c> / <c>_inbox</c> / <c>_perspective_events</c>.
 ///
 /// <para>
-/// Original behavior (pre-PR-#227): every successful claim ran <c>INSERT INTO
-/// wh_active_streams ... ON CONFLICT (stream_id) DO UPDATE</c>, taking the unique-index
+/// Original behavior (pre-PR-#227): every successful claim ran <code>INSERT INTO
+/// wh_active_streams ... ON CONFLICT (stream_id) DO UPDATE</code>, taking the unique-index
 /// leaf-page lock even in the steady-state case where this instance already owned the
 /// stream with a live lease. Under N pods × 250 ms polling in production, two pods'
 /// transactions could end up holding overlapping leaf-page locks while waiting on each
@@ -49,6 +49,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+[Category("Shard3")]
 public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
 
   // ============================================================================
@@ -289,8 +290,8 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       throw new InvalidOperationException($"No wh_active_streams row for {streamId}");
     }
-    var owner = reader.IsDBNull(0) ? (Guid?)null : reader.GetGuid(0);
-    var lastActivity = reader.GetFieldValue<DateTimeOffset>(1);
+    var owner = await reader.IsDBNullAsync(0) ? (Guid?)null : reader.GetGuid(0);
+    var lastActivity = await reader.GetFieldValueAsync<DateTimeOffset>(1);
     return (owner, lastActivity);
   }
 
@@ -361,11 +362,18 @@ public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
       Guid? instanceId, DateTimeOffset? leaseExpiry, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, @att, NOW(),
-              @inst, @lease, @stream, @part)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @att,
+             @inst::uuid, @lease::timestamptz, @part, 99
+      FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("part", partitionNumber);

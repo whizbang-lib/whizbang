@@ -68,7 +68,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveBase — unified marker for all perspective types
           return originalDef.Contains("IPerspectiveBase");
         })
@@ -90,7 +90,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
     // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
     var typeArguments = perspectiveInterface.TypeArguments
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Select(t => TypeNameUtilities.FullyQualified(t))
         .ToArray();
 
     // Extract event types (all except TModel at index 0) for diagnostics
@@ -112,7 +112,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
     return new PerspectiveInfo(
-        ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ClassName: TypeNameUtilities.FullyQualified(classSymbol),
         SimpleName: simpleName,
         ClrTypeName: clrTypeName,
         InterfaceTypeArguments: typeArguments,

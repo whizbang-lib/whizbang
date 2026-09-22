@@ -20,9 +20,7 @@ public class FlowDiagramHandlerTests {
         TestCount = 3
       }
     ]);
-
-    var generator = new MermaidGenerator();
-    var handler = new FlowDiagramHandler(resolver, generator);
+    var handler = new FlowDiagramHandler(resolver);
     var request = new GenerateFlowDiagramParams { MessageType = "CreateOrderCommand" };
 
     // Act
@@ -37,8 +35,7 @@ public class FlowDiagramHandlerTests {
   public async Task HandleGenerateFlowDiagram_UnknownMessage_ReturnsEmptyMermaidAsync() {
     // Arrange
     var resolver = new SymbolResolver("https://docs.whizbang.dev");
-    var generator = new MermaidGenerator();
-    var handler = new FlowDiagramHandler(resolver, generator);
+    var handler = new FlowDiagramHandler(resolver);
     var request = new GenerateFlowDiagramParams { MessageType = "NonExistentMessage" };
 
     // Act

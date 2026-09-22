@@ -8,6 +8,109 @@ namespace Whizbang.Generators.Tests;
 /// Tests for PerspectiveSchemaGenerator - ensures PostgreSQL schema generation for perspectives.
 /// </summary>
 public class PerspectiveSchemaGeneratorTests {
+
+  /// <summary>
+  /// A perspective whose model carries one vector property, with the attribute's named arguments
+  /// filled in by the caller. The schema generator reads each of those named arguments in its own
+  /// switch arm, and the defaults are what every other test in this file exercises.
+  /// </summary>
+  private static string _vectorPerspective(string vectorFieldAttribute) => $$"""
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace MyApp.Perspectives;
+
+            public record DocumentModel {
+              public Guid Id { get; set; }
+              {{vectorFieldAttribute}}
+              public float[]? Embedding { get; set; }
+            }
+
+            public class DocumentPerspective : IPerspectiveFor<DocumentModel, DocumentIndexed> {
+              public DocumentModel Apply(DocumentModel currentData, DocumentIndexed @event) => currentData;
+            }
+
+            public record DocumentIndexed : IEvent;
+            """;
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldWithIndexingOff_EmitsTheColumnWithoutAnIndexAsync() {
+    // Indexing a vector column is the expensive part — building an IVFFlat index over a large
+    // table is minutes of work and it is what the opt-out exists for. The column itself must
+    // still be created, or the opt-out silently drops the data instead of the index.
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(1536)]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).Contains("vector(1536)")
+      .Because("declining the index is not declining the column");
+    await Assert.That(sql).DoesNotContain("USING ivfflat")
+      .Because(" is the opt-out for exactly this index");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldWithAnExplicitColumnName_UsesItInsteadOfTheConventionAsync() {
+    // Without ColumnName the generator snake-cases the property. An explicit name is how a
+    // perspective maps onto a column that already exists, so ignoring it would generate a schema
+    // that does not match the table it is meant to describe.
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(768, ColumnName = \"doc_vec\")]\n        [Indexed]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).Contains("doc_vec")
+      .Because("an explicit column name is the whole point of the option");
+    await Assert.That(sql).DoesNotContain("embedding")
+      .Because("the convention name must not be emitted alongside the explicit one — two columns "
+             + "for one property is a schema that will not apply");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldWithAnIndexTypeOutsideTheEnum_EmitsTheColumnWithNoIndexAsync() {
+    // C# lets any int be cast to an enum, so (VectorIndexType)99 compiles and reaches the
+    // generator as an index type it has no case for. The only safe answer is no index statement:
+    // guessing a method would emit CREATE INDEX ... USING <nothing>, and the whole schema file
+    // fails to apply — taking every other perspective's table with it, for one bad attribute
+    // argument on one field.
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(1536, IndexType = (VectorIndexType)99)]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).Contains("vector(1536)")
+      .Because("an index type it cannot name is no reason to drop the column");
+    // Scoped to the VECTOR index: the schema always emits a GIN index on the JSONB column, so
+    // asserting on "USING" alone would be answered by an index that has nothing to do with this.
+    await Assert.That(sql).DoesNotContain("_vec")
+      .Because("an index method the generator cannot name must produce no index statement at "
+             + "all — a malformed one fails the whole schema file, not just this field");
+    await Assert.That(sql).DoesNotContain("ivfflat");
+    await Assert.That(sql).DoesNotContain("hnsw");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldDefaults_IndexTheColumnAsync() {
+    // The companion to the opt-out: indexing is on unless asked otherwise, which is what makes
+    // the opt-out meaningful rather than a no-op.
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(1536)]\n        [Indexed]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql).Contains("ivfflat")
+      .Because("vector indexing is opt-out, not opt-in");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesSchemaAsync() {

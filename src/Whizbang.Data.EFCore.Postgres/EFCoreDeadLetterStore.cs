@@ -20,11 +20,9 @@ namespace Whizbang.Data.EFCore.Postgres;
     "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterStore<TDbContext>(
   TDbContext dbContext,
-  ILogger<EFCoreDeadLetterStore<TDbContext>> logger,
   WorkCoordinatorGate? gate = null
 ) : IDeadLetterStore where TDbContext : DbContext {
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-  private readonly ILogger<EFCoreDeadLetterStore<TDbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
 
   // move_to_dead_letters lives in the service schema (__SCHEMA__.<fn>); qualify it like
@@ -32,7 +30,7 @@ public sealed class EFCoreDeadLetterStore<TDbContext>(
   // includes the service schema, which is not guaranteed (multi-schema: 42883).
   private string _fn(string name) {
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+    return Whizbang.Data.Postgres.PgIdentifier.Qualify(schema, name);
   }
 
   /// <inheritdoc />

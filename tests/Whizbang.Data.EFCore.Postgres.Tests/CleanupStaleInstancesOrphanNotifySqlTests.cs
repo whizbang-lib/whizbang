@@ -35,6 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard1")]
 public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
 
   [Test]
@@ -92,9 +93,9 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
 
     await Assert.That(received).Count().IsEqualTo(3)
       .Because("one orphan NOTIFY per live instance");
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToList();
+    var channels = received.Select(r => r.Channel).Order().ToList();
     var expected = new[] { live1, live2, live3 }
-      .Select(g => $"wh_work_i_{g}").OrderBy(c => c).ToList();
+      .Select(g => $"wh_work_i_{g}").Order().ToList();
     await Assert.That(channels).IsEquivalentTo(expected)
       .Because("one NOTIFY per LIVE instance — never on a dead-instance's channel");
   }
@@ -157,6 +158,12 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a round-trip so NOTIFY messages buffered after COMMIT are dispatched.
       await using var ping = conn.CreateCommand();

@@ -11,15 +11,21 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Signals;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Notifications;
+using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -49,14 +55,28 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
 
   /// <summary>
-  /// UNSCALED wall-clock budget for commit → perspective-visible. Deliberately NOT scaled by
-  /// any test-timeout multiplier: the whole point is that production-default cadences land the
-  /// apply well under the 5 s backstop, so a fixed absolute bound is the lock.
+  /// UNSCALED wall-clock budget for commit → perspective-visible on the UNFENCED path.
+  /// Deliberately NOT scaled by any test-timeout multiplier: the whole point is that
+  /// production-default cadences land the apply well under the 5 s backstop, so a fixed
+  /// absolute bound is the lock.
   /// </summary>
   private static readonly TimeSpan _visibilityBudget = TimeSpan.FromSeconds(1.5);
+
+  /// <summary>
+  /// The FENCED path has a larger inherent floor than the unfenced one: the scenario holds an
+  /// older same-database transaction open ~300 ms, and after it clears the make-up stamp lands
+  /// on the next <see cref="CommitOrderStamperOptions.FencedRetryInterval"/> tick (≤ 250 ms
+  /// granularity) before claim → drain → apply even begins. That ~550 ms of fence-specific
+  /// latency sits ON TOP of the unfenced claim/drain/apply cost, so the two paths cannot share
+  /// a budget (they did, and the fenced test flaked at the shared 1.5 s edge). This bound still
+  /// locks out the regression it guards — visibility quantizing to the 5 s backstop — by a wide
+  /// margin: a backstop-quantized apply is ≥ 5 s, never ~2.5 s.
+  /// </summary>
+  private static readonly TimeSpan _fencedVisibilityBudget = TimeSpan.FromSeconds(2.5);
 
   /// <summary>All real components composed the way a booting pod composes them.</summary>
   private sealed class RealPipeline {
@@ -74,6 +94,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddScoped(_ => CreateDbContext());
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -143,30 +164,56 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     // NotifyHealthyPollingIntervalMilliseconds (5 s default) and doorbell wakes carry the
     // fast path — the same shape a booting pod runs.
     var claimWorker = new ClaimWorker(
-      scopeFactory,
-      instanceProvider,
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions()),
-      NullLogger<ClaimWorker>.Instance,
+      scopeFactory: scopeFactory,
+      instanceProvider: instanceProvider,
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions()),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: harness.ChannelWriter,
       perspectiveDrainChannel: harness.DrainChannel,
-      signalingGate: sharedConnection);
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: sharedConnection,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Production defaults on purpose (300 ms drain sliding window, 4 drain consumers,
     // burst-driven wake via the NOTIFY listener) — this test locks latency under real
     // cadences; do not neuter.
     var perspectiveWorker = new PerspectiveWorker(
-      instanceProvider,
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions()),
+      instanceProvider: instanceProvider,
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: gate,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      // The registry registration above also registers the real event-type provider; the worker used to
+      // pick it up lazily from a scope, which the required parameter no longer does.
+      eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: listener,
-      schemaReadyGate: gate);
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
 
     return new RealPipeline {
       Services = provider,
@@ -310,12 +357,12 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       await blockerTx.RollbackAsync(cancellationToken);
 
       var elapsed = await applied.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-      Console.WriteLine($"commit → perspective-visible elapsed (fenced): {elapsed.TotalMilliseconds:F0} ms (budget {_visibilityBudget.TotalMilliseconds:F0} ms, fence held 300 ms)");
+      Console.WriteLine($"commit → perspective-visible elapsed (fenced): {elapsed.TotalMilliseconds:F0} ms (budget {_fencedVisibilityBudget.TotalMilliseconds:F0} ms, fence held 300 ms)");
 
-      await Assert.That(elapsed).IsLessThan(_visibilityBudget)
-        .Because("the 1.5 s budget covers the 300 ms fence hold + ≤250 ms fenced re-stamp retry + "
+      await Assert.That(elapsed).IsLessThan(_fencedVisibilityBudget)
+        .Because("the fenced budget covers the 300 ms fence hold + ≤250 ms fenced re-stamp retry + "
                + "claim/drain/apply; a stamp that sleeps until the next backstop tick quantizes "
-               + "perspective visibility to the backstop cadence");
+               + "perspective visibility to the backstop cadence (issue #677)");
       await Assert.That(await _countOrderRowsAsync(conn, streamId, cancellationToken)).IsEqualTo(1L)
         .Because("the completion signal fires after the wh_per_order upsert committed — the row must be readable");
     } finally {
@@ -410,6 +457,11 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
     call.Parameters.AddWithValue("req", request);
     _ = await call.ExecuteScalarAsync(ct);
+    // 146 (#720): the commit queued its doorbells; the coordinator rings right after the commit, and
+    // this raw call models that ring so the measured latency is the production path's.
+    await using var ring = conn.CreateCommand();
+    ring.CommandText = "SELECT ring_doorbells()";
+    _ = await ring.ExecuteScalarAsync(ct);
   }
 
   private static async Task<long> _countOrderRowsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {

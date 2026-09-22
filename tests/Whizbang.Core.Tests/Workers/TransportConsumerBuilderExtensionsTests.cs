@@ -26,6 +26,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -51,6 +52,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_AutoPopulatesEventDestinations_FromSubscribeToAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -79,6 +81,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_CombinesAutoDiscoveredAndManualDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     // Add a test event namespace registry for auto-discovery
@@ -113,17 +116,14 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_WithAdditionalDestinations_IncludesThemAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
-    builder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub"));
-    });
+    builder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -138,12 +138,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_WithMultipleAdditionalDestinations_IncludesAllAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer(config => {
@@ -170,12 +169,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_RegistersTransportConsumerWorkerAsHostedServiceAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act - TransportConsumerWorker always has resilience built-in
     builder.AddTransportConsumer();
@@ -206,12 +204,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_RegistersTransportConsumerOptionsAsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -232,6 +229,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_ReturnsSameBuilderForChainingAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -262,6 +260,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_WithoutRouting_ThrowsInvalidOperationExceptionAsync() {
     // Arrange - No WithRouting() called, so no IOptions<RoutingOptions> registered
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -284,13 +283,12 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_UsesServiceInstanceProviderServiceNameAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
     services.AddSingleton<IServiceInstanceProvider>(new TestServiceInstanceProvider("MyTestService"));
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -305,12 +303,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_WithoutServiceInstanceProvider_UsesDefaultServiceNameAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services, includeServiceInstanceProvider: false);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act
     builder.AddTransportConsumer();
@@ -329,6 +326,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_WithEmptyRouting_CreatesEmptyDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -347,12 +345,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_CalledMultipleTimes_DoesNotDuplicateRegistrationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Act - Call twice
     builder.AddTransportConsumer();
@@ -373,6 +370,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_OnPerspectiveBuilder_AutoPopulatesDestinationsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -405,19 +403,16 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_OnPerspectiveBuilder_WithAdditionalDestinations_IncludesThemAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
     // Act
-    perspectiveBuilder.AddTransportConsumer(config => {
-      config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub"));
-    });
+    perspectiveBuilder.AddTransportConsumer(config => config.AdditionalDestinations.Add(new TransportDestination("custom-topic", "custom-sub")));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -442,6 +437,7 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_OnPerspectiveBuilder_ReturnsSameBuilderForChainingAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var whizbangBuilder = new WhizbangBuilder(services);
@@ -460,12 +456,11 @@ public class TransportConsumerBuilderExtensionsTests {
   public async Task AddTransportConsumer_OnPerspectiveBuilder_RegistersWorkerAndOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
@@ -515,7 +510,6 @@ public class TransportConsumerBuilderExtensionsTests {
 
   private sealed class TestServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
     public string ServiceName { get; } = serviceName;
-    public string InstanceId => Guid.NewGuid().ToString("N")[..8];
 
     public string HostName => throw new NotImplementedException();
 
@@ -529,4 +523,79 @@ public class TransportConsumerBuilderExtensionsTests {
   }
 
   #endregion
+
+  // ============================================================
+  // The subscription health check
+  // ============================================================
+  //
+  // A transport consumer whose subscriptions have dropped is still a running process with a
+  // green liveness probe — it simply stops receiving. The health check is what turns that into
+  // something an orchestrator can see, so its registration has to produce a working check in
+  // both the composed and the partly-composed case.
+
+  [Test]
+  public async Task AddTransportConsumer_RegistersTheSubscriptionHealthCheckAsync() {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+
+    builder.AddTransportConsumer();
+
+    var provider = services.BuildServiceProvider();
+    var registrations = provider
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations;
+
+    await Assert.That(registrations.Any(r => r.Tags.Contains("transport"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TheHealthCheckFactory_ToleratesAnAbsentWorkerAsync() {
+    // A host that registered the consumer options but not the worker — a schema-only or
+    // diagnostic composition — must still get a check rather than a null-reference from the
+    // health endpoint. The check simply reports on an empty subscription set.
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+    builder.AddTransportConsumer();
+
+    // Resolve through a provider that cannot build the worker.
+    var bare = new ServiceCollection();
+    bare.TryAddWhizbangDefaults();
+    var registration = services.BuildServiceProvider()
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations
+      .First(r => r.Tags.Contains("transport"));
+
+    var check = registration.Factory(bare.BuildServiceProvider());
+
+    await Assert.That(check).IsNotNull()
+      .Because("a partly-composed host must get a health check that reports, not one that throws");
+  }
+
+  [Test]
+  public async Task TheHealthCheckIsDegradedRatherThanUnhealthyAsync() {
+    // Subscriptions drop and recover on their own — the transport reconnects. Reporting
+    // Unhealthy would make an orchestrator restart or evict a pod that was about to recover.
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+    builder.AddTransportConsumer();
+
+    var registration = services.BuildServiceProvider()
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations
+      .First(r => r.Tags.Contains("transport"));
+
+    await Assert.That(registration.FailureStatus)
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded)
+      .Because("a dropped subscription recovers on its own — Unhealthy would evict a pod that "
+             + "was about to come back");
+  }
 }

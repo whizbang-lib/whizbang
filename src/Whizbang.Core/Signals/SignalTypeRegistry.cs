@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace Whizbang.Core.Signals;
 
@@ -36,14 +37,8 @@ public static class SignalTypeRegistry {
   /// </summary>
   public static bool IsRegistered(string wireName) {
     ArgumentNullException.ThrowIfNull(wireName);
-    foreach (var source in _sources) {
-      foreach (var entry in source.GetSignalTypes()) {
-        if (string.Equals(entry.WireName, wireName, StringComparison.Ordinal)) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return _sources.Any(source => source.GetSignalTypes()
+      .Any(entry => string.Equals(entry.WireName, wireName, StringComparison.Ordinal)));
   }
 
   /// <summary>Number of registered sources (diagnostics/testing).</summary>

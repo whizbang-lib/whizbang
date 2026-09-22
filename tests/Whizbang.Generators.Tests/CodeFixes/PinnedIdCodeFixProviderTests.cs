@@ -163,7 +163,7 @@ public class PinnedIdCodeFixProviderTests {
     var fixContext = new CodeFixContext(
       document,
       targetDiagnostic,
-      (action, diagnostics) => actions.Add(action),
+      (action, _) => actions.Add(action),
       CancellationToken.None);
 
     await provider.RegisterCodeFixesAsync(fixContext);

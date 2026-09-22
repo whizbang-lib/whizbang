@@ -23,7 +23,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record UpdateOrder(Guid OrderId, string[] Changes);
   public record OrderUpdated(Guid OrderId, string[] Changes);
   public record CancelOrder(Guid OrderId);
-  public record OrderCancelled(Guid OrderId);
+  public record OrderCanceled(Guid OrderId);
 
   // Test receptor implementations (will be created when implementing)
   public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
@@ -91,10 +91,11 @@ public class ReceptorTests : DiagnosticTestBase {
         Items: [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
-    // Act
-    var task = receptor.HandleAsync(command);
-    await Assert.That(task.IsCompleted).IsFalse(); // Should be async
-    var result = await task;
+    // Act. The receptor's only awaited work is a 1 ms delay, so on a loaded host the task
+    // can legally complete before this method observes it — asserting IsCompleted==false
+    // was a race, not a contract. The contract worth locking is that an async receptor's
+    // result awaits cleanly and arrives intact.
+    var result = await receptor.HandleAsync(command);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -251,7 +252,7 @@ public class ReceptorTests : DiagnosticTestBase {
   }
 
   // Supporting types for array response test
-  public interface INotificationEvent { }
+  public interface INotificationEvent;
   public record EmailSent(Guid CustomerId) : INotificationEvent;
   public record HighValueAlert(Guid OrderId) : INotificationEvent;
 

@@ -30,7 +30,7 @@ public class WhizbangFlushMiddlewareTests {
         webBuilder.ConfigureServices(services => services.AddScoped<IWorkFlusher>(_ => flusher));
         webBuilder.Configure(app => {
           app.UseWhizbangFlush();
-          app.Run(context => {
+          app.Run(_ => {
             pipelineCompleted = true;
             // At this point, flush should NOT have been called yet
             return Task.CompletedTask;

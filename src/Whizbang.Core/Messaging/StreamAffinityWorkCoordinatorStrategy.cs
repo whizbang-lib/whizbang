@@ -24,14 +24,15 @@ namespace Whizbang.Core.Messaging;
 public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
     IOutboxBatchStrategy outboxBatch,
+    Microsoft.Extensions.Logging.ILogger logger,
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
-    Microsoft.Extensions.Logging.ILogger? logger = null,
     Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinatorStrategy _inner = inner ?? throw new ArgumentNullException(nameof(inner));
   private readonly IOutboxBatchStrategy _outboxBatch = outboxBatch ?? throw new ArgumentNullException(nameof(outboxBatch));
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
-  private readonly Microsoft.Extensions.Logging.ILogger? _logger = logger;
+  private readonly Microsoft.Extensions.Logging.ILogger _logger =
+    logger;
   private readonly Whizbang.Core.Tags.CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
 
   /// <inheritdoc />

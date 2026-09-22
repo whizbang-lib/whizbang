@@ -23,7 +23,7 @@ namespace Whizbang.Core.Configuration;
 /// </example>
 /// </remarks>
 /// <docs>operations/configuration/whizbang-options</docs>
-/// <tests>Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs</tests>
 public sealed class WhizbangCoreOptions {
   /// <summary>
   /// Gets the tag system configuration.
@@ -32,6 +32,13 @@ public sealed class WhizbangCoreOptions {
   /// Use this property to register tag hooks that process messages after successful handling.
   /// </remarks>
   public TagOptions Tags { get; } = new();
+
+  /// <summary>
+  /// Gets the consumer-side priority classification (priority step 2): rules by namespace, by type, or by a
+  /// predicate that decide the effective priority of received messages. See <see cref="Whizbang.Core.Priority.PriorityOptions"/>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaring-with-tags</docs>
+  public Whizbang.Core.Priority.PriorityOptions Priority { get; } = new();
 
   /// <summary>
   /// Gets the tracing system configuration.
@@ -84,6 +91,49 @@ public sealed class WhizbangCoreOptions {
   /// to control its position relative to other registrations.
   /// </summary>
   public bool AutoRegisterAspNetHosting { get; set; } = true;
+
+  /// <summary>
+  /// Validate at startup that every registered type's constructor can be satisfied. Default true.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A dependency that is declared but never registered produces no error on its own: the container
+  /// supplies null and the dependent type runs in a degraded mode nobody chose. This turns that into
+  /// a startup failure naming both the missing service and the type that wanted it.
+  /// </para>
+  /// <para>
+  /// The check reads service descriptors and never resolves anything, so it constructs nothing and
+  /// fires no factory side effects. Set false for a partial composition that deliberately registers
+  /// only a subset, such as a test fixture exercising one worker in isolation.
+  /// </para>
+  /// </remarks>
+  public bool ValidateRegistrations { get; set; } = true;
+
+  /// <summary>
+  /// How long graceful shutdown may spend deregistering this instance before giving up.
+  /// Default: 15 seconds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deregistration is not a single-row delete — it releases <em>every lease this instance holds</em>
+  /// (outbox, inbox, perspective events, receptor processing, active streams) before removing the
+  /// instance row, all in one call. Its cost therefore scales with how much work the instance had
+  /// claimed, which can be tens of thousands of rows on a backlogged service.
+  /// </para>
+  /// <para>
+  /// It is also <strong>all-or-nothing</strong>: the whole thing runs in a single implicit
+  /// transaction, so a timeout rolls it back and releases nothing. Setting this too low does not
+  /// degrade gracefully — it guarantees the leases stay held until they expire on their own, and
+  /// leaves the instance row for stale cleanup.
+  /// </para>
+  /// <para>
+  /// The ceiling is the orchestrator's termination grace period (commonly 30s): overrun it and the
+  /// process is hard-killed, losing the clean exit entirely. The default leaves room for the rest of
+  /// shutdown. Raise it for services that routinely hold large claim backlogs; lower it only if you
+  /// would rather abandon deregistration quickly than delay shutdown.
+  /// </para>
+  /// </remarks>
+  public TimeSpan ShutdownDeregistrationTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
   /// <summary>
   /// Gets or sets whether tag processing is enabled.

@@ -198,20 +198,20 @@ public class PerspectiveRowSweepTests {
 
   [Test]
   public async Task Guard_CancelHoldsForever_DeferHoldsUntilTheInstantAsync() {
-    var cancelled = Guid.NewGuid();
+    var canceled = Guid.NewGuid();
     var deferred = Guid.NewGuid();
     var until = DateTimeOffset.UtcNow.AddHours(6);
-    var coordinator = new RowSweepCoordinator { Collectable = [_target(cancelled), _target(deferred)] };
+    var coordinator = new RowSweepCoordinator { Collectable = [_target(canceled), _target(deferred)] };
     var guard = new RecordingGuard {
       Decide = _ => new Dictionary<Guid, PerspectiveRowDecision> {
-        [cancelled] = PerspectiveRowDecision.Cancel(),
+        [canceled] = PerspectiveRowDecision.Cancel(),
         [deferred] = PerspectiveRowDecision.Defer(until),
       }
     };
 
     await _buildWorker(coordinator, guard).RunMaintenanceOnceAsync(CancellationToken.None);
 
-    var cancelHold = coordinator.Held.Single(h => h.Row.RowId == cancelled);
+    var cancelHold = coordinator.Held.Single(h => h.Row.RowId == canceled);
     await Assert.That(cancelHold.Until).IsEqualTo(DateTimeOffset.MaxValue)
       .Because("Cancel keeps the row indefinitely — the explicit, observable leak-risk decision");
     var deferHold = coordinator.Held.Single(h => h.Row.RowId == deferred);

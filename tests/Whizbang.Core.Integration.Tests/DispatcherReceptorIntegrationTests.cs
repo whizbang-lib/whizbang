@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -120,7 +121,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -153,7 +154,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -189,7 +190,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -228,7 +229,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -255,7 +256,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     // Intentionally NOT registering any receptors - only dispatcher
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -282,7 +283,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -316,7 +317,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -349,7 +350,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -390,7 +391,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -419,7 +420,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -454,7 +455,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -494,7 +495,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -529,7 +530,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -570,7 +571,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -619,7 +620,7 @@ public class DispatcherReceptorIntegrationTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);

@@ -62,7 +62,7 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
       columnDefinitions.Add(_buildColumnDefinition(column));
     }
 
-    sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
+    sb.AppendJoin(",\n", columnDefinitions.Select(c => $"  {c}")).AppendLine();
     sb.AppendLine(");");
 
     return sb.ToString();
@@ -134,8 +134,9 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
   public string BuildInfrastructureSchema(SchemaConfiguration config) {
     var sb = new StringBuilder();
 
+    // No clock stamp and nothing else per call, for the same reason as the Postgres builder: the
+    // text a builder returns must be the same for every instance of one release.
     sb.AppendLine("-- Whizbang Infrastructure Schema for SQLite");
-    sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine($"-- Infrastructure Prefix: {config.InfrastructurePrefix}");
     sb.AppendLine($"-- Perspective Prefix: {config.PerspectivePrefix}");
     sb.AppendLine();

@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the real combined contexts keep serving every other type.
 /// </summary>
 /// <docs>fundamentals/events/event-store-serialization</docs>
+[Category("Shard4")]
 public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   private const string ORPHAN_EVENT_TYPE = "Whizbang.Tests.FallbackOrphanEvent";
   private static readonly string[] _onePerspective = ["P.One"];
@@ -51,6 +52,35 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
     // when no tenant key is present.
     var envelope = (MessageEnvelope<JsonElement>)orphans[0].Envelope;
     await Assert.That(envelope.Hops).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task GetOrphanedLifecycleEventsAsync_WithNoScopeColumnAtAll_StillReturnsTheEventAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    var logger = new CapturingLogger();
+    var coordinator = _createCoordinator(dbContext, JsonContextRegistry.CreateCombinedOptions(), logger);
+
+    // A NULL scope column, not an empty JSON object: events minted before scoping existed, and
+    // events minted with no ambient security context, both land this way.
+    var (_, eventId) = await _seedOrphanAsync(connection, scope: null);
+
+    var orphans = await coordinator.GetOrphanedLifecycleEventsAsync(
+      _orphanMap(), TimeSpan.FromHours(1));
+
+    // The event being present at all is the point. Rehydration runs inside a per-row catch that
+    // logs and skips, so a null scope reaching the deserializer would not surface as a failure —
+    // it would silently drop the event from the reconciler's orphan list, and the lifecycle
+    // completion it exists to repair would never be written.
+    await Assert.That(orphans).Count().IsEqualTo(1)
+      .Because("an unscoped event is still an orphan needing reconciliation; deserializing a null "
+             + "scope would throw into the per-row catch and drop it without anyone noticing");
+    await Assert.That(orphans[0].EventId).IsEqualTo(eventId);
+
+    var envelope = (MessageEnvelope<JsonElement>)orphans[0].Envelope;
+    await Assert.That(envelope.Hops).IsEmpty()
+      .Because("no scope means no security context to restore — inventing a hop here would "
+             + "attribute the replayed event to a tenant or user that never touched it");
   }
 
   [Test]
@@ -191,7 +221,7 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   /// caught-up cursor for the single expected perspective and no completion marker.
   /// </summary>
   private static async Task<(Guid StreamId, Guid EventId)> _seedOrphanAsync(
-      NpgsqlConnection connection, string scope = "{}", string eventData = "{}") {
+      NpgsqlConnection connection, string? scope = "{}", string eventData = "{}") {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var eventId = (Guid)TrackedGuid.NewMedo();
 
@@ -206,7 +236,7 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("type", ORPHAN_EVENT_TYPE);
       ins.Parameters.AddWithValue("data", eventData);
-      ins.Parameters.AddWithValue("scope", scope);
+      ins.Parameters.AddWithValue(nameof(scope), (object?)scope ?? DBNull.Value);
       await ins.ExecuteNonQueryAsync();
     }
 
@@ -268,14 +298,9 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
     ThrowUnrelated
   }
 
-  private sealed class JsonElementSabotagingResolver : IJsonTypeInfoResolver {
-    private readonly IJsonTypeInfoResolver _inner;
-    private readonly SabotageMode _mode;
-
-    public JsonElementSabotagingResolver(IJsonTypeInfoResolver inner, SabotageMode mode) {
-      _inner = inner;
-      _mode = mode;
-    }
+  private sealed class JsonElementSabotagingResolver(IJsonTypeInfoResolver inner, EFCoreWorkCoordinatorEnvelopeFallbackTests.SabotageMode mode) : IJsonTypeInfoResolver {
+    private readonly IJsonTypeInfoResolver _inner = inner;
+    private readonly SabotageMode _mode = mode;
 
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       if (type != typeof(JsonElement)) {

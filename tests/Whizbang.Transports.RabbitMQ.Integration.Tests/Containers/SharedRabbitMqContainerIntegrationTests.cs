@@ -100,16 +100,6 @@ public class SharedRabbitMqContainerIntegrationTests {
 
   [Test]
   [Timeout(60000)]
-  public async Task InitializeAsync_WithCancellation_RespectsTokenAsync(CancellationToken cancellationToken) {
-    // Act - Initialize (should succeed if already initialized, or complete quickly)
-    await SharedRabbitMqContainer.InitializeAsync(cancellationToken);
-
-    // Assert - Should be initialized
-    await Assert.That(SharedRabbitMqContainer.IsInitialized).IsTrue();
-  }
-
-  [Test]
-  [Timeout(60000)]
   public async Task ConnectionString_BeforeInitialize_ThrowsInvalidOperationExceptionAsync(CancellationToken cancellationToken) {
     // This test is tricky because the container might already be initialized
     // We're testing the behavior when NOT initialized

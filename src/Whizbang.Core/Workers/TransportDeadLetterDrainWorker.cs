@@ -40,16 +40,14 @@ public partial class TransportDeadLetterDrainWorker(
   IOptions<TransportDeadLetterDrainWorkerOptions> options,
   WhizbangMetrics whizbangMetrics,
   ILogger<TransportDeadLetterDrainWorker> logger,
-  // Startup barrier: draining writes to wh_dead_letters, which may not exist on a first boot.
-  // Optional only so existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
+  ISchemaReadyGate schemaReadyGate
 ) : BackgroundService {
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly TransportDeadLetterDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<TransportDeadLetterDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly Counter<long> _drained = _buildCounter(whizbangMetrics);
+  private readonly PassiveCounter<long> _drained = _buildCounter(whizbangMetrics);
 
   private long _totalDrained;
   private bool _warnedNoDrainers;
@@ -59,12 +57,14 @@ public partial class TransportDeadLetterDrainWorker(
   public const string METER_NAME = "Whizbang.TransportDeadLetterDrain";
 #pragma warning restore CA1707
 
-  private static Counter<long> _buildCounter(WhizbangMetrics whizbangMetrics) {
+  private static PassiveCounter<long> _buildCounter(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
-    return meter.CreateCounter<long>(
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
+    var drained = meter.CreatePassiveCounter<long>(
       name: "whizbang.transport_dlq.drained",
       description: "Messages re-submitted from a transport broker's dead-letter queue back onto the normal receive path.");
+    // Issue #711: the series exists at zero from construction; a queue that drained nothing is healthy, not unmonitored.
+    return drained;
   }
 
   /// <summary>Cumulative count of broker-DLQ messages re-submitted since process start.</summary>
@@ -84,7 +84,7 @@ public partial class TransportDeadLetterDrainWorker(
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 

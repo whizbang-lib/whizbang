@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tags;
@@ -63,12 +64,10 @@ public sealed class ControlClassResolver {
   }
 
   private (Dictionary<string, Type> Lookup, HashSet<Type> Members) _buildIndex() {
-    var members = new HashSet<Type>();
-    foreach (var registration in _registrationSource()) {
-      if (string.Equals(registration.Tag, SystemTags.CONTROL, StringComparison.Ordinal)) {
-        members.Add(registration.MessageType);
-      }
-    }
+    var members = _registrationSource()
+      .Where(registration => string.Equals(registration.Tag, SystemTags.CONTROL, StringComparison.Ordinal))
+      .Select(registration => registration.MessageType)
+      .ToHashSet();
 
     return (EventTypeMatchingHelper.BuildTypeLookup([.. members]), members);
   }

@@ -71,6 +71,9 @@ public sealed partial class PgSharedNotifyConnection(
   // the shared conn via WaitAsync, so we can't issue LISTEN from Subscribe directly —
   // NpgsqlConnection isn't thread-safe and a concurrent command would throw.
   private CancellationTokenSource? _resyncSignal;
+  // Latches a resync request so it survives the window where _resyncSignal is null — see
+  // _signalResync. Drained by the dispatch loop before every wait.
+  private int _resyncPending;
   private bool _isAvailable;
   private bool _aliveLockHeld;
   private DateTimeOffset? _lastVerifiedAt;
@@ -136,7 +139,7 @@ public sealed partial class PgSharedNotifyConnection(
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
-      _setAvailable(false, "no connection string resolvable");
+      SetAvailable(false, "no connection string resolvable");
       return false;
     }
     try {
@@ -154,13 +157,14 @@ public sealed partial class PgSharedNotifyConnection(
       // can't authenticate). When the data source path is used the probe doesn't open a
       // second connection itself, so this argument is unused.
       var ok = await _runProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
-      _setAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
+      SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
       return ok;
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      _setAvailable(false, "ProbeNowAsync timed out");
-      return false;
     } catch (Exception ex) {
-      _setAvailable(false, ex.Message);
+      // A cancellation the caller did not ask for is the self-test timeout; name it as such.
+      var reason = ex is OperationCanceledException && !cancellationToken.IsCancellationRequested
+        ? "ProbeNowAsync timed out"
+        : ex.Message;
+      SetAvailable(false, reason);
       return false;
     }
   }
@@ -272,9 +276,16 @@ public sealed partial class PgSharedNotifyConnection(
   /// the loop's wait token so it unwinds, calls _syncListensAsync, and resumes WaitAsync.
   /// </summary>
   private void _signalResync() {
+    // Latch BEFORE reading the handle. The loop publishes its handle before draining the latch,
+    // so the two orderings are both covered: if we latch first the loop drains it and syncs; if
+    // the loop drains first, its handle is already published and our Cancel below unwinds it.
+    // Without the latch, a request landing while the handle is null — the loop is mid-sync, or
+    // running the keepalive ping — is dropped outright and that channel is never listened, so
+    // every notification on it is lost for the lifetime of the connection.
+    Volatile.Write(ref _resyncPending, 1);
     var cts = Volatile.Read(ref _resyncSignal);
     if (cts is null) {
-      return;  // Dispatch loop not currently waiting; next iteration will sync naturally.
+      return;  // Loop isn't waiting; it will drain the latch before its next wait.
     }
     try {
       cts.Cancel();
@@ -448,13 +459,13 @@ public sealed partial class PgSharedNotifyConnection(
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
         var probeOk = await _runProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
-          _setAvailable(false, "self-test probe round-trip failed");
+          SetAvailable(false, "self-test probe round-trip failed");
           throw new InvalidOperationException(
             "Self-test probe failed: connection opened but pg_notify round-trip did not arrive within SelfTestTimeout.");
         }
 
         attempt = 0;
-        _setAvailable(true, failureReason: null);
+        SetAvailable(true, failureReason: null);
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
         _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
@@ -471,21 +482,23 @@ public sealed partial class PgSharedNotifyConnection(
           Volatile.Write(ref _resyncSignal, resync);
           using var combined = CancellationTokenSource.CreateLinkedTokenSource(
             stoppingToken, keepalive.Token, resync.Token);
-          var resyncFired = false;
+
+          // Drain the latch AFTER publishing the handle, so a request racing this point either
+          // is seen here or finds the handle and cancels the wait below. Covers both the request
+          // that woke us and any that landed while we were syncing.
+          if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
+            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+          }
+
           var keepaliveFired = false;
           try {
             await conn.WaitAsync(combined.Token).ConfigureAwait(false);
             // Notification arrived (or backend message) — handler ran synchronously inside
             // WaitAsync. Loop again to wait for the next one.
           } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested && !stoppingToken.IsCancellationRequested) {
-            resyncFired = resync.IsCancellationRequested;
             keepaliveFired = keepalive.IsCancellationRequested;
           } finally {
             Volatile.Write(ref _resyncSignal, null);
-          }
-
-          if (resyncFired) {
-            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
           }
           if (keepaliveFired) {
             // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
@@ -501,7 +514,7 @@ public sealed partial class PgSharedNotifyConnection(
           _connection = null;
         }
         attempt++;
-        _setAvailable(false, failureReason: ex.Message);
+        SetAvailable(false, failureReason: ex.Message);
         var delay = _computeBackoff(attempt);
         LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
@@ -516,7 +529,7 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
 
-    _setAvailable(false, failureReason: "shutdown");
+    SetAvailable(false, failureReason: "shutdown");
     LogStopped(_logger);
   }
 
@@ -533,8 +546,15 @@ public sealed partial class PgSharedNotifyConnection(
   /// to a worker channel for real work). A slow subscriber blocks subsequent notifications
   /// on this pod's shared connection.
   /// </remarks>
-  private void _dispatchNotification(object? sender, NpgsqlNotificationEventArgs e) {
-    var subscribers = _registry.Get(e.Channel);
+  private void _dispatchNotification(object? sender, NpgsqlNotificationEventArgs e) =>
+    DispatchNotification(e.Channel, e.Payload);
+
+  /// <summary>
+  /// The dispatch path behind the Npgsql notification handler, reachable without an Npgsql event
+  /// so the routing, metrics and subscriber-failure handling can be exercised directly.
+  /// </summary>
+  internal void DispatchNotification(string channel, string payload) {
+    var subscribers = _registry.Get(channel);
     if (subscribers.IsEmpty) {
       return;
     }
@@ -543,7 +563,7 @@ public sealed partial class PgSharedNotifyConnection(
     // notify_instance_owners; anything else lands in "unknown" so a payload drift
     // (new SQL signal that the .NET side hasn't taught yet) is observable instead
     // of silent.
-    var category = e.Payload switch {
+    var category = payload switch {
       "outbox" => "outbox",
       "inbox" => "inbox",
       "perspective" => "perspective",
@@ -552,18 +572,18 @@ public sealed partial class PgSharedNotifyConnection(
     _metrics?.SignalsReceived.Add(1, new KeyValuePair<string, object?>("category", category));
     foreach (var subscriber in subscribers) {
       try {
-        subscriber.OnNotification(e.Payload);
+        subscriber.OnNotification(payload);
       } catch (Exception ex) {
-        LogSubscriberCallbackFailed(_logger, e.Channel, ex);
+        LogSubscriberCallbackFailed(_logger, channel, ex);
       }
     }
   }
 
-  private void _setAvailable(bool available, string? failureReason) {
+  internal void SetAvailable(bool available, string? failureReason) {
     bool fire;
     lock (_availabilityGate) {
       // ProbeNowAsync can run concurrently with the BackgroundService loop's probe; both
-      // call _setAvailable. Guard the transition so OnAvailabilityChanged fires exactly
+      // call SetAvailable. Guard the transition so OnAvailabilityChanged fires exactly
       // once per actual change.
       fire = _isAvailable != available;
       _isAvailable = available;
@@ -624,6 +644,21 @@ public sealed partial class PgSharedNotifyConnection(
     get {
       lock (_connectionGate) {
         return _connection is not null && _connection.State == System.Data.ConnectionState.Open;
+      }
+    }
+  }
+
+  /// <summary>
+  /// The channels this connection currently holds a <c>LISTEN</c> on. Test hook, because the set
+  /// is otherwise unobservable: PostgreSQL exposes no catalog for another session's listened
+  /// channels, and "the NOTIFY stopped arriving" is an absence, which cannot be waited for. Without
+  /// a way to see the set shrink, a shared connection that never UNLISTENs looks identical to one
+  /// that does — while it accumulates channels for the life of the process.
+  /// </summary>
+  internal IReadOnlyCollection<string> ListenedChannelsForTesting {
+    get {
+      lock (_connectionGate) {
+        return [.. _listenedChannels];
       }
     }
   }

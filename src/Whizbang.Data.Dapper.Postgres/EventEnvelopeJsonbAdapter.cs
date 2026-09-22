@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
@@ -55,6 +56,10 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       ["causation_id"] = JsonDocument.Parse(causationIdJson).RootElement.Clone(),
       ["hops"] = JsonDocument.Parse(hopsJson).RootElement.Clone()
     };
+    // Priority step 1: the number lives in the metadata column, omitted when undeclared (the wire's convention).
+    if (Whizbang.Core.Priority.WorkPriority.IsDeclared(source.Priority)) {
+      metadataDict["pri"] = JsonDocument.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
+    }
 
     var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
@@ -117,7 +122,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     _restoreScopeFromJson(jsonb.ScopeJson, hops);
 
     // Deserialize payload (event data) with concrete type - AOT-compatible
-    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TMessage).FullName}. Ensure the type is registered in WhizbangJsonContext.");
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {TypeNameFormatter.DisplayName(typeof(TMessage))}. Ensure the type is registered in WhizbangJsonContext.");
     var payload = JsonSerializer.Deserialize(jsonb.DataJson, payloadTypeInfo)
                   ?? throw new InvalidOperationException("Failed to deserialize event data");
 
@@ -126,7 +131,10 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       MessageId = Core.ValueObjects.MessageId.From(messageId),
       Payload = (TMessage)payload,
       Hops = hops,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      Priority = metadataDict.TryGetValue("pri", out var pri) && pri.ValueKind == JsonValueKind.Number
+        ? pri.GetInt32()
+        : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
     };
   }
 
@@ -135,8 +143,22 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Supports both new PerspectiveScope short keys and legacy snake_case format.
   /// </summary>
   private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson) || hops.Count == 0) {
+    if (string.IsNullOrEmpty(scopeJson)) {
       return;
+    }
+
+    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
+    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
+    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
+    // any perspective requiring a security context rejected the event on every retry until it
+    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
+    // scope still yields none, because the emptiness check above returns first.
+    if (hops.Count == 0) {
+      hops.Add(new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      });
     }
 
     var (tenantId, userId) = _parseScopeValues(scopeJson);

@@ -61,9 +61,9 @@ public class ScheduleOccurrencePublishGateTests {
   }
 
   private sealed class FakeManager : IScheduleManager {
-    public Guid? Cancelled { get; private set; }
+    public Guid? Canceled { get; private set; }
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) {
-      Cancelled = scheduleId;
+      Canceled = scheduleId;
       return Task.FromResult(true);
     }
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) =>
@@ -176,7 +176,7 @@ public class ScheduleOccurrencePublishGateTests {
 
     await Assert.That(decision).IsEqualTo(OccurrencePublishDecision.Drop);
     await Assert.That(store.Logged!.Value.Status).IsEqualTo((short)2);   // Skipped
-    await Assert.That(manager.Cancelled).IsNull()
+    await Assert.That(manager.Canceled).IsNull()
       .Because("skip drops this occurrence only — the schedule keeps its cadence");
   }
 
@@ -187,7 +187,7 @@ public class ScheduleOccurrencePublishGateTests {
     var decision = await gate.EvaluateAsync(_work(_occurrenceMetadata()));
 
     await Assert.That(decision).IsEqualTo(OccurrencePublishDecision.Drop);
-    await Assert.That(manager.Cancelled).IsEqualTo(_schedule);
+    await Assert.That(manager.Canceled).IsEqualTo(_schedule);
     await Assert.That(store.Logged!.Value.Status).IsEqualTo((short)2);
   }
 
@@ -228,6 +228,6 @@ public class ScheduleOccurrencePublishGateTests {
     await Assert.That(decision).IsEqualTo(OccurrencePublishDecision.Proceed)
       .Because("a buggy hook must not silently swallow scheduled work");
     await Assert.That(store.Logged).IsNull();
-    await Assert.That(manager.Cancelled).IsNull();
+    await Assert.That(manager.Canceled).IsNull();
   }
 }

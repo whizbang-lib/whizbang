@@ -19,12 +19,12 @@ namespace Whizbang.Core.Messaging;
 /// <docs>operations/testing/chaos-injection</docs>
 public sealed class ChaosInjectorInvoker(
   IOptions<Configuration.WhizbangOptions>? options,
-  IChaosInjector? injector = null) {
-  private readonly IChaosInjector? _injector = injector;
+  IChaosInjector injector) {
+  private readonly IChaosInjector _injector = injector;
   private readonly bool _enabled = options?.Value?.Guardrails.EnableChaosHooks ?? false;
 
   /// <summary>Whether chaos hooks are enabled AND an injector is registered.</summary>
-  public bool IsActive => _enabled && _injector is not null;
+  public bool IsActive => _enabled && _injector.IsInjecting;
 
   /// <summary>
   /// Invoke the injector at the named checkpoint if both the options flag is on and an

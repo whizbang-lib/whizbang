@@ -70,8 +70,6 @@ public static class ServiceBusSubscriptionNameHelper {
     }
 
     // Trim leading/trailing hyphens
-    sanitized = sanitized.Trim('-');
-
-    return sanitized;
+    return sanitized.Trim('-');
   }
 }

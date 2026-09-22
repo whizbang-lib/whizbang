@@ -4,6 +4,8 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Models;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -139,16 +141,28 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// Checks if a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    return type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
-           !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal);
+    return type.ContainingNamespace is { } ns &&
+           TypeNameUtilities.Display(ns).StartsWith("System", StringComparison.Ordinal) &&
+           !TypeNameUtilities.Display(ns).StartsWith("System.Collections", StringComparison.Ordinal);
   }
 
   /// <summary>
-  /// Checks if a property should be skipped during analysis (static, indexer, write-only, or ignored).
+  /// Checks if a property should be skipped during analysis.
   /// </summary>
-  private static bool _shouldSkipProperty(IPropertySymbol member) {
-    return member.IsStatic || member.IsIndexer || member.IsWriteOnly || _isPropertyIgnored(member);
-  }
+  /// <remarks>
+  /// <para>
+  /// Asked of the shared discovery, which is the same question the generator asks when it decides
+  /// how a model is stored. A copy here would be a copy that can disagree, and this one did: without
+  /// the accessibility rule it reported the compiler-generated <c>EqualityContract</c> of every
+  /// record, whose type is the abstract <c>System.Type</c>. Info severity is why nobody noticed.
+  /// </para>
+  /// <para>
+  /// Only a public property is mapped, by the serializer and by the mapped path alike, so only a
+  /// public property can make a document polymorphic or be worth a discriminator.
+  /// </para>
+  /// </remarks>
+  private static bool _shouldSkipProperty(IPropertySymbol member) =>
+    !PolymorphicModelDiscovery.IsAnalyzableProperty(member);
 
   /// <summary>
   /// Reports a WHIZ811 diagnostic for a polymorphic property.
@@ -197,8 +211,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
 
     // Check for [JsonPolymorphic] attribute
     foreach (var attr in type.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == "System.Text.Json.Serialization.JsonPolymorphicAttribute") {
+      if (TypeNameUtilities.IsNamed(attr.AttributeClass, "System.Text.Json.Serialization.JsonPolymorphicAttribute")) {
         return true;
       }
     }
@@ -221,7 +234,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       return null;
     }
 
-    var originalDef = type.ConstructedFrom.ToDisplayString();
+    var originalDef = TypeNameUtilities.Display(type.ConstructedFrom);
 
     // Common collection interfaces and types
     if (originalDef.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
@@ -239,7 +252,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
+    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
     if (ns == null) {
       return false;
     }
@@ -254,32 +267,4 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     return false;
   }
 
-  /// <summary>
-  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
-  /// </summary>
-  private static bool _isPropertyIgnored(IPropertySymbol property) {
-    foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == null) {
-        continue;
-      }
-
-      // EF Core [NotMapped]
-      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") {
-        return true;
-      }
-
-      // System.Text.Json [JsonIgnore]
-      if (attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute") {
-        return true;
-      }
-
-      // Newtonsoft.Json [JsonIgnore]
-      if (attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
-        return true;
-      }
-    }
-
-    return false;
-  }
 }

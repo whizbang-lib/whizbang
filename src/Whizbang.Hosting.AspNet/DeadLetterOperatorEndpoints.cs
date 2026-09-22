@@ -19,8 +19,10 @@ namespace Whizbang.Hosting.AspNet;
 [JsonSerializable(typeof(List<DeadLetterEntry>))]
 [JsonSerializable(typeof(DeadLetterEntry))]
 [JsonSerializable(typeof(DeadLetterOperatorEndpoints.ScanNowResponse))]
-internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext {
-}
+[JsonSerializable(typeof(IReadOnlyList<HeldCohort>))]
+[JsonSerializable(typeof(HeldCohort))]
+[JsonSerializable(typeof(DeadLetterOperatorEndpoints.CohortReleaseResult))]
+internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Opt-in operator HTTP endpoints for the Whizbang internal DLQ. Wraps the SQL functions
@@ -48,12 +50,15 @@ internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext {
 /// </remarks>
 /// <docs>operations/dead-letter-queue/operator-api</docs>
 public static class DeadLetterOperatorEndpoints {
+  private const string JSON_CONTENT_TYPE = "application/json";
+
 
   /// <summary>
   /// Maps the operator endpoints under the configured prefix (default <c>/whizbang/dlq</c>).
   /// Returns the <see cref="RouteGroupBuilder"/> so callers can chain
   /// <c>.RequireAuthorization()</c> / <c>.RequireHost()</c> etc.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "ASP0018:Unused route parameter", Justification = "The handlers are RequestDelegates so the map stays ahead-of-time compatible; the cohort-release handler reads the fingerprint from the route values.")]
   public static RouteGroupBuilder MapWhizbangDeadLetterEndpoints(
       this IEndpointRouteBuilder endpoints,
       string prefix = "/whizbang/dlq") {
@@ -66,8 +71,42 @@ public static class DeadLetterOperatorEndpoints {
     group.MapPost("/{id:guid}/hold", _handleHoldAsync);
     group.MapPost("/{id:guid}/give-up", _handleGiveUpAsync);
     group.MapPost("/scan-now", _handleScanNowAsync);
+    group.MapGet("/cohorts", _handleCohortsAsync);
+    group.MapPost("/cohorts/{fingerprint}/release", _handleCohortReleaseAsync);
 
     return group;
+  }
+
+  private static async Task _handleCohortsAsync(HttpContext http) {
+    var svc = http.RequestServices.GetRequiredService<IDeadLetterRecoveryService>();
+    var cohorts = await svc.ListHeldCohortsAsync(http.RequestAborted).ConfigureAwait(false);
+    http.Response.ContentType = JSON_CONTENT_TYPE;
+    await JsonSerializer.SerializeAsync(
+      http.Response.Body, cohorts,
+      DeadLetterOperatorJsonContext.Default.IReadOnlyListHeldCohort,
+      http.RequestAborted).ConfigureAwait(false);
+  }
+
+  private static async Task _handleCohortReleaseAsync(HttpContext http) {
+    var fingerprint = http.Request.RouteValues["fingerprint"]?.ToString();
+    if (string.IsNullOrWhiteSpace(fingerprint)) {
+      http.Response.StatusCode = StatusCodes.Status400BadRequest;
+      return;
+    }
+    var staggerMinutes = 30;
+    if (http.Request.Query.TryGetValue("staggerMinutes", out var s) && int.TryParse(s, out var parsed)) {
+      staggerMinutes = parsed;
+    }
+    var svc = http.RequestServices.GetRequiredService<IDeadLetterRecoveryService>();
+    // Operator release goes through the SAME staggered-eligibility path as the campaigns:
+    // there is no firehose endpoint, by design.
+    var released = await svc.ReleaseHeldCohortAsync(
+      fingerprint, TimeSpan.FromMinutes(staggerMinutes), http.RequestAborted).ConfigureAwait(false);
+    http.Response.ContentType = JSON_CONTENT_TYPE;
+    await JsonSerializer.SerializeAsync(
+      http.Response.Body, new CohortReleaseResult(fingerprint, released),
+      DeadLetterOperatorJsonContext.Default.CohortReleaseResult,
+      http.RequestAborted).ConfigureAwait(false);
   }
 
   private static async Task _handleDueAsync(HttpContext http) {
@@ -77,7 +116,7 @@ public static class DeadLetterOperatorEndpoints {
       max = parsed;
     }
     var entries = await svc.FetchDueAsync(maxCount: max, ct: http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     await JsonSerializer.SerializeAsync(
       http.Response.Body, entries,
       DeadLetterOperatorJsonContext.Default.IReadOnlyListDeadLetterEntry,
@@ -124,8 +163,10 @@ public static class DeadLetterOperatorEndpoints {
       var provider = http.RequestServices.GetRequiredService<IGenerationProvider>();
       gen = provider.GetGeneration();
     }
-    var scheduled = await svc.ResetForGenerationAsync(gen, http.RequestAborted).ConfigureAwait(false);
-    http.Response.ContentType = "application/json";
+    // Operator-initiated replay is deliberate and interactive: no stagger (0), the operator
+    // wants the re-offer now — the deploy-time replay is the one that paces itself (#669).
+    var scheduled = await svc.ResetForGenerationAsync(gen, 0, http.RequestAborted).ConfigureAwait(false);
+    http.Response.ContentType = JSON_CONTENT_TYPE;
     var response = new ScanNowResponse { Generation = gen, Scheduled = scheduled };
     await JsonSerializer.SerializeAsync(
       http.Response.Body, response,
@@ -143,6 +184,11 @@ public static class DeadLetterOperatorEndpoints {
   }
 
   /// <summary>Response DTO for the scan-now endpoint.</summary>
+  /// <summary>An operator cohort release receipt.</summary>
+  /// <param name="Fingerprint">The released cohort.</param>
+  /// <param name="Released">Rows returned to Pending, staggered.</param>
+  public sealed record CohortReleaseResult(string Fingerprint, int Released);
+
   public sealed class ScanNowResponse {
     /// <summary>The generation tag that was passed (or auto-resolved).</summary>
     public string Generation { get; init; } = "";

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>fundamentals/lenses/scoped-queries</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
 public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : class {
   private readonly IServiceScopeFactory _scopeFactory;
 

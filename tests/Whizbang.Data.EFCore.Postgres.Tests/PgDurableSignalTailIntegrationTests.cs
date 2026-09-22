@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// signals must NOT persist (the fast path is NOTIFY only).
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard2")]
 public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
   private readonly record struct DurableProbe(int V) : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.Durable;
@@ -37,6 +38,32 @@ public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
       return ValueTask.CompletedTask;
     }
   }
+
+  /// <summary>
+  /// A schema gate that never opens and reports when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the tail is parked at the barrier" signal; the infinite delay behind it then
+  /// observes the stopping token exactly as the real gate's <c>Task.WaitAsync</c> does.
+  /// </summary>
+  /// <remarks>
+  /// <para>Needed because <c>StartAsync</c> only schedules <c>ExecuteAsync</c> onto the thread pool.
+  /// Asserting straight after it describes a worker whose body may never have started, and
+  /// "canceled at the gate" and "never dispatched" are indistinguishable from the outside.</para>
+  /// </remarks>
+  private sealed class BlockingGate : Whizbang.Core.Workers.ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>Generous ceiling for the worker-body signals below; the tests fail fast, not slow.</summary>
+  private static readonly TimeSpan _signalWait = TimeSpan.FromSeconds(20);
 
   private (PostgresSignalTransport Transport, IServiceInstanceProvider Instance) _createTransport(Guid instanceId) {
     var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
@@ -62,6 +89,20 @@ public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
     return new PgDurableSignalTailWorker(
       Options.Create(opts), cfg, instance, sink,
       NullLogger<PgDurableSignalTailWorker>.Instance);
+  }
+
+  /// <summary>
+  /// Rows this instance owns in <c>wh_signal_cursors</c> — the table the tail's first act behind
+  /// the schema gate INSERTs into, and therefore the observable proof of whether it got there.
+  /// </summary>
+  private async Task<long> _countCursorRowsAsync(Guid instanceId, CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_signal_cursors WHERE instance_id = @id", conn);
+    cmd.Parameters.AddWithValue("id", instanceId);
+    return Convert.ToInt64(
+      await cmd.ExecuteScalarAsync(cancellationToken) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
   }
 
   private async Task<long> _selectMaxSignalIdAsync() {
@@ -169,4 +210,111 @@ public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
     await Assert.That(caught).IsTrue()
       .Because("the durable tail must deliver signals persisted after its cursor was initialized");
   }
+
+  // ============================================================
+  // Lifecycle
+  // ============================================================
+  //
+  // The tail is the backstop for a missed NOTIFY: a doorbell that never arrived on the wire is
+  // replayed from wh_signals on the next tick. That makes an ended loop invisible and permanent —
+  // the fast path keeps working, so nothing looks wrong, but every signal the wire drops from
+  // then on is dropped for good.
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
+      CancellationToken testToken) {
+    // The first act of the loop is an INSERT into wh_signal_cursors, a table the migration
+    // creates. A host that fails during migration has to get a clean shutdown here.
+    var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instanceId = Guid.CreateVersion7();
+    var gate = new BlockingGate();   // never opens, and says when the tail arrives
+    var worker = new PgDurableSignalTailWorker(
+      Options.Create(opts), cfg,
+      new ServiceInstanceProvider(instanceId, "utest-svc", "utest-host", processId: 1),
+      new CountingSink(),
+      NullLogger<PgDurableSignalTailWorker>.Instance,
+      schemaReadyGate: gate);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+    // StartAsync only queues ExecuteAsync on the thread pool, so wait for the body to actually
+    // reach the barrier. Without this the assertions below are equally satisfied by a run that
+    // was canceled before the thread pool ever invoked it.
+    await gate.Entered.WaitAsync(_signalWait, testToken);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None).WaitAsync(_signalWait, testToken);
+    var executeTask = worker.ExecuteTask;
+    await executeTask!.WaitAsync(_signalWait, testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(await _countCursorRowsAsync(instanceId, testToken)).IsEqualTo(0L)
+      .Because("a canceled gate wait must end the run before the cursor INSERT — that statement "
+             + "targets a table the migration it is still waiting on may not have created yet");
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("a tail that never settles hangs shutdown instead of ending it");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a faulted tail turns an ordinary shutdown into a reported crash");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ExecuteAsync_WithNoReachableConnection_StopsInsteadOfSpinningAsync(
+      CancellationToken testToken) {
+    // With no usable connection string there is nothing to tail. Looping anyway would retry a
+    // connection that can never be built, once per tick, for the life of the process.
+    var opts = new WhizbangNotificationOptions { DirectConnectionString = null };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var worker = new PgDurableSignalTailWorker(
+      Options.Create(opts), cfg,
+      new ServiceInstanceProvider(Guid.CreateVersion7(), "utest-svc", "utest-host", processId: 1),
+      new CountingSink(),
+      NullLogger<PgDurableSignalTailWorker>.Instance,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+
+    // It returns on its own rather than waiting for cancellation.
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask.IsFaulted).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ExecuteAsync_SurvivesAFailingTickAsync(CancellationToken testToken) {
+    // A tick reads the database, which can be briefly unavailable. Letting that end the loop
+    // would silently retire the backstop for the rest of the process.
+    var opts = new WhizbangNotificationOptions {
+      // Reachable on the first pass; the server refuses this connection so every tick faults.
+      DirectConnectionString = "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1",
+    };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var worker = new PgDurableSignalTailWorker(
+      Options.Create(opts), cfg,
+      new ServiceInstanceProvider(Guid.CreateVersion7(), "utest-svc", "utest-host", processId: 1),
+      new CountingSink(),
+      NullLogger<PgDurableSignalTailWorker>.Instance,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+
+    // Long enough for the cursor init to fail and at least one tick to fail behind it.
+    await Task.Delay(TimeSpan.FromSeconds(5), testToken);
+    var executeTask = worker.ExecuteTask;
+
+    await Assert.That(executeTask!.IsCompleted).IsFalse()
+      .Because("a database blip must not retire the backstop for the life of the process");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(executeTask.IsFaulted).IsFalse();
+  }
+
 }

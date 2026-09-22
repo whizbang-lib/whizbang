@@ -17,39 +17,29 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// claimer); the DB is the source of truth. Transition status codes: 0=resume/Active, 1=Pause, 3=Cancel.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
-public sealed class PgScheduleManager : IScheduleManager {
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
+public sealed class PgScheduleManager(
+  IOptions<WhizbangNotificationOptions> options,
+  IConfiguration configuration,
+  IServiceInstanceProvider instanceProvider,
+  IOptions<ClaimWorkerOptions> claimWorkerOptions,
+  IOptions<TemporalOptions> temporalOptions,
+  ILogger<PgScheduleManager> logger,
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null) : IScheduleManager {
+#pragma warning restore S107
   private const short STATUS_ACTIVE = 0;
   private const short STATUS_PAUSED = 1;
-  private const short STATUS_CANCELLED = 3;
+  private const short STATUS_CANCELED = 3;
 
-  private readonly WhizbangNotificationOptions _options;
-  private readonly IConfiguration _configuration;
-  private readonly INotificationConnectionStringFallback? _connectionStringFallback;
-  private readonly INotificationDataSource? _notificationDataSource;
-  private readonly ILogger<PgScheduleManager> _logger;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly int _partitionCount;
-  private readonly int _leaseSeconds;
-
-  /// <summary>Constructor.</summary>
-  public PgScheduleManager(
-    IOptions<WhizbangNotificationOptions> options,
-    IConfiguration configuration,
-    IServiceInstanceProvider instanceProvider,
-    IOptions<ClaimWorkerOptions> claimWorkerOptions,
-    IOptions<TemporalOptions> temporalOptions,
-    ILogger<PgScheduleManager> logger,
-    INotificationConnectionStringFallback? connectionStringFallback = null,
-    INotificationDataSource? notificationDataSource = null) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _partitionCount = (claimWorkerOptions?.Value ?? new ClaimWorkerOptions()).PartitionCount;
-    _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _connectionStringFallback = connectionStringFallback;
-    _notificationDataSource = notificationDataSource;
-  }
+  private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
+  private readonly ILogger<PgScheduleManager> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly int _partitionCount = (claimWorkerOptions?.Value ?? new ClaimWorkerOptions()).PartitionCount;
+  private readonly int _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
 
   /// <inheritdoc />
   public async Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
@@ -69,11 +59,7 @@ public sealed class PgScheduleManager : IScheduleManager {
       throw new ArgumentException("Cron recurrence requires ScheduleDefinition.Cron.", nameof(definition));
     }
 
-    await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
-    if (conn is null) {
-      throw new InvalidOperationException("No database connection available to create a schedule.");
-    }
-
+    await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false) ?? throw new InvalidOperationException("No database connection available to create a schedule.");
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       SELECT o_schedule_id, o_next_fire_at, o_was_created FROM wh_create_schedule(
@@ -112,11 +98,17 @@ public sealed class PgScheduleManager : IScheduleManager {
       Value = (object?)definition.AuthorityClaimsJson ?? DBNull.Value
     });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    var scheduleId = reader.GetGuid(0);
-    var nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
-    var wasCreated = reader.GetBoolean(2);
+    Guid scheduleId;
+    DateTimeOffset nextFire;
+    bool wasCreated;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      scheduleId = reader.GetGuid(0);
+      nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
+      wasCreated = reader.GetBoolean(2);
+    }
+    // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);
     return new ScheduleHandle(scheduleId, nextFire, wasCreated);
   }
 
@@ -130,7 +122,7 @@ public sealed class PgScheduleManager : IScheduleManager {
 
   /// <inheritdoc />
   public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) =>
-    _transitionAsync(scheduleId, STATUS_CANCELLED, expectedVersion, cancellationToken);
+    _transitionAsync(scheduleId, STATUS_CANCELED, expectedVersion, cancellationToken);
 
   /// <inheritdoc />
   public async Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) {
@@ -147,11 +139,16 @@ public sealed class PgScheduleManager : IScheduleManager {
     });
     cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = _partitionCount });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
-      return null;   // missing or terminal
+    Guid occurrenceId;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+        return null;   // missing or terminal
+      }
+      occurrenceId = reader.GetGuid(1);
     }
-    return reader.GetGuid(1);
+    // #720: the spawned occurrence queued its doorbell inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);
+    return occurrenceId;
   }
 
   /// <inheritdoc />
@@ -193,12 +190,18 @@ public sealed class PgScheduleManager : IScheduleManager {
       Value = update.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
     });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
-      return null;   // missing / terminal / version mismatch
+    DateTimeOffset nextFire;
+    long version;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+        return null;   // missing / terminal / version mismatch
+      }
+      nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
+      version = reader.GetInt64(2);
     }
-    var nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
-    return new ScheduleUpdateResult(nextFire, reader.GetInt64(2));
+    // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);
+    return new ScheduleUpdateResult(nextFire, version);
   }
 
   private async Task<bool> _transitionAsync(Guid scheduleId, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) {
@@ -212,7 +215,12 @@ public sealed class PgScheduleManager : IScheduleManager {
     cmd.Parameters.Add(new NpgsqlParameter("target", NpgsqlDbType.Smallint) { Value = targetStatus });
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is bool b && b;
+    var updated = result is bool b && b;
+    if (updated) {
+      // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+      await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);
+    }
+    return updated;
   }
 
   private async Task<NpgsqlConnection?> _openAsync(CancellationToken cancellationToken) {

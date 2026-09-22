@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 using Whizbang.Testing.Containers;
@@ -98,7 +99,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
           AND pid <> pg_backend_pid()");
 
         // Drop the database
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors - the database will be cleaned up when the container stops
       }
@@ -152,14 +153,26 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       var functionFilePath = Path.Combine(migrationPath, functionFile);
       var functionSql = await File.ReadAllTextAsync(functionFilePath);
 
-      // Replace __SCHEMA__ placeholder with "public" (default PostgreSQL schema for tests)
-      functionSql = functionSql.Replace("__SCHEMA__", "public");
+      // The same substitution the runtime provider makes: "public" for __SCHEMA__ (the default schema for
+      // these tests) and the migration constants (rule 12) for their tokens.
+      functionSql = MigrationConstants.Apply(functionSql.Replace("__SCHEMA__", "public"));
 
+      // ONE TRANSACTION PER FILE, because that is what the runner does and this harness has to
+      // apply migrations the way production applies them. It did not, and the difference was not
+      // academic: a migration that takes an explicit LOCK TABLE -- which the inbox cutover does, to
+      // keep move-then-drop atomic -- is rejected outside a transaction block with 25P01, so this
+      // base class failed every test that uses it while the migration itself was correct. A harness
+      // that applies migrations differently from the runner can reject what production accepts, and
+      // accept what production rejects; both directions cost a day.
+      await using var transaction = (NpgsqlTransaction)connection.BeginTransaction();
       using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
+      functionCommand.Transaction = transaction;
       functionCommand.CommandText = functionSql;
       try {
         await functionCommand.ExecuteNonQueryAsync();
+        await transaction.CommitAsync();
       } catch (Exception ex) {
+        await transaction.RollbackAsync();
         Console.WriteLine($"MIGRATION ERROR in {functionFile}: {ex.Message}");
         Console.WriteLine($"ERROR DETAIL: {ex}");
         throw;

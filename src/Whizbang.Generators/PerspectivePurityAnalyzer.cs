@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -223,7 +224,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static bool _isCollectiveApply(IMethodSymbol methodSymbol) {
     return methodSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString() == COLLECTIVE_APPLY_FOR_ATTRIBUTE_FULL_NAME);
+        .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FULL_NAME));
   }
 
   /// <summary>
@@ -241,7 +242,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // invocation symbol, but `query`'s own type still resolves.
     foreach (var memberAccess in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
       var receiverType = context.SemanticModel.GetTypeInfo(memberAccess.Expression, context.CancellationToken).Type;
-      if (receiverType?.ToDisplayString() != COLLECTIVE_QUERY_FULL_NAME) {
+      if (!TypeNameUtilities.IsNamed(receiverType, COLLECTIVE_QUERY_FULL_NAME)) {
         continue;
       }
 
@@ -290,7 +291,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
             NonPureServiceInjected,
             location,
             containingType.Name,
-            parameterType.ToDisplayString()
+            TypeNameUtilities.Display(parameterType)
         );
         context.ReportDiagnostic(diagnostic);
       }
@@ -314,21 +315,18 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
   private static bool _hasAttribute(ITypeSymbol typeSymbol, string attributeFullName) {
     return typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString() == attributeFullName);
+        .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, attributeFullName));
   }
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
     // Use shared discovery helper for consistent perspective detection
-    if (Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol)) {
-      return true;
-    }
-    return false;
+    return Utilities.PerspectiveDiscoveryHelper.IsPerspectiveClass(typeSymbol);
   }
 
   private static bool _returnsTask(IMethodSymbol methodSymbol) {
     var returnType = methodSymbol.ReturnType;
     if (returnType is INamedTypeSymbol namedType) {
-      var fullName = namedType.ConstructedFrom.ToDisplayString();
+      var fullName = TypeNameUtilities.Display(namedType.ConstructedFrom);
       return fullName == "System.Threading.Tasks.Task<TResult>" ||
              fullName == "System.Threading.Tasks.Task" ||
              fullName == "System.Threading.Tasks.ValueTask<TResult>" ||
@@ -341,7 +339,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     if (returnType is INamedTypeSymbol namedType && namedType.IsGenericType) {
       var typeArgs = namedType.TypeArguments;
       if (typeArgs.Length > 0) {
-        return typeArgs[0].ToDisplayString();
+        return TypeNameUtilities.Display(typeArgs[0]);
       }
     }
     return null;
@@ -362,7 +360,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType?.ToDisplayString() ?? "";
+        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
         var methodName = methodSymbol.Name;
 
         // Check for common database operation patterns
@@ -395,7 +393,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     foreach (var invocation in invocations) {
       var symbolInfo = semanticModel.GetSymbolInfo(invocation);
       if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
-        var containingType = methodSymbol.ContainingType?.ToDisplayString() ?? "";
+        var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : "";
         var methodName = methodSymbol.Name;
 
         // Check for HTTP operation patterns

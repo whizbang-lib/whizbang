@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -29,22 +30,22 @@ public class DispatcherCoverageScopeTests {
   private static readonly List<object> _outboxInvocations = [];
   private static readonly Lock _lock = new();
 
-  private static void _trackLocal(object evt) { lock (_lock) { _localInvocations.Add(evt); } }
-  private static void _trackOutbox(object evt) { lock (_lock) { _outboxInvocations.Add(evt); } }
   private static void _reset() { lock (_lock) { _localInvocations.Clear(); _outboxInvocations.Clear(); } }
   private static (int LocalCount, int OutboxCount) _snapshotCounts() { lock (_lock) { return (_localInvocations.Count, _outboxInvocations.Count); } }
 
-  private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
+    private static void _trackOutbox(object evt) { lock (_lock) { _outboxInvocations.Add(evt); } }
+    private static void _trackLocal(object evt) { lock (_lock) { _localInvocations.Add(evt); } }
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand) && typeof(TResult) == typeof(ScopeTestResult)) {
-        return msg => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));
+        return _ => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));
       }
 
       return null;
     }
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand)) {
-        return msg => ValueTask.CompletedTask;
+        return _ => ValueTask.CompletedTask;
       }
 
       return null;
@@ -56,7 +57,8 @@ public class DispatcherCoverageScopeTests {
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
     protected override Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) { _trackOutbox(message); return Task.CompletedTask; }
-    protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) { _trackOutbox(message); return Task.CompletedTask; }
+    protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) =>
+      CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
   }
 
   private static ServiceProvider _buildProvider() {
@@ -107,9 +109,9 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCancelledAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), null, DispatchModes.Local, cts.Token)).ThrowsExactly<OperationCanceledException>();
   }
@@ -137,9 +139,9 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_VoidWithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_VoidWithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.LocalInvokeAsync(new ScopeTestCommand(Guid.NewGuid()), new DispatchOptions { CancellationToken = cts.Token })).ThrowsExactly<OperationCanceledException>();
   }
@@ -155,9 +157,9 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await Assert.That(async () => await dispatcher.LocalInvokeAsync<ScopeTestResult>(new ScopeTestCommand(Guid.NewGuid()), new DispatchOptions { CancellationToken = cts.Token })).ThrowsExactly<OperationCanceledException>();
   }

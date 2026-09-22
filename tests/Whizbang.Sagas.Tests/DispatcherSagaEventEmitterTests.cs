@@ -78,7 +78,7 @@ public class DispatcherSagaEventEmitterTests {
   public async Task PublishOnceAsync_ForwardsClaimKeyAndEventToDispatcherAsync() {
     var dispatcher = new RecordingDispatcher();
     var emitter = new DispatcherSagaEventEmitter(dispatcher);
-    var key = "saga-completed:bulk-job:abc";
+    const string key = "saga-completed:bulk-job:abc";
     var evt = new TestEvent();
 
     var result = await emitter.PublishOnceAsync(key, evt, CancellationToken.None);

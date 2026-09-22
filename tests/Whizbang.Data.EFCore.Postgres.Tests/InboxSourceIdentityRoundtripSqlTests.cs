@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (local service identity + 0).</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard1")]
 public class InboxSourceIdentityRoundtripSqlTests : EFCoreTestBase {
 
   [Test]

@@ -15,6 +15,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Configuration;
@@ -23,11 +25,13 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Testing.Containers;
 using Whizbang.Testing.Lifecycle;
+using Whizbang.Testing.Workers;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
@@ -464,8 +468,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -519,16 +524,24 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(inventoryConsumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        inventoryConsumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+        transport: sp.GetRequiredService<ITransport>(),
+        options: inventoryConsumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        routingOptions: Options.Create(new RoutingOptions()),
+        workChannelWriter: new WorkChannelWriter(),
+        claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        controlClass: Options.Create(new ControlClassOptions()))
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
@@ -603,6 +616,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:bff-db" above)
+    //
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang(), as the
+    // RabbitMQ and InMemory fixtures do. A module initializer in another test assembly overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with a callback that registers InventoryWorker
+    // receptors; those need IInventoryLens, which the BFF host does not register. Under
+    // DOTNET_ENVIRONMENT=Development the host builder validates on build and refuses the graph
+    // ("Unable to resolve service for type 'IInventoryLens'"), so every test in the fixture fails.
+    // The BFF dispatcher is registered explicitly below, so the auto-registration is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
@@ -658,8 +680,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+        transport: sp.GetRequiredService<ITransport>(),
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        loggerFactory: NullLoggerFactory.Instance
       )
     );
 
@@ -699,16 +722,24 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        consumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+        transport: sp.GetRequiredService<ITransport>(),
+        options: consumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        routingOptions: Options.Create(new RoutingOptions()),
+        workChannelWriter: new WorkChannelWriter(),
+        claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        controlClass: Options.Create(new ControlClassOptions()))
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
@@ -1055,8 +1086,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
     // Query event types from wh_event_store
-    var eventTypesQuery = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
-    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(eventTypesQuery).ToListAsync(cancellationToken);
+    var sql = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(sql).ToListAsync(cancellationToken);
 
     // Query message types from wh_message_associations (perspectives only)
     var associationsQuery = $"SELECT DISTINCT message_type FROM {schemaName}.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type";
@@ -1111,7 +1142,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       invCmd.CommandText = @"
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0) as outbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0) as inbox,
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0) as inbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var invReader = await invCmd.ExecuteReaderAsync();
       await invReader.ReadAsync();
@@ -1131,7 +1162,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       bffCmd.CommandText = @"
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_outbox WHERE (status & 4) = 0) as outbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_inbox WHERE (status & 2) = 0) as inbox,
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_inbox_state WHERE (status & 2) = 0) as inbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var bffReader = await bffCmd.ExecuteReaderAsync();
       await bffReader.ReadAsync();
@@ -1144,7 +1175,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       // CRITICAL: Require 3 consecutive checks with 0 pending to prevent race conditions
       // Without this, work might complete momentarily (pending=0), we return immediately,
       // then event cascades trigger new work (e.g., perspective → outbox → ServiceBus → BFF)
-      // and disposal happens while new work is in-flight, causing "Query was cancelled" errors
+      // and disposal happens while new work is in-flight, causing "Query was canceled" errors
       if (totalPending == 0) {
         consecutiveEmptyChecks++;
         if (consecutiveEmptyChecks >= 3) {
@@ -1203,17 +1234,22 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     logger.LogInformation("[SQL Diagnostic] Current UTC time: {Now}", DateTimeOffset.UtcNow);
 
     // Query 1: Check inbox for event
+    // 162 split the inbox: message_type, stream_id, is_event and received_at describe the message
+    // and stay on wh_inbox, while status is work state and moved to wh_inbox_state. A diagnostic
+    // that reads both therefore joins both. LEFT JOIN rather than JOIN on purpose: a message row
+    // with no state row would be a defect worth seeing here, not a row worth hiding.
     var inboxQuery = @"
       SELECT
-        message_id AS MessageId,
-        message_type AS MessageType,
-        stream_id AS StreamId,
-        is_event AS IsEvent,
-        status AS Status,
-        received_at AS ReceivedAt
-      FROM inventory.wh_inbox
-      WHERE message_type LIKE '%' || {0} || '%'
-      ORDER BY received_at DESC
+        i.message_id AS MessageId,
+        i.message_type AS MessageType,
+        i.stream_id AS StreamId,
+        i.is_event AS IsEvent,
+        s.status AS Status,
+        i.received_at AS ReceivedAt
+      FROM inventory.wh_inbox i
+      LEFT JOIN inventory.wh_inbox_state s ON s.message_id = i.message_id
+      WHERE i.message_type LIKE '%' || {0} || '%'
+      ORDER BY i.received_at DESC
       LIMIT 5";
 
     var inboxResults = await inventoryDbContext.Database

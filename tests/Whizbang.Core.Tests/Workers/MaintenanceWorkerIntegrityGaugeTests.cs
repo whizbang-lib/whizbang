@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -33,31 +34,36 @@ public class MaintenanceWorkerIntegrityGaugeTests {
   private sealed class LedgerCoordinator : IWorkCoordinator {
     public LedgerGaugeSnapshot Snapshot { get; init; } = LedgerGaugeSnapshot.Empty;
     public bool Throw { get; init; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; init; }
     public int MaxAttemptsSeen { get; private set; } = -1;
 
     public Task<LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
         int maxRepairAttempts, CancellationToken cancellationToken = default) {
       MaxAttemptsSeen = maxRepairAttempts;
+      if (ThrowSpecific is not null) {
+        return Task.FromException<LedgerGaugeSnapshot>(ThrowSpecific);
+      }
       return Throw
         ? Task.FromException<LedgerGaugeSnapshot>(new InvalidOperationException("ledger unavailable"))
         : Task.FromResult(Snapshot);
     }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private static (MaintenanceWorker Worker, StreamIntegrityMetrics Metrics) _build(
       LedgerCoordinator coord, int maxAttempts = 8) {
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     services.AddSingleton(metrics);
@@ -117,5 +123,19 @@ public class MaintenanceWorkerIntegrityGaugeTests {
 
     await Assert.That(metrics.CurrentLedgerGaugesForTest.UnhealedBuckets).IsEqualTo(0)
       .Because("the reading is simply absent — and the cycle completed rather than throwing");
+  }
+
+  [Test]
+  public async Task LedgerReadCanceled_StopsTheCycleInsteadOfContinuingAsync() {
+    // The companion to the failure case above, and the opposite answer. A metrics read must not
+    // abort the cycle when it FAILS — but a canceled read is a stopping host, and the steps that
+    // follow include the reap and the sweep, which take locks the completion path needs. The
+    // narrow catch above the wide one is what separates the two, and nothing was holding it.
+    var (worker, _) = _build(new LedgerCoordinator { ThrowSpecific = new OperationCanceledException() });
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown has to travel through a best-effort step, or the cycle keeps reaping on "
+             + "a host that asked to stop");
   }
 }

@@ -45,15 +45,15 @@ public class RawReceptorDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // ModuleInitializer wires the callback
-    await Assert.That(code!).Contains("[ModuleInitializer]");
-    await Assert.That(code!).Contains("ServiceRegistrationCallbacks.RawReceptors");
+    await Assert.That(code).Contains("[ModuleInitializer]");
+    await Assert.That(code).Contains("ServiceRegistrationCallbacks.RawReceptors");
 
     // Both receptors registered
-    await Assert.That(code!).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
-    await Assert.That(code!).Contains("services.AddSingleton<IRawReceptor, global::MyApp.BarRawReceptor>();");
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.BarRawReceptor>();");
 
     // Registry singleton registered once
-    await Assert.That(code!).Contains("services.AddSingleton<IRawReceptorRegistry, RawReceptorRegistry>();");
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptorRegistry, RawReceptorRegistry>();");
   }
 
   [Test]
@@ -100,8 +100,8 @@ public class RawReceptorDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // Concrete subclass IS registered
-    await Assert.That(code!).Contains("services.AddSingleton<IRawReceptor, global::MyApp.ConcreteRawReceptor>();");
+    await Assert.That(code).Contains("services.AddSingleton<IRawReceptor, global::MyApp.ConcreteRawReceptor>();");
     // Abstract base is NOT registered
-    await Assert.That(code!).DoesNotContain("global::MyApp.AbstractRawReceptor");
+    await Assert.That(code).DoesNotContain("global::MyApp.AbstractRawReceptor");
   }
 }

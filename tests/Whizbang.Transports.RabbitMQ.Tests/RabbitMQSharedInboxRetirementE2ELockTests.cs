@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using TUnit.Assertions;
@@ -72,8 +73,7 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
     var consumerChannels = new Dictionary<string, FakeChannel>(StringComparer.Ordinal);
     var subscriptionHandles = new List<IDisposable>();
     try {
-      foreach (var subscription in subscriptions) {
-        var exchange = subscription.Topic;
+      foreach (var exchange in subscriptions.Select(subscription => subscription.Topic)) {
         var channel = new FakeChannel { ExistingExchanges = { exchange } };
         var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
         var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
@@ -118,9 +118,10 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
     var publisherConnection = new FakeConnection(() => Task.FromResult<IChannel>(publisherChannel));
     var publisherTransport = await RabbitTestWire.NewInitializedTransportAsync(publisherConnection);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      SHARED_INBOX,
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: SHARED_INBOX,
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
     var domainResult = await publishStrategy.PublishAsync(
@@ -132,7 +133,7 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
 
     await Assert.That(domainResult.Success).IsTrue();
     await Assert.That(systemResult.Success).IsTrue();
-    var publishedExchanges = publisherChannel.PublishedMessages.Select(m => m.Exchange).ToList();
+    var publishedExchanges = publisherChannel.PublishedMessages.ConvertAll(m => m.Exchange);
     await Assert.That(publishedExchanges).Contains(flippedEntity);
     await Assert.That(publishedExchanges).Contains(broadcastEntity)
       .Because("durable system commands broadcast on inbox.whizbang — the sole carve-out");
@@ -142,12 +143,12 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
       .Because("the publisher never declares the retired entity either");
 
     // ---------- Delivery: each published message reaches its entity's consumer ----------
-    foreach (var published in publisherChannel.PublishedMessages) {
-      var consumerChannel = consumerChannels[published.Exchange];
+    foreach (var (Exchange, RoutingKey, _) in publisherChannel.PublishedMessages) {
+      var consumerChannel = consumerChannels[Exchange];
       var consumer = (AsyncEventingBasicConsumer)consumerChannel.LastRegisteredConsumer!;
       var (properties, body) = RabbitTestWire.ValidWireMessage("delivered");
       await consumer.HandleBasicDeliverAsync(
-        "retirement-consumer", 1UL, false, published.Exchange, published.RoutingKey, properties, body);
+        "retirement-consumer", 1UL, false, Exchange, RoutingKey, properties, body);
     }
 
     await Assert.That(deliveriesByExchange.GetValueOrDefault(flippedEntity)).IsEqualTo(1)

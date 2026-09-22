@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -377,7 +378,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that tracks cascade behavior with routing support.
   /// </summary>
-  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle RoutedTestCommand -> (RoutedTestResult, Routed<RoutedTestEvent>) for Local routing test
       if (messageType == typeof(RoutedTestCommand) && typeof(TResult) == typeof((RoutedTestResult, Routed<RoutedTestEvent>))) {
@@ -404,7 +405,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, envelope, ct) => {
+      return (evt, _, ct) => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };
@@ -470,7 +471,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed<T> send path testing.
   /// </summary>
-  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private readonly List<object> _sentMessages = [];
     private readonly Lock _lock = new();
 
@@ -641,7 +642,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed&lt;T&gt; local invoke testing.
   /// </summary>
-  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private readonly List<object> _invokedMessages = [];
     private readonly Lock _lock = new();
 
@@ -756,7 +757,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
   /// Registers a trace store or receptor registry to trigger the tracing code path.
   /// </summary>
-  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
+  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: null, receptorRegistry: receptorRegistry) {
     private readonly List<object> _invokedMessages = [];
     private readonly Lock _lock = new();
 
@@ -824,8 +825,10 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -904,6 +907,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// (these tests use a manually-wired custom dispatcher).
   /// </remarks>
   private sealed class PlaceOrderReceptor {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Receptor shape: the dispatcher invokes it on an instance.")]
     public ValueTask<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>
         HandleAsync(PlaceOrderCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult((
@@ -930,6 +935,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Uses object[] because the array mixes plain IEvent instances with Routed&lt;T&gt; wrappers.
   /// </remarks>
   private sealed class BatchProcessReceptor {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
     public ValueTask<Routed<object[]>> HandleAsync(
         BatchProcessCommand message, CancellationToken cancellationToken = default) {
       return Route.Local(new object[] {
@@ -944,7 +951,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that wires PlaceOrderReceptor and BatchProcessReceptor for integration testing.
   /// Tracks which events were cascaded locally vs to outbox.
   /// </summary>
-  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Wire PlaceOrderCommand → PlaceOrderReceptor
       if (messageType == typeof(PlaceOrderCommand)) {
@@ -979,7 +986,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, envelope, ct) => {
+      return (evt, _, ct) => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };

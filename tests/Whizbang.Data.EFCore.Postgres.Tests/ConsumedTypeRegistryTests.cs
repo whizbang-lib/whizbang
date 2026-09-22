@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/086_ConsumedTypeRegistry.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("ConsumedTypeRegistry")]
+[Category("Shard3")]
 public class ConsumedTypeRegistryTests : EFCoreTestBase {
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>

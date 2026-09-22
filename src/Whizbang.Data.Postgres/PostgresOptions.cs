@@ -56,12 +56,14 @@ public class PostgresOptions {
 
   /// <summary>
   /// Command timeout in seconds for database operations like process_work_batch.
-  /// Controls how long a single SQL command can run before being cancelled.
-  /// Default: 5 seconds
+  /// Controls how long a single SQL command can run before being canceled.
+  /// Default: 120 seconds. Coordinator commands batch handler results and composite fan-outs; under a
+  /// bulk-import backlog a single commit batch has been observed at 13-30 s. A timeout shorter than the
+  /// worst batch cancels the commit and loses its completions, which then re-claim as lease expiries.
   /// </summary>
   /// <docs>data/postgres#command-timeout</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesConvenienceOverload_RegistersCoreServicesWithDefaultOptionsAsync</tests>
-  public int CommandTimeoutSeconds { get; set; } = 5;
+  public int CommandTimeoutSeconds { get; set; } = 120;
 
   #endregion
 
@@ -91,7 +93,7 @@ public class PostgresOptions {
   /// Server-side <c>statement_timeout</c> (seconds) applied to each collective-apply batch transaction (via
   /// the transaction-local <c>set_config('statement_timeout', …, true)</c> — the only form that survives
   /// PgBouncer transaction pooling). Null leaves the server/role default; when set, a runaway batch is
-  /// cancelled by Postgres itself, so a client timeout can never leave a zombie query.
+  /// canceled by Postgres itself, so a client timeout can never leave a zombie query.
   /// </summary>
   /// <docs>fundamentals/messaging/collective-events</docs>
   public int? CollectiveApplyStatementTimeoutSeconds { get; set; }

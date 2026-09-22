@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
@@ -8,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
@@ -23,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// composite row while completing the singles atomically.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+[Category("Shard3")]
 public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
   [Test]
   public async Task GetPendingCoalesceGroupStats_ReturnsPerGroupCountsAndAgesAsync() {
@@ -104,7 +108,7 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await signaling.FoldCompleted.Task.WaitAsync(TimeSpan.FromSeconds(15));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     // ONE composite row: immediately shippable, transport-only, carrying all three inners.
@@ -115,8 +119,8 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
         WHERE message_type LIKE '%CoalescedEventsComposite%'";
       await using var reader = await read.ExecuteReaderAsync();
       await Assert.That(await reader.ReadAsync()).IsTrue().Because("the fold must insert the composite row");
-      await Assert.That(reader.IsDBNull(1)).IsTrue();
-      await Assert.That(reader.IsDBNull(2)).IsTrue();
+      await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
+      await Assert.That(await reader.IsDBNullAsync(2)).IsTrue();
       await Assert.That(reader.GetBoolean(3)).IsFalse();
       var envelope = JsonDocument.Parse(reader.GetString(4));
       var innerIds = envelope.RootElement.GetProperty("p").GetProperty("InnerEventIds")
@@ -126,13 +130,12 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     }
 
     // All three singles completed.
-    await using (var count = connection.CreateCommand()) {
-      count.CommandText = @"
+    await using var count = connection.CreateCommand();
+    count.CommandText = @"
         SELECT COUNT(*) FROM wh_outbox
         WHERE coalesce_group = 'record-digest' AND processed_at IS NULL";
-      var pending = (long)(await count.ExecuteScalarAsync())!;
-      await Assert.That(pending).IsEqualTo(0L);
-    }
+    var pending = (long)(await count.ExecuteScalarAsync())!;
+    await Assert.That(pending).IsEqualTo(0L);
   }
 
   [Test]
@@ -167,21 +170,20 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       INSERT INTO wh_service_instances
         (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
       VALUES ('{instanceId}', 'test', 'test-host', 1, NOW(), NOW(), '{{}}'::jsonb)");
-    await using (var claim = connection.CreateCommand()) {
-      claim.CommandText = @"
+    await using var claim = connection.CreateCommand();
+    claim.CommandText = @"
         SELECT work_id FROM claim_work(
           p_instance_id => @id, p_service_name => 'test', p_host_name => 'test-host',
           p_process_id => 1, p_max_streams => 100, p_partition_count => 10000, p_lease_seconds => 300)
         WHERE source = 'outbox'";
-      claim.Parameters.AddWithValue("id", instanceId);
-      var claimed = new List<Guid>();
-      await using var reader = await claim.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) {
-        claimed.Add(reader.GetGuid(0));
-      }
-      await Assert.That(claimed).Contains(matured);
-      await Assert.That(claimed).DoesNotContain(young);
+    claim.Parameters.AddWithValue("id", instanceId);
+    var claimed = new List<Guid>();
+    await using var reader = await claim.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      claimed.Add(reader.GetGuid(0));
     }
+    await Assert.That(claimed).Contains(matured);
+    await Assert.That(claimed).DoesNotContain(young);
   }
 
   #region Helpers
@@ -203,7 +205,13 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), gate, resolver, logger: null, timeProvider: time);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
+      timeProvider: time);
   }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
@@ -227,15 +235,17 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       string? scheduledForSql = null) {
     var messageId = (Guid)TrackedGuid.NewMedo();
     await using var ins = connection.CreateCommand();
-    ins.CommandText = $@"
+    ins.CommandText = $$"""
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, coalesce_group, scheduled_for)
       VALUES (@msg, 'test-topic', 'TestEvent',
-        '{{""id"":""{messageId}"",""p"":{{""record"":""data""}},""h"":[]}}',
-        '{{}}', 0, 0,
-        NOW() - INTERVAL '{createdAgoSeconds} seconds', @stream, 0, @grp,
-        {(scheduledForSql ?? "NOW() + INTERVAL '60 seconds'")})";
+        '{"id":"{{messageId}}","p":{"record":"data"},"h":[]}',
+        '{}', 0, 0,
+        NOW() - INTERVAL '{{createdAgoSeconds}} seconds', @stream, 0, @grp,
+        {{scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"}})
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", Guid.NewGuid());
     ins.Parameters.AddWithValue("grp", group);
@@ -273,13 +283,13 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => inner.StoreInboxMessagesAsync(messages, partitionCount, cancellationToken);
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 

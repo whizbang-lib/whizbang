@@ -6,7 +6,7 @@ namespace Whizbang.Core.Workers;
 /// Register via DI to receive callbacks when events are deduped, cached, or evicted.
 /// </summary>
 /// <docs>operations/workers/perspective-worker#dedup-observer</docs>
-/// <tests>Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEventsMarkedInFlight_CalledAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnRetentionActivated_CalledAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ProcessedEventCacheTests.cs:Observer_OnEvicted_CalledAsync</tests>
@@ -48,7 +48,7 @@ public interface IProcessedEventCacheObserver {
 /// <summary>
 /// No-op observer. Registered by default — zero overhead.
 /// </summary>
-internal sealed class NullProcessedEventCacheObserver : IProcessedEventCacheObserver {
+public sealed class NullProcessedEventCacheObserver : IProcessedEventCacheObserver, INullDefault {
   /// <summary>Singleton instance of the no-op observer.</summary>
   public static readonly NullProcessedEventCacheObserver Instance = new();
 

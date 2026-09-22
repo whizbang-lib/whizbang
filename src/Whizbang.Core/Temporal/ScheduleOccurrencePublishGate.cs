@@ -21,17 +21,12 @@ namespace Whizbang.Core.Temporal;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/temporal/pre-fire-hook</docs>
-public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGate {
+/// <remarks>Constructor.</remarks>
+public sealed partial class ScheduleOccurrencePublishGate(IServiceScopeFactory scopeFactory, ILogger<ScheduleOccurrencePublishGate> logger) : IOccurrencePublishGate {
   private const short RUN_SKIPPED = 2;
 
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ILogger<ScheduleOccurrencePublishGate> _logger;
-
-  /// <summary>Constructor.</summary>
-  public ScheduleOccurrencePublishGate(IServiceScopeFactory scopeFactory, ILogger<ScheduleOccurrencePublishGate> logger) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly ILogger<ScheduleOccurrencePublishGate> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async ValueTask<OccurrencePublishDecision> EvaluateAsync(
@@ -77,9 +72,9 @@ public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGa
         }
         if (store is not null) {
           await store.LogRunAsync(context.ScheduleId, context.OccurrenceId, RUN_SKIPPED,
-            "schedule cancelled by pre-fire hook", cancellationToken).ConfigureAwait(false);
+            "schedule canceled by pre-fire hook", cancellationToken).ConfigureAwait(false);
         }
-        LogCancelled(_logger, context.ScheduleId, context.OccurrenceId);
+        LogCanceled(_logger, context.ScheduleId, context.OccurrenceId);
         return OccurrencePublishDecision.Drop;
 
       case FireAction.Defer:
@@ -143,8 +138,8 @@ public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGa
   private static partial void LogSkipped(ILogger logger, Guid scheduleId, Guid occurrenceId);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
-    Message = "Pre-fire hook cancelled schedule {ScheduleId} (occurrence {OccurrenceId} dropped)")]
-  private static partial void LogCancelled(ILogger logger, Guid scheduleId, Guid occurrenceId);
+    Message = "Pre-fire hook canceled schedule {ScheduleId} (occurrence {OccurrenceId} dropped)")]
+  private static partial void LogCanceled(ILogger logger, Guid scheduleId, Guid occurrenceId);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Pre-fire hook deferred occurrence {OccurrenceId} of schedule {ScheduleId}")]

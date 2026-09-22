@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// was never created — which this test catches.</para>
 /// </summary>
 [Category("Integration")]
+[Category("Shard2")]
 public class RekeyThroughRebuildTests : EFCoreTestBase {
 
   private const string RekeyPerspectiveName =
@@ -105,7 +106,7 @@ public class RekeyThroughRebuildTests : EFCoreTestBase {
 
     await using var sp = _buildRekeyServices();
 
-    // Both events are appended on the SAME physical stream. The first re-keys to targetStream;
+    // Both events are appended on the SAME physical stream. The first re-keys to targetStream —
     // the second (TargetStreamId == Empty) stays on physicalStream.
     await using (var appendScope = sp.CreateAsyncScope()) {
       var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();

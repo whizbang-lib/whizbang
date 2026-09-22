@@ -44,8 +44,14 @@ public class PerspectiveCompletionWaiterTests {
     var bff = new FakeReceptorRegistry();
     using var waiter = new PerspectiveCompletionWaiter<TestEvent>(inventory, bff, 0, 0);
 
-    // Both completion sources are pre-completed, so any timeout works instantly.
-    await waiter.WaitAsync(timeoutMilliseconds: 1);
+    var wait = waiter.WaitAsync(timeoutMilliseconds: 1);
+
+    // Both completion sources are pre-completed in the constructor, so the wait is already done
+    // before it is awaited. A host that registers no perspectives must not make callers pay the
+    // timeout — nothing is ever going to signal it.
+    await Assert.That(wait.IsCompletedSuccessfully).IsTrue()
+      .Because("expecting zero perspectives completes without waiting on anything");
+    await wait;
   }
 
   [Test]
@@ -54,10 +60,18 @@ public class PerspectiveCompletionWaiterTests {
     var bff = new FakeReceptorRegistry();
     using var waiter = new PerspectiveCompletionWaiter<TestEvent>(inventory, bff, 1, 1);
 
+    var wait = waiter.WaitAsync(timeoutMilliseconds: 30_000);
+    await Assert.That(wait.IsCompleted).IsFalse()
+      .Because("neither host has run its perspective yet");
+
     await inventory.GetSingleReceptor<TestEvent>().HandleAsync(new TestEvent("evt"));
+    await Assert.That(wait.IsCompleted).IsFalse()
+      .Because("returning here would let a test assert against the BFF's read model before it "
+             + "was written — the waiter's whole job is that both hosts are done");
+
     await bff.GetSingleReceptor<TestEvent>().HandleAsync(new TestEvent("evt"));
 
-    await waiter.WaitAsync(timeoutMilliseconds: 30_000);
+    await wait;
   }
 
   [Test]
@@ -66,9 +80,17 @@ public class PerspectiveCompletionWaiterTests {
     var bff = new FakeReceptorRegistry();
     using var waiter = new PerspectiveCompletionWaiter<TestEvent>(inventory, bff, 1, 0);
 
+    var wait = waiter.WaitAsync(timeoutMilliseconds: 30_000);
+    await Assert.That(wait.IsCompleted).IsFalse()
+      .Because("the inventory host still owes its one perspective");
+
     await inventory.GetSingleReceptor<TestEvent>().HandleAsync(new TestEvent("evt"));
 
-    await waiter.WaitAsync(timeoutMilliseconds: 30_000);
+    // The BFF receptor is never invoked: a host expecting zero perspectives is pre-completed, so
+    // the wait returns on inventory alone rather than hanging until the timeout.
+    await wait;
+    await Assert.That(bff.Registered.Count).IsEqualTo(1)
+      .Because("the BFF receptor stays registered and simply never fires — it is not required");
   }
 
   [Test]

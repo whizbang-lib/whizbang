@@ -898,4 +898,78 @@ public class GuidInterceptorGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource).Contains("InterceptsLocation");
   }
+
+  /// <summary>
+  /// A LATER <c>#pragma warning disable</c> for an unrelated code sits between the WHIZ055 disable
+  /// and the call, and must not be mistaken for the restore that would end the suppression.
+  /// </summary>
+  /// <remarks>
+  /// The restore scan collects every pragma directive between the disable and the call and asks each
+  /// one whether it is a matching restore; a directive that is a DISABLE has to be rejected on the
+  /// disable/restore keyword alone, before its error codes are ever consulted. Without that check an
+  /// author who disables two warnings in a row would silently lose the WHIZ055 suppression, and every
+  /// <c>Guid.NewGuid()</c> below it would be rewritten to a TrackedGuid they explicitly opted out of.
+  /// The companion <c>Generator_PragmaDisableUnrelatedCode_StillInterceptsAsync</c> pins the other
+  /// direction: an unrelated disable on its own suppresses nothing.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_SecondUnrelatedPragmaDisableAfterTheWhizDisable_StaysSuppressedAsync() {
+    // Arrange - the second directive is a DISABLE, not a restore, so the WHIZ055 disable stands.
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+            #pragma warning disable WHIZ055
+              public Guid Placeholder => Guid.Empty;
+            #pragma warning disable CS0219
+
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    // Act
+    var result = _runGenerator(source);
+
+    // Assert - no interceptor at all: the intervening disable did not lift the suppression.
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNull()
+      .Because("a second #pragma warning disable is not a restore, so the WHIZ055 suppression must still cover the call below it");
+  }
+
+  /// <summary>
+  /// The same file with a real <c>#pragma warning restore WHIZ055</c> in that position DOES lift the
+  /// suppression — so the assertion above is attributable to the disable/restore distinction rather
+  /// than to the call being invisible to the generator for some unrelated reason.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_RealRestoreInTheSamePosition_ResumesInterceptionAsync() {
+    const string source = """
+            using System;
+
+            namespace TestApp;
+
+            public class MyService {
+            #pragma warning disable WHIZ055
+              public Guid Placeholder => Guid.Empty;
+            #pragma warning restore WHIZ055
+
+              public Guid CreateId() {
+                return Guid.NewGuid();
+              }
+            }
+            """;
+
+    var result = _runGenerator(source);
+
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
+    await Assert.That(generatedSource).IsNotNull()
+      .Because("the identical file with a matching restore in that slot must intercept, proving the call itself is discoverable");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
+  }
 }

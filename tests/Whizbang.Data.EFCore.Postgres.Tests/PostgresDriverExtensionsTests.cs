@@ -7,10 +7,12 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Health;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.RunControl;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 
@@ -19,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test model for PostgresDriverExtensions tests.
 /// </summary>
+[Category("Shard1")]
 public class PostgresTestModel {
   public string Name { get; set; } = string.Empty;
 }
@@ -38,6 +41,7 @@ public class PostgresTestDbContext(DbContextOptions<PostgresTestDbContext> optio
 /// Verifies driver registration, service configuration, and error handling.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard4")]
 public class PostgresDriverExtensionsTests {
   [Test]
   public async Task Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync() {
@@ -105,7 +109,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var fallback = sp.GetService<INotificationConnectionStringFallback>();
 
     await Assert.That(fallback).IsNotNull();
@@ -128,7 +132,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
 
@@ -155,7 +159,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
 
@@ -173,5 +177,52 @@ public class PostgresDriverExtensionsTests {
   private sealed class NoOpClaimedEmissionStore : IClaimedEmissionStore {
     public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
       => Task.FromResult(true);
+  }
+
+  /// <summary>
+  /// The driver registers an event-store health source, and that source's probe is the driver's
+  /// own — not a copy.
+  /// </summary>
+  /// <remarks>
+  /// The registration is a factory lambda, so nothing runs it until something resolves and
+  /// probes the source. That makes it exactly the shape that can be wired to the wrong thing and
+  /// stay silent: the health endpoint would answer, just about something else. Resolving it here
+  /// and driving it against a real data source is what ties the registered source to the probe
+  /// the health-source tests cover directly.
+  /// </remarks>
+  [Test]
+  public async Task Postgres_RegistersAnEventStoreHealthSourceWiredToTheDriversProbeAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("HealthDb"));
+
+    var builder = new WhizbangPerspectiveBuilder(services);
+    _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    // The probe needs a data source and the lifecycle phase; an unreachable host is fine here —
+    // the point is that the registered source runs the driver's probe and reports its outcome
+    // rather than answering from somewhere else.
+    services.AddSingleton(NpgsqlDataSource.Create(
+      "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1"));
+    services.AddSingleton<IWhizbangLifecycleState>(new RunningLifecycle());
+
+    await using var provider = services.BuildServiceProvider();
+    var source = provider.GetServices<IWhizbangHealthSource>()
+      .FirstOrDefault(s => s.Component == "event-store");
+
+    await Assert.That(source).IsNotNull()
+      .Because("without it a consumer has to write its own readiness check, which is what this "
+             + "registration exists to replace");
+
+    var health = await source!.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Faulted)
+      .Because("the registered source must report the probe's actual outcome — a source wired to "
+             + "something else would answer Operational against an unreachable database");
+  }
+
+  private sealed class RunningLifecycle : IWhizbangLifecycleState {
+    public LifecyclePhase Phase => LifecyclePhase.Running;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
   }
 }

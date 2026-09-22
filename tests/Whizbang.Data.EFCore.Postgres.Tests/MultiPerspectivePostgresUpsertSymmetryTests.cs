@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -137,7 +138,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
           FROM pg_stat_activity
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Cleanup best-effort
       }

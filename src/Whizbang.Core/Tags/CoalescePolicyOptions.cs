@@ -64,4 +64,17 @@ public sealed class CoalescePolicyOptions {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_BindingFactory_BuildsTheBindingsCompositeAsync</tests>
   public Func<CoalesceFoldBatch, CompositeEventBase>? CompositeFactory { get; set; }
+
+  /// <summary>
+  /// How the minted composite's priority is folded from its members (priority step 1). Default
+  /// <see cref="CompositePriorityFold.MostUrgent"/>, the rule the claim folds a stream with.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync</tests>
+  public CompositePriorityFold PriorityFold { get; set; } = CompositePriorityFold.MostUrgent;
+
+  /// <summary>
+  /// The number for a composite when <see cref="PriorityFold"/> is <see cref="CompositePriorityFold.Manual"/>; ignored otherwise.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync</tests>
+  public Func<CoalesceFoldBatch, int>? PriorityFor { get; set; }
 }

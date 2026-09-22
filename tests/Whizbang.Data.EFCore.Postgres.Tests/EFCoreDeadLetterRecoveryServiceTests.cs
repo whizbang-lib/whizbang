@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// tests lock the wrapper's constructor + round-trip mapping for each method.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+[Category("Shard4")]
 public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
 
   // ===== Constructor =====
@@ -24,17 +25,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   [Test]
   public async Task Constructor_NullDbContext_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      dbContext: null!,
-      logger: NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance))
-      .Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
-    await using var ctx = CreateDbContext();
-    await Assert.That(() => new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      dbContext: ctx,
-      logger: null!))
+      dbContext: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -128,10 +119,10 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
 
   [Test]
   public async Task ScheduleNextAttemptAsync_CompletesWithoutErrorAsync() {
-    // Coverage smoke for ScheduleNextAttemptAsync's wrapper round-trip. The persisted
-    // effect (next_recovery_at column update) is locked by DeadLetterRecoverySqlTests at
-    // the SQL function level; this test exercises the C# parameter wiring + Npgsql
-    // round-trip without re-asserting the SQL semantic.
+    // The SQL function's semantics are locked by DeadLetterRecoverySqlTests; what is only
+    // reachable here is the C# parameter wiring — that the id and the timestamp this wrapper
+    // was handed are the ones that reach the row. Swapped or dropped parameters produce no
+    // error, just a retry scheduled for the wrong moment (or for every row).
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     var svc = _newService(ctx);
@@ -139,7 +130,13 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     var future = DateTimeOffset.UtcNow.AddHours(3);
 
     await svc.ScheduleNextAttemptAsync(dlqId, future);
-    // No throw == wrapper path succeeded.
+
+    var scheduled = await _getNextRecoveryAtAsync(conn, dlqId);
+    await Assert.That(scheduled).IsNotNull()
+      .Because("scheduling the next attempt must land on the row the caller named");
+    await Assert.That((scheduled!.Value - future).Duration()).IsLessThan(TimeSpan.FromSeconds(1))
+      .Because("the caller's instant is the retry deadline — a wrapper that dropped or reordered "
+             + "the timestamp parameter would silently reschedule to NOW() instead");
   }
 
   // ===== ResetForGenerationAsync =====
@@ -149,7 +146,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var svc = _newService(ctx);
 
-    await Assert.That(async () => await svc.ResetForGenerationAsync(null!))
+    await Assert.That(async () => await svc.ResetForGenerationAsync(null!, 0))
       .Throws<ArgumentException>();
   }
 
@@ -158,7 +155,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var svc = _newService(ctx);
 
-    await Assert.That(async () => await svc.ResetForGenerationAsync(""))
+    await Assert.That(async () => await svc.ResetForGenerationAsync("", 0))
       .Throws<ArgumentException>();
   }
 
@@ -170,7 +167,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     // Seed a row dead-lettered under an OLDER generation so the new generation can schedule it.
     await _seedDlqAsync(conn, generation: "v0.500");
 
-    var count = await svc.ResetForGenerationAsync("v0.502-newgen");
+    var count = await svc.ResetForGenerationAsync("v0.502-newgen", 0);
 
     await Assert.That(count).IsGreaterThanOrEqualTo(1)
       .Because("at least our seeded row should be eligible for the new generation");
@@ -179,7 +176,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
   // ===== Helpers =====
 
   private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _newService(WorkCoordinationDbContext ctx) =>
-    new(ctx, NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance);
+    new(ctx);
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext ctx) {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
@@ -218,6 +215,21 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     return (dlqId, messageId);
   }
 
+  private static async Task<DateTimeOffset?> _getNextRecoveryAtAsync(NpgsqlConnection conn, Guid dlqId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT next_recovery_at FROM wh_dead_letters WHERE dead_letter_id = @id";
+    cmd.Parameters.AddWithValue("id", dlqId);
+    var result = await cmd.ExecuteScalarAsync();
+    // Npgsql surfaces timestamptz as a UTC DateTime by default, DateTimeOffset only when the
+    // provider is configured for it — accept either so the helper does not depend on that setting.
+    return result switch {
+      null or DBNull => null,
+      DateTimeOffset dto => dto,
+      DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+      _ => throw new InvalidOperationException($"Unexpected next_recovery_at type {result.GetType()}")
+    };
+  }
+
   private static async Task<int> _getStatusAsync(NpgsqlConnection conn, Guid dlqId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -225,4 +237,49 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
+
+  [Test]
+  public async Task EveryReadPath_OpensAClosedConnectionItselfAsync(CancellationToken cancellationToken) {
+    // Every method here begins with the same two lines: if the connection is not open, open it.
+    // Nothing exercised them, because the helper above pre-opens the connection before seeding,
+    // so by the time a service method runs the work is already done for it.
+    //
+    // That is the fixture's convenience, not production's guarantee. EF Core hands back whatever
+    // connection the context is holding, and after a scope ends or the pool recycles one, that
+    // connection is closed. A method that skipped the open would throw InvalidOperationException
+    // on the very first command -- and only in the states the tests never set up.
+    //
+    // Closing before each call is what makes the assertion about the service rather than about
+    // the fixture.
+    await using var ctx = CreateDbContext();
+    var svc = _newService(ctx);
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+
+    async Task<T> WithClosedConnectionAsync<T>(Func<Task<T>> call) {
+      if (conn.State != System.Data.ConnectionState.Closed) {
+        await conn.CloseAsync();
+      }
+      // Without this the test could pass having proved nothing: if the connection were still
+      // open here, the guard under test would be skipped and every call would succeed for the
+      // ordinary reason.
+      await Assert.That(conn.State).IsEqualTo(System.Data.ConnectionState.Closed)
+        .Because("the point of this test is the state the service is handed");
+      return await call();
+    }
+
+    // Each of these is a distinct copy of the open-if-closed guard, so each has to be driven.
+    var due = await WithClosedConnectionAsync(() => svc.FetchDueAsync(1, cancellationToken));
+    var purged = await WithClosedConnectionAsync(() => svc.PurgeUndeliverableHeldAsync(cancellationToken));
+    var cohorts = await WithClosedConnectionAsync(() => svc.ListHeldCohortsAsync(cancellationToken));
+    var unstacked = await WithClosedConnectionAsync(() => svc.FetchUnstackedAsync(1, cancellationToken));
+
+    // The values are whatever the empty fixture holds; that they were produced at all is the
+    // point -- a skipped open throws before returning anything.
+    await Assert.That(due).IsNotNull()
+      .Because("a closed connection must be opened by the method, not by its caller");
+    await Assert.That(purged).IsGreaterThanOrEqualTo(0);
+    await Assert.That(cohorts).IsNotNull();
+    await Assert.That(unstacked).IsNotNull();
+  }
+
 }

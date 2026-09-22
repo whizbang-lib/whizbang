@@ -8,11 +8,12 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Phase H step 6 slice 1 regression locks for stream-ownership pinning.
-///
+/// <para>Phase H step 6 slice 1 regression locks for stream-ownership pinning.</para>
+/// <para>
 /// These tests pin the architectural invariants the original archive plan called out
 /// but the Phase H step 3 decomposition silently dropped:
-///
+/// </para>
+/// <para>
 /// 1. <c>store_outbox_messages</c> / <c>store_inbox_messages</c> UPSERT into
 ///    <c>wh_active_streams</c> on first event for a stream (producer-instance pinning,
 ///    ON CONFLICT DO NOTHING — first-write-wins).
@@ -21,8 +22,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// 3. <c>register_instance_heartbeat</c> opportunistically calls
 ///    <c>cleanup_stale_instances</c> when a peer has gone silent past the stale cutoff,
 ///    releasing leases held by the dead instance.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+[Category("Shard2")]
 public class ActiveStreamsOwnershipSqlTests : EFCoreTestBase {
 
   // ----- store_outbox_messages UPSERT -----

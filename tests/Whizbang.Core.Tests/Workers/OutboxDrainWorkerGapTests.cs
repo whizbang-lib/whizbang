@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -7,11 +8,14 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -45,8 +49,8 @@ public class OutboxDrainWorkerGapTests {
     public ConcurrentBag<Guid> AllIds { get; } = [];
     public int Target { get; set; } = 1;
     public TaskCompletionSource ReachedTarget { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
       if (AllIds.Count >= Target) {
         ReachedTarget.TrySetResult();
       }
@@ -58,7 +62,7 @@ public class OutboxDrainWorkerGapTests {
     public ConcurrentBag<MessageFailure> All { get; } = [];
     public int Target { get; set; } = 1;
     public TaskCompletionSource ReachedTarget { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       if (All.Count >= Target) {
         ReachedTarget.TrySetResult();
@@ -71,8 +75,8 @@ public class OutboxDrainWorkerGapTests {
     public ConcurrentQueue<OutboxWork> Published { get; } = new();
     public int TargetCount { get; set; } = 1;
     public TaskCompletionSource ReachedCount { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Enqueue(work);
       if (Published.Count >= TargetCount) {
         ReachedCount.TrySetResult();
@@ -90,12 +94,12 @@ public class OutboxDrainWorkerGapTests {
   private sealed class GapBulkPublishStrategy : IMessagePublishStrategy {
     public List<IReadOnlyList<OutboxWork>> BatchCalls { get; } = [];
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("PublishAsync must not be called on a bulk-capable strategy");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      lock (BatchCalls) { BatchCalls.Add(works); }
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      lock (BatchCalls) { BatchCalls.Add(workItems); }
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,
@@ -109,10 +113,32 @@ public class OutboxDrainWorkerGapTests {
   private sealed class GapCancellableHangingPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<MessagePublishResult> _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Started.TrySetResult();
-      return await _never.Task.WaitAsync(ct);
+      return await _never.Task.WaitAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// The bulk counterpart of <see cref="GapCancellableHangingPublishStrategy"/>. The two publish
+  /// paths have separate cancellation handling — the bulk one awaits through
+  /// <c>WaitAsync(timeout, ct)</c>, so it has to tell a publish timeout apart from a shutdown.
+  /// </summary>
+  private sealed class GapCancellableHangingBulkStrategy : IMessagePublishStrategy {
+    public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<IReadOnlyList<MessagePublishResult>> _never =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
+      throw new InvalidOperationException("PublishAsync must not be called on a bulk-capable strategy");
+
+    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
+        IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      Started.TrySetResult();
+      return await _never.Task.WaitAsync(cancellationToken);
     }
   }
 
@@ -165,14 +191,14 @@ public class OutboxDrainWorkerGapTests {
       return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -180,7 +206,7 @@ public class OutboxDrainWorkerGapTests {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
     public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => jsonBytes;
-    public object DeserializeFromJsonElement(JsonElement payload, string messageTypeName) => payload;
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
   private sealed class GapCapturingReceptorInvoker : IReceptorInvoker {
@@ -266,6 +292,10 @@ public class OutboxDrainWorkerGapTests {
     /// await the background ExecuteAsync reaching that branch instead of racing StopAsync.</summary>
     public TaskCompletionSource NoTransportWarningLogged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Completes once the killswitch's own log line has been captured — the same trick
+    /// for the <c>Enabled=false</c> branch, which otherwise has no observable effect at all.</summary>
+    public TaskCompletionSource DisabledLogged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
@@ -274,6 +304,31 @@ public class OutboxDrainWorkerGapTests {
       if (message.Contains("no IMessagePublishStrategy registered", StringComparison.Ordinal)) {
         NoTransportWarningLogged.TrySetResult();
       }
+      if (eventId.Id == 3) {   // LogDisabled
+        DisabledLogged.TrySetResult();
+      }
+    }
+  }
+
+  /// <summary>
+  /// A schema gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is
+  /// the deterministic "the worker is parked at the barrier" signal. Since .NET 10,
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
+  /// scheduled, and cancelling before the thread pool dequeues the work item settles the task
+  /// Canceled with the delegate never invoked — satisfying <c>IsCompleted</c>, <c>!IsFaulted</c>
+  /// and "zero fetches" all at once.
+  /// </summary>
+  private sealed class GapBlockingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
   }
 
@@ -283,12 +338,14 @@ public class OutboxDrainWorkerGapTests {
 
   private static OutboxBatchRow _row(
       Guid messageId, Guid streamId, int attempts = 0,
-      Guid? originServiceId = null, long? originCommitSequence = null, long? commitSequence = null) {
+      Guid? originServiceId = null, long? originCommitSequence = null, long? commitSequence = null,
+      int priority = 0, int storedEnvelopePriority = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
+      Priority = storedEnvelopePriority,
     };
     var typeInfo = _jsonOpts.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
       ?? throw new InvalidOperationException("Test setup: no JsonTypeInfo for MessageEnvelope<JsonElement>");
@@ -309,7 +366,48 @@ public class OutboxDrainWorkerGapTests {
       CommitSequence = commitSequence,
       OriginServiceId = originServiceId,
       OriginCommitSequence = originCommitSequence,
+      Priority = priority,
     };
+  }
+
+  private static async Task<MessageEnvelope<JsonElement>> _publishOneAsync(OutboxBatchRow row) {
+    var streamId = row.StreamId!.Value;
+    var coord = new GapWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
+    coord.RowsByStream[streamId] = [row];
+    var drainChannel = new GapDrainChannel();
+    var publish = new GapPublishStrategy { TargetCount = 1 };
+    var worker = _worker(_sp(coord), drainChannel, new GapCompletionChannel(), new GapFailureChannel(),
+      new OutboxDrainWorkerOptions { Enabled = true }, publish);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+    _ = publish.Published.TryDequeue(out var work);
+    return (MessageEnvelope<JsonElement>)work!.Envelope;
+  }
+
+  /// <summary>
+  /// Priority step 1 on the wire: the number the producer classified is stored on the outbox row, and the
+  /// envelope this worker publishes must carry it, or every consumer sees the message undeclared and bulk
+  /// work arrives standard. Observed on a deployment: a bulk import's fan-out stamped 250 on the producer's
+  /// outbox arrived at every other service at 150.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync() {
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), priority: 250));
+
+    await Assert.That(envelope.Priority).IsEqualTo(250)
+      .Because("the row's number is the producer's classification; the wire envelope is how the consumer learns it");
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_WithoutARowNumber_KeepsTheStoredEnvelopesPriorityAsync() {
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), storedEnvelopePriority: 50));
+
+    await Assert.That(envelope.Priority).IsEqualTo(50)
+      .Because("a fetch that predates the column leaves the row at 0; the number serialized into the stored envelope still counts");
   }
 
   private static OutboxBatchRow _badRow(Guid messageId, Guid streamId, string eventData) =>
@@ -349,26 +447,28 @@ public class OutboxDrainWorkerGapTests {
       gate = readyGate;
     }
     return new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new GapServiceInstanceProvider(),
-      drainChannel,
-      completion,
-      failure,
-      gate,
-      Options.Create(options),
-      _jsonOpts,
-      logger ?? NullLogger<OutboxDrainWorker>.Instance,
-      publish,
-      lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registryQuery,
-      runtimeReceptorRegistry: runtimeRegistry,
-      deadLetterStore: deadLetterStore,
-      generationProvider: generationProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new GapServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      jsonOptions: _jsonOpts,
+      logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish ?? NullMessagePublishStrategy.Instance,
+      lifecycleMessageDeserializer: deserializer ?? new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: registryQuery ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: generationProvider ?? new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options)).Value),
       dlqMetrics: dlqMetrics);
   }
 
   private static ServiceProvider _sp(GapWorkCoordinator coord, IReceptorInvoker? invoker = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     if (invoker is not null) {
       services.AddSingleton(invoker);
@@ -390,16 +490,22 @@ public class OutboxDrainWorkerGapTests {
     var completion = new GapCompletionChannel();
     var failure = new GapFailureChannel();
     var publish = new GapPublishStrategy();
+    var logger = new GapCapturingLogger();
     var sp = _sp(coord);
 
     var worker = _worker(sp, drainChannel, completion, failure,
-      new OutboxDrainWorkerOptions { Enabled = false }, publish);
+      new OutboxDrainWorkerOptions { Enabled = false }, publish, logger: logger);
 
     await drainChannel.WriteAsync((Guid)TrackedGuid.NewMedo());
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Wait for the killswitch branch to actually be reached. Since .NET 10 StartAsync only
+    // queues ExecuteAsync onto the thread pool, and cancelling before the work item is dequeued
+    // settles the task Canceled with the body never invoked — which satisfies every assertion
+    // below, including "never fetched". The log line is the branch's only observable effect.
+    await logger.DisabledLogged.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var execTask = worker.ExecuteTask;
     await Assert.That(execTask is not null).IsTrue();
@@ -407,7 +513,7 @@ public class OutboxDrainWorkerGapTests {
     // scheduler timing the disabled branch's awaited Task.Delay(Infinite) may surface
     // cancellation as either RanToCompletion (OCE caught) or Canceled (observed before
     // the catch) — both are non-faulted clean exits. Asserting RanToCompletion exactly
-    // is a scheduling-dependent flake (matches the SchemaGateCancelled sibling fix).
+    // is a scheduling-dependent flake (matches the SchemaGateCanceled sibling fix).
     await Assert.That(execTask!.IsCompleted).IsTrue()
       .Because("the disabled drainer must complete on shutdown");
     await Assert.That(execTask!.IsFaulted).IsFalse()
@@ -440,7 +546,7 @@ public class OutboxDrainWorkerGapTests {
     // cancellation can race the background task before it logs the warning.
     await logger.NoTransportWarningLogged.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(coord.FetchCalls).IsEqualTo(0);
     var sawNoTransportWarning = logger.Messages.Any(m => m.Contains("no IMessagePublishStrategy registered"));
@@ -454,27 +560,30 @@ public class OutboxDrainWorkerGapTests {
   /// worker must return before resolving the local service id or fetching anything.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_SchemaGateCancelled_ReturnsWithoutFetchingAsync() {
+  public async Task OutboxDrainWorker_SchemaGateCanceled_ReturnsWithoutFetchingAsync() {
     var coord = new GapWorkCoordinator();
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
     var failure = new GapFailureChannel();
     var publish = new GapPublishStrategy();
     var sp = _sp(coord);
-    var neverReadyGate = new SchemaReadyGate();  // MarkReady intentionally NOT called
+    var neverReadyGate = new GapBlockingSchemaGate();  // never opens; announces the waiter
 
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = true }, publish, gate: neverReadyGate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Park first, then cancel: without this the body may never be invoked at all, and "never
+    // fetched" is then true for the wrong reason.
+    await neverReadyGate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var execTask = worker.ExecuteTask;
     await Assert.That(execTask is not null).IsTrue();
     // Graceful shutdown: the worker either catches the OCE and returns (RanToCompletion) or,
-    // when StopAsync's token is already cancelled before ExecuteAsync's body runs, the async
+    // when StopAsync's token is already canceled before ExecuteAsync's body runs, the async
     // state machine surfaces the cancellation (Canceled). Both are clean; only a fault is a bug.
     await Assert.That(execTask!.IsCompleted).IsTrue();
     await Assert.That(execTask.IsFaulted).IsFalse()
@@ -511,7 +620,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1);
     _ = publish.Published.TryDequeue(out var work);
@@ -553,7 +662,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     _ = publish.Published.TryDequeue(out var work);
     var concrete = work!.Envelope as MessageEnvelope<JsonElement>;
@@ -590,7 +699,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     _ = publish.Published.TryDequeue(out var work);
     var concrete = work!.Envelope as MessageEnvelope<JsonElement>;
@@ -639,7 +748,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await idled.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(completion.AllIds).Contains(msgId)
       .Because("a DROPPED control-plane row is terminally handled — completing it lets the flush " +
@@ -670,7 +779,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(completion.AllIds).Contains(msgId)
       .Because("PublishTimeoutSeconds=0 disables the WaitAsync timeout wrapper but must not change the success path");
@@ -702,7 +811,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.BatchCalls.Count).IsEqualTo(1);
     await Assert.That(completion.AllIds).Contains(msgId);
@@ -740,7 +849,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await failure.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(failure.All.Count).IsEqualTo(2)
       .Because("both the null-envelope and malformed-JSON deserialize failures must enqueue a MessageFailure");
@@ -783,7 +892,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.BatchCalls.Count).IsEqualTo(1);
     await Assert.That(publish.BatchCalls[0].Count).IsEqualTo(1)
@@ -826,7 +935,7 @@ public class OutboxDrainWorkerGapTests {
     await failure.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await idle.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.BatchCalls).IsEmpty()
       .Because("with zero surviving works the bulk path must short-circuit before PublishBatchAsync");
@@ -858,7 +967,7 @@ public class OutboxDrainWorkerGapTests {
       new OutboxDrainWorkerOptions { Enabled = true, MaxOutboxAttempts = 10 }, publish,
       deadLetterStore: dlqStore,
       generationProvider: new GapGenerationProvider(),
-      dlqMetrics: new DeadLetterMetrics(new WhizbangMetrics()));
+      dlqMetrics: new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnWorkProcessingIdle += () => idle.TrySetResult();
 
@@ -868,7 +977,7 @@ public class OutboxDrainWorkerGapTests {
     await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await idle.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dlqStore.MovedSourceIds).Contains(msgId);
     await Assert.That(dlqStore.MovedSourceIds.Count).IsEqualTo(1);
@@ -908,7 +1017,7 @@ public class OutboxDrainWorkerGapTests {
     await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dlqStore.Calls).IsEqualTo(1)
       .Because("the gate must have attempted the DLQ move before falling through");
@@ -947,7 +1056,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(healthyStream);
     await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(completion.AllIds).Contains(msgId)
       .Because("a drain exception on one stream must be isolated — sibling streams in the batch still publish");
@@ -989,7 +1098,7 @@ public class OutboxDrainWorkerGapTests {
     await completion.ReachedTarget.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await idle.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var sawPerfLine = logger.Messages.Any(m => m.Contains("PERF OutboxDrain"));
     await Assert.That(sawPerfLine).IsTrue()
@@ -1027,7 +1136,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await invoker.PostInlineSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var stages = invoker.Stages;
     await Assert.That(stages).Contains(LifecycleStage.PreOutboxInline)
@@ -1091,12 +1200,63 @@ public class OutboxDrainWorkerGapTests {
   }
 
   /// <summary>
+  /// The lifecycle-stage counterpart of the publish-path shutdown branch below. The stage
+  /// invocation routes any throw to the failure channel so operators get a triage signal
+  /// instead of a silent infinite retry — but a shutdown is not a fault to triage.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LifecycleStageCanceledByShutdown_DoesNotEnqueueAFailureAsync() {
+    // Recording this as a lifecycle failure stamps wh_outbox.error with a TaskCanceledException
+    // and burns an attempt on a message nothing rejected. Deploy often enough and rows accumulate
+    // failures they never earned; the row is still leased for the next claim cycle either way.
+    var failure = new GapFailureChannel();
+    var coord = new GapWorkCoordinator();
+    var sp = _sp(coord);
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true }, new GapPublishStrategy());
+
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [],
+    };
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "gap-test-topic",
+      MessageType = "TestMessage",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName ?? "MessageEnvelope",
+      Envelope = envelope,
+      Attempts = 1,
+      Status = MessageProcessingStatus.Stored,
+    };
+
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await worker.InvokeOutboxLifecycleStageAsync(
+        work, envelope, new GapThrowingReceptorInvoker(new OperationCanceledException()),
+        LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
+        "PreOutbox", stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown reaches the drain loop's own cancellation handling rather than being "
+             + "converted into a fault record on the way");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("a stage interrupted by shutdown is not a message that failed — recording it burns "
+             + "an attempt no receptor asked for");
+  }
+
+  /// <summary>
   /// Graceful-shutdown rethrow branch: cancellation firing while a publish is in flight must
   /// propagate as OperationCanceledException (NOT get converted into a failure record) and
   /// end the worker loop cleanly.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_CancelledDuringPublish_NoFailureRecord_StopsCleanlyAsync() {
+  public async Task OutboxDrainWorker_CanceledDuringPublish_NoFailureRecord_StopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
 
@@ -1117,7 +1277,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(streamId);
     await publish.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var execTask = worker.ExecuteTask;
     await Assert.That(execTask is not null).IsTrue();
@@ -1128,6 +1288,50 @@ public class OutboxDrainWorkerGapTests {
     await Assert.That(failure.All).IsEmpty()
       .Because("graceful shutdown must NOT masquerade as a publish failure — the row stays leased for the next claim cycle");
     await Assert.That(completion.AllIds).IsEmpty();
+  }
+
+  /// <summary>
+  /// The bulk path's shutdown behaviour, which the singular test above does not reach: the two
+  /// paths handle cancellation separately, and only the singular one was held.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_CanceledDuringBulkPublish_NoFailureRecord_StopsCleanlyAsync() {
+    // The bulk path awaits through WaitAsync(timeout, ct), so it has to separate a publish that
+    // ran long from a host that is stopping. A timeout is a failure: the rows are recorded failed
+    // and the abandoned publish is observed. Shutdown is not — recording these rows as failed
+    // would burn an attempt on messages that were never actually rejected, and the rows are
+    // already leased for the next claim cycle to pick up.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new GapWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+    var failure = new GapFailureChannel();
+    var publish = new GapCancellableHangingBulkStrategy();
+    var sp = _sp(coord);
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true, PublishTimeoutSeconds = 30 }, publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await publish.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    var execTask = worker.ExecuteTask;
+    await Assert.That(execTask is not null).IsTrue();
+    await Assert.That(execTask!.IsFaulted).IsFalse()
+      .Because("graceful shutdown must not fault the worker on the bulk path either");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("a batch interrupted by shutdown was not rejected — recording it failed burns an "
+             + "attempt on every row in it, and they are still leased for the next claim cycle");
+    await Assert.That(completion.AllIds).IsEmpty()
+      .Because("nothing was published, so nothing may be marked complete");
   }
 
   /// <summary>
@@ -1148,47 +1352,47 @@ public class OutboxDrainWorkerGapTests {
     var logger = NullLogger<OutboxDrainWorker>.Instance;
 
     var ex1 = await Assert.That(() =>
-      new OutboxDrainWorker(null!, instance, drainChannel, completion, failure, gate, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: null!, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex1!.ParamName).IsEqualTo("scopeFactory");
 
     var ex2 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, null!, drainChannel, completion, failure, gate, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: null!, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex2!.ParamName).IsEqualTo("instanceProvider");
 
     var ex3 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, null!, completion, failure, gate, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: null!, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex3!.ParamName).IsEqualTo("drainChannel");
 
     var ex4 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, null!, failure, gate, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: null!, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex4!.ParamName).IsEqualTo("completionChannel");
 
     var ex5 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, completion, null!, gate, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: null!, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex5!.ParamName).IsEqualTo("failureChannel");
 
     var ex6 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, completion, failure, null!, options, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: null!, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex6!.ParamName).IsEqualTo("schemaReadyGate");
 
     var ex7 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, completion, failure, gate, null!, _jsonOpts, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: null!, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: new FixedWidthGovernor(1)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex7!.ParamName).IsEqualTo("options");
 
     var ex8 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, completion, failure, gate, options, null!, logger))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: null!, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex8!.ParamName).IsEqualTo("jsonOptions");
 
     var ex9 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory, instance, drainChannel, completion, failure, gate, options, _jsonOpts, null!))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: null!, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex9!.ParamName).IsEqualTo("logger");
   }

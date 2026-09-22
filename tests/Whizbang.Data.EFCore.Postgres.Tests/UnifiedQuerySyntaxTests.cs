@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -45,6 +46,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   /// Physical fields: Name, Price, Category, IsActive
   /// JSONB-only fields: Description, Tags
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; its columns are configured through the DbContext rather than by attribute")]
   public class ProductModel {
     public string Name { get; init; } = string.Empty;
     public decimal Price { get; init; }
@@ -158,7 +160,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }

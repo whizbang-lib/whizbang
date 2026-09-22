@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// value rather than a side channel.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/106_InstanceEvictionFencing.sql</code-under-test>
+[Category("Shard4")]
 public class InstanceEvictionFencingSqlTests : EFCoreTestBase {
 
   [Test]

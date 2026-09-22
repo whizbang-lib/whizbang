@@ -53,7 +53,7 @@ public class SharedInboxRetirementTests {
       r.RetireSharedInbox();
     });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.SharedInboxRetired).IsTrue();
@@ -71,7 +71,7 @@ public class SharedInboxRetirementTests {
       r.RetireSharedInbox();
     });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var exception = Assert.Throws<InvalidOperationException>(
       () => provider.GetRequiredService<IOptions<RoutingOptions>>());
@@ -91,7 +91,7 @@ public class SharedInboxRetirementTests {
       r.RetireSharedInbox();
     });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     var exception = Assert.Throws<InvalidOperationException>(
       () => provider.GetRequiredService<IOptions<RoutingOptions>>());
@@ -110,7 +110,7 @@ public class SharedInboxRetirementTests {
       r.RetireSharedInbox();
     });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     Assert.Throws<InvalidOperationException>(
       () => provider.GetRequiredService<IOutboxRoutingStrategy>());
@@ -133,7 +133,7 @@ public class SharedInboxRetirementTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Inbox.UseNamespaceInboxes());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.SharedInboxRetired).IsTrue();
@@ -155,7 +155,7 @@ public class SharedInboxRetirementTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(r => r.Inbox.UseNamespaceInboxes());
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
 
     Assert.Throws<InvalidOperationException>(
       () => provider.GetRequiredService<IOptions<RoutingOptions>>());
@@ -177,7 +177,7 @@ public class SharedInboxRetirementTests {
     services.AddSingleton<IConfiguration>(configuration);
     new WhizbangBuilder(services).WithRouting(_ => { });
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
     await Assert.That(options.SharedInboxRetired).IsFalse();

@@ -32,7 +32,7 @@ namespace Whizbang.Data.Tests;
 /// row shape (EventType/EventData/Metadata/Scope), so malformed rows can be seeded
 /// directly with SQL and read back through the public base-class API.
 /// </remarks>
-public class DapperEventStoreBaseTests : IDisposable {
+public sealed class DapperEventStoreBaseTests : IDisposable {
   private static readonly JsonSerializerOptions _jsonOptions = JsonOptionsHelper.CreateOptions();
 
   private DapperTestBase _testBase = null!;
@@ -211,9 +211,13 @@ public class DapperEventStoreBaseTests : IDisposable {
   }
 
   [Test]
-  public async Task GetEventsBetweenAsync_MetadataWithoutHops_YieldsEmptyHopsAsync() {
-    // Arrange - metadata carries only message_id; scope HAS values, but with zero
-    // hops there is nowhere to restore it (covers the hops.Count == 0 scope arm)
+  public async Task GetEventsBetweenAsync_MetadataWithoutHops_RestoresThePersistedScopeAsync() {
+    // Arrange - metadata carries only message_id, and the scope column HAS a value. A stored event
+    // keeps its scope in a column and carries no envelope metadata, so there is no hop to restore
+    // it into. This previously yielded zero hops and silently dropped the scope: GetCurrentScope()
+    // walks hops, found nothing, and any perspective requiring a security context rejected the
+    // event on every retry until it parked. A hop is synthesized so the persisted scope survives
+    // the round trip.
     var store = await _createStoreAsync();
     var streamId = (Guid)TrackedGuid.NewMedo();
     var messageId = (Guid)TrackedGuid.NewMedo();
@@ -227,13 +231,18 @@ public class DapperEventStoreBaseTests : IDisposable {
     // Assert
     await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].MessageId.Value).IsEqualTo(messageId);
-    await Assert.That(events[0].Hops).Count().IsEqualTo(0);
+    await Assert.That(events[0].Hops).Count().IsEqualTo(1)
+      .Because("the scope was persisted and has to be carried somewhere the readers look, and "
+             + "GetCurrentScope walks hops");
+    await Assert.That(events[0].GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-x")
+      .Because("restoring a hop is only worth doing if the scope it carries is the one that was "
+             + "stored; an empty hop would satisfy a count and still drop the event");
     await Assert.That(events[0].DispatchContext.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
   public async Task GetEventsBetweenAsync_HopsJsonNull_YieldsEmptyHopsAsync() {
-    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm;
+    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm —
     // scope column is SQL NULL, covering the scope-absent early return
     var store = await _createStoreAsync();
     var streamId = (Guid)TrackedGuid.NewMedo();
@@ -431,7 +440,7 @@ public class DapperEventStoreBaseTests : IDisposable {
   [Test]
   public async Task EnsureConnectionOpen_ClosedConnection_OpensItAsync() {
     // Arrange - a fresh SQLite connection starts Closed
-    using var connection = new SqliteConnection("Data Source=:memory:");
+    await using var connection = new SqliteConnection("Data Source=:memory:");
     await Assert.That(connection.State).IsEqualTo(ConnectionState.Closed);
 
     // Act - covers the State != Open branch that pre-opened factories never hit
@@ -450,7 +459,7 @@ public class DapperEventStoreBaseTests : IDisposable {
   // ========================================
 
   private async Task<ThreeColumnEventStore> _createStoreAsync() {
-    using var command = _testBase.Connection.CreateCommand();
+    await using var command = _testBase.Connection.CreateCommand();
     command.CommandText = @"
       CREATE TABLE IF NOT EXISTS three_col_events (
         position INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,13 +1,18 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.ValueObjects;
@@ -124,7 +129,7 @@ public class CoalesceShipWorkerTests {
     // individually-shipped floor row at the consumer's inbox).
     var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
     var singles = _singles(2);
-    var expectedIds = singles.Select(m => m.MessageId).ToList();
+    var expectedIds = singles.ConvertAll(m => m.MessageId);
     var expectedType = singles[0].MessageType;
     var expectedDestination = singles[0].Destination;
     coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
@@ -239,7 +244,7 @@ public class CoalesceShipWorkerTests {
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
     await Assert.That(coordinator.ReleasedGroups).IsEmpty();
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -255,7 +260,7 @@ public class CoalesceShipWorkerTests {
 
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -282,7 +287,7 @@ public class CoalesceShipWorkerTests {
     await worker.StartAsync(cts.Token);
     await firstStats.WaitAsync(TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.StatsCalls).IsGreaterThanOrEqualTo(1);
@@ -290,11 +295,71 @@ public class CoalesceShipWorkerTests {
       .Because("startup recovery released before the first tick ran");
   }
 
+
+  #region Composite priority
+
+  private static List<OutboxMessage> _mixedSingles() =>
+    [_single("test-topic", WorkPriority.BACKGROUND), _single("test-topic", WorkPriority.INTERACTIVE), _single("test-topic", WorkPriority.BACKGROUND)];
+
+  private static async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
+    var (worker, coordinator, _) = _build(configureBinding);
+    coordinator.Stats = [_stats("record-digest", count: singles.Count, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+    await worker.RunOnceAsync(CancellationToken.None);
+    return coordinator.CompletedFolds[0].Composites[0];
+  }
+
+  /// <summary>
+  /// A minted composite carries a number folded from its members, on the row and inside the envelope: by default
+  /// the most urgent, the same rule the claim folds a stream with, so a bundle is never scheduled behind the
+  /// member somebody is waiting on.
+  /// </summary>
+  [Test]
+  public async Task RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync() {
+    var composite = await _foldAsync(c => c.SlideSeconds = 15, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.INTERACTIVE)
+      .Because("the row's number is what the drain and the store read");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(WorkPriority.INTERACTIVE)
+      .Because("the envelope's number is what crosses the wire and what the consumer's fan-out gives every child");
+  }
+
+  [Test]
+  public async Task RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync() {
+    var composite = await _foldAsync(c => c.PriorityFold = CompositePriorityFold.LeastUrgent, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a binding may decide the bundle waits for its slowest member; an audit digest is one");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND);
+  }
+
+  [Test]
+  public async Task RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync() {
+    var composite = await _foldAsync(c => {
+      c.PriorityFold = CompositePriorityFold.Manual;
+      c.PriorityFor = batch => batch.Singles.Count * 10;
+    }, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(30)
+      .Because("Manual hands the whole decision to the binding's callback, with the batch in hand");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(30);
+  }
+
+  [Test]
+  public async Task RunOnce_NoMemberDeclared_CompositeStaysUndeclaredAsync() {
+    var composite = await _foldAsync(c => c.SlideSeconds = 15, _singles(2));
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.UNDECLARED)
+      .Because("the members were produced before the number existed; the consumer's rules classify the bundle, the worker does not invent a band");
+  }
+
+  #endregion
+
   #endregion
 
   #region Helpers
 
-  private (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
+  private static (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
       Action<CoalescePolicyOptions> configureBinding) {
     var time = new FakeTimeProvider(_testNow);
     var coordinator = new FakeCoalesceCoordinator();
@@ -307,7 +372,7 @@ public class CoalesceShipWorkerTests {
   }
 
   private static CoalesceShipWorker _buildWorker(
-      FakeCoalesceCoordinator coordinator,
+      IWorkCoordinator coordinator,
       CoalesceGroupResolver? resolver,
       FakeTimeProvider time) {
     var services = new ServiceCollection();
@@ -320,10 +385,12 @@ public class CoalesceShipWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      resolver,
-      logger: null,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
       timeProvider: time);
   }
 
@@ -334,11 +401,88 @@ public class CoalesceShipWorkerTests {
     NewestCreatedAt = _testNow.AddSeconds(-newestAge)
   };
 
+  // === Scope carry ===
+  //
+  // Same defect class as the re-delivery pump: the composite's wire hop was built without a scope,
+  // so a folded bundle arrived unscoped and the consumer's fan-out gave every child a null scope.
+  // The children are then PERSISTED that way, which no later read can repair.
+
+  [Test]
+  public async Task RunOnce_CarriesTheSinglesScopeOntoTheCompositeHopAsync() {
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    var singles = new List<OutboxMessage> { _scopedSingle("test-topic", "tenant-a"), _scopedSingle("test-topic", "tenant-a") };
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds[0].Composites[0];
+    var hop = composite.Metadata.Hops[0];
+    await Assert.That(hop.Scope).IsNotNull()
+      .Because("the folded singles carried a scope; dropping it here persists every fanned-out "
+             + "child unscoped, and a perspective requiring a security context parks them all");
+    await Assert.That(hop.Scope!.ApplyTo(null).Scope.TenantId).IsEqualTo("tenant-a");
+  }
+
+  [Test]
+  public async Task RunOnce_NeverFoldsDifferentScopesIntoOneCompositeAsync() {
+    // One composite carries ONE hop scope. Folding two tenants together could only stamp one of
+    // them, shipping one tenant's event under the other's authority.
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    var singles = new List<OutboxMessage> { _scopedSingle("test-topic", "tenant-a"), _scopedSingle("test-topic", "tenant-b") };
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composites = coordinator.CompletedFolds.SelectMany(f => f.Composites).ToList();
+    await Assert.That(composites.Count).IsEqualTo(2)
+      .Because("two scopes cannot share one bundle without mis-attributing one of them");
+    var tenants = composites
+      .Select(c => c.Metadata.Hops[0].Scope?.ApplyTo(null).Scope.TenantId ?? "<unscoped>")
+      .OrderBy(t => t, StringComparer.Ordinal).ToList();
+    await Assert.That(tenants).IsEquivalentTo(["tenant-a", "tenant-b"]);
+  }
+
+  [Test]
+  public async Task RunOnce_LeavesTheCompositeUnscopedWhenSinglesHadNoScopeAsync() {
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. _singles(2)];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds[0].Composites[0];
+    await Assert.That(composite.Metadata.Hops[0].Scope).IsNull()
+      .Because("unscoped singles must fold into an unscoped composite — inventing an authority "
+             + "here would be worse than the failure it hides");
+  }
+
+  private static OutboxMessage _scopedSingle(string destination, string tenantId) {
+    var single = _single(destination);
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      Timestamp = _testNow,
+      ServiceInstance = ServiceInstanceInfo.Unknown,
+      Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = tenantId, UserId = "user-1" }),
+    };
+    return single with {
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = single.Envelope.MessageId,
+        Payload = single.Envelope.Payload,
+        Hops = [hop],
+        DispatchContext = single.Envelope.DispatchContext,
+      },
+      Metadata = new EnvelopeMetadata { MessageId = single.Envelope.MessageId, Hops = [hop] },
+    };
+  }
+
   private static List<OutboxMessage> _singles(int count) =>
     [.. Enumerable.Range(0, count).Select(_ => _single("test-topic"))];
 
-  private static OutboxMessage _single(string destination) {
+  private static OutboxMessage _single(string destination, int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
+      Priority = priority,
       MessageId = MessageId.New(),
       Payload = JsonSerializer.SerializeToElement(new { record = "data" }),
       Hops = [],
@@ -354,7 +498,8 @@ public class CoalesceShipWorkerTests {
       IsEvent = false,
       MessageType = "TestNamespace.TestFoldedEvent, TestAssembly",
       CoalesceGroup = "record-digest",
-      ScheduledFor = _testNow.AddSeconds(60)
+      ScheduledFor = _testNow.AddSeconds(60),
+      Priority = priority,
     };
   }
 
@@ -383,7 +528,11 @@ public class CoalesceShipWorkerTests {
       return Task.FromResult(Stats);
     }
 
+    public string? FoldThrowsForGroup { get; set; }
     public Task<IReadOnlyList<OutboxMessage>> FetchPendingCoalesceAsync(string group, int limit, CancellationToken cancellationToken = default) {
+      if (group == FoldThrowsForGroup) {
+        return Task.FromException<IReadOnlyList<OutboxMessage>>(new InvalidOperationException("simulated fold failure"));
+      }
       FetchedGroups.Add(group);
       CallOrder.Add($"fetch:{group}");
       if (!PendingSingles.TryGetValue(group, out var pending) || pending.Count == 0) {
@@ -415,15 +564,307 @@ public class CoalesceShipWorkerTests {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   #endregion
+
+  #region Loop resilience
+
+  // The shipper is the only thing that folds coalesce rows and the only thing that releases them
+  // when folding is not possible. If a transient coordinator failure ends the loop nothing
+  // notices — the worker is still "running", the backlog just stops draining, and the rows sit
+  // there until someone restarts the process. So each step has to survive its own failure and
+  // come back on the next tick.
+
+  /// <summary>A coordinator whose coalesce calls fail a fixed number of times, then succeed.</summary>
+  /// <summary>
+  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
+  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
+  /// </summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private sealed class FlakyCoalesceCoordinator(int statsFailures, int releaseFailures) : IWorkCoordinator {
+    private int _statsLeft = statsFailures;
+    private int _releaseLeft = releaseFailures;
+
+    public int StatsAttempts { get; private set; }
+    public int ReleaseAttempts { get; private set; }
+    public TaskCompletionSource StatsSucceeded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseSucceeded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(
+        CancellationToken cancellationToken = default) {
+      StatsAttempts++;
+      if (_statsLeft-- > 0) {
+        return Task.FromException<IReadOnlyList<CoalesceGroupStats>>(
+          new InvalidOperationException("transient coordinator outage"));
+      }
+      StatsSucceeded.TrySetResult();
+      return Task.FromResult<IReadOnlyList<CoalesceGroupStats>>([]);
+    }
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      ReleaseAttempts++;
+      if (_releaseLeft-- > 0) {
+        return Task.FromException<int>(new InvalidOperationException("release failed"));
+      }
+      ReleaseSucceeded.TrySetResult();
+      return Task.FromResult(0);
+    }
+
+    // The rest of IWorkCoordinator is default-implemented; only the abstract members need bodies.
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
+      => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+  }
+
+  private static CoalesceGroupResolver _oneGroupResolver(FakeTimeProvider time, string group = "record-digest") {
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce(group, c => c.SlideSeconds = 15);
+    return new CoalesceGroupResolver(tagOptions, time, () => []);
+  }
+
+  /// <summary>
+  /// A failing startup recovery is logged and the loop still starts ticking.
+  /// </summary>
+  /// <remarks>
+  /// Recovery runs against a coordinator that has just come up alongside this process, so it is
+  /// the single most likely step to hit a cold connection. Letting that end ExecuteAsync would
+  /// mean a database blip during rollout silently disables coalesce shipping for the life of
+  /// the pod.
+  /// </remarks>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_StartupRecoveryFails_TheLoopStillRunsAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 1);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ReleaseAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("recovery ran and failed");
+    await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("a failed recovery must not stop the first tick — otherwise a cold-start blip "
+             + "disables shipping until the process restarts");
+  }
+
+  /// <summary>
+  /// A failing tick is logged and the loop keeps ticking.
+  /// </summary>
+  /// <remarks>
+  /// There is no other path that drains these rows, so an ended loop is an unbounded backlog
+  /// reported as a healthy worker.
+  /// </remarks>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_ATickFails_TheLoopKeepsTickingAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 2, releaseFailures: 0);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    // Ticks pace on a timer the FakeTimeProvider owns; advance until a stats call succeeds.
+    while (!coordinator.StatsSucceeded.Task.IsCompleted && !cts.IsCancellationRequested) {
+      time.Advance(TimeSpan.FromSeconds(30));
+      await Task.Delay(20, testToken);
+    }
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(3)
+      .Because("two ticks failed and a third ran — one failure must not end the loop");
+  }
+
+  /// <summary>
+  /// Cancellation during the loop ends it cleanly rather than faulting.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CanceledMidLoop_StopsWithoutFaultingAsync(CancellationToken testToken) {
+    // Shutdown cancels the stopping token while the worker may be inside a coordinator call.
+    // A fault here surfaces as a failed host shutdown, which reads as a crash.
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 0);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    var executeTask = worker.ExecuteTask;
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a faulted ExecuteAsync turns an ordinary shutdown into a reported crash");
+  }
+
+  /// <summary>
+  /// Cancellation while waiting on the schema gate returns without touching the coordinator.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_NeverStartsAsync(CancellationToken testToken) {
+    // A host that fails during migration stops everything it built. The shipper must not run
+    // recovery against a schema that is not there.
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 0);
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+    services.AddSingleton(new WorkCoordinatorOptions());
+    var sp = services.BuildServiceProvider();
+
+    // Gate never marked ready, and it reports the moment a waiter arrives.
+    var gate = new BlockingGate();
+    var worker = new CoalesceShipWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: _oneGroupResolver(time),
+      timeProvider: time);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Wait for the body to actually park on the gate before stopping. On .NET 10 the base class
+    // dispatches ExecuteAsync through Task.Run, so StartAsync returning proves only that the body
+    // was scheduled — and a work item dequeued after the stopping token is canceled never runs the
+    // delegate at all, settling Canceled, which satisfies IsCompleted && !IsFaulted && zero calls.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    var executeTask = worker.ExecuteTask;
+    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(executeTask.IsCompleted).IsTrue()
+      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a shutdown before the schema exists is an ordinary deploy, not a crash");
+    await Assert.That(coordinator.StatsAttempts).IsEqualTo(0)
+      .Because("nothing may run before the schema the coalesce tables live in exists");
+  }
+
+  #endregion
+
+  [Test]
+  public async Task RunOnce_FullGroup_FoldsImmediately_NoDeadlineWaitAsync() {
+    // #668 H1: under sustained arrivals the slide never goes quiet, so the ONLY trigger
+    // was the MaxDelay deadline — steady-state pending grew to arrival_rate x MaxDelay
+    // (observed: 15.5k rows behind a bulk ingest). A group holding a full chunk is due
+    // NOW: the fold has nothing to gain by waiting and a window of backlog to lose.
+    var (worker, coordinator, _) = _build(configureBinding: c => {
+      c.SlideSeconds = 15;
+      c.MaxDelaySeconds = 120;
+      c.MaxBatchCount = 5;
+    });
+    coordinator.Stats = [_stats("record-digest", count: 5, oldestAge: 3, newestAge: 1)];
+    coordinator.PendingSingles["record-digest"] = _singles(5);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.CompletedFolds.Count).IsEqualTo(1)
+      .Because("a full chunk folds immediately — the deadline is a floor for SMALL groups, "
+             + "not a governor that lets a storm accumulate two minutes of backlog");
+  }
+
+  [Test]
+  public async Task RunOnce_OneGroupFoldThrows_OtherGroupsAndReleaseStillRunAsync() {
+    // #668 H2: the fold loop had no per-group isolation — one group's deterministic
+    // failure (a missing composite JsonTypeInfo, say) aborted the whole tick, skipping
+    // every other group's fold AND the release backstop, wedging ALL coalesce-pending
+    // rows forever (claims exclude them by design; the worker is their only exit).
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FakeCoalesceCoordinator();
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce("record-digest", c => { c.SlideSeconds = 15; c.MaxDelaySeconds = 120; });
+    tagOptions.Coalesce("poison-group", c => { c.SlideSeconds = 15; c.MaxDelaySeconds = 120; });
+    var resolver = new CoalesceGroupResolver(tagOptions, time,
+      () => [
+        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "record-digest"),
+        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "poison-group"),
+      ]);
+    var worker = _buildWorker(coordinator, resolver, time);
+    coordinator.Stats = [
+      _stats("poison-group", count: 3, oldestAge: 130, newestAge: 125),
+      _stats("record-digest", count: 3, oldestAge: 130, newestAge: 125),
+    ];
+    coordinator.FoldThrowsForGroup = "poison-group";
+    coordinator.PendingSingles["poison-group"] = _singles(3);
+    coordinator.PendingSingles["record-digest"] = _singles(3);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.CompletedFolds.Count).IsEqualTo(1)
+      .Because("the healthy group folds despite the poison one — per-group isolation");
+    await Assert.That(coordinator.ReleasedGroups.Count).IsEqualTo(2)
+      .Because("the release backstop runs for every group regardless — it is the LAST exit "
+             + "for rows claims cannot see, and a fold failure must never close it");
+  }
+
+
+  [Test]
+  public async Task RunOnce_Fold_RecordsEachSinglesOwnStreamOnTheCompositeAsync() {
+    // #596 producer half: the composite must CARRY the folded singles' stream identities so
+    // the receiver's expansion can restore them — without this, hundreds of source streams
+    // collapse onto the composite's one stream and serialize behind a single drain lane.
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    var singles = _singles(2);
+    // Capture BEFORE the run: the fake's fetch drains the shared list, and iterating it
+    // afterwards silently asserts nothing.
+    var expectedStreams = singles.ConvertAll(m => m.StreamId);
+    coordinator.PendingSingles["record-digest"] = singles;
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds.Single().Composites.Single();
+    var envelopeJson = composite.Envelope.Payload.GetRawText();
+    await Assert.That(expectedStreams.Count).IsEqualTo(2);
+    foreach (var expected in expectedStreams) {
+      await Assert.That(envelopeJson).Contains(expected.ToString()!)
+        .Because("each folded single's stream id rides the wire — the composite is transport "
+               + "packaging, not a stream-identity rewrite");
+    }
+  }
+
 }

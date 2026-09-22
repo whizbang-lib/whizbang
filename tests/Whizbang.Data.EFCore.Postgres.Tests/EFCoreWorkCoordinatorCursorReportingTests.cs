@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// A level-agnostic capturing logger keeps every diagnostic logging branch live.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
+[Category("Shard2")]
 public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
 
   // --------------------------------------------------------------------------
@@ -234,7 +235,7 @@ public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("name", perspectiveName);
     ins.Parameters.AddWithValue("last_event", (object?)lastEventId ?? DBNull.Value);
-    ins.Parameters.AddWithValue("status", status);
+    ins.Parameters.AddWithValue(nameof(status), status);
     await ins.ExecuteNonQueryAsync();
   }
 

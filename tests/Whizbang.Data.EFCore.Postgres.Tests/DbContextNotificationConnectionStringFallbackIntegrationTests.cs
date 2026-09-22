@@ -12,8 +12,7 @@ using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// End-to-end regression for a consumer's Azure SCRAM-SHA-256 incident.
@@ -50,6 +49,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// test fails at OpenAsync with the production-equivalent error.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFCoreTestBase {
 
   /// <summary>
@@ -70,10 +70,9 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
       var ctx = probeScope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
       await ctx.Database.OpenConnectionAsync();
       var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
-      await using (var cmd = new NpgsqlCommand("SELECT 1", conn)) {
-        var result = await cmd.ExecuteScalarAsync();
-        await Assert.That(result).IsEqualTo(1);
-      }
+      await using var cmd = new NpgsqlCommand("SELECT 1", conn);
+      var result = await cmd.ExecuteScalarAsync();
+      await Assert.That(result).IsEqualTo(1);
       // At this point `conn.ConnectionString` no longer contains "Password=" —
       // Npgsql strips it for security once auth completes.
     }
@@ -96,10 +95,9 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
     // the regression is reproducible here.
     await using var freshConn = new NpgsqlConnection(resolution.ConnectionString);
     await freshConn.OpenAsync();
-    await using (var verify = new NpgsqlCommand("SELECT 1", freshConn)) {
-      var got = await verify.ExecuteScalarAsync();
-      await Assert.That(got).IsEqualTo(1);
-    }
+    await using var verify = new NpgsqlCommand("SELECT 1", freshConn);
+    var got = await verify.ExecuteScalarAsync();
+    await Assert.That(got).IsEqualTo(1);
   }
 
   /// <summary>

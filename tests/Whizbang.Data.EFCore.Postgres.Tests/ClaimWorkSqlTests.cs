@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Foundational contract tests for Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+[Category("Shard2")]
 public class ClaimWorkSqlTests : EFCoreTestBase {
 
   /// <summary>
@@ -62,11 +63,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     var args = (string?)await command.ExecuteScalarAsync();
 
     await Assert.That(args).IsNotNull();
-    await Assert.That(args!).Contains("p_instance_id uuid");
-    await Assert.That(args!).Contains("p_service_name text");
-    await Assert.That(args!).Contains("p_max_streams integer");
-    await Assert.That(args!).Contains("p_partition_count integer");
-    await Assert.That(args!).Contains("p_lease_seconds integer");
+    await Assert.That(args).Contains("p_instance_id uuid");
+    await Assert.That(args).Contains("p_service_name text");
+    await Assert.That(args).Contains("p_max_streams integer");
+    await Assert.That(args).Contains("p_partition_count integer");
+    await Assert.That(args).Contains("p_lease_seconds integer");
   }
 
   /// <summary>
@@ -284,9 +285,15 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
 
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 0, 0, NOW(), @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 0, 0, 0 FROM m";
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();
@@ -376,14 +383,19 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Two-tier perspective fairness: streams with ≤ 100 pending events come BEFORE streams
-  /// with > 100 pending events in the claim_work return. Without this, a single huge stream
-  /// could starve many small streams behind it on every claim cycle. This test seeds one
-  /// large stream (200 events) and one small stream (1 event), then asserts the small one
-  /// is returned first.
+  /// A large held stream does not displace a small one from the re-offer, and within a priority the
+  /// stream with the oldest held event comes first.
   /// </summary>
+  /// <remarks>
+  /// The re-offer once ranked every held event to put streams with a hundred or fewer pending
+  /// events ahead of larger ones. That tier guarded a batch of rows against one large stream; the
+  /// drain has been per stream with an unbounded channel since Phase H, so a large stream no longer
+  /// displaces small ones, and the aggregate cost the tier paid on every poll was most of a busy
+  /// instance's poll (158). The re-offer now enumerates held streams most urgent first and, within a
+  /// priority, by their oldest held event.
+  /// </remarks>
   [Test]
-  public async Task ClaimWork_PerspectiveTwoTierFairness_SmallStreamReturnsBeforeLargeAsync() {
+  public async Task ClaimWork_Perspective_ALargeStreamDoesNotDisplaceASmallOne_OldestEventFirstAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -403,22 +415,27 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await hb.ExecuteNonQueryAsync();
     }
 
-    // Seed 200 events on the large stream + 1 event on the small stream, all owned by us.
+    // 200 events on the large stream, then one on the small stream, all held by us. Event ids are
+    // time-ordered (v7) as they are in production, so the large stream's events are the older ones.
+    var largeEventIds = Enumerable.Range(0, 200).Select(_ => Guid.CreateVersion7()).ToArray();
+    var smallEventId = Guid.CreateVersion7();
     await using (var bulk = connection.CreateCommand()) {
       bulk.CommandText = @"
         INSERT INTO wh_perspective_events
           (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
            instance_id, lease_expiry)
-        SELECT gen_random_uuid(), gen_random_uuid(), @largeStream, 'TestPerspective', 0, 0, NOW(),
+        SELECT gen_random_uuid(), e, @largeStream, 'TestPerspective', 0, 0, NOW(),
                @inst, NOW() + INTERVAL '5 minutes'
-        FROM generate_series(1, 200);
+        FROM unnest(@largeEvents) AS e;
 
         INSERT INTO wh_perspective_events
           (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
            instance_id, lease_expiry)
-        VALUES (gen_random_uuid(), gen_random_uuid(), @smallStream, 'TestPerspective', 0, 0, NOW(),
+        VALUES (gen_random_uuid(), @smallEvent, @smallStream, 'TestPerspective', 0, 0, NOW(),
                 @inst, NOW() + INTERVAL '5 minutes');";
       bulk.Parameters.AddWithValue("largeStream", largeStreamId);
+      bulk.Parameters.AddWithValue("largeEvents", largeEventIds);
+      bulk.Parameters.AddWithValue("smallEvent", smallEventId);
       bulk.Parameters.AddWithValue("smallStream", smallStreamId);
       bulk.Parameters.AddWithValue("inst", instanceId);
       await bulk.ExecuteNonQueryAsync();
@@ -446,13 +463,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       }
     }
 
-    var smallIdx = perspectiveStreams.IndexOf(smallStreamId);
-    var largeIdx = perspectiveStreams.IndexOf(largeStreamId);
-
-    await Assert.That(smallIdx).IsGreaterThanOrEqualTo(0)
-      .Because("Small stream must appear in the result set");
-    await Assert.That(smallIdx).IsLessThan(largeIdx == -1 ? int.MaxValue : largeIdx)
-      .Because("Two-tier fairness — small stream must come BEFORE large stream");
+    await Assert.That(perspectiveStreams).Contains(smallStreamId)
+      .Because("a held stream is re-offered whatever else the instance holds; the large stream does not displace it");
+    await Assert.That(perspectiveStreams).Contains(largeStreamId);
+    await Assert.That(perspectiveStreams.IndexOf(largeStreamId)).IsLessThan(perspectiveStreams.IndexOf(smallStreamId))
+      .Because("within a priority the stream with the oldest held event is re-offered first");
   }
 
   /// <summary>
@@ -879,13 +894,20 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     // by all four inbox predicates, but its event_id is already in wh_event_store.
     await using (var inbox = connection.CreateCommand()) {
       inbox.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, scope,
-           stream_id, instance_id, lease_expiry, processed_at, is_event,
-           status, attempts, received_at, partition_number)
-        VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
-                @stream, @inst, NOW() + INTERVAL '5 minutes', NULL, true,
-                0, 0, NOW(), 1)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, scope,
+             stream_id, is_event, received_at)
+          VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
+                  @stream, true, NOW())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           instance_id, lease_expiry, processed_at, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               @inst, NOW() + INTERVAL '5 minutes', NULL::timestamptz,
+               0, 0, 1 FROM m";
       inbox.Parameters.AddWithValue("mid", eventId);
       inbox.Parameters.AddWithValue("stream", streamId);
       inbox.Parameters.AddWithValue("inst", instanceId);
@@ -915,7 +937,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     await using (var flush = connection.CreateCommand()) {
@@ -937,7 +959,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       .Because("emit_chain MUST be idempotent against pre-emitted events — its internal NOT EXISTS check + ON CONFLICT DO NOTHING guarantee no duplicate wh_event_store rows. This is the lock-in invariant that lets v0.684 ship the cheaper guard safely.");
   }
 
-  private async Task<_InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
+  private async Task<InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
       int seedOutbox, int seedInbox, int seedPerspective, int seedReceptor) {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -971,14 +993,23 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await using var ins = connection.CreateCommand();
       // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
       // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
-      ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, scope,
-           stream_id, instance_id, lease_expiry, processed_at, is_event,
-           status, attempts, received_at, partition_number)
-        VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
-                @stream, NULL, NULL, NULL, true,
-                0, 0, NOW(), 1)";
+      ins.CommandText = """
+
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, scope,
+             stream_id, is_event, received_at)
+          VALUES (@msg, 'TestHandler', 'Test', '{"p": {}}'::jsonb, '{}'::jsonb, NULL,
+                  @stream, true, NOW())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           instance_id, lease_expiry, processed_at, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               NULL::uuid, NULL::timestamptz, NULL::timestamptz,
+               0, 0, 1 FROM m
+""";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();
@@ -1026,7 +1057,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     // pg_stat_user_functions is populated by the async stats collector — without an
@@ -1036,7 +1067,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await flush.ExecuteNonQueryAsync();
     }
 
-    return new _InnerCallCounts(
+    return new InnerCallCounts(
       OutboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_outbox'"),
       InboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_inbox'"),
       PerspectiveCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_perspective_events'"),
@@ -1051,7 +1082,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     return result is null or DBNull ? 0L : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private readonly record struct _InnerCallCounts(
+  private readonly record struct InnerCallCounts(
     long OutboxCalls,
     long InboxCalls,
     long PerspectiveCalls,

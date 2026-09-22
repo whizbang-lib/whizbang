@@ -36,14 +36,12 @@ namespace Whizbang.Core.Workers;
 /// <docs>internals/stream-affinity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerStreamSerializerTests.cs</tests>
 public sealed class PerStreamSerializer<T> : IAsyncDisposable {
-  private static readonly Guid _defaultStreamKey = Guid.Empty;
-
   private readonly Func<T, Guid?> _streamIdSelector;
   private readonly Func<T, CancellationToken, Task> _processor;
   private readonly PerStreamSerializerOptions _options;
   private readonly IComparer<T>? _sortComparer;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamChannel> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -55,17 +53,17 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   /// </summary>
   /// <param name="streamIdSelector">Extracts the stream-affinity key from each item; null returns route to a shared default channel.</param>
   /// <param name="processor">Per-item handler; called serially within a stream, in parallel across streams.</param>
-  /// <param name="options">Tuning knobs (channel capacity, drain window, idle eviction). Defaults if null.</param>
+  /// <param name="logger">Logger; processor exceptions get logged at Error.</param>
   /// <param name="sortComparer">Optional sort applied to each batch within a drain window — resolves brief enqueue races between concurrent producers.</param>
+  /// <param name="options">Tuning knobs (channel capacity, drain window, idle eviction). Defaults if null.</param>
   /// <param name="timeProvider">Time source for idle eviction + drain-window timing. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; processor exceptions get logged at Error.</param>
   public PerStreamSerializer(
       Func<T, Guid?> streamIdSelector,
       Func<T, CancellationToken, Task> processor,
-      PerStreamSerializerOptions? options = null,
+      ILogger logger,
       IComparer<T>? sortComparer = null,
-      TimeProvider? timeProvider = null,
-      ILogger<PerStreamSerializer<T>>? logger = null) {
+      PerStreamSerializerOptions? options = null,
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(streamIdSelector);
     ArgumentNullException.ThrowIfNull(processor);
     _streamIdSelector = streamIdSelector;
@@ -76,8 +74,8 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      _ => _ = _runIdleSweepAsync(),
-      state: null,
+      static state => ((PerStreamSerializer<T>)state!)._fireAndForgetIdleSweep(),
+      state: this,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
   }
@@ -91,7 +89,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   /// </summary>
   public async ValueTask EnqueueAsync(T item, CancellationToken cancellationToken = default) {
     ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-    var key = _streamIdSelector(item) ?? _defaultStreamKey;
+    var key = _streamIdSelector(item) ?? Guid.Empty;
     var stream = _streams.GetOrAdd(key, k => _createStreamChannel(k));
     stream.LastActivity = _timeProvider.GetUtcNow();
     await stream.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
@@ -114,7 +112,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       // shutdown deadline hit; remaining workers will observe _stopCts when canceled
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }
@@ -225,6 +223,11 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     }
   }
 
+  // The timer callback is static so the timer does not root a closure; the sweep runs fire-and-forget.
+
+  private void _fireAndForgetIdleSweep() => _ = _runIdleSweepAsync();
+
+
   private async Task _runIdleSweepAsync() {
     if (Volatile.Read(ref _disposed) != 0) {
       return;
@@ -249,7 +252,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
 
   private void _logUnhandledProcessorException(Exception ex, Guid streamKey) {
 #pragma warning disable CA1848
-    _logger?.LogError(ex,
+    _logger.LogError(ex,
       "PerStreamSerializer<{ItemType}>: processor threw for stream {StreamKey}; continuing",
       typeof(T).Name, streamKey);
 #pragma warning restore CA1848

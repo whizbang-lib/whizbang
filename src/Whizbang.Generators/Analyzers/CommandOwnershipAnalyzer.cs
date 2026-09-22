@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -48,13 +49,13 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Error,
     isEnabledByDefault: true,
-    customTags: [WellKnownDiagnosticTags.CompilationEnd],
     description: "One service owns each command type (single-handler command semantics). Under "
       + "per-namespace command inboxes, every inbox receptor's service subscribes to the "
       + "command namespace's inbox entity — a second receptor class for the same command means "
       + "a second claim on that entity, and every command would be delivered and handled twice. "
       + "Cross-service duplicates are caught at runtime by the provisioning topology-drift "
-      + "check; this rule catches the duplicate registration units visible at build time.");
+      + "check; this rule catches the duplicate registration units visible at build time.",
+    customTags: WellKnownDiagnosticTags.CompilationEnd);
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
@@ -107,7 +108,7 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
     }
 
     foreach (var iface in classSymbol.AllInterfaces) {
-      var display = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var display = TypeNameUtilities.FullyQualified(iface.OriginalDefinition);
       if ((!display.StartsWith(IRECEPTOR_PREFIX, System.StringComparison.Ordinal)
            && !display.StartsWith(ISYNCRECEPTOR_PREFIX, System.StringComparison.Ordinal))
           || iface.TypeArguments.Length == 0) {
@@ -121,11 +122,9 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
-      var commandName = messageType
-        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      var commandName = TypeNameUtilities.FullyQualified(messageType)
         .Replace("global::", "");
-      var receptorName = classSymbol
-        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      var receptorName = TypeNameUtilities.FullyQualified(classSymbol)
         .Replace("global::", "");
       var location = classSymbol.Locations.FirstOrDefault() ?? Location.None;
 

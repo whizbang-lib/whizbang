@@ -14,6 +14,16 @@ namespace Whizbang.Core.Observability;
 internal sealed class CascadeEnvelopeWrapper(IMessageEnvelope inner) : IMessageEnvelope {
   private readonly IMessageEnvelope _inner = inner;
 
+  /// <summary>
+  /// The id of the cascaded message this wrapper carries into a nested local dispatch. The wrapper
+  /// reports the inbound message's <see cref="MessageId"/> and handler, so without an anchor a receptor
+  /// handling the cascaded message would derive the same emission ids as the top-level handler and its
+  /// emissions would be silently deduplicated. Emissions made through this wrapper derive from the anchor
+  /// instead (see <see cref="Messaging.EmissionIdentity"/>). Null only when the cascade had no source.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
+  public Guid? EmissionAnchor { get; init; }
+
   public int Version => _inner.Version;
   public MessageDispatchContext DispatchContext { get; } = inner.DispatchContext.WithDefaultDispatch();
   public MessageId MessageId => _inner.MessageId;

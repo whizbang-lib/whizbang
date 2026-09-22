@@ -7,6 +7,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests to inspect the actual database schema created by EF Core.
 /// Used to debug column naming issues.
 /// </summary>
+[Category("Shard4")]
 public class SchemaInspectionTests : EFCoreTestBase {
   [Test]
   public async Task InspectPerspectiveTableSchema_ShouldShowActualColumnNamesAsync() {

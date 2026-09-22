@@ -11,8 +11,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 5 of zero-idle-polling — locks the opportunistic heartbeat
@@ -34,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+[Category("Shard4")]
 public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
 
   private sealed class StubInstanceProvider(Guid id) : IServiceInstanceProvider {

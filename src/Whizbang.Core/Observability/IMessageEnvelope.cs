@@ -14,7 +14,7 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
-public interface IMessageEnvelope {
+public interface IMessageEnvelope : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Envelope schema version. Enables backward-compatible evolution of the envelope format.
   /// Version 1: original (MessageId, Payload, Hops).
@@ -125,7 +125,7 @@ public interface IMessageEnvelope {
   /// </summary>
   List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() =>
     throw new System.NotSupportedException(
-      $"Envelope type '{GetType().FullName}' does not support receptor invocation tracking. " +
+      $"Envelope type '{TypeNameFormatter.DisplayName(GetType())}' does not support receptor invocation tracking. " +
       "Use MessageEnvelope<T> or implement IMessageEnvelope.GetOrCreateReceptorInvocations explicitly.");
 
   /// <summary>
@@ -171,7 +171,7 @@ public interface IMessageEnvelope {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The merged ScopeContext from all current hops, or null if no hops have scope deltas</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Integration.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
   ScopeContext? GetCurrentScope();
 
   /// <summary>
@@ -204,6 +204,10 @@ public interface IMessageEnvelope {
   /// <docs>resilience/stream-integrity</docs>
   [JsonPropertyName("sto")]
   bool StateOnly => false;
+
+  /// <summary>The priority the producer declared (lower is more urgent; 0 = not declared).</summary>
+  /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
+  int Whizbang.Core.Priority.IPrioritized.Priority => 0;
 
 }
 

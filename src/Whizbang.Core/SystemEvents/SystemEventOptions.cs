@@ -151,6 +151,32 @@ public sealed class SystemEventOptions {
   public int AuditShipMaxBatchCount { get; set; } = 500;
 
   /// <summary>
+  /// The band audit records are written on. Default: <see cref="Priority.WorkPriority.IDLE"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Audit is durable, not real-time, and it is most of what a bulk load generates: the records
+  /// are read days later if at all, while the work they describe is what a person is waiting on.
+  /// The idle band is the one the claim withholds while the service is busy, so this is where they
+  /// belong -- and withholding is bounded by time, not by the service happening to go quiet, so an
+  /// idle record is delayed and never dropped. A busy service still takes a slice of the band past
+  /// the trickle bound, and clears it whole past the forced-drain bound however busy it is.
+  /// </para>
+  /// <para>
+  /// Set it to <see cref="Priority.WorkPriority.BACKGROUND"/> to restore the pre-idle behavior,
+  /// where audit competes with ordinary bulk work. Do that when something downstream reads the
+  /// audit trail on a deadline -- a live compliance feed, an export a person is waiting for -- and
+  /// say so where you set it, because the reason is not visible from the audit code.
+  /// </para>
+  /// <para>
+  /// This is the ONE place the band is chosen. Every writer of an audit record reads it, so the
+  /// record, the envelope it travels in and the queue row it lands on cannot disagree.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
+  public int AuditPriority { get; set; } = Priority.WorkPriority.IDLE;
+
+  /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
   /// When enabled, an EventAudited is emitted for each domain event appended.
   /// </summary>
@@ -279,6 +305,13 @@ public sealed class SystemEventOptions {
 
     if (systemEventType == typeof(CommandAudited)) {
       return CommandAuditEnabled;
+    }
+
+    // An index advisory is a perspective-related finding, so it rides the flag that already covers
+    // them rather than adding another switch for one event. A host that wants perspective events
+    // wants to hear this one too; a host that does not is not asking to be advised.
+    if (systemEventType == typeof(PerspectiveIndexAdvised)) {
+      return PerspectiveEventsEnabled;
     }
 
     // Add more system event type checks as they are added

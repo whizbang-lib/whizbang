@@ -11,7 +11,7 @@ namespace Whizbang.Generators.Sagas;
 /// <param name="LifecycleStage">Fully qualified <c>LifecycleStage</c> enum member the emitted
 /// <c>[FireAt]</c> names, or <c>null</c> when the receptor carries no <c>[FireAt]</c> and takes the
 /// default stage.</param>
-internal sealed record SagaRecoveryReceptorShape(
+public sealed record SagaRecoveryReceptorShape(
     string ClassName,
     string? SagaEventClassName,
     string? FrameworkMessageType,
@@ -33,19 +33,19 @@ internal sealed record SagaRecoveryReceptorShape(
 /// stage here stops matching.</para>
 /// </summary>
 /// <docs>fundamentals/sagas/completion-orchestration</docs>
-internal static class SagaRecoveryReceptorShapes {
+public static class SagaRecoveryReceptorShapes {
   /// <summary>Stage the two per-item terminal handlers declare via <c>[FireAt]</c>.</summary>
   private const string POST_ALL_PERSPECTIVES_INLINE =
       "global::Whizbang.Core.Messaging.LifecycleStage.PostAllPerspectivesInline";
 
   /// <summary>The framework-owned tick event the watchdog handler receives — shared by every saga.</summary>
-  public const string WATCHDOG_TICK_EVENT = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent";
+  internal const string WATCHDOG_TICK_EVENT = "Whizbang.Sagas.SagaCompletionWatchdogTickEvent";
 
   /// <summary>
   /// Named argument on <c>[Saga]</c> that suppresses the generated service — and with it these
   /// receptors, which take that service as their constructor dependency.
   /// </summary>
-  public const string GENERATE_SERVICE_ARGUMENT = "GenerateService";
+  internal const string GENERATE_SERVICE_ARGUMENT = "GenerateService";
 
   /// <summary>
   /// Every recovery receptor the generator emits, in emission order. Mirrors

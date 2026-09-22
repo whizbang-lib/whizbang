@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard4")]
 public class IntegrityLedgerMigrationRerunSqlTests : EFCoreTestBase {
 
   /// <summary>The parts of 090 that must survive re-application, verbatim in shape.</summary>

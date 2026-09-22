@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core;
@@ -12,7 +13,7 @@ namespace Whizbang.Core;
 /// reaper (<see cref="Destruction.WhenConsumed"/>) and the rebuild/rewind guards derive it from the
 /// catalog at startup through this seam rather than a database round-trip.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/events</docs>
 public interface IEphemeralModeResolver {
   /// <summary>
   /// The ephemeral mode of the event type whose CLR name is <paramref name="clrTypeName"/> (the
@@ -22,17 +23,17 @@ public interface IEphemeralModeResolver {
   EphemeralInfo? Resolve(string clrTypeName);
 
   /// <summary>
-  /// <c>true</c> when the type is declared ephemeral (carries an <see cref="EphemeralInfo"/> in the
-  /// catalog); <c>false</c> for Sourced or unknown types.
-  /// </summary>
-  bool IsEphemeral(string clrTypeName);
-
-  /// <summary>
   /// The ephemeral mode of the runtime <paramref name="type"/> (the dispatch path — <c>payload.GetType()</c>),
   /// or <c>null</c> when it is Sourced or not in the catalog. Keyed on the catalog's own <see cref="Type"/>
   /// objects, so it is a reference-equality dictionary probe with no string formatting.
   /// </summary>
   EphemeralInfo? Resolve(Type type);
+
+  /// <summary>
+  /// <c>true</c> when the type is declared ephemeral (carries an <see cref="EphemeralInfo"/> in the
+  /// catalog); <c>false</c> for Sourced or unknown types.
+  /// </summary>
+  bool IsEphemeral(string clrTypeName);
 
   /// <summary>
   /// <c>true</c> when the runtime <paramref name="type"/> is declared ephemeral; <c>false</c> for Sourced
@@ -62,11 +63,9 @@ public sealed class EphemeralModeResolver : IEphemeralModeResolver {
     ArgumentNullException.ThrowIfNull(catalog);
     _byClrTypeName = new Dictionary<string, EphemeralInfo>(StringComparer.Ordinal);
     _byType = [];
-    foreach (var entry in catalog.GetAll()) {
-      if (entry.Ephemeral is not null) {
-        _byClrTypeName[entry.ClrTypeName] = entry.Ephemeral;
-        _byType[entry.Type] = entry.Ephemeral;
-      }
+    foreach (var entry in catalog.GetAll().Where(e => e.Ephemeral is not null)) {
+      _byClrTypeName[entry.ClrTypeName] = entry.Ephemeral!;
+      _byType[entry.Type] = entry.Ephemeral!;
     }
   }
 
@@ -75,11 +74,11 @@ public sealed class EphemeralModeResolver : IEphemeralModeResolver {
     _byClrTypeName.TryGetValue(clrTypeName, out var info) ? info : null;
 
   /// <inheritdoc/>
-  public bool IsEphemeral(string clrTypeName) => _byClrTypeName.ContainsKey(clrTypeName);
-
-  /// <inheritdoc/>
   public EphemeralInfo? Resolve(Type type) =>
     type is not null && _byType.TryGetValue(type, out var info) ? info : null;
+
+  /// <inheritdoc/>
+  public bool IsEphemeral(string clrTypeName) => _byClrTypeName.ContainsKey(clrTypeName);
 
   /// <inheritdoc/>
   public bool IsEphemeral(Type type) => type is not null && _byType.ContainsKey(type);

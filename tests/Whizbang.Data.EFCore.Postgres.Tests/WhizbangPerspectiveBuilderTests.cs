@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Verifies constructor validation and Services property access.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard1")]
 public class WhizbangPerspectiveBuilderTests {
   [Test]
   public async Task Constructor_WithValidServices_InitializesSuccessfullyAsync() {

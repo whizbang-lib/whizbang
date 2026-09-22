@@ -37,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// count on the round-trip integrity query.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard2")]
 public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
 
   // Realistic multi-line stacks across the three source-table failure modes
@@ -93,13 +94,19 @@ public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
   private static async Task _seedInboxAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
-      INSERT INTO wh_inbox (
-        message_id, handler_name, message_type, event_data, metadata,
-        status, attempts, received_at, partition_number
-      ) VALUES (
-        @id, 'TestHandler', 'TestMessage', '{}'::jsonb, '{}'::jsonb,
-        1, 11, NOW(), 0
+      WITH m AS (
+        INSERT INTO wh_inbox (
+          message_id, handler_name, message_type, event_data, metadata, received_at
+        ) VALUES (
+          @id, 'TestHandler', 'TestMessage', '{}'::jsonb, '{}'::jsonb, NOW()
+        )
+        RETURNING message_id, stream_id, received_at, priority, is_event
       )
+      INSERT INTO wh_inbox_state (
+        message_id, stream_id, received_at, priority, is_event,
+        status, attempts, partition_number
+      )
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 11, 0 FROM m
       """;
     cmd.Parameters.AddWithValue("id", messageId);
     await cmd.ExecuteNonQueryAsync();

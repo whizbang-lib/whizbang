@@ -16,9 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs</tests>
 [Category("Integration")]
+[Category("Shard4")]
 public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
-  private readonly Uuid7IdProvider _idProvider = new();
-
   private IServiceProvider BuildServiceProvider() {
     var services = new ServiceCollection();
 
@@ -214,13 +213,12 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
     }
 
     // Act - Create scope, use it, and dispose
-    LensQueryScope<Order>? scopedQuery = factory.CreateScoped();
+    var scopedQuery = factory.CreateScoped();
     var count = await scopedQuery.Value.Query.CountAsync();
     await Assert.That(count).IsEqualTo(1);
 
     // Dispose the scope
     scopedQuery.Dispose();
-    scopedQuery = null;
 
     // Assert - Should be able to create new scope after disposal
     using var newScope = factory.CreateScoped();

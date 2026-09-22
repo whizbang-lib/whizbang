@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -74,12 +75,12 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   [Test]
-  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -88,13 +89,13 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   [Test]
-  public async Task SendAsync_WithDispatchOptionsAndCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithDispatchOptionsAndCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     var context = MessageContext.New();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -123,22 +124,29 @@ public sealed class DispatcherOptionsAndRoutingTests {
 
   [Test]
   public async Task LocalInvokeAsync_Void_WithDispatchOptions_CompletesSuccessfullyAsync() {
-    // Arrange
+    // Arrange - a payload unique to this test so the assertion below survives the other tests in
+    // this class dispatching TestCommand in parallel.
     var dispatcher = _createDispatcher();
-    var command = new TestCommand("test data");
+    var data = $"void-invoke-{Guid.NewGuid():N}";
+    var command = new TestCommand(data);
     var options = new DispatchOptions();
 
-    // Act & Assert - should not throw
+    // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the void overload returns nothing, so "completed successfully" is indistinguishable
+    // from "found no receptor and quietly did nothing" unless the receptor itself is the witness.
+    await Assert.That(TestCommandVoidReceptor.Handled).Contains(data)
+      .Because("the DispatchOptions overload must still reach the void receptor, not just return");
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithDispatchOptionsAndCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithDispatchOptionsAndCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -351,7 +359,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
 
     // Register service instance provider (required dependency)
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register test receptors
     services.AddReceptors();
@@ -376,7 +384,14 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   public class TestCommandVoidReceptor : IReceptor<TestCommand> {
+    /// <summary>
+    /// Payloads this receptor has actually handled. The void overloads return nothing, so this is
+    /// the only witness that a dispatch reached a receptor rather than silently finding none.
+    /// </summary>
+    public static System.Collections.Concurrent.ConcurrentBag<string> Handled { get; } = [];
+
     public ValueTask HandleAsync(TestCommand message, CancellationToken cancellationToken = default) {
+      Handled.Add(message.Data);
       return ValueTask.CompletedTask;
     }
   }

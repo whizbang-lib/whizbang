@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Utilities;
 
@@ -95,7 +96,7 @@ internal static class EphemeralResolver {
       attr = _on(b);
     }
     if (attr is null) {
-      foreach (var iface in type.AllInterfaces.OrderBy(i => i.ToDisplayString(), StringComparer.Ordinal)) {
+      foreach (var iface in type.AllInterfaces.OrderBy(i => TypeNameUtilities.Display(i), StringComparer.Ordinal)) {
         attr = _on(iface);
         if (attr is not null) {
           break;

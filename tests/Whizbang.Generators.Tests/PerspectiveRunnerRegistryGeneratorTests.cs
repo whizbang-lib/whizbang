@@ -417,7 +417,7 @@ namespace TestNamespace {
 
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("BulkRetagCollectiveEvent")
+    await Assert.That(registrySource).Contains("BulkRetagCollectiveEvent")
       .Because("Collective events handled via [CollectiveApplyFor] are polymorphically deserialized by the " +
         "__collective__ sink, so they must appear in _allEventTypes / GetEventTypes() even though they have " +
         "no IPerspectiveFor perspective.");

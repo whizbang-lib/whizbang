@@ -12,23 +12,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Each test resets static state via reflection to ensure isolation.
 /// </summary>
 [NotInParallel("DbContextRegistrationRegistry")]
+[Category("Shard2")]
 public class DbContextRegistrationRegistryTests {
   [Before(Test)]
-  public void ResetStaticState() {
-    // Reset _registrations list
-    var registrationsField = typeof(DbContextRegistrationRegistry)
-        .GetField("_registrations", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var list = (System.Collections.IList)registrationsField.GetValue(null)!;
-    list.Clear();
-
-    // Reset _invoked ConditionalWeakTable by replacing it
-    var invokedField = typeof(DbContextRegistrationRegistry)
-        .GetField("_invoked", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var table = invokedField.GetValue(null)!;
-    // ConditionalWeakTable has Clear() in .NET 9+
-    var clearMethod = table.GetType().GetMethod("Clear")!;
-    clearMethod.Invoke(table, null);
-  }
+  public void ResetStaticState() => DbContextRegistrationRegistry.ResetForTesting();
 
   [Test]
   public async Task InvokeRegistration_CallsMatchingCallbackAsync() {

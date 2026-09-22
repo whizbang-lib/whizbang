@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>The tests in this file lock both halves into regression coverage so future
 /// refactors don't silently revert the perf shape or drop the wire-up.</para>
 /// </summary>
+[Category("Shard4")]
 public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   // ============================================================================
@@ -89,15 +90,18 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, pinnedStream, partitionNumber: 0, instanceA);
 
     var unclaimedStream = (Guid)TrackedGuid.NewMedo();
-    // partition 7 % 3 = rank 1 → instanceB.
+    // partition 7 % 3 = rank 1 → instanceB. The ledger carries the number and no owner: that is
+    // what "unclaimed" means to Step 2, and the ledger is where the number comes from now that a
+    // doorbell no longer recovers it by reading the queue table.
     await _insertOutboxRowAsync(conn, unclaimedStream, partitionNumber: 7);
+    await _upsertActiveStreamAsync(conn, unclaimedStream, partitionNumber: 7, owner: null);
 
     var received = await _captureNotificationsAsync(
       conn,
       instancesToListen: [instanceA, instanceB, instanceC],
       emit: async () => await _callNotifyInstanceOwnersAsync(conn, "outbox", pinnedStream, unclaimedStream));
 
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToHashSet();
+    var channels = received.Select(r => r.Channel).Order().ToHashSet();
     await Assert.That(channels).Contains($"wh_work_i_{instanceA}")
       .Because("Step 1 must still emit to the pinned owner.");
     await Assert.That(channels).Contains($"wh_work_i_{instanceB}")
@@ -211,7 +215,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
     var byChannel = received
       .GroupBy(r => r.Channel)
-      .ToDictionary(g => g.Key, g => g.Select(r => r.Payload).OrderBy(p => p).ToList());
+      .ToDictionary(g => g.Key, g => g.Select(r => r.Payload).Order().ToList());
 
     await Assert.That(byChannel.ContainsKey($"wh_work_i_{instanceA}")).IsTrue()
       .Because("Caller (instanceA) pins the stream, so Step 1 routes both notifies to the caller's channel.");
@@ -283,7 +287,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       conn,
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, firstJson));
-    var firstPayloads = firstReceived.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var firstPayloads = firstReceived.Select(r => r.Payload).Order().ToList();
     await Assert.That(firstPayloads).Contains("outbox");
     await Assert.That(firstPayloads).Contains("perspective");
 
@@ -353,7 +357,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, json));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("'outbox' notify must fire for non-event messages too — they still need transport pickup.");
     await Assert.That(payloads.Contains("perspective")).IsFalse()
@@ -425,7 +429,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var received = await _captureNotificationsAsync(conn, [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]"));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("A store into a drained stream must re-arm transport pickup immediately.");
     await Assert.That(payloads).Contains("perspective")
@@ -541,7 +545,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await using var holderTx = await holderConn.BeginTransactionAsync();
     await using (var complete = holderConn.CreateCommand()) {
       complete.Transaction = holderTx;
-      complete.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+      complete.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
       complete.Parameters.AddWithValue("mid", firstMsgId);
       _ = await complete.ExecuteNonQueryAsync();
     }
@@ -598,7 +602,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, json));
 
-    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    var payloads = received.Select(r => r.Payload).Order().ToList();
     await Assert.That(payloads).Contains("outbox")
       .Because("Transport pickup is still owed for the new outbox row.");
     await Assert.That(payloads.Contains("perspective")).IsFalse()
@@ -624,7 +628,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   private static async Task _markInboxDrainedAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+    cmd.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
     cmd.Parameters.AddWithValue("mid", messageId);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -645,7 +649,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   private static async Task _deferInboxRowAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE message_id = @mid";
+    cmd.CommandText = "UPDATE wh_inbox_state SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE message_id = @mid";
     cmd.Parameters.AddWithValue("mid", messageId);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -658,6 +662,15 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
+    }
+    // These tests lock the emptiness-probe edge semantics, which sit UPSTREAM of the 130
+    // doorbell debounce: same-kind repeat notifies within the debounce window are
+    // deliberately suppressed in production (the drain linger covers them), which would
+    // mask the probe behavior under test. Debounce off — its own contract is locked by
+    // NotifyDebounceSqlTests.
+    await using (var off = conn.CreateCommand()) {
+      off.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
+      await off.ExecuteNonQueryAsync();
     }
     return conn;
   }
@@ -677,6 +690,12 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       await using var ping = conn.CreateCommand();
       ping.CommandText = "SELECT 1";
@@ -696,7 +715,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, string payload, params Guid[] streamIds) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT notify_instance_owners(@payload, @ids)";
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
       Value = streamIds
     });

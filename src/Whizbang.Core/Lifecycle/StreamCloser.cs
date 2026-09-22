@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lifecycle;
 /// A close is a stream-granularity destruction (<see cref="DestructionReason.PeriodClose"/>), so it reuses
 /// the same <see cref="IDestructionHook"/> the ephemeral reaper uses.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IStreamCloser {
   /// <summary>
   /// Close <paramref name="streamId"/> through <paramref name="throughVersion"/>: fire the awaited
@@ -28,17 +28,11 @@ public interface IStreamCloser {
 /// registered it is a thin pass-through to the gated truncate.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed partial class StreamCloser : IStreamCloser {
-  private readonly IWorkCoordinator _coordinator;
-  private readonly ILogger<StreamCloser> _logger;
-  private readonly IDestructionHook? _hook;
-
-  /// <summary>Creates a closer over the coordinator, with an optional destruction hook.</summary>
-  public StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook? hook = null) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _hook = hook;
-  }
+/// <remarks>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</remarks>
+public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) : IStreamCloser {
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly ILogger<StreamCloser> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly IDestructionHook _hook = hook;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
@@ -66,24 +60,8 @@ public sealed partial class StreamCloser : IStreamCloser {
     // truncate. Cancel or Defer vetoes the close (nothing is truncated). A THROWING pre-hook aborts the
     // close — durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
     // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
-    if (_hook is not null) {
-      DestructionResult decision;
-      try {
-        decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPreCloseFailed(_logger, ex, streamId);
-        throw;
-      }
-      if (decision.Cancel) {
-        LogCloseVetoed(_logger, streamId, "cancelled");
-        return new StreamCloseResult("cancelled", 0);
-      }
-      if (decision.DeferUntil.HasValue) {
-        LogCloseVetoed(_logger, streamId, "deferred");
-        return new StreamCloseResult("deferred", 0);
-      }
+    if (await _vetoedByPreDestructionAsync(context, streamId, cancellationToken).ConfigureAwait(false) is { } veto) {
+      return veto;
     }
 
     // Fold-before-discard (apply-stack lineage): the close is about to truncate this stream's
@@ -98,7 +76,7 @@ public sealed partial class StreamCloser : IStreamCloser {
 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual close (not a gate-blocked / no-carry-forward / debug-skipped outcome).
-    if (_hook is not null && string.Equals(result.Status, "closed", StringComparison.Ordinal)) {
+    if (string.Equals(result.Status, "closed", StringComparison.Ordinal)) {
       try {
         await _hook.OnAfterDestructionAsync(context, cancellationToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
@@ -125,4 +103,29 @@ public sealed partial class StreamCloser : IStreamCloser {
   [LoggerMessage(EventId = 42, Level = LogLevel.Warning,
     Message = "PostDestruction close hook threw for stream {StreamId}; close already committed")]
   static partial void LogPostCloseFailed(ILogger logger, Exception ex, Guid streamId);
+
+  /// <summary>
+  /// Runs the PreDestruction hook and returns the veto result when the hook cancels or defers the
+  /// close; null means the close proceeds. A throwing hook aborts the close (rethrown after logging).
+  /// </summary>
+  private async Task<StreamCloseResult?> _vetoedByPreDestructionAsync(DestructionContext context, Guid streamId, CancellationToken cancellationToken) {
+    DestructionResult decision;
+    try {
+      decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPreCloseFailed(_logger, ex, streamId);
+      throw;
+    }
+    if (decision.Cancel) {
+      LogCloseVetoed(_logger, streamId, "canceled");
+      return new StreamCloseResult("canceled", 0);
+    }
+    if (decision.DeferUntil.HasValue) {
+      LogCloseVetoed(_logger, streamId, "deferred");
+      return new StreamCloseResult("deferred", 0);
+    }
+    return null;
+  }
 }

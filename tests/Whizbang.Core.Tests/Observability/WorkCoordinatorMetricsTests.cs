@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -20,7 +22,7 @@ public class WorkCoordinatorMetricsTests {
   [Test]
   public async Task WCMetrics_Constructor_CreatesAllInstrumentsAsync() {
     // Arrange & Act
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
 
     // Assert - all properties are non-null
@@ -35,6 +37,8 @@ public class WorkCoordinatorMetricsTests {
     await Assert.That(metrics.ReturnedPerspectiveWork).IsNotNull();
     await Assert.That(metrics.ProcessBatchCalls).IsNotNull();
     await Assert.That(metrics.ProcessBatchErrors).IsNotNull();
+    await Assert.That(metrics.CommitHandlerFallbacks).IsNotNull();
+    await Assert.That(metrics.OutboxEmissionDeduplicated).IsNotNull();
     await Assert.That(metrics.FlushCalls).IsNotNull();
     await Assert.That(metrics.EmptyFlushCalls).IsNotNull();
     await Assert.That(metrics.PublisherLeaseRenewals).IsNotNull();
@@ -103,7 +107,8 @@ public class WorkCoordinatorMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.work_coordinator.process_batch.calls");
-    await Assert.That(measurements).Count().IsEqualTo(2);
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(2);
   }
 
   [Test]
@@ -119,8 +124,32 @@ public class WorkCoordinatorMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.work_coordinator.process_batch.errors");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("NpgsqlException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "NpgsqlException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WCMetrics_OutboxEmissionDeduplicated_CountsPerMessageTypeAsync() {
+    // Arrange - a retry re-emitted two events of one type and one of another; the store skipped all three
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
+    var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    // Act
+    metrics.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", "Orders.OrderPlaced"));
+    metrics.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", "Orders.OrderPlaced"));
+    metrics.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", "Orders.OrderPriced"));
+
+    // Assert
+    var measurements = helper.GetByName("whizbang.work_coordinator.outbox.emission_deduplicated");
+    var placed = measurements.Where(m => m.Tags.GetValueOrDefault("message_type") == "Orders.OrderPlaced").ToList();
+    var priced = measurements.Where(m => m.Tags.GetValueOrDefault("message_type") == "Orders.OrderPriced").ToList();
+    await Assert.That(placed).Count().IsEqualTo(1);
+    await Assert.That(placed[0].Value).IsEqualTo(2);
+    await Assert.That(priced).Count().IsEqualTo(1);
+    await Assert.That(priced[0].Value).IsEqualTo(1);
   }
 
   [Test]

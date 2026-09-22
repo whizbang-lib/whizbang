@@ -80,7 +80,7 @@ public static class WhizbangActivitySource {
     }
 
     activity.SetStatus(ActivityStatusCode.Error, description);
-    activity.AddTag("exception.type", exception.GetType().FullName);
+    activity.AddTag("exception.type", TypeNameFormatter.DisplayName(exception.GetType()));
     activity.AddTag("exception.message", exception.Message);
     activity.AddTag("exception.stacktrace", exception.StackTrace);
     activity.AddTag("defensive.code", true);

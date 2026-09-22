@@ -76,14 +76,14 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task Constructor_WithNullQueueName_ThrowsArgumentNullExceptionAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     await Assert.That(() => new RabbitMQSubscription(channel, null!))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task IsActive_WhenFreshlyConstructed_IsTrueAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
 
     await Assert.That(subscription.IsActive).IsTrue();
@@ -91,7 +91,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task PauseAsync_WhenActive_SetsInactiveAndLogsAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var logger = new RecordingLogger();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG, logger);
 
@@ -103,7 +103,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task PauseAsync_WhenAlreadyPaused_ShortCircuitsAndLogsSkipAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var logger = new RecordingLogger();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG, logger);
 
@@ -119,7 +119,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task PauseAsync_WhenDisposed_ThrowsObjectDisposedExceptionAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
     subscription.Dispose();
 
@@ -129,7 +129,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task ResumeAsync_WhenPaused_SetsActiveAndLogsAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var logger = new RecordingLogger();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG, logger);
 
@@ -144,7 +144,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task ResumeAsync_WhenAlreadyActive_ShortCircuitsAndLogsSkipAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var logger = new RecordingLogger();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME, CONSUMER_TAG, logger);
 
@@ -157,7 +157,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task ResumeAsync_WhenDisposed_ThrowsObjectDisposedExceptionAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
     subscription.Dispose();
 
@@ -167,7 +167,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task ChannelShutdown_WhenNotApplicationInitiated_FiresOnDisconnectedAndMarksInactiveAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
 
     var tcs = new TaskCompletionSource<SubscriptionDisconnectedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,7 +183,7 @@ public class RabbitMQSubscriptionTests {
 
   [Test]
   public async Task ChannelShutdown_WhenApplicationInitiated_DoesNotFireOnDisconnectedButMarksInactiveAsync() {
-    using var channel = new FakeChannel();
+    await using var channel = new FakeChannel();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
 
     var fired = false;
@@ -227,7 +227,7 @@ public class RabbitMQSubscriptionTests {
 
     await Assert.That(channel.BasicCancelAsyncCalled).IsTrue();
     await Assert.That(channel.IsDisposed).IsTrue();
-    await Assert.That(logger.HasMessageContaining("Cancelled consumer")).IsTrue();
+    await Assert.That(logger.HasMessageContaining("Canceled consumer")).IsTrue();
     await Assert.That(logger.HasMessageContaining("Disposed channel")).IsTrue();
   }
 

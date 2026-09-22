@@ -25,7 +25,7 @@ public sealed class PostSerializeHookChain {
   /// </summary>
   public PostSerializeHookChain(IEnumerable<IPostSerializeHook> hooks) {
     ArgumentNullException.ThrowIfNull(hooks);
-    _orderedHooks = hooks.OrderBy(h => h.Order).ToArray();
+    _orderedHooks = [.. hooks.OrderBy(h => h.Order)];
   }
 
   /// <summary>True when no hooks are registered — chain is a no-op.</summary>

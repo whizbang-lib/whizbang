@@ -5,7 +5,7 @@ namespace Whizbang.Core.Observability;
 /// Provides the method name, file path, and line number of the code that dispatched the message.
 /// </summary>
 /// <docs>fundamentals/messages/message-context#caller-info</docs>
-/// <tests>Whizbang.Core.Tests/Observability/CallerInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/CallerInfoTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/CallerInfoTests.cs:CallerInfo_ImplementsICallerInfoAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Security/ScopedMessageContextExtraTests.cs:CallerInfo_WithoutMessageContext_ReturnsNullAsync</tests>
 public interface ICallerInfo {

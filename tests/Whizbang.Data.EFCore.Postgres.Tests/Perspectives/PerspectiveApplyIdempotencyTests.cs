@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// already-applied events become no-ops, which is what these tests pin down.
 /// </para>
 /// </summary>
+[Category("Shard2")]
 public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(
@@ -58,7 +59,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     return (IPerspectiveRunner)ctor.Invoke([
       sp,
       logger,
-      (IEventStore)eventStore,
+      eventStore,
       (IPerspectiveStore<ActionTestModel>)perspectiveStore,
       sp.GetRequiredService<IServiceScopeFactory>(),
       null, // tracingOptions
@@ -265,7 +266,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var streamId = Guid.NewGuid();
     var innerStore = new InMemoryEventStore();
     var stampingMap = new Dictionary<Guid, long?>();
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stampingMap);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stampingMap);
 
     var createdId = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent {
       StreamId = streamId,
@@ -294,23 +295,27 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// Inverse stamper-lag mixed-mode (G5d): metadata's <c>CommitSequence</c> is NULL (the
   /// stamper hadn't caught up to the checkpoint event when <c>SaveModelAndCheckpointAsync</c>
   /// called <c>_eventStore.GetCommitSequenceAsync</c>, returning null and persisting null
   /// to metadata) but the late-arriving envelope's <c>LocalCommitSequence</c> is SET.
   /// Pre-fix the filter falls back to event_id lex compare — same UUIDv7 inversion the cs
   /// path was added to avoid. The lex-smaller event_id gets silently dropped.
-  ///
+  /// </para>
+  /// <para>
   /// Concrete observation from a production bulk-import run: the
   /// BulkImportOrchestration saga projection's metadata never had CommitSequence
   /// because the SagaItemCompletedEvents were being checkpointed faster than the stamper
   /// could keep up — every checkpoint write got null cs. Subsequent batches arrived with
   /// stamped cs but the persisted floor was null, so the filter fell to event_id compare
   /// and dropped 5 consecutive lines (249–253).
-  ///
+  /// </para>
+  /// <para>
   /// Fix: a single mixed-mode branch — when EITHER side has cs but not both, defer to
   /// Apply. event_id lex compare only fires when BOTH sides lack cs (legacy
   /// single-source / pre-stamper world).
+  /// </para>
   /// </summary>
   [Test]
   public async Task RunWithEvents_MetadataMissingCommitSequence_EnvelopeHasCommitSequence_LexSmallerEventId_IsAppliedAsync() {
@@ -376,30 +381,33 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
         .Because("persisted-cs null + envelope-cs set is mixed-mode; defer to Apply, don't fall to event_id lex compare");
     }
 
-    await using (var verifyData = CreateDbContext()) {
-      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
-          .AsNoTracking()
-          .FirstAsync(r => r.Id == streamId);
-      await Assert.That(row.Data.Value).IsEqualTo(999);
-    }
+    await using var verifyData = CreateDbContext();
+    var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value).IsEqualTo(999);
   }
 
   /// <summary>
+  /// <para>
   /// Stamper-lag mixed-mode regression: metadata has <c>CommitSequence</c> set (the runner is
   /// "in commit_sequence mode") but the late-arriving envelope's <c>LocalCommitSequence</c> is
   /// null because the post-commit stamper hasn't caught up to this event yet. The pre-fix
   /// filter fell back to event_id lex compare in that case — the same UUIDv7 inversion the
   /// commit_sequence-based filter exists to avoid. The result was that a never-applied event
   /// with lex-smaller event_id got silently dropped.
-  ///
+  /// </para>
+  /// <para>
   /// Fix: 3-way branch in the runner filter — when metadata has commit_sequence but the
   /// envelope's is null, do NOT filter. Pass the event through to Apply; Apply's natural
   /// idempotency guards (Contains, Version check, value-mutate-only no-op, etc.) handle
   /// real duplicates without guessing from event_id.
-  ///
+  /// </para>
+  /// <para>
   /// Synthetic UUIDv7 prefixes 4c17/4a1e represent the inversion shape: <c>4a1e</c> is
   /// lex-smaller than <c>4c17</c>, the pre-fix fallback would compare them and drop the
   /// "smaller" one even though it represents the later-fetched but never-applied event.
+  /// </para>
   /// </summary>
   [Test]
   public async Task RunWithEvents_MetadataHasCommitSequence_EnvelopeMissingCommitSequence_LexSmallerEventId_IsAppliedAsync() {
@@ -419,7 +427,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stamping = new Dictionary<Guid, long?> {
       [firstId.Value] = 200_000L
     };
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
@@ -460,14 +468,13 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
         .Because("when metadata has cs but envelope's cs is null (stamper lag), we can't reliably tell duplicate from missed — let it through to Apply's idempotency guards");
     }
 
-    await using (var verifyData = CreateDbContext()) {
-      var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
-          .AsNoTracking()
-          .FirstAsync(r => r.Id == streamId);
-      await Assert.That(row.Data.Value)
-        .IsEqualTo(999)
-        .Because("late event with unstamped commit_sequence must reach Apply to mutate the model");
-    }
+    await using var verifyData = CreateDbContext();
+    var row = await verifyData.Set<PerspectiveRow<ActionTestModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value)
+      .IsEqualTo(999)
+      .Because("late event with unstamped commit_sequence must reach Apply to mutate the model");
   }
 
   /// <summary>
@@ -496,7 +503,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stamping = new Dictionary<Guid, long?> {
       [firstId.Value] = 234000L
     };
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
@@ -588,7 +595,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       Value = 5
     });
     const long expectedCommitSequence = 571800L;
-    var stampingStore = new _CommitSequenceStampingEventStore(
+    var stampingStore = new CommitSequenceStampingEventStore(
       innerStore, new Dictionary<Guid, long?> { [checkpointId.Value] = expectedCommitSequence });
 
     await using var storeCtx = CreateDbContext();
@@ -597,7 +604,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     // Pre-seed the row so BootstrapSnapshotAsync finds something to snapshot.
     await perspectiveStore.UpsertAsync(streamId, new ActionTestModel { Id = streamId, Name = "x", Value = 1 });
 
-    var recording = new _RecordingSnapshotStore();
+    var recording = new RecordingSnapshotStore();
     var snapshotOpts = Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Perspectives.PerspectiveSnapshotOptions {
       Enabled = true,
       SnapshotEveryNEvents = 1,
@@ -623,34 +630,34 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   /// <see cref="IEventStore.GetCommitSequenceAsync"/>. Lets the test prove the runner
   /// reads the value and threads it onto persisted metadata.
   /// </summary>
-  private sealed class _CommitSequenceStampingEventStore(
+  private sealed class CommitSequenceStampingEventStore(
       InMemoryEventStore inner, IReadOnlyDictionary<Guid, long?> stamps) : IEventStore {
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
-      inner.AppendAsync(streamId, envelope, ct);
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
-      inner.AppendAsync(streamId, message, ct);
-    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken ct = default) =>
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
+      inner.AppendAsync(streamId, envelope, cancellationToken);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
+      inner.AppendAsync(streamId, message, cancellationToken);
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(stamps.TryGetValue(eventId, out var v) ? v : null);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
         Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
-      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
         if (stamps.TryGetValue(envelope.MessageId.Value, out var seq)) {
           envelope.LocalCommitSequence = seq;
         }
         yield return envelope;
       }
     }
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
-      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
-      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
-      inner.GetLastSequenceAsync(streamId, ct);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      inner.GetLastSequenceAsync(streamId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -661,7 +668,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   /// verify <c>snapshotCommitSequence</c> threads through the 5-arg overload — without G3/G4
   /// the runner calls the legacy 4-arg overload and the recording captures null.
   /// </summary>
-  private sealed class _RecordingSnapshotStore : IPerspectiveSnapshotStore {
+  private sealed class RecordingSnapshotStore : IPerspectiveSnapshotStore {
     public sealed record CreateCall(Guid StreamId, string PerspectiveName, Guid SnapshotEventId, long? SnapshotCommitSequence);
     public List<CreateCall> Calls { get; } = [];
     public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) {

@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -16,8 +18,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// Locks <see cref="ClaimWorker"/>'s cadence against a RE-EMITTED work set.
 ///
 /// <para>
-/// <c>claim_work</c>'s eligible CTEs filter <c>instance_id = me AND lease_expiry &gt; NOW() AND
-/// processed_at IS NULL</c>, so every leased-but-uncompleted row is re-emitted on EVERY poll —
+/// <c>claim_work</c>'s eligible CTEs filter <code>instance_id = me AND lease_expiry &gt; NOW() AND
+/// processed_at IS NULL</code>, so every leased-but-uncompleted row is re-emitted on EVERY poll —
 /// deliberately, because the alternative (an in-memory in-flight filter) proved unrecoverable in
 /// production when a drain died before clearing its flag. Emission must therefore stay unconditional.
 /// </para>
@@ -72,6 +74,9 @@ public class ClaimWorkerReemissionBackoffTests {
     /// </summary>
     public Action? AfterClaim { get; set; }
 
+    /// <summary>When true, every claim returns an EMPTY batch — the true-idle shape.</summary>
+    public bool ReturnEmpty { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         ClaimCallTimes.Add(DateTimeOffset.UtcNow);
@@ -85,12 +90,14 @@ public class ClaimWorkerReemissionBackoffTests {
       }
       AfterClaim?.Invoke();
       // Same stream, every time. Nothing new ever appears.
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        OutboxStreamIds = [_stuckStream],
-      });
+      return Task.FromResult(ReturnEmpty
+          ? new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] }
+          : new WorkBatch {
+            OutboxWork = [],
+            InboxWork = [],
+            PerspectiveWork = [],
+            OutboxStreamIds = [_stuckStream],
+          });
     }
 
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
@@ -108,7 +115,7 @@ public class ClaimWorkerReemissionBackoffTests {
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;
-    public event Action<bool>? OnAvailabilityChanged { add { } remove { } }
+    public event Action<bool>? OnAvailabilityChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
@@ -116,23 +123,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedIdenticalWorkSet_BacksOffLikeAnIdlePollAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -155,38 +171,50 @@ public class ClaimWorkerReemissionBackoffTests {
   }
 
   /// <summary>
+  /// <para>
   /// The production half. The wake permit short-circuits the loop's wait, and the system's own
   /// completion traffic keeps setting it — publishes complete, completions signal, the permit is
   /// released. So an empty-poll streak alone cannot slow the loop down when signals keep
   /// arriving: the streak stretches the timeout, but a pending permit means the wait returns
   /// immediately anyway.
-  ///
+  /// </para>
+  /// <para>
   /// Here every claim pulls the wake lever, standing in for that feedback path. With the same
   /// work re-offered each time, the loop must STILL space its claims out. Without the pre-wait
   /// spacing this pins to back-to-back claims regardless of the streak, which is why the streak
   /// increment needed to be verified separately from the spacing that acts on it.
+  /// </para>
   /// </summary>
   [Test]
   public async Task RepeatedWorkSet_UnderConstantWakeSignals_StillSpacesClaimsAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Every claim immediately re-arms the wake, as our own completion signals do in production.
     coord.AfterClaim = worker.RequestImmediatePoll;
@@ -220,17 +248,18 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedWorkSet_NewWorkDoorbellDuringSpacing_ClaimsPromptlyAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         // The gate reports available, so this IS the spacing nap length — production's 5s
@@ -238,8 +267,16 @@ public class ClaimWorkerReemissionBackoffTests {
         // against the 1s promptness bound without slowing the suite unduly.
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     // Drive the first two claims promptly (completion-feedback shape), so claim 2 is the
     // re-offer that engages the spacing. Stop pulling the lever after that: the nap that
@@ -284,23 +321,32 @@ public class ClaimWorkerReemissionBackoffTests {
   public async Task RepeatedWorkSet_CompletionFeedbackDuringSpacing_StillWaitsOutTheNapAsync() {
     var coord = new ReemittingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
 
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 10_000,
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate());
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     var fed = 0;
     coord.AfterClaim = () => {
@@ -329,4 +375,118 @@ public class ClaimWorkerReemissionBackoffTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>
+  /// The TRUE-IDLE twin of the re-offer spacing (#635). An empty store under constant
+  /// completion-feedback wakes ran the claim cycle at permit-arrival rate: the empty streak
+  /// stretched the WAIT timeout, but a pending permit returns immediately, and the spacing nap
+  /// engaged only on re-offers. Measured fleet-wide as a ~27/s claim metronome on a deployment
+  /// with zero application traffic. Idle must space like idle regardless of what keeps ringing
+  /// the completion bell.
+  /// </summary>
+  [Test]
+  public async Task EmptyStore_UnderConstantCompletionFeedback_StillSpacesClaimsAsync() {
+    var coord = new ReemittingCoordinator { ReturnEmpty = true };
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
+
+    // Constant feedback: every claim pulls the wake lever, the shape a chatty fleet produces.
+    coord.AfterClaim = worker.RequestImmediatePoll;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+
+    var gap2to3 = coord.ClaimCallTimes[2] - coord.ClaimCallTimes[1];
+    await Assert.That(gap2to3).IsGreaterThan(TimeSpan.FromSeconds(2))
+      .Because(
+        "an EMPTY claim under healthy notify must space out even while completion-feedback "
+        + "permits keep arriving; otherwise idle cadence is set by whoever rings the bell, and "
+        + "a whole fleet of quiet services claims at tens of cycles per second forever");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// The responsiveness guard on the idle nap: a NEW-WORK doorbell must cut it short exactly as
+  /// it cuts the re-offer nap, so the spacing never taxes a genuinely fresh row.
+  /// </summary>
+  [Test]
+  public async Task EmptyStore_NewWorkDoorbellInterruptsTheIdleSpacingAsync() {
+    var coord = new ReemittingCoordinator { ReturnEmpty = true };
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // The loop is inside the idle spacing nap that follows the empty claim. Ring the doorbell.
+    await Task.Delay(300);
+    var doorbellAt = DateTimeOffset.UtcNow;
+    worker.SignalNewWork();
+
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    var wakeLatency = coord.ClaimCallTimes[1] - doorbellAt;
+
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(1))
+      .Because("idle spacing must never tax a genuinely fresh row: the doorbell cancels the nap");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
 }

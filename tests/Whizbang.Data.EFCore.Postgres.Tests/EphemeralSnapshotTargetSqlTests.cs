@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// covering snapshot exists, the pair drops out. Verified against a real Postgres.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard3")]
 public class EphemeralSnapshotTargetSqlTests : EFCoreTestBase {
   private const string EventType = "Whizbang.Tests.SnapTargetEvent";
   private const string Perspective = "SnapTargetPerspective";

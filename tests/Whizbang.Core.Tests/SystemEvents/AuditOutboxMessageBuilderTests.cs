@@ -22,7 +22,7 @@ public class AuditOutboxMessageBuilderTests {
   public async Task TryBuildAuditMessage_UnresolvableEventType_LogsWarningAsync() {
     // An event type name that Type.GetType can't resolve makes the audit include/exclude decision
     // fall back to the default — that must be logged, not silent (swallow-audit finding).
-    var captured = new _capturingLogger();
+    var captured = new CapturingLogger();
     var message = _createOutboxMessage(isEvent: true, messageType: "Nonexistent.EventType, Nonexistent.Assembly");
     var options = _createOptions(auditEnabled: true);
 
@@ -32,7 +32,7 @@ public class AuditOutboxMessageBuilderTests {
       .Because("an unresolvable audit type name must be logged, not silently defaulted");
   }
 
-  private sealed class _capturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

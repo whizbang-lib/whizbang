@@ -5,6 +5,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
+    <!-- Suppress the DI-factory construction rule here: sample fixtures construct services by
+         hand on purpose, supplying only what a scenario needs. The rule exists for registrations
+         standing in for the container in shipping code. This file does not import the parent
+         Directory.Build.props, so the suppression cannot be inherited. -->
+    <NoWarn>$(NoWarn);WHIZ500</NoWarn>
+
     <!-- Enable source generator output to file system -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>

@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("EventStoreQuery")]
+[Category("Shard1")]
 public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 
@@ -182,7 +183,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
     var query = new EFCoreFilterableEventStoreQuery(context);
 
     var stream1Id = _idProvider.NewGuid();
-    var stream2Id = _idProvider.NewGuid();
+    _ = _idProvider.NewGuid();
     await _seedEventAsync(context, _idProvider.NewGuid(), stream1Id, "Event1", 1, tenantId: "tenant-1");
     await _seedEventAsync(context, _idProvider.NewGuid(), stream1Id, "Event2", 2, tenantId: "tenant-2");
 

@@ -52,8 +52,8 @@ public sealed partial class SubscriptionExpansionWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
-    var typeProvider = services.GetService<IEventTypeProvider>();
-    if (coordinator is null || typeProvider is null) {
+    var typeProvider = services.GetRequiredService<IEventTypeProvider>();
+    if (coordinator is null || !typeProvider.IsAvailable) {
       return;   // schema-only / diagnostic hosts: nothing to reconcile with.
     }
 
@@ -94,7 +94,13 @@ public sealed partial class SubscriptionExpansionWorker(
       return;
     }
 
-    if (!_options.BackfillOnSubscriptionGrowth) {
+    // Gated on BOTH the dedicated flag and RepairMode. Every other repair emitter honors
+    // RepairMode, and the diagnostics recommend ReportOnly by name to stop repair traffic; a path
+    // that ignored it left an operator following that advice watching the traffic continue. A
+    // package upgrade changes the consumed-type catalog, so this fires on every service at once
+    // from a version bump alone — which is how it became a storm rather than a one-off repair.
+    if (!SubscriptionBackfillGate.ShouldRequestBackfill(
+          _options.BackfillOnSubscriptionGrowth, _options.RepairMode)) {
       // Recorded, not repaired — the audit reports "pending backfill", never silent divergence.
       LogBackfillDisabled(_logger, pending.Count);
       return;
@@ -103,8 +109,8 @@ public sealed partial class SubscriptionExpansionWorker(
     // A pending name with no catalog entry (type since removed) passes through unchanged —
     // an unmatched name at the origin is a no-op, same as today.
     var pendingWireForms = pending
-      .Select(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
-      .ToList();
+      .ConvertAll(p => wireByClrName.TryGetValue(p, out var wire) ? wire : p)
+;
     if (await _sendBackfillRequestAsync(services, pendingWireForms, cancellationToken).ConfigureAwait(false)) {
       await coordinator.MarkConsumedTypeBackfillRequestedAsync(pending, cancellationToken).ConfigureAwait(false);
       services.GetService<Observability.StreamIntegrityMetrics>()?.BackfillsRequested.Add(pending.Count);
@@ -131,6 +137,7 @@ public sealed partial class SubscriptionExpansionWorker(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         EventTypes = pendingTypes,
@@ -139,11 +146,7 @@ public sealed partial class SubscriptionExpansionWorker(
         StateOnly = true,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     };

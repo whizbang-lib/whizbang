@@ -10,6 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Unit tests for schema definition validation.
 /// Tests the pre-generated SQL schema for AOT compatibility.
 /// </summary>
+[Category("Shard4")]
 public class SchemaDefinitionTests : EFCoreTestBase {
   [Test]
   public async Task CoreInfrastructureSchema_ShouldCreateAllRequiredTablesAsync() {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -66,7 +67,7 @@ public class DispatcherComprehensiveCoverageTests {
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     DispatchModes? defaultRouting = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       envelopeRegistry: envelopeRegistry,
@@ -99,7 +100,7 @@ public class DispatcherComprehensiveCoverageTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
@@ -217,22 +218,6 @@ public class DispatcherComprehensiveCoverageTests {
     }
   }
 
-  private sealed class StubDeferredOutboxChannel : IDeferredOutboxChannel {
-    public List<OutboxMessage> QueuedMessages { get; } = [];
-    public bool HasPending => QueuedMessages.Count > 0;
-
-    public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) {
-      QueuedMessages.Add(message);
-      return ValueTask.CompletedTask;
-    }
-
-    public IReadOnlyList<OutboxMessage> DrainAll() {
-      var items = QueuedMessages.ToList();
-      QueuedMessages.Clear();
-      return items;
-    }
-  }
-
   // ========================================
   // HELPER METHODS
   // ========================================
@@ -290,10 +275,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   private static ReceptorInvoker<object> _defaultInvoker() =>
-    msg => {
-      var cmd = (TestCommand)msg;
-      return new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
-    };
+    _ => new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
 
   private static VoidReceptorInvoker _defaultVoidInvoker() => msg => ValueTask.CompletedTask;
 
@@ -430,12 +412,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_WithOptionsAndCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task SendAsync_WithOptionsAndCanceledToken_ThrowsOperationCanceledAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("cancel-test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -545,13 +527,25 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeAsync_Void_WithOptions_AnyInvoker_CompletesAsync() {
     // Arrange - covers anyInvoker fallback in _localInvokeVoidWithOptionsAsync
-    ValueTask<object?> anyInvoker(object msg) => new(new TestResult(Guid.NewGuid(), true));
+    object? received = null;
+    ValueTask<object?> anyInvoker(object msg) {
+      received = msg;
+      return new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new TestCommand("void-options-any");
     var options = new DispatchOptions();
 
     // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the fallback is the last invoker the void path tries, so "completed" and "silently
+    // dispatched nothing" are the same observation from the caller's side. The receptor running is
+    // the whole point of the call; a fallback that quietly stopped resolving would drop the message
+    // and still return successfully.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("falling through to the any-invoker has to end in the receptor actually seeing this "
+             + "message, not in a call that returns having done nothing");
   }
 
   [Test]
@@ -567,12 +561,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Void_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Void_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("cancel-void");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -626,12 +620,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Typed_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Typed_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("typed-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -731,12 +725,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("receipt-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -984,12 +978,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.Local, cts.Token))
@@ -1040,12 +1034,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1438,12 +1432,12 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_ObjectWithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_ObjectWithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     object command = new TestCommand("obj-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1506,13 +1500,13 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Typed_WithTracingOptionsAndCancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Typed_WithTracingOptionsAndCanceledToken_ThrowsAsync() {
     // Arrange - covers cancellation check in _localInvokeWithTracingAndOptionsAsync
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(traceStore: traceStore, invoker: _defaultInvoker());
     var command = new TestCommand("typed-trace-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert

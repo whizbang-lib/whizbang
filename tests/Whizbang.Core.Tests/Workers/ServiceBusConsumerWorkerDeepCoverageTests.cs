@@ -1,8 +1,10 @@
 #pragma warning disable CA1707, CS0067
 
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -16,6 +18,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -62,10 +65,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       _ = new ServiceBusConsumerWorker(
         transport: null!,
         scopeFactory: _buildScopeFactory(),
-        jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        envelopeSerializer: new EnvelopeSerializer(),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
       await Task.CompletedTask;
     });
   }
@@ -76,24 +84,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       _ = new ServiceBusConsumerWorker(
         transport: new DeepCoverageTransport(),
         scopeFactory: null!,
-        jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
-      await Task.CompletedTask;
-    });
-  }
-
-  [Test]
-  public async Task Constructor_NullJsonOptions_ThrowsArgumentNullExceptionAsync() {
-    await Assert.ThrowsAsync<ArgumentNullException>(async () => {
-      _ = new ServiceBusConsumerWorker(
-        transport: new DeepCoverageTransport(),
-        scopeFactory: _buildScopeFactory(),
-        jsonOptions: null!,
-        logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        envelopeSerializer: new EnvelopeSerializer(),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
       await Task.CompletedTask;
     });
   }
@@ -104,10 +103,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       _ = new ServiceBusConsumerWorker(
         transport: new DeepCoverageTransport(),
         scopeFactory: _buildScopeFactory(),
-        jsonOptions: new JsonSerializerOptions(),
         logger: null!,
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        envelopeSerializer: new EnvelopeSerializer(),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
       await Task.CompletedTask;
     });
   }
@@ -118,10 +122,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       _ = new ServiceBusConsumerWorker(
         transport: new DeepCoverageTransport(),
         scopeFactory: _buildScopeFactory(),
-        jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: null!
-      );
+        orderedProcessor: null!,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        envelopeSerializer: new EnvelopeSerializer(),
+        receptorRegistry: new PermissiveReceptorRegistryQuery(),
+        runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+        eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
       await Task.CompletedTask;
     });
   }
@@ -129,20 +138,31 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   [Test]
   public async Task Constructor_NullOptions_DefaultsToEmptyOptionsAsync() {
     // options parameter is nullable with default null - should not throw
+    var transport = new DeepCoverageTransport();
     var worker = new ServiceBusConsumerWorker(
-      transport: new DeepCoverageTransport(),
+      transport: transport,
       scopeFactory: _buildScopeFactory(),
-      jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options: null
-    );
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: null);
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // "Defaults to empty options" is a claim about what the worker subscribes to: nothing. A
+    // default that invented a topic would have this host quietly consuming a destination no one
+    // configured, which is worse than the startup failure the null was allowed to avoid.
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
   }
 
   // ========================================
@@ -203,25 +223,35 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   [Test]
   public async Task PauseAllSubscriptionsAsync_NoSubscriptions_DoesNotThrowAsync() {
     // Arrange - no subscriptions configured
-    var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
+    var transport = new DeepCoverageTransport();
+    var worker = _createWorker(transport, new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
-    // Act & Assert - should not throw
+    // Act - should not throw
     await worker.PauseAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // Nothing to pause, and nothing conjured to pause: an options set with no subscriptions must
+    // leave the transport untouched rather than subscribing to a default destination.
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
   }
 
   [Test]
   public async Task ResumeAllSubscriptionsAsync_NoSubscriptions_DoesNotThrowAsync() {
-    var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
+    var transport = new DeepCoverageTransport();
+    var worker = _createWorker(transport, new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.ResumeAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // Nothing to resume, and nothing conjured to resume: an options set with no subscriptions
+    // must leave the transport untouched rather than subscribing to a default destination.
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
   }
 
   // ========================================
@@ -330,6 +360,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -371,6 +402,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -418,6 +450,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(throwOnSecondFlush);
 
@@ -446,57 +479,6 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   // ========================================
   // Lifecycle Tests (PreInbox/PostInbox skip when no invoker)
   // ========================================
-
-  [Test]
-  public async Task HandleMessage_NoReceptorInvoker_SkipsLifecycleStagesAsync() {
-    // Arrange - no IReceptorInvoker registered, lifecycle should be skipped
-    var handlerCapturingTransport = new HandlerCapturingTransport();
-    var messageId = MessageId.New();
-    var streamId = Guid.NewGuid();
-
-    var inboxWork = new InboxWork {
-      MessageId = messageId.Value,
-      Envelope = _createJsonEnvelope(messageId, streamId),
-      MessageType = "Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests",
-      Status = MessageProcessingStatus.None,
-      Attempts = 0
-    };
-
-    var strategy = new DeepCoverageWorkCoordinatorStrategy(
-      () => new WorkBatch {
-        InboxWork = [inboxWork],
-        OutboxWork = [],
-        PerspectiveWork = []
-      }
-    );
-
-    var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
-    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
-    // NOTE: IReceptorInvoker NOT registered
-
-    var worker = _createWorker(
-      handlerCapturingTransport,
-      new ServiceBusConsumerOptions {
-        Subscriptions = [new TopicSubscription("t", "s")]
-      },
-      services
-    );
-
-    await worker.StartAsync(CancellationToken.None);
-    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
-
-    var envelope = _createJsonEnvelope(messageId, streamId);
-    var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
-
-    // Act - should complete without errors (lifecycle skipped)
-    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-
-    // Assert - completed without throwing
-    await Assert.That(strategy.FlushCallCount).IsGreaterThanOrEqualTo(2);
-
-    await worker.StopAsync(CancellationToken.None);
-  }
 
   [Test]
   public async Task HandleMessage_PreInboxGate_RuntimeReceptorRegistered_ButCompileTimeEmpty_FiresAsync() {
@@ -550,7 +532,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var compileTimeRegistry = new FakeReceptorRegistryQuery(hasReceptors: (_, _) => false);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(runtimeRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(runtimeRegistry, sp));
@@ -620,7 +603,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"deep_cov_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -628,7 +611,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -699,7 +683,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"postlc_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -707,7 +691,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -777,7 +762,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       registry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"fallback_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -785,7 +770,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -855,7 +841,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       receptorRegistry.AddReceptor(stage, typeof(DeepCoverageTestEvent), new ReceptorInfo(
         MessageType: typeof(DeepCoverageTestEvent),
         ReceptorId: $"skip_postlc_{stage}",
-        InvokeAsync: (sp, msg, envelope2, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -873,7 +859,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     ]);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(receptorRegistry, sp));
@@ -921,6 +908,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -956,6 +944,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -991,6 +980,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -1033,6 +1023,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -1073,6 +1064,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -1155,8 +1147,23 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
+  [NotInParallel]
   public async Task HandleMessage_WithValidTraceParent_CreatesActivityAsync() {
-    // Arrange - envelope with a valid TraceParent in hop
+    // Arrange - envelope with a valid TraceParent in hop.
+    // Without a registered listener StartActivity returns null and the whole path this test is
+    // named for never runs, so the listener is part of the arrangement, not just the observation.
+    var stopped = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = activity => {
+        lock (stopped) {
+          stopped.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
     var handlerCapturingTransport = new HandlerCapturingTransport();
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
@@ -1166,6 +1173,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -1184,11 +1192,28 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    // Act - should not throw; activity creation is best-effort
+    // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
-    // Assert - completed without error
-    // No assertion needed — test verifies no exception is thrown
+    // Assert - the inbox span continues the PRODUCER's trace rather than starting a fresh root.
+    // Creating an activity is not the point; adopting the traceparent is. A span that roots itself
+    // here severs the request from everything the consumer does with it, which is exactly the gap
+    // an operator is looking at when a trace ends at the queue.
+    List<Activity> inboxActivities;
+    lock (stopped) {
+      inboxActivities = [
+        .. stopped.Where(a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString())
+      ];
+    }
+    await Assert.That(inboxActivities.Count).IsEqualTo(1);
+    var inboxActivity = inboxActivities[0];
+    await Assert.That(inboxActivity.OperationName).StartsWith("Inbox ");
+    await Assert.That(inboxActivity.Kind).IsEqualTo(ActivityKind.Consumer);
+    await Assert.That(inboxActivity.TraceId.ToHexString()).IsEqualTo("0af7651916cd43dd8448eb211c80319c")
+      .Because("the hop's traceparent carries the producer's trace id and the inbox span must join it");
+    await Assert.That(inboxActivity.ParentSpanId.ToHexString()).IsEqualTo("b7ad6b7169203331")
+      .Because("the producer's span is this span's parent — losing it orphans the consumer half of the trace");
+    await Assert.That(inboxActivity.GetTagItem("messaging.operation")).IsEqualTo("receive");
 
     await worker.StopAsync(CancellationToken.None);
   }
@@ -1207,6 +1232,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     );
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
 
@@ -1250,24 +1276,25 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     IReceptorRegistry? runtimeReceptorRegistry = null) {
     services ??= new ServiceCollection();
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     return new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      jsonOptions,
-      new TestLogger<ServiceBusConsumerWorker>(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options,
-      lifecycleMessageDeserializer,
-      envelopeSerializer,
-      receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: runtimeReceptorRegistry
-    );
+      transport: transport,
+      scopeFactory: scopeFactory,
+      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
+      receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1291,7 +1318,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithAggregateId(MessageId messageId, Guid aggregateId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1315,7 +1342,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithoutMetadata(MessageId messageId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1337,7 +1364,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithTraceParent(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1377,17 +1404,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      LastDestination = destination;
-      var sub = new DeepCoverageSubscription();
-      CreatedSubscriptions.Add(sub);
-      return Task.FromResult<ISubscription>(sub);
-    }
-
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1403,7 +1420,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       return Task.FromResult<ISubscription>(sub);
     }
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
       TransportDestination destination, CancellationToken cancellationToken = default)
       where TRequest : notnull where TResponse : notnull =>
       throw new NotImplementedException();
@@ -1427,13 +1444,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult<ISubscription>(new DeepCoverageSubscription());
-    }
-
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
       TransportDestination destination,
@@ -1446,7 +1458,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
       TransportDestination destination, CancellationToken cancellationToken = default)
       where TRequest : notnull where TResponse : notnull =>
       throw new NotImplementedException();
@@ -1460,10 +1472,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -1486,10 +1498,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       onQueueInbox(message);
     }
 
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -1508,10 +1520,10 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -1568,8 +1580,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

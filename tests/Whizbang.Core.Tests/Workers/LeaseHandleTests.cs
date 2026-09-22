@@ -40,7 +40,7 @@ public class LeaseHandleTests {
   }
 
   [Test]
-  public async Task Token_BeforeDeadline_NotCancelledAsync() {
+  public async Task Token_BeforeDeadline_NotCanceledAsync() {
     var provider = _provider(out var fake);
     var deadline = fake.GetUtcNow() + TimeSpan.FromSeconds(60);
     using var lease = new LeaseHandle(
@@ -174,7 +174,7 @@ public class LeaseHandleTests {
   }
 
   [Test]
-  public async Task Token_LinkedToken_Cancelled_LeaseTokenAlsoCancelsAsync() {
+  public async Task Token_LinkedToken_Canceled_LeaseTokenAlsoCancelsAsync() {
     var provider = _provider(out _);
     using var stoppingTokenSource = new CancellationTokenSource();
     using var lease = new LeaseHandle(

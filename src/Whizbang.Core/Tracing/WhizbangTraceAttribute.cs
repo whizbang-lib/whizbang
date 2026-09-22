@@ -35,7 +35,7 @@ namespace Whizbang.Core.Tracing;
 /// </code>
 /// </example>
 /// <docs>operations/observability/tracing-attributes</docs>
-/// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync</tests>
 [AttributeUsage(
   AttributeTargets.Class,  // Receptors, Perspectives, Events, Commands
   AllowMultiple = false,

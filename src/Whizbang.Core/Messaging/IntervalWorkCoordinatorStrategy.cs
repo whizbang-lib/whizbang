@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
@@ -26,12 +27,12 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
-  private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
-  private readonly IServiceScopeFactory? _scopeFactory;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
-  private readonly IWorkChannelWriter? _workChannelWriter;
-  private readonly IInboxChannelWriter? _inboxChannelWriter;
+  private readonly ILogger<IntervalWorkCoordinatorStrategy> _logger = NullLogger<IntervalWorkCoordinatorStrategy>.Instance;
+  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions> _tracingOptions;
+  private readonly IWorkChannelWriter _workChannelWriter;
+  private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
@@ -63,19 +64,15 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
-    IServiceScopeFactory? scopeFactory = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null,
+    ILogger<IntervalWorkCoordinatorStrategy> logger,
+    IServiceScopeFactory scopeFactory,
+    ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+    IOptionsMonitor<TracingOptions> tracingOptions,
+    IWorkChannelWriter workChannelWriter,
+    IInboxChannelWriter inboxChannelWriter,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null,
-    IWorkChannelWriter? workChannelWriter = null,
-    IInboxChannelWriter? inboxChannelWriter = null
-  ) {
+    LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
-    if (coordinator == null && scopeFactory == null) {
-      throw new ArgumentNullException(nameof(coordinator), "Either coordinator or scopeFactory must be provided.");
-    }
     _coordinator = coordinator;
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -96,9 +93,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
     );
 
-    if (_logger != null) {
-      LogStrategyStarted(_logger, _options.IntervalMilliseconds);
-    }
+    LogStrategyStarted(_logger, _options.IntervalMilliseconds);
   }
 
   /// <summary>
@@ -116,9 +111,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       _queuedOutboxMessages.Add(message);
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
-    }
+    LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
   }
 
   /// <summary>
@@ -132,9 +125,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       _queuedInboxMessages.Add(message);
     }
 
-    if (_logger != null) {
-      LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
-    }
+    LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
   }
 
   /// <summary>
@@ -150,9 +141,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
-    }
+    LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
   }
 
   /// <summary>
@@ -168,9 +157,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedInboxCompletion(_logger, messageId, completedStatus);
-    }
+    LogQueuedInboxCompletion(_logger, messageId, completedStatus);
   }
 
   /// <summary>
@@ -187,9 +174,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxFailure(_logger, messageId, errorMessage);
-    }
+    LogQueuedOutboxFailure(_logger, messageId, errorMessage);
   }
 
   /// <summary>
@@ -206,9 +191,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedInboxFailure(_logger, messageId, errorMessage);
-    }
+    LogQueuedInboxFailure(_logger, messageId, errorMessage);
   }
 
   /// <summary>
@@ -256,9 +239,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Prevent concurrent flushes
     lock (_lock) {
       if (_flushing) {
-        if (_logger != null) {
-          LogFlushAlreadyInProgress(_logger);
-        }
+        LogFlushAlreadyInProgress(_logger);
         return new WorkBatch {
           OutboxWork = [],
           InboxWork = [],
@@ -273,12 +254,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
       }
 
-      if (_logger != null) {
-        LogIntervalFlush(_logger,
-          snapshot.OutboxMessages.Length, snapshot.InboxMessages.Length,
-          snapshot.OutboxCompletions.Length, snapshot.OutboxFailures.Length,
-          snapshot.InboxCompletions.Length, snapshot.InboxFailures.Length);
-      }
+      LogIntervalFlush(_logger,
+        snapshot.OutboxMessages.Length, snapshot.InboxMessages.Length,
+        snapshot.OutboxCompletions.Length, snapshot.OutboxFailures.Length,
+        snapshot.InboxCompletions.Length, snapshot.InboxFailures.Length);
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
         new FlushContext(
@@ -293,9 +272,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         ct
       );
 
-      if (_logger != null) {
-        LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
-      }
+      LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
 
       _routeClaimedInboxWorkToChannel(workBatch);
       return workBatch;
@@ -321,9 +298,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
           _queuedInboxCompletions.Count == 0 &&
           _queuedInboxFailures.Count == 0) {
         _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
-        if (_logger != null) {
-          LogNoQueuedOperations(_logger);
-        }
+        LogNoQueuedOperations(_logger);
         snapshot = default;
         return false;
       }
@@ -350,7 +325,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// deduplicating by IsInFlight. No-op when no channel writer is configured or the batch has
   /// no inbox rows.</summary>
   private void _routeClaimedInboxWorkToChannel(WorkBatch workBatch) {
-    if (_inboxChannelWriter is null || workBatch.InboxWork.Count == 0) {
+    if (workBatch.InboxWork.Count == 0) {
       return;
     }
     // S3267: Loop body has side effects (channel writer mutation) — LINQ not appropriate
@@ -394,9 +369,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       try {
         await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "timer", skipLifecycle: false, ct: default);
       } catch (Exception ex) {
-        if (_logger != null) {
-          LogErrorDuringIntervalFlush(_logger, ex);
-        }
+        LogErrorDuringIntervalFlush(_logger, ex);
       }
     });
   }
@@ -410,22 +383,19 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       return;
     }
 
-    if (_logger != null) {
-      LogStrategyDisposing(_logger);
-    }
+    LogStrategyDisposing(_logger);
 
     // Stop the timer first
     await _flushTimer.DisposeAsync();
 
     // Flush any remaining queued operations
     lock (_lock) {
-      if (_logger != null &&
-          (_queuedOutboxMessages.Count > 0 ||
+      if (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
           _queuedOutboxCompletions.Count > 0 ||
           _queuedOutboxFailures.Count > 0 ||
           _queuedInboxCompletions.Count > 0 ||
-          _queuedInboxFailures.Count > 0)) {
+          _queuedInboxFailures.Count > 0) {
         LogDisposingWithUnflushedOperations(
           _logger,
           _queuedOutboxMessages.Count,
@@ -441,17 +411,13 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       // backgrounded stage halves would race process exit.
       await _flushCoreAsync(WorkBatchOptions.SkipInboxClaiming, trigger: "disposal", skipLifecycle: true, ct: default);
     } catch (Exception ex) {
-      if (_logger != null) {
-        LogErrorFlushingOnDisposal(_logger, ex);
-      }
+      LogErrorFlushingOnDisposal(_logger, ex);
     }
 
     _disposed = true;
     GC.SuppressFinalize(this);
 
-    if (_logger != null) {
-      LogStrategyDisposed(_logger);
-    }
+    LogStrategyDisposed(_logger);
   }
 
   // LoggerMessage definitions

@@ -80,6 +80,7 @@ public static class MessageSecurityServiceCollectionExtensions {
     services.TryAddScoped<IMessageContext, ScopedMessageContext>();
 
     // Register default extractor
+    services.TryAddWhizbangDefaults();
     services.AddSecurityExtractor<MessageHopSecurityExtractor>();
 
     // Register the provider
@@ -106,6 +107,7 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// </example>
   public static IServiceCollection AddSecurityExtractor<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TExtractor>(this IServiceCollection services)
     where TExtractor : class, ISecurityContextExtractor {
+    services.TryAddWhizbangDefaults();
     services.AddScoped<ISecurityContextExtractor, TExtractor>();
     return services;
   }

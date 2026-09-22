@@ -199,7 +199,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
           FROM pg_stat_activity
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* ignore cleanup errors */ }
       _testDatabaseName = null;
       _connectionString = null;
@@ -225,7 +225,7 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
 
     await using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<PostgresOptions>();
-    await Assert.That(options.CommandTimeoutSeconds).IsEqualTo(5)
+    await Assert.That(options.CommandTimeoutSeconds).IsEqualTo(120)
       .Because("configureOptions is null on the convenience path, so defaults apply.");
 
     await Assert.That(provider.GetRequiredService<IDbConnectionFactory>()).IsTypeOf<PostgresConnectionFactory>();

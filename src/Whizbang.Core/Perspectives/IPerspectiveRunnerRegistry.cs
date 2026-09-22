@@ -7,6 +7,7 @@ namespace Whizbang.Core.Perspectives;
 /// Implemented by source-generated PerspectiveRunnerRegistry in {AssemblyName}.Generated namespace.
 /// Also provides event types for polymorphic event deserialization in lifecycle receptors.
 /// </summary>
+/// <docs>fundamentals/perspectives/registry</docs>
 public interface IPerspectiveRunnerRegistry : IEventTypeProvider {
   /// <summary>
   /// Gets a perspective runner by perspective type name (zero reflection).

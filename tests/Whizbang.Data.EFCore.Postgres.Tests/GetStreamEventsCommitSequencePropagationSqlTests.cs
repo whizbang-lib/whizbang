@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// worker. These tests lock that contract.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard1")]
 public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
 
   [Test]

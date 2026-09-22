@@ -89,6 +89,52 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     await Assert.That(code).Contains("CreateMessageEnvelope");
   }
 
+  /// <summary>
+  /// A composite implements <c>IMessage</c>, never <c>IEvent</c> — so any filter written as
+  /// "command or event" silently drops it. That is not cosmetic: the envelope type-check dispatch
+  /// covers composites, so omitting the lazy envelope field leaves the resolver returning null and
+  /// the receive side unable to bind that envelope type at all. A composite arriving on the wire
+  /// then fails typed binding permanently, and it surfaces at the broker as repeated delivery
+  /// attempts against missing JsonTypeInfo rather than as anything resembling a serialization bug.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_GeneratesMessageEnvelopeAsync() {
+    // Arrange — a composite declared in a CONSUMER assembly, the case that fails in the field. The
+    // framework's own composites are unaffected because they are registered in its own context.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Minting;
+
+namespace MyApp.Events;
+
+public record ProductBatchComposite(string BatchId) : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => System.Array.Empty<IMessage>();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Assert on the LAZY FIELD specifically, not merely on the type name appearing somewhere. The
+    // type-check dispatch table already emits "MessageEnvelope<...Composite>" for composites, so a
+    // bare Contains() on that string passes even when the field is missing — it matches the very
+    // dispatch that has nothing to dispatch TO. Verified: the looser assertion passed against the
+    // unfixed generator, i.e. it was vacuous.
+    await Assert.That(code)
+      .Contains("private JsonTypeInfo<MessageEnvelope<global::MyApp.Events.ProductBatchComposite>>?")
+      .Because("the lazy envelope FIELD must be emitted for composites; without it the resolver "
+             + "returns null for an envelope the type-check table already advertises, and the "
+             + "receiver can never bind a composite off the wire");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleMessages_GeneratesAllFactoriesAsync() {
@@ -281,15 +327,62 @@ public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICom
     await Assert.That(code).IsNotNull();
 
     // Should generate primitive type handling in GetTypeInfoInternal using JsonMetadataServices directly
-    // (NOT GetOrCreateTypeInfo to avoid false circular reference detection)
-    await Assert.That(code).Contains("if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
-    await Assert.That(code).Contains("if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
-    await Assert.That(code).Contains("if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
-    await Assert.That(code).Contains("if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
-    await Assert.That(code).Contains("if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
-    await Assert.That(code).Contains("if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
-    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
-    await Assert.That(code).Contains("if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    // (NOT GetOrCreateTypeInfo to avoid false circular reference detection), deferring to a converter
+    // registered on the options before the built-in one.
+    await Assert.That(code).Contains("if (type == typeof(string)) return _registeredOrBuiltIn<string>(options, JsonMetadataServices.StringConverter!);");
+    await Assert.That(code).Contains("if (type == typeof(int)) return _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter);");
+    await Assert.That(code).Contains("if (type == typeof(Guid)) return _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter);");
+    await Assert.That(code).Contains("if (type == typeof(long)) return _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter);");
+    await Assert.That(code).Contains("if (type == typeof(bool)) return _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTime)) return _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    await Assert.That(code).Contains("if (type == typeof(decimal)) return _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter);");
+  }
+
+  /// <summary>
+  /// The facade defers to a converter registered on the options before its built-in one, for every
+  /// primitive it answers for itself.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A fixed built-in converter here meant that whenever the facade came before the framework's own
+  /// contexts in a resolver chain, a converter registered on the options for that type never ran.
+  /// The persistence profile stores a date as a number through exactly such a converter; a document
+  /// serialized through a chain with the facade first was written as a rendering, and the mapping
+  /// that reads numbers could not read it. The profile's union happened to order the framework's
+  /// contexts first, so the defect surfaced only in options built by hand.
+  /// </para>
+  /// <para>
+  /// A factory is asked for its converter, so a registered factory counts too. No reflection: the
+  /// candidates are the options' own list, and each is asked whether it converts the type.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PrimitiveTypeInfo_DefersToARegisteredConverterAsync() {
+    const string source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record ProcessOrder(System.DateTime At) : ICommand;
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+
+    await Assert.That(code).Contains(
+      "private static JsonTypeInfo<TValue> _registeredOrBuiltIn<TValue>(JsonSerializerOptions options, JsonConverter<TValue> builtIn)");
+    await Assert.That(code).Contains("foreach (var candidate in options.Converters)")
+      .Because("the options' own list is the only place a registered converter can be, and no "
+        + "reflection is needed to read it");
+    await Assert.That(code).Contains("candidate is JsonConverterFactory factory ? factory.CreateConverter(typeof(TValue), options) : candidate")
+      .Because("a registered factory has to be asked for its converter, as the serializer would ask it");
+    await Assert.That(code).Contains("return JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    await Assert.That(code).Contains("var elementInfo = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);")
+      .Because("a collection's element info is fixed at creation, so a list of dates has to defer the "
+        + "same way or its elements are written in the built-in form whatever the profile says");
   }
 
   /// <summary>
@@ -318,14 +411,17 @@ public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICo
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate nullable primitive type handling that creates underlying type first, then wraps
-    await Assert.That(code).Contains("if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    await Assert.That(code).Contains("if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    // Should generate nullable primitive type handling that creates underlying type first (deferring
+    // to a registered converter), then wraps
+    await Assert.That(code).Contains("if (type == typeof(int?)) { var u = _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(Guid?)) { var u = _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(long?)) { var u = _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(bool?)) { var u = _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTime?)) { var u = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) { var u = _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter()); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }")
+      .Because("the optional form has to read what the required form reads; a fixed strict converter "
+        + "here refused the renderings the lenient one accepts");
+    await Assert.That(code).Contains("if (type == typeof(decimal?)) { var u = _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
   }
 
   /// <summary>
@@ -4166,7 +4262,7 @@ public record TemplateCreatedEvent : IEvent {
     await Assert.That(code).Contains("CreateCtorParamsFor_TestApp_TemplateCreatedEvent");
 
     // Type info should be cached BEFORE deferred initialization runs
-    await Assert.That(code).Contains("TypeInfoCache[typeof(global::TestApp.TemplateCreatedEvent)]");
+    await Assert.That(code).Contains("TypeInfoCacheFor(options)[typeof(global::TestApp.TemplateCreatedEvent)]");
 
     // Event should have exactly one factory method
     var factoryCount = _createTemplateCreatedEventFactoryRegex().Count(code);
@@ -5909,6 +6005,10 @@ public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
       .Because("Phase S: state-only must survive the typed receive");
     await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).Target = value")
       .Because("directed delivery must survive the typed receive");
+    await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).Priority = value")
+      .Because("priority step 1: the number must survive the typed receive, or every typed envelope arrives undeclared");
+    await Assert.That(contextCode).Contains("\"pri\"")
+      .Because("the wire name is pri, the same the attribute-honoring MessageEnvelope<JsonElement> shape writes");
   }
 
   [Test]
@@ -6097,7 +6197,8 @@ public record CreateOrder(string OrderId) : ICommand;
   [RequiresAssemblyFiles()]
   public async Task Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync() {
     // Arrange — Perspective using only IPerspectiveWithActionsFor (Purge pattern)
-    const string source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -6111,14 +6212,15 @@ namespace TestApp {
   public record PurgeModel {
     [StreamId]
     public Guid Id { get; init; }
-    public string Name { get; init; } = """";
+    public string Name { get; init; } = "";
   }
 
   public class PurgePerspective : IPerspectiveWithActionsFor<PurgeModel, PurgeEvent> {
     public ApplyResult<PurgeModel> Apply(PurgeModel current, PurgeEvent @event)
       => ApplyResult<PurgeModel>.Purge();
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
@@ -6131,4 +6233,41 @@ namespace TestApp {
   }
 
   #endregion
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithAGenericKey_StillDiscoversTheValueTypeAsync() {
+    // The value type is found by splitting "TKey, TValue" at the top-level comma. When TKey is
+    // itself generic it carries commas of its own, so the split has to track angle-bracket depth.
+    // Splitting at the first comma instead would parse TValue out of the middle of the key --
+    // the payload type is never registered in the JSON context, and serializing this event fails
+    // at runtime with a type the generated context has never heard of.
+    const string source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CoordinatePayload {
+  public required string Label { get; init; }
+}
+
+public record GridEvent : IEvent {
+  public required Dictionary<Tuple<int, int>, CoordinatePayload> Cells { get; init; }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("CoordinatePayload")
+      .Because("the value type sits after the key's own commas, so the split has to reach it");
+    await Assert.That(code).Contains("Create_TestApp_CoordinatePayload")
+      .Because("discovery without a factory leaves the type unserializable at runtime");
+  }
+
 }

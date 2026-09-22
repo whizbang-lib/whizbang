@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <OutputType>Exe</OutputType>
     <SonarQubeExclude>true</SonarQubeExclude>
   </PropertyGroup>

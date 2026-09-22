@@ -74,14 +74,16 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
 
   private static async Task _seedEventStoreRowAsync(
       NpgsqlConnection conn, Guid eventId, Guid streamId, int version, long? commitSequence) {
-    await conn.ExecuteAsync(@"
+    await conn.ExecuteAsync("""
+
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, version, event_type,
          scope, created_at, commit_sequence)
       VALUES (@id, @stream, @stream, 'TestAgg', @version, 'Test.OrderCreated, Test',
-              '{""t"": ""tenant-7""}'::jsonb, NOW(), @cs);
+              '{"t": "tenant-7"}'::jsonb, NOW(), @cs);
       INSERT INTO wh_event_body (event_id, event_data, metadata)
-      VALUES (@id, '{""amount"": 42}'::jsonb, '{""Hops"": []}'::jsonb)",
+      VALUES (@id, '{"amount": 42}'::jsonb, '{"Hops": []}'::jsonb)
+""",
       new { id = eventId, stream = streamId, version, cs = commitSequence });
   }
 
@@ -184,7 +186,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(
-      "UPDATE wh_inbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
     var threw = false;

@@ -174,9 +174,9 @@ public class EventUpcasterPipelineTests {
 
   // ── test upcasters ──
   private sealed class V1ToV2Upcaster : IEventUpcaster {
-    public bool CanUpcast(IEvent @event) => @event is OrderV1Event;
-    public IEvent Upcast(IEvent @event) {
-      var v1 = (OrderV1Event)@event;
+    public bool CanUpcast(IEvent storedEvent) => storedEvent is OrderV1Event;
+    public IEvent Upcast(IEvent storedEvent) {
+      var v1 = (OrderV1Event)storedEvent;
       return new OrderV2Event { StreamId = v1.StreamId, Data = v1.Data, Version = 2 };
     }
   }
@@ -186,17 +186,17 @@ public class EventUpcasterPipelineTests {
   private sealed class DeclaringV1ToV2Upcaster : IEventUpcaster {
     public IReadOnlyList<Type> SourceTypes => [typeof(OrderV1Event)];
     public IReadOnlyList<Type> TargetTypes => [typeof(OrderV2Event)];
-    public bool CanUpcast(IEvent @event) => @event is OrderV1Event;
-    public IEvent Upcast(IEvent @event) {
-      var v1 = (OrderV1Event)@event;
+    public bool CanUpcast(IEvent storedEvent) => storedEvent is OrderV1Event;
+    public IEvent Upcast(IEvent storedEvent) {
+      var v1 = (OrderV1Event)storedEvent;
       return new OrderV2Event { StreamId = v1.StreamId, Data = v1.Data, Version = 2 };
     }
   }
 
   private sealed class V2ToV3Upcaster : IEventUpcaster {
-    public bool CanUpcast(IEvent @event) => @event is OrderV2Event;
-    public IEvent Upcast(IEvent @event) {
-      var v2 = (OrderV2Event)@event;
+    public bool CanUpcast(IEvent storedEvent) => storedEvent is OrderV2Event;
+    public IEvent Upcast(IEvent storedEvent) {
+      var v2 = (OrderV2Event)storedEvent;
       return new OrderV3Event { StreamId = v2.StreamId, Data = v2.Data };
     }
   }
@@ -205,9 +205,9 @@ public class EventUpcasterPipelineTests {
     public static Guid KeyFor(Guid sagaId, string item) =>
       new(System.Security.Cryptography.SHA256.HashData(
         System.Text.Encoding.UTF8.GetBytes($"{sagaId:N}:{item}"))[..16]);
-    public bool CanUpcast(IEvent @event) => @event is RekeyableEvent;
-    public IEvent Upcast(IEvent @event) {
-      var e = (RekeyableEvent)@event;
+    public bool CanUpcast(IEvent storedEvent) => storedEvent is RekeyableEvent;
+    public IEvent Upcast(IEvent storedEvent) {
+      var e = (RekeyableEvent)storedEvent;
       e.StreamId = KeyFor(e.SagaId, e.Item);
       return e;
     }

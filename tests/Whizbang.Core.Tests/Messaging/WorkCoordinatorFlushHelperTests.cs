@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -142,9 +143,10 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_OutboxCompletions_RouteToCompletionChannelAsync() {
     var completionChannel = new CountingOutboxCompletionChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -161,9 +163,10 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_OutboxFailures_RouteToFailureChannelWithOutboxCategoryAsync() {
     var failureChannel = new CountingFailureChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -182,9 +185,10 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_InboxFailures_RouteToFailureChannelWithInboxCategoryAsync() {
     var failureChannel = new CountingFailureChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IFailureChannel>(failureChannel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -202,9 +206,10 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_InboxMessages_SignalsInboxChannelWriterAsync() {
     var inboxWriter = new CountingInboxChannelWriter();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
     services.AddSingleton<IInboxChannelWriter>(inboxWriter);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
@@ -221,11 +226,13 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task ScopePath_NoCompletionChannelRegistered_DoesNotThrowAsync() {
     // The helper soft-resolves channels (GetService, not GetRequiredService); a host that
     // doesn't register them must not crash the flush path.
+    var coordinator = new CapturingWorkCoordinator();
     var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(new CapturingWorkCoordinator());
-    using var sp = services.BuildServiceProvider();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    await using var sp = services.BuildServiceProvider();
 
-    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+    var batch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       _ctx(
         coordinator: null,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -233,7 +240,12 @@ public class WorkCoordinatorFlushHelperTests {
         outboxFailures: [_failure()]),
       default);
 
-    // No assertion needed beyond "didn't throw"; reaching this line is the success condition.
+    // "Soft-resolves" has to mean dropped, not rerouted: the unroutable completion/failure must not
+    // fall through onto the coordinator's store path, which would insert them as fresh work rows.
+    await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(0);
+    await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0);
+    await Assert.That(batch.OutboxWork.Count).IsEqualTo(0);
+    await Assert.That(batch.InboxWork.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -248,9 +260,10 @@ public class WorkCoordinatorFlushHelperTests {
   public async Task PartitionCount_ClaimWorkerOptions_TakesPrecedenceAsync() {
     var coordinator = new CapturingWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddOptions<ClaimWorkerOptions>().Configure(o => o.PartitionCount = 42);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var options = new WorkCoordinatorOptions { PartitionCount = 9999 };
 
@@ -302,11 +315,12 @@ public class WorkCoordinatorFlushHelperTests {
     var inboxWriter = new CountingInboxChannelWriter();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IOutboxCompletionChannel>(completionChannel);
     services.AddSingleton<IFailureChannel>(failureChannel);
     services.AddSingleton<IInboxChannelWriter>(inboxWriter);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       _ctx(
@@ -451,14 +465,14 @@ public class WorkCoordinatorFlushHelperTests {
     public InboxMessage[] LastStoredInbox { get; private set; } = [];
     public int LastStoredPartitionCount { get; private set; }
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreOutboxCallCount++;
       LastStoredOutbox = messages;
       LastStoredPartitionCount = partitionCount;
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreInboxCallCount++;
       LastStoredInbox = messages;
       LastStoredPartitionCount = partitionCount;

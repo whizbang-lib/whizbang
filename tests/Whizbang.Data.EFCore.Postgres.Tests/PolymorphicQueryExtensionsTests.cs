@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -12,19 +13,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Unit")]
 [Category("Polymorphic")]
+[Category("Shard2")]
 public class PolymorphicQueryExtensionsTests {
 
   // Test model classes
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   private sealed record TestModel {
     public string SettingsTypeName { get; init; } = "";
     public string Name { get; init; } = "";
   }
 
   private sealed record TextFieldSettings {
-    public string SettingsTypeName { get; init; } = "";
-  }
-
-  private sealed record NumberFieldSettings {
     public string SettingsTypeName { get; init; } = "";
   }
 

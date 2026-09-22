@@ -65,6 +65,36 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   }
 
   [Test]
+  public async Task FirstReArm_InitialBudgetBelowTheFloor_ReArmsAtTheFloorAsync() {
+    // A host that raises MinWatchdogDelay above the initial budget (30s + items*100ms) must still get
+    // the floor it asked for: the clamp lifts a too-short delay up to the minimum, it does not only
+    // cap a too-long one at the maximum.
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 3, Completed: 1, Failed: 0, InProgress: 2),
+        items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel { Id = _sagaId, SagaName = SAGA_NAME, EntityId = _entityId, TotalItems = 3 },
+      options: new SagaOptions { MinWatchdogDelay = TimeSpan.FromMinutes(2) });
+
+    var firstTick = new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 0,
+      LastObservedAt = null,
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(firstTick, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    var elapsed = emitter.LastScheduledFor!.Value - DateTimeOffset.UtcNow;
+    await Assert.That(elapsed).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(115))
+      .Because("the initial budget of about 30s is below the 2-minute floor, so the floor wins");
+    await Assert.That(elapsed).IsLessThanOrEqualTo(TimeSpan.FromMinutes(2));
+  }
+
+  [Test]
   public async Task ProgressBetweenTicks_NextDelayIsEtaBasedAsync() {
     // Previous tick saw 100 done; current sees 200 done over 10s elapsed → rate = 10/s.
     // 50 items remain → ETA = 5s, plus 30s safety margin = 35s. The floor (30s) is below
@@ -235,6 +265,99 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   }
 
   [Test]
+  public async Task EveryItemTerminalButCompletionAlreadyDispatched_ReArmsAtTheFloorAsync() {
+    // Recovery declines because the projection already carries CompletionEventDispatched (a
+    // duplicate or late tick for a saga another pod already completed), yet the per-item
+    // aggregate shows every item terminal. Progress WAS observed (150 items since the last
+    // snapshot) so this is not a stall, but there is nothing outstanding to project an ETA
+    // over. The scheduler has to fall through to "everything's done" semantics: re-arm at the
+    // floor so the next tick re-checks completion promptly, and leave the stall counter alone.
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 250, Completed: 250, Failed: 0, InProgress: 0),
+        items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel {
+        Id = _sagaId,
+        SagaName = SAGA_NAME,
+        EntityId = _entityId,
+        TotalItems = 250,
+        CompletionEventDispatched = true,
+      });
+
+    var tick = new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 2,
+      LastObservedAt = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(10),
+      LastObservedCompleted = 100,
+      LastObservedFailed = 0,
+      ConsecutiveStallCount = 0,
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(tick, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    var nextTick = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(nextTick.ConsecutiveStallCount).IsEqualTo(0)
+      .Because("150 items reached terminal since the previous snapshot — counting that as a stall would march a saga that is visibly finishing toward a spurious abandon.");
+
+    var elapsed = emitter.LastScheduledFor!.Value - DateTimeOffset.UtcNow;
+    await Assert.That(elapsed).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(28));
+    await Assert.That(elapsed).IsLessThanOrEqualTo(TimeSpan.FromSeconds(35))
+      .Because("with zero items outstanding there is no ETA to project, so the delay must be the MinWatchdogDelay floor (30s) — the stall tier (60s at stall 1) would leave an already-finished saga unchecked for twice as long.");
+  }
+
+  [Test]
+  public async Task SnapshotTimestampAheadOfLocalClock_ReArmsAtTheFloorAsync() {
+    // Multi-pod clock skew: the previous tick was stamped by a pod whose clock runs ahead, so
+    // "elapsed since last observation" comes out negative on this pod. Progress is real
+    // (100 -> 200) and 50 items are still outstanding, so the ETA branch would otherwise
+    // divide by that negative interval. The guard has to reject the degenerate interval and
+    // re-arm at the floor; a delay derived from a negative rate would schedule the next tick
+    // in the past, which the outbox picks up immediately and spins on.
+    var (svc, emitter) = _buildService(
+      itemRepository: new FakeItemRepository(
+        agg: new SagaItemAggregate(Total: 250, Completed: 200, Failed: 0, InProgress: 50),
+        items: []),
+      terminalReader: new FakeTerminalReader(),
+      projection: new BaseSagaModel {
+        Id = _sagaId,
+        SagaName = SAGA_NAME,
+        EntityId = _entityId,
+        TotalItems = 250,
+        CompletionEventDispatched = true,
+      });
+
+    var tick = new SagaCompletionWatchdogTickEvent {
+      StreamId = _sagaId,
+      SagaName = SAGA_NAME,
+      EntityId = _entityId,
+      RescheduleCount = 2,
+      LastObservedAt = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5),  // skewed ahead
+      LastObservedCompleted = 100,
+      LastObservedFailed = 0,
+      ConsecutiveStallCount = 0,
+    };
+
+    var outcome = await svc.TryRecoverViaWatchdogTickAsync(tick, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(WatchdogTickOutcome.ReArmed);
+    await Assert.That(emitter.LastScheduledFor!.Value).IsGreaterThan(DateTimeOffset.UtcNow)
+      .Because("a next-tick instant in the past is due the moment it is written, so the watchdog would re-fire in a tight loop.");
+
+    var nextTick = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(nextTick.ConsecutiveStallCount).IsEqualTo(0)
+      .Because("100 items reached terminal since the previous snapshot — a skewed timestamp must not be read as a stall.");
+
+    var elapsed = emitter.LastScheduledFor!.Value - DateTimeOffset.UtcNow;
+    await Assert.That(elapsed).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(28));
+    await Assert.That(elapsed).IsLessThanOrEqualTo(TimeSpan.FromSeconds(35))
+      .Because("the unusable interval falls back to the MinWatchdogDelay floor (30s), not to the stall tier (60s at stall 1) and not to an ETA computed from a negative rate.");
+  }
+
+  [Test]
   public async Task Complete_RecoversWithoutReArmAsync() {
     // Aggregate already shows complete; TryRecoverViaWatchdogAsync drives the
     // emission and the tick receptor MUST NOT re-arm.
@@ -269,9 +392,10 @@ public class TryRecoverViaWatchdogTickAsyncTests {
   private static (TestSagaService, RecordingEmitter) _buildService(
       FakeItemRepository itemRepository,
       FakeTerminalReader terminalReader,
-      BaseSagaModel projection) {
+      BaseSagaModel projection,
+      SagaOptions? options = null) {
     var emitter = new RecordingEmitter();
-    var svc = new TestSagaService(emitter, itemRepository, terminalReader, projection);
+    var svc = new TestSagaService(emitter, itemRepository, terminalReader, projection, options);
     return (svc, emitter);
   }
 
@@ -380,10 +504,11 @@ public class TryRecoverViaWatchdogTickAsyncTests {
       ISagaEventEmitter emitter,
       ISagaItemRepository itemRepository,
       ISagaItemTerminalReader terminalReader,
-      BaseSagaModel projection)
+      BaseSagaModel projection,
+      SagaOptions? options = null)
     : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
                       TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
-        SAGA_NAME, emitter, itemRepository, terminalReader, NullLogger<TestSagaService>.Instance) {
+        SAGA_NAME, emitter, itemRepository, terminalReader, options, NullLogger<TestSagaService>.Instance) {
 
     private readonly BaseSagaModel _projection = projection;
 

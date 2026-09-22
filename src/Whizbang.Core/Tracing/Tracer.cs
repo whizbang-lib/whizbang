@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tracing;
 /// </list>
 /// </remarks>
 /// <docs>operations/observability/tracing#tracer</docs>
-/// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of the <see cref="Tracer"/> class.
@@ -123,7 +123,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
         activity.SetStatus(ActivityStatusCode.Error, exception.Message);
         // Record exception as an event
         var exceptionTags = new ActivityTagsCollection {
-          { "exception.type", exception.GetType().FullName ?? exception.GetType().Name },
+          { "exception.type", TypeNameFormatter.DisplayName(exception.GetType()) },
           { "exception.message", exception.Message },
           { "exception.stacktrace", exception.StackTrace ?? string.Empty }
         };

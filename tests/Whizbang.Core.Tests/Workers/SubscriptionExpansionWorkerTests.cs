@@ -35,8 +35,8 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task FirstBoot_BaselinesWholeCatalog_NoBackfillAsync() {
-    var coordinator = new _registryCoordinator();   // empty registry = first boot
-    var transport = new _captureTransport();
+    var coordinator = new RegistryCoordinator();   // empty registry = first boot
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -48,10 +48,10 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task Expansion_BroadcastsStateOnlyBackfillAndMarksRequestedAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;   // prior boot
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, transport);
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     await worker.RunOnceAsync(CancellationToken.None);
 
@@ -68,7 +68,7 @@ public class SubscriptionExpansionWorkerTests {
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
     await Assert.That(command.StateOnly).IsTrue()
       .Because("backfill builds STATE — trigger receptors must never re-run over delivered history.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo([_expandedWireType])
+    await Assert.That(command.EventTypes).IsEquivalentTo([_expandedWireType])
       .Because("the registry keys on the no-assembly CLR name (persisted rows must not re-baseline), " +
                "but the ORIGIN matches event_type in the assembly-qualified wire form — a FullName-only " +
                "request silently backfills nothing.");
@@ -78,9 +78,9 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task Disabled_RecordsPendingWithoutRequestingAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport,
       new StreamIntegrityOptions { BackfillOnSubscriptionGrowth = false });
 
@@ -94,7 +94,7 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task MissingTransport_LeavesPendingForNextBootAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
     var worker = _buildWorker(coordinator, transport: null);
 
@@ -104,34 +104,101 @@ public class SubscriptionExpansionWorkerTests {
       .Because("a request that cannot be sent stays Pending — the next boot retries it.");
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_AFailedPassIsNonFatalAsync(CancellationToken testToken) {
+    // This runs at startup, before the app serves. A reconcile that cannot reach the registry
+    // must cost the pass, not the process: the expansion stays recorded and is re-detected next
+    // boot, and the audit phases surface anything still pending. Faulting here would take a
+    // healthy service out of rotation over a transient read.
+    var coordinator = new RegistryCoordinator { FailReads = true };
+    var worker = _buildWorker(coordinator, transport: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a startup reconcile failure is logged and swallowed; a faulted hosted service "
+             + "stops the host from ever serving");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_ShutdownBeforeSchemaReady_TouchesNothingAsync(
+      CancellationToken testToken) {
+    // A host that fails during migration stops everything it built. This worker reads registry
+    // tables that may not exist yet, so it waits on the schema gate -- and a shutdown arriving
+    // during that wait must not be reported as a reconcile failure.
+    var coordinator = new RegistryCoordinator();
+    var gate = new BlockingGate();
+    var worker = _buildWorker(coordinator, transport: null, gate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Without waiting for the worker to actually reach the gate, everything below is answered by
+    // a worker that never ran -- the registry is untouched either way.
+    await gate.WaitEntered.WaitAsync(testToken);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("shutdown during the schema wait is an ordinary stop, not an error to report");
+    await Assert.That(coordinator.Registry).IsEmpty()
+      .Because("nothing may be written before the schema those tables live in is ready");
+  }
+
+  private static SchemaReadyGate _readyGate() {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    return gate;
+  }
+
+  /// <summary>A gate that never opens, and reports when the worker began waiting on it.</summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitEntered => _waitEntered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static SubscriptionExpansionWorker _buildWorker(
-      _registryCoordinator coordinator, _captureTransport? transport, StreamIntegrityOptions? options = null) {
+      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null,
+      ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
     }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("expanded-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanded-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
+      gate ?? _readyGate(),
       Options.Create(options ?? new StreamIntegrityOptions()),
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(ExpandedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -145,12 +212,18 @@ public class SubscriptionExpansionWorkerTests {
   }
 
   /// <summary>In-memory consumed-type registry with the production status semantics.</summary>
-  private sealed class _registryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
 
+    /// <summary>Set to make the registry read throw, as a database outage at startup would.</summary>
+    public bool FailReads { get; set; }
+
     public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
-        [.. Registry.Select(kv => new ConsumedTypeRegistration { EventType = kv.Key, Status = kv.Value })]);
+      FailReads
+        ? Task.FromException<IReadOnlyList<ConsumedTypeRegistration>>(
+            new InvalidOperationException("registry unavailable"))
+        : Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
+            [.. Registry.Select(kv => new ConsumedTypeRegistration { EventType = kv.Key, Status = kv.Value })]);
 
     public Task RegisterConsumedTypesAsync(IReadOnlyList<string> eventTypes, bool asBaseline, CancellationToken cancellationToken = default) {
       foreach (var type in eventTypes) {
@@ -169,7 +242,7 @@ public class SubscriptionExpansionWorkerTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

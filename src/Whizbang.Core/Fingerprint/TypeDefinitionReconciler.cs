@@ -15,10 +15,22 @@ namespace Whizbang.Core.Fingerprint;
 /// Detect-by-default, act-by-opt-in (<see cref="EphemeralOptions.ReconcileHistoricalOnStartup"/>).
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
-public sealed partial class TypeDefinitionReconciler {
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly EphemeralOptions _options;
-  private readonly ILogger<TypeDefinitionReconciler> _logger;
+/// <remarks>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</remarks>
+/// <remarks>
+/// <see cref="IWorkCoordinator"/> is a SCOPED service (one per DbContext scope), so this singleton
+/// reconciler resolves it from a freshly-created scope per pass rather than capturing it in the
+/// constructor — capturing a scoped service on a singleton is a captive-dependency bug that throws
+/// under scope validation ("Cannot resolve scoped service … from root provider") and yields a broken
+/// root-scoped instance without it. Mirrors <c>MaintenanceWorker</c>.
+/// </remarks>
+public sealed partial class TypeDefinitionReconciler(
+    IServiceScopeFactory scopeFactory,
+    IOptions<EphemeralOptions> options,
+    ILogger<TypeDefinitionReconciler> logger,
+    IMessageTypeCatalog catalog) {
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
+  private readonly EphemeralOptions _options = options.Value;
+  private readonly ILogger<TypeDefinitionReconciler> _logger = logger;
 
   /// <summary>
   /// How recently a sibling's reconcile suppresses this one. Deliberately short: this is startup
@@ -26,30 +38,11 @@ public sealed partial class TypeDefinitionReconciler {
   /// The window only needs to cover one fleet's simultaneous boot, not a whole deployment cycle.
   /// </summary>
   private static readonly TimeSpan _claimWindow = TimeSpan.FromMinutes(2);
-  private readonly IMessageTypeCatalog? _catalog;
-
-  /// <summary>Creates the reconciler. <paramref name="catalog"/> is optional — absent means no-op.</summary>
-  /// <remarks>
-  /// <see cref="IWorkCoordinator"/> is a SCOPED service (one per DbContext scope), so this singleton
-  /// reconciler resolves it from a freshly-created scope per pass rather than capturing it in the
-  /// constructor — capturing a scoped service on a singleton is a captive-dependency bug that throws
-  /// under scope validation ("Cannot resolve scoped service … from root provider") and yields a broken
-  /// root-scoped instance without it. Mirrors <c>MaintenanceWorker</c>.
-  /// </remarks>
-  public TypeDefinitionReconciler(
-      IServiceScopeFactory scopeFactory,
-      IOptions<EphemeralOptions> options,
-      ILogger<TypeDefinitionReconciler> logger,
-      IMessageTypeCatalog? catalog = null) {
-    _scopeFactory = scopeFactory;
-    _options = options.Value;
-    _logger = logger;
-    _catalog = catalog;
-  }
+  private readonly IMessageTypeCatalog _catalog = catalog;
 
   /// <summary>Runs one reconciliation pass over the catalog. Returns a summary of what it found/did.</summary>
   public async Task<TypeDefinitionReconcileSummary> ReconcileAsync(CancellationToken cancellationToken = default) {
-    if (_catalog is null) {
+    if (!_catalog.IsAvailable) {
       return TypeDefinitionReconcileSummary.Empty;
     }
 
@@ -104,8 +97,12 @@ public sealed partial class TypeDefinitionReconciler {
     if (registered.Count > 0) {
       var retention = new List<PerspectiveRetentionDeclaration>(registered.Count);
       foreach (var (modelType, ttlSeconds) in registered) {
-        var clrTypeName = modelType.FullName;
-        if (clrTypeName is null) {
+        // The registry key form (Outer+Model for a nested model), through the shared helper: the
+        // generator writes the row with TypeNameUtilities.BuildClrTypeName, and the two helpers
+        // are documented mirrors. A local rendering on either side is how issue #697 happened.
+        // A type with no CLR full name (a generic parameter registered by mistake) is skipped: a
+        // null key would corrupt the lookup for every legitimately named perspective sharing it.
+        if (!TypeNameFormatter.TryFormatClrTypeName(modelType, out var clrTypeName)) {
           continue;
         }
         // A registered perspective is enrolled by construction — the declaration IS the enrolment.
@@ -157,9 +154,11 @@ public sealed partial class TypeDefinitionReconciler {
       var schemaChanged = !string.Equals(prev.SchemaHashHex, entry.SchemaHash, StringComparison.OrdinalIgnoreCase);
       var isEphemeral = entry.Ephemeral is not null;
 
-      var relationship = schemaChanged
-        ? DefinitionRelationship.SchemaUpgradedTo
-        : (isEphemeral ? DefinitionRelationship.ReclassifiedTo : DefinitionRelationship.MetadataChangedTo);
+      var relationship = (schemaChanged, isEphemeral) switch {
+        (true, _) => DefinitionRelationship.SchemaUpgradedTo,
+        (false, true) => DefinitionRelationship.ReclassifiedTo,
+        _ => DefinitionRelationship.MetadataChangedTo,
+      };
       await coordinator.RecordDefinitionLineageAsync(
         prevId, reg.DefinitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
       LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());

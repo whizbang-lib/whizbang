@@ -1,4 +1,4 @@
-#pragma warning disable CS0618, WHIZ400
+#pragma warning disable CS0618
 
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;

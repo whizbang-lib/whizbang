@@ -224,6 +224,12 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.verify_digest_epochs IS
 'Sweep backstop: recomputes each closed epoch from the store, compares bucket-for-bucket, refolds on drift. Non-zero drift means an unaccounted write path — alarm-worthy, not routine. Epochs with unsettled arrivals are skipped whole.';
 
+-- #515: the stall-escape window, live-tunable like the epoch width.
+INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
+VALUES ('integrity_epoch_max_stall_seconds', '3600', 'integer',
+        'Epoch-closure stall escape: a lane whose digest frontier has not advanced for this many seconds closes its first blocked epoch anyway (once per sweep) — the verify backstop refolds on drift. Non-positive disables the escape.')
+ON CONFLICT (setting_key) DO NOTHING;
+
 -- Advances each lane's contiguous frontier, folding every closable epoch. Returns epochs closed
 -- across all lanes (empty epochs advance the frontier and count, but write no rows).
 CREATE OR REPLACE FUNCTION __SCHEMA__.close_digest_epochs(
@@ -244,14 +250,38 @@ DECLARE
   v_target  BIGINT;
   v_epoch   BIGINT;
   v_blocked BOOLEAN;
+  v_max_stall INTEGER;
+  v_stalled BOOLEAN;
+  v_frontier_updated TIMESTAMPTZ;
 BEGIN
   SELECT setting_value::bigint INTO v_default_width
   FROM __SCHEMA__.wh_settings WHERE setting_key = 'integrity_epoch_width';
   v_default_width := COALESCE(v_default_width, 100000);
 
+  -- #515: stall escape window (settings table, live-tunable). A lane whose frontier has not
+  -- advanced for longer than this closes its blocked epoch anyway — the verify sweep refolds
+  -- on drift, so a late straggler is corrected by the existing backstop instead of pinning
+  -- the lane forever. Non-positive disables the escape.
+  SELECT setting_value::int INTO v_max_stall
+  FROM __SCHEMA__.wh_settings WHERE setting_key = 'integrity_epoch_max_stall_seconds';
+  v_max_stall := COALESCE(v_max_stall, 3600);
+
+  -- #515: lanes source from the event store AND the integrity ledger — an origin with ledger
+  -- history but no local events is the LOSS signature, and it must exist as a lane for the
+  -- verify machinery to flag rather than vanish from the audit. Ordering is
+  -- least-recently-advanced first (never-seen lanes lead), so the global closure budget
+  -- round-robins across lanes over cycles instead of letting scan order starve the tail.
   FOR v_lane IN
-    SELECT DISTINCT COALESCE(es.origin_service_id, c_zero)
-    FROM __SCHEMA__.wh_event_store es
+    SELECT lanes.lane
+    FROM (
+      SELECT DISTINCT COALESCE(es.origin_service_id, c_zero) AS lane
+      FROM __SCHEMA__.wh_event_store es
+      UNION
+      SELECT DISTINCT il.origin_service_id
+      FROM __SCHEMA__.wh_integrity_ledger il
+    ) lanes
+    LEFT JOIN __SCHEMA__.wh_digest_epoch_frontiers f ON f.origin_service_id = lanes.lane
+    ORDER BY f.updated_at ASC NULLS FIRST
   LOOP
     -- Pin the width on first contact with this lane.
     INSERT INTO __SCHEMA__.wh_digest_epoch_frontiers
@@ -259,9 +289,11 @@ BEGIN
     VALUES (v_lane, -1, v_default_width, p_now)
     ON CONFLICT (origin_service_id) DO NOTHING;
 
-    SELECT f.closed_through_epoch, f.epoch_width INTO v_frontier, v_width
+    SELECT f.closed_through_epoch, f.epoch_width, f.updated_at INTO v_frontier, v_width, v_frontier_updated
     FROM __SCHEMA__.wh_digest_epoch_frontiers f
     WHERE f.origin_service_id = v_lane;
+    v_stalled := v_max_stall > 0
+      AND v_frontier_updated < p_now - make_interval(secs => v_max_stall);
 
     -- The lane's settled maximum. The epoch containing it stays open: the lane keeps appending
     -- into it, so only strictly lower epochs are closure candidates.
@@ -301,7 +333,12 @@ BEGIN
             AND es.created_at >= p_now - make_interval(secs => p_settle_seconds)
         ) INTO v_blocked;
       END IF;
-      EXIT WHEN v_blocked;
+      -- #515: a stalled lane forces its FIRST blocked epoch through (once per call — the
+      -- escape is a trickle, not an open gate); an unstalled blocked lane waits as before.
+      EXIT WHEN v_blocked AND NOT v_stalled;
+      IF v_blocked THEN
+        v_stalled := FALSE;
+      END IF;
 
       PERFORM __SCHEMA__._wh_fold_digest_epoch(v_lane, v_epoch, v_width, p_now);
 

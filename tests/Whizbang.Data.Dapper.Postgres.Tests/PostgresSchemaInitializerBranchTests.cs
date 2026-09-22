@@ -51,7 +51,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }
@@ -67,7 +67,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   }
 
   /// <summary>Minimal provider so tests can control exactly which migration scripts run.</summary>
-  private sealed class _customMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
+  private sealed class CustomMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
     public string Version => version;
     public string? ReleaseNotes => null;
     public IReadOnlyList<MigrationScript> GetMigrations() => migrations;
@@ -97,7 +97,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task InitializeSchemaAsync_CoreMigrationFails_RecordsFailureStatusAndThrowsAsync() {
-    var provider = new _customMigrationProvider("9.9.1-test", [
+    var provider = new CustomMigrationProvider("9.9.1-test", [
       _realBootstrap(),
       new MigrationScript("999_intentionally_broken", "SELECT * FROM wh_this_table_does_not_exist;")
     ]);
@@ -156,7 +156,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     // Tracking tables must exist so the rest of the preview can query recorded hashes.
     await new PostgresSchemaInitializer(_testConnectionString).InitializeSchemaAsync();
 
-    var provider = new _customMigrationProvider("9.9.2-test", [
+    var provider = new CustomMigrationProvider("9.9.2-test", [
       new MigrationScript("000_broken_bootstrap", "SELECT * FROM wh_no_such_bootstrap_table;"),
       new MigrationScript("100_branch_probe", "SELECT 1;")
     ]);
@@ -220,7 +220,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     var step = plan.Steps.Single(s => s.Name == "perspective:DestructivePerspective");
     await Assert.That(step.Action).IsEqualTo(MigrationAction.BlueGreenEventReplay);
     await Assert.That(step.RemovedColumns).IsNotNull();
-    await Assert.That(step.RemovedColumns!).Contains("extra");
+    await Assert.That(step.RemovedColumns).Contains("extra");
     await Assert.That(step.AddedColumns).IsNull();
 
     await initializer.InitializeSchemaAsync();
@@ -279,7 +279,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     var step = plan.Steps.Single(s => s.Name == "perspective:DroppedPerspective");
     await Assert.That(step.Action).IsEqualTo(MigrationAction.Update);
     await Assert.That(step.AddedColumns).IsNotNull();
-    await Assert.That(step.AddedColumns!).Contains("extra");
+    await Assert.That(step.AddedColumns).Contains("extra");
   }
 
   // --- Perspective failure path ---
@@ -360,7 +360,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task InitializeAndPreview_EmptyMigrationProvider_SkipMigrationPhaseAsync() {
-    var provider = new _customMigrationProvider("9.9.3-test", []);
+    var provider = new CustomMigrationProvider("9.9.3-test", []);
     var initializer = new PostgresSchemaInitializer(
       _testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider);
 
@@ -385,7 +385,7 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     // Tracking tables come from a prior real initialization; the custom provider then has no 000 script.
     await new PostgresSchemaInitializer(_testConnectionString).InitializeSchemaAsync();
 
-    var provider = new _customMigrationProvider("9.9.4-test", [
+    var provider = new CustomMigrationProvider("9.9.4-test", [
       new MigrationScript("100_branch_probe", "SELECT 1;")
     ]);
     var initializer = new PostgresSchemaInitializer(

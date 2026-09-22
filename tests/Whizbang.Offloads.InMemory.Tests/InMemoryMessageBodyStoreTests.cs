@@ -101,11 +101,19 @@ public class InMemoryMessageBodyStoreTests {
   [Test]
   public async Task DeleteAsync_DefaultIgnoreMissing_NotFoundDoesNotThrowAsync() {
     var store = _newStore("memory");
+    var survivorBody = new byte[] { 9, 8, 7 };
+    var survivor = await store.UploadAsync(survivorBody, "application/octet-stream");
     var bogus = new MessageBodyClaim(
       "memory", "inmemory://nonexistent", 0, "sha256-x", "application/json", DateTimeOffset.UtcNow);
 
     // Default options.IgnoreMissing is true — must not throw.
     await store.DeleteAsync(bogus);
+
+    // ...and the miss must be a true no-op: an unknown key must not take any other body with it
+    // (fan-out topologies double-delete by design, so a miss that cleared the store would drop
+    // bodies still needed for redelivery).
+    var stillThere = await store.DownloadAsync(survivor);
+    await Assert.That(stillThere.ToArray()).IsEquivalentTo(survivorBody);
   }
 
   [Test]

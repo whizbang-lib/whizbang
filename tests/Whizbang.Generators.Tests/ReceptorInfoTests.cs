@@ -131,4 +131,40 @@ public class ReceptorInfoTests {
     // Assert - Different IsPolymorphicMessageType means not equal
     await Assert.That(info1).IsNotEqualTo(info2);
   }
+
+  // HasSyncAttributes distinguishes THREE states of the SyncAttributes slot: absent (null),
+  // present-but-empty, and populated. The generator's extraction returns null when a receptor
+  // carries no [AwaitPerspectiveSync], but an empty array is what a future extraction change would
+  // most naturally produce instead — and a regression to a plain null check would then claim the
+  // receptor awaits a perspective sync it never declared, making the dispatcher wait on a sync
+  // barrier that nothing will ever satisfy.
+  [Test]
+  public async Task ReceptorInfo_HasSyncAttributes_IsFalseWhenTheSlotIsNullAsync() {
+    var info = new ReceptorInfo("MyClass", "MyMessage", null, []);
+
+    await Assert.That(info.SyncAttributes).IsNull()
+      .Because("the default for the SyncAttributes slot is null, not an empty array");
+    await Assert.That(info.HasSyncAttributes).IsFalse();
+  }
+
+  [Test]
+  public async Task ReceptorInfo_HasSyncAttributes_IsFalseWhenTheSlotIsAnEmptyArrayAsync() {
+    var info = new ReceptorInfo(
+      "MyClass", "MyMessage", null, [],
+      SyncAttributes: []
+    );
+
+    await Assert.That(info.HasSyncAttributes).IsFalse()
+      .Because("an empty array declares no sync barriers, so it must read the same as no attribute at all");
+  }
+
+  [Test]
+  public async Task ReceptorInfo_HasSyncAttributes_IsTrueWhenAtLeastOneAttributeIsPresentAsync() {
+    var info = new ReceptorInfo(
+      "MyClass", "MyMessage", null, [],
+      SyncAttributes: [new SyncAttributeInfo("MyApp.Perspectives.OrderView", null, 5000, 0)]
+    );
+
+    await Assert.That(info.HasSyncAttributes).IsTrue();
+  }
 }

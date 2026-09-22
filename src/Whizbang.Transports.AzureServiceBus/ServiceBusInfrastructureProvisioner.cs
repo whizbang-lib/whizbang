@@ -12,8 +12,8 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// entity named by a <see cref="TopologyManifest"/> (manifest-driven DARK provisioning).
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
-/// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
-/// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisioner {
   private readonly IServiceBusAdminClient _adminClient;
@@ -54,12 +54,12 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   }
 
   /// <inheritdoc />
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCreatesTopicForEachDomainAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsSkipsExistingTopicsAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsLowercasesTopicNamesAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsTopicAlreadyExistsHandlesRaceAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCreatesTopicForEachDomainAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsSkipsExistingTopicsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsLowercasesTopicNamesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsTopicAlreadyExistsHandlesRaceAsync</tests>
   public Task ProvisionOwnedDomainsAsync(
       IReadOnlySet<string> ownedDomains,
       CancellationToken cancellationToken = default) {
@@ -92,10 +92,10 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
 
   /// <inheritdoc />
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
   public Task EnsureTopicExistsAsync(
       string topicName,
       CancellationToken cancellationToken = default) {
@@ -113,8 +113,8 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// Idempotent via the per-process existence cache; the ownership drift check runs once per
   /// owned command inbox per process.
   /// </remarks>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroManagementOpsAsync</tests>
-  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedCommandInbox_ForeignSubscription_RecordsDriftAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroManagementOpsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedCommandInbox_ForeignSubscription_RecordsDriftAsync</tests>
   public async Task ProvisionManifestAsync(
       TopologyManifest manifest,
       CancellationToken cancellationToken = default) {

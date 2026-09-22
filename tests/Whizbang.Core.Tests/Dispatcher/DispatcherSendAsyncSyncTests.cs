@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -19,7 +20,7 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test perspective for sync testing.
   /// </summary>
-  private sealed class TestSyncPerspective { }
+  private sealed class TestSyncPerspective;
 
   /// <summary>
   /// Test event that should be synced before receptor runs.
@@ -64,7 +65,7 @@ public class DispatcherSendAsyncSyncTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register the test sync awaiter
     services.AddSingleton<IPerspectiveSyncAwaiter>(testSyncAwaiter);
@@ -176,7 +177,7 @@ public class DispatcherSendAsyncSyncTests {
           new ReceptorInfo(
             MessageType: typeof(TestSyncCommand),
             ReceptorId: "TestSyncReceptor",
-            InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+            InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
               _onInvoke();
               return ValueTask.FromResult<object?>(new TestSyncResult(true));
             },
@@ -195,8 +196,10 @@ public class DispatcherSendAsyncSyncTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

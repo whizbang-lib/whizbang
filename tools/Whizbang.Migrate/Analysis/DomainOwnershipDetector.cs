@@ -36,7 +36,7 @@ public static class DomainOwnershipDetector {
     "Updated",
     "Deleted",
     "Changed",
-    "Cancelled",
+    "Canceled",
     "Completed",
     "Started",
     "Shipped",

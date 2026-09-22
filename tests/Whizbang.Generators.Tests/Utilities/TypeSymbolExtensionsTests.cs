@@ -447,6 +447,157 @@ public class TypeSymbolExtensionsTests {
 
   #endregion
 
+  #region FindMethodWithAttribute Tests
+
+  private const string ATTRIBUTED_SOURCE = @"
+    public class MarkerAttribute : System.Attribute { }
+
+    public class BaseHandler {
+      [Marker]
+      protected void HandleOnBase() { }
+    }
+
+    public class DerivedHandler : BaseHandler {
+      [Marker]
+      public void HandlePublic() { }
+
+      [Marker]
+      private void HandlePrivate() { }
+
+      public void Unattributed() { }
+    }
+
+    public class NoMarkers {
+      public void Plain() { }
+    }
+  ";
+
+  [Test]
+  public async Task FindMethodWithAttribute_MethodOnTheTypeItself_IsFoundAsync() {
+    var typeSymbol = _getTypeSymbol(ATTRIBUTED_SOURCE, "DerivedHandler");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(typeSymbol, "global::MarkerAttribute");
+
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.GetAttributes()).IsNotEmpty();
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_NoMatch_ReturnsNullAsync() {
+    var typeSymbol = _getTypeSymbol(ATTRIBUTED_SOURCE, "NoMarkers");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(typeSymbol, "global::MarkerAttribute");
+
+    await Assert.That(method).IsNull();
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_UnknownAttribute_ReturnsNullAsync() {
+    var typeSymbol = _getTypeSymbol(ATTRIBUTED_SOURCE, "DerivedHandler");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(typeSymbol, "global::NotAnAttribute");
+
+    await Assert.That(method).IsNull();
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_PublicOnly_SkipsNonPublicMatchesAsync() {
+    var typeSymbol = _getTypeSymbol(ATTRIBUTED_SOURCE, "DerivedHandler");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(
+        typeSymbol, "global::MarkerAttribute", includeNonPublic: false);
+
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.DeclaredAccessibility).IsEqualTo(Accessibility.Public);
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_WalksUpToTheBaseTypeAsync() {
+    // BaseHandler carries the only marker reachable from a type that declares none itself.
+    const string source = @"
+      public class MarkerAttribute : System.Attribute { }
+
+      public class OnlyBaseHasIt {
+        [Marker]
+        public void FromBase() { }
+      }
+
+      public class EmptyDerived : OnlyBaseHasIt { }
+    ";
+    var typeSymbol = _getTypeSymbol(source, "EmptyDerived");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(typeSymbol, "global::MarkerAttribute");
+
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.Name).IsEqualTo("FromBase");
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_IgnoresNonOrdinaryMethodsAsync() {
+    // Constructors and property accessors are not MethodKind.Ordinary and must not match.
+    const string source = @"
+      public class MarkerAttribute : System.Attribute { }
+
+      public class CtorOnly {
+        [Marker]
+        public CtorOnly() { }
+      }
+    ";
+    var typeSymbol = _getTypeSymbol(source, "CtorOnly");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(typeSymbol, "global::MarkerAttribute");
+
+    await Assert.That(method).IsNull();
+  }
+
+  [Test]
+  public async Task FindMethodWithAttribute_PublicOnly_SkipsPastAnEarlierNonPublicMatchAsync() {
+    // The non-public match is declared first, so the skip branch has to run before the
+    // public one is reached — declaring it second would short-circuit before the skip.
+    const string source = @"
+      public class MarkerAttribute : System.Attribute { }
+
+      public class PrivateFirst {
+        [Marker]
+        private void Hidden() { }
+
+        [Marker]
+        public void Visible() { }
+      }
+    ";
+    var typeSymbol = _getTypeSymbol(source, "PrivateFirst");
+
+    var method = TypeSymbolExtensions.FindMethodWithAttribute(
+        typeSymbol, "global::MarkerAttribute", includeNonPublic: false);
+
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.Name).IsEqualTo("Visible");
+  }
+
+  [Test]
+  public async Task FindPropertyWithAttribute_PublicOnly_SkipsPastAnEarlierNonPublicMatchAsync() {
+    const string source = @"
+      public class MarkerAttribute : System.Attribute { }
+
+      public class PrivatePropFirst {
+        [Marker]
+        private string Hidden { get; set; }
+
+        [Marker]
+        public string Visible { get; set; }
+      }
+    ";
+    var typeSymbol = _getTypeSymbol(source, "PrivatePropFirst");
+
+    var property = TypeSymbolExtensions.FindPropertyWithAttribute(
+        typeSymbol, "global::MarkerAttribute", includeNonPublic: false);
+
+    await Assert.That(property).IsNotNull();
+    await Assert.That(property!.Name).IsEqualTo("Visible");
+  }
+
+  #endregion
+
   #region Helper Methods
 
   private static INamedTypeSymbol _getTypeSymbol(string source, string typeName) {

@@ -15,6 +15,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityRepairLedger.cs</code-under-test>
 [Category("Messaging")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
 public class IntegrityRepairLedgerTests {
 
   private static readonly TimeSpan _cooldown = TimeSpan.FromMinutes(60);

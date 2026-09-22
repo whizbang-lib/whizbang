@@ -16,12 +16,12 @@ namespace Whizbang.Core.RunControl;
 public sealed class LifecyclePhaseWorker : BackgroundService {
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly IReadModelsReadyGate? _readModelsReadyGate;
+  private readonly IReadModelsReadyGate _readModelsReadyGate;
 
   /// <summary>Creates the driver over the lifecycle machine and the gates it projects.</summary>
   public LifecyclePhaseWorker(
       IWhizbangLifecycleState lifecycle, ISchemaReadyGate schemaReadyGate,
-      IReadModelsReadyGate? readModelsReadyGate = null) {
+      IReadModelsReadyGate readModelsReadyGate) {
     ArgumentNullException.ThrowIfNull(lifecycle);
     ArgumentNullException.ThrowIfNull(schemaReadyGate);
     _lifecycle = lifecycle;
@@ -45,12 +45,10 @@ public sealed class LifecyclePhaseWorker : BackgroundService {
     // the instance fully Running. Without a read-model gate (partial hosts, old fixtures) the
     // two moments coincide.
     await _lifecycle.AdvanceToAsync(LifecyclePhase.AcceptingCommands, stoppingToken).ConfigureAwait(false);
-    if (_readModelsReadyGate is not null) {
-      try {
-        await _readModelsReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        return; // host stopping while reads were still held — fail-closed, phase stays put
-      }
+    try {
+      await _readModelsReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      return; // host stopping while reads were still held — fail-closed, phase stays put
     }
     await _lifecycle.AdvanceToAsync(LifecyclePhase.Running, stoppingToken).ConfigureAwait(false);
   }

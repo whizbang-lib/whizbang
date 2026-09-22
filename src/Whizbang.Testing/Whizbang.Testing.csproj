@@ -5,7 +5,7 @@
     <!-- Suppress CA1707: Contract test base classes use underscores for readability (Given_When_Then pattern) -->
     <!-- Suppress WHIZ055: Test code uses Guid.NewGuid() for stream IDs intentionally -->
     <!-- Suppress IL2066: Generated dispatcher registrations in a library context -->
-    <NoWarn>$(NoWarn);CA1707;WHIZ055;IL2066</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;IL2066</NoWarn>
     <OutputType>Library</OutputType>
     <IsTestProject>false</IsTestProject>
     <!-- Prevent Microsoft.Testing.Platform (pulled in transitively via TUnit) from treating this
@@ -15,6 +15,11 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The per-test-database retry policy is asserted from the Postgres test project, which is
+         where Npgsql and the fixtures that use it live. -->
+    <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />

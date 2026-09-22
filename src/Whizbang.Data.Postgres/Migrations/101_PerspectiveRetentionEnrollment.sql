@@ -31,6 +31,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_registry_retention_enrolled
   ON __SCHEMA__.wh_perspective_registry (clr_type_name)
   WHERE row_retention_enrolled;
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('sync_perspective_retention');
+
 -- Syncs one perspective's retention declaration. Called at startup from the C# TTL registry, which
 -- is where the attribute values live.
 --

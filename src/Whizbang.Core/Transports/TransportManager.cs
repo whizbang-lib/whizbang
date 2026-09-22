@@ -36,11 +36,11 @@ namespace Whizbang.Core.Transports;
 /// </remarks>
 /// <param name="instanceProvider">Optional service instance provider for message tracing</param>
 public class TransportManager(
-  IServiceInstanceProvider? instanceProvider = null,
+  IServiceInstanceProvider instanceProvider,
   CascadeContextFactory? cascadeContextFactory = null
 ) : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = [];
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? new CascadeContextFactory(null);
 
   /// <inheritdoc />
@@ -228,12 +228,13 @@ public class TransportManager(
     var scopeDelta = CascadeContext.ScopeDeltaFromMessageContext(context);
 
     return new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = context.MessageId,
       Payload = message,
       Hops = [
         new MessageHop {
           Type = HopType.Current,
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = context.CorrelationId,
           CausationId = context.CausationId,

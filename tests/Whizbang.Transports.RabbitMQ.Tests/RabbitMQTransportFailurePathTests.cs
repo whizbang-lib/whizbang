@@ -2,11 +2,13 @@ using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
@@ -202,7 +204,7 @@ public class RabbitMQTransportFailurePathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeAsync(
-        (envelope, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
+        (_, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -222,7 +224,7 @@ public class RabbitMQTransportFailurePathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeAsync(
-        (envelope, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
+        (_, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -320,7 +322,11 @@ public class RabbitMQTransportFailurePathTests {
   public async Task ProcessMessage_DiscardPolicySaysSkip_AcksWithoutInvokingHandlerAsync() {
     using var meter = new Meter("Whizbang.Tests.RabbitMQTransportFailurePathTests.Discard");
     var policy = new MessageDiscardPolicy(
-      new EmptyReceptorRegistry(), new CapturingLogger<MessageDiscardPolicy>(), meter);
+      registry: new EmptyReceptorRegistry(),
+      logger: new CapturingLogger<MessageDiscardPolicy>(),
+      meter: meter,
+      routingOptions: Options.Create(new RoutingOptions()),
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     var (channel, handled, _, _) = await _subscribeAsync(discardPolicy: policy);
 
     var (props, body) = RabbitTestWire.ValidWireMessage("skipped");
@@ -335,7 +341,7 @@ public class RabbitMQTransportFailurePathTests {
 
   [Test]
   public async Task ProcessMessage_IsClaimHeaderVariants_AllDecodedAndProcessedAsync() {
-    // _tryReadStringHeader must handle byte[] (AMQP wire form), string (pre-decoded),
+    // TryReadStringHeader must handle byte[] (AMQP wire form), string (pre-decoded),
     // arbitrary objects (ToString fallback), and explicit null — none of which mark a claim.
     var (channel, handled, _, _) = await _subscribeAsync();
 
@@ -448,8 +454,8 @@ public class RabbitMQTransportFailurePathTests {
   public async Task HandleMessageFailure_NackThrowsAlreadyClosed_SwallowsAsync() {
     var channel = new RecordingChannel { ExceptionToThrowOnNack = RabbitTestWire.NewAlreadyClosedException() };
     var (_, handled, _, _) = await _subscribeAsync(
-      channel: channel,
-      handlerBehavior: () => throw new InvalidOperationException("handler boom"));
+      handlerBehavior: () => throw new InvalidOperationException("handler boom"),
+      channel: channel);
 
     var (props, body) = RabbitTestWire.ValidWireMessage("nack-fails");
     Exception? caught = null;
@@ -646,7 +652,7 @@ public class RabbitMQTransportFailurePathTests {
 
     var handled = new List<(IMessageEnvelope Envelope, string? EnvelopeType)>();
     var subscription = await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
+      (envelope, envelopeType, _) => {
         handled.Add((envelope, envelopeType));
         return handlerBehavior != null ? handlerBehavior() : Task.CompletedTask;
       },

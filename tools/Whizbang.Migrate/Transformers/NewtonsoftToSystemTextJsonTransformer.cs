@@ -186,8 +186,13 @@ public sealed class NewtonsoftToSystemTextJsonTransformer(
 
     // Add System.Text.Json.Serialization using if needed and not already present
     if (rewriter.NeedsSerializationUsing && !addedStjUsing) {
+      // The name needs its own leading space: SyntaxFactory emits `using` and the name as
+      // adjacent tokens, so without it this renders as `usingSystem.Text.Json.Serialization;`
+      // and the migrated file does not compile. The replacement above avoids this only because
+      // it reuses an existing directive's trivia; a directive built from scratch does not.
       var stjUsing = SyntaxFactory.UsingDirective(
-          SyntaxFactory.ParseName("System.Text.Json.Serialization"))
+          SyntaxFactory.ParseName("System.Text.Json.Serialization")
+              .WithLeadingTrivia(SyntaxFactory.Space))
           .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
 
       var usings = newRoot.Usings.ToList();
@@ -220,7 +225,14 @@ public sealed class NewtonsoftToSystemTextJsonTransformer(
       List<CodeChange> changes,
       List<string> warnings) {
     var newUsings = new List<UsingDirectiveSyntax>();
-    var addedStjSerialization = false;
+
+    // Seed the flag from what the file already imports. A partially migrated file -- one the
+    // tool has run over before, or that somebody hand-converted in part -- can carry both
+    // `using Newtonsoft.Json;` and the System.Text.Json import. Replacing the former without
+    // noticing the latter emitted the same using twice, which is CS0105 and a build failure
+    // under warnings-as-errors. Migrations get re-run, so this is an ordinary input.
+    var addedStjSerialization = originalUsings
+        .Any(u => u.Name?.ToString() == "System.Text.Json.Serialization");
 
     foreach (var usingDirective in originalUsings) {
       var name = usingDirective.Name?.ToString();

@@ -31,7 +31,7 @@ public class PerspectiveEventsSchemaTests {
     var columns = PerspectiveEventsSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(15);
+    await Assert.That(columns).Count().IsEqualTo(16);   // 149: + priority
 
     var eventWorkId = columns.First(c => c.Name == "event_work_id");
     await Assert.That(eventWorkId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -146,10 +146,11 @@ public class PerspectiveEventsSchemaTests {
 
     // Assert - only status, attempts, and created_at carry defaults
     var columnsWithDefaults = columns.Where(c => c.DefaultValue != null).Select(c => c.Name).ToList();
-    await Assert.That(columnsWithDefaults.Count).IsEqualTo(3);
+    await Assert.That(columnsWithDefaults.Count).IsEqualTo(4);
     await Assert.That(columnsWithDefaults).Contains("status");
     await Assert.That(columnsWithDefaults).Contains("attempts");
     await Assert.That(columnsWithDefaults).Contains("created_at");
+    await Assert.That(columnsWithDefaults).Contains("priority");   // 149: the standard band is the default
   }
 
   [Test]
@@ -250,7 +251,8 @@ public class PerspectiveEventsSchemaTests {
       PerspectiveEventsSchema.Columns.CLAIMED_AT,
       PerspectiveEventsSchema.Columns.PROCESSED_AT,
       PerspectiveEventsSchema.Columns.SCHEDULED_FOR,
-      PerspectiveEventsSchema.Columns.FAILURE_REASON
+      PerspectiveEventsSchema.Columns.FAILURE_REASON,
+      PerspectiveEventsSchema.Columns.PRIORITY
     };
 
     // Assert - constants and table columns are the same set

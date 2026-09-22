@@ -9,35 +9,23 @@ namespace Whizbang.Core.Messaging;
 /// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
 /// <docs>messaging/inbox-pattern</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxStatusFlagsAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxInstanceIdAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync</tests>
 public sealed class InboxRecord {
   /// <summary>
   /// Unique message ID (idempotency key).
   /// Primary key for fast deduplication checks.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxStatusFlagsAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxInstanceIdAsync</tests>
   public required Guid MessageId { get; set; }
 
   /// <summary>
   /// The name of the handler that will process this message.
   /// Used to route inbox messages to the correct handler.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public required string HandlerName { get; set; }
 
   /// <summary>
   /// Fully-qualified message type name (e.g., "MyApp.Events.OrderCreated", "MyApp.Commands.CreateOrder").
   /// Used for debugging and monitoring.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public required string MessageType { get; set; }
 
   /// <summary>
@@ -45,7 +33,6 @@ public sealed class InboxRecord {
   /// Contains the actual message data for debugging/replay.
   /// Schema matches the message type.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public required InboxMessageData MessageData { get; set; }
 
   /// <summary>
@@ -53,7 +40,6 @@ public sealed class InboxRecord {
   /// Contains correlation ID, causation ID, timestamp, security context, etc.
   /// Schema: { "CorrelationId": "guid", "CausationId": "guid", "Timestamp": "ISO8601", "UserId": "...", "TenantId": "..." }
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public required EnvelopeMetadata Metadata { get; set; }
 
   /// <summary>
@@ -61,7 +47,6 @@ public sealed class InboxRecord {
   /// Contains tenant/user/customer/organization information for query filtering.
   /// Schema: { "t": "...", "u": "...", "c": "...", "o": "...", "ap": [...], "ex": [...] }
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public PerspectiveScope? Scope { get; set; }
 
 
@@ -69,28 +54,24 @@ public sealed class InboxRecord {
   /// Number of processing attempts (starts at 0).
   /// Used for retry logic and poison message detection.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public int Attempts { get; set; }
 
   /// <summary>
   /// Error message if processing failed.
   /// Null if processing succeeded or not yet attempted.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public string? Error { get; set; }
 
   /// <summary>
   /// UTC timestamp when the message was first received.
   /// Automatically set by database on insert.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public DateTimeOffset ReceivedAt { get; set; }
 
   /// <summary>
   /// UTC timestamp when the message was last processed (attempt made).
   /// Null if not yet processed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public DateTime? ProcessedAt { get; set; }
 
   /// <summary>
@@ -98,8 +79,6 @@ public sealed class InboxRecord {
   /// Used for multi-instance coordination and tracking which instance owns the lease.
   /// Null if message is not currently being processed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxInstanceIdAsync</tests>
   public Guid? InstanceId { get; set; }
 
   /// <summary>
@@ -107,7 +86,6 @@ public sealed class InboxRecord {
   /// Used for orphaned work recovery - messages with expired leases can be claimed by other instances.
   /// Null if message is not currently being processed or has been completed/failed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public DateTimeOffset? LeaseExpiry { get; set; }
 
   // ========================================
@@ -119,7 +97,6 @@ public sealed class InboxRecord {
   /// Events from the same stream must be processed in order.
   /// Used for partition-based work distribution via consistent hashing.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public Guid? StreamId { get; set; }
 
   /// <summary>
@@ -127,7 +104,6 @@ public sealed class InboxRecord {
   /// Used for load distribution and ensuring same stream goes to same instance.
   /// Range: 0-9999 (10,000 partitions by default).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
   public int? PartitionNumber { get; set; }
 
   /// <summary>
@@ -135,8 +111,6 @@ public sealed class InboxRecord {
   /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// Uses MessageProcessingStatus enum.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:GetInboxStatusFlagsAsync</tests>
   public MessageProcessingStatus StatusFlags { get; set; }
 
   /// <summary>

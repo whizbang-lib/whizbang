@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// against a real Postgres so the migration SQL (check_function_bodies=on) runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard1")]
 public class StreamCloseSqlTests : EFCoreTestBase {
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());

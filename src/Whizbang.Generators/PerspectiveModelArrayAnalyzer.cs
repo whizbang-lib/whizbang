@@ -75,7 +75,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   private static bool _isPerspectiveModel(INamedTypeSymbol typeSymbol) {
     // Check if the type has [Perspective] attribute
     foreach (var attribute in typeSymbol.GetAttributes()) {
-      var attributeName = attribute.AttributeClass?.ToDisplayString() ?? "";
+      var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
       if (attributeName == "Whizbang.Core.Perspectives.PerspectiveAttribute" ||
           attributeName.EndsWith(".PerspectiveAttribute", System.StringComparison.Ordinal)) {
         return true;
@@ -102,7 +102,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     foreach (var member in typeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
         foreach (var attribute in property.GetAttributes()) {
-          var attributeName = attribute.AttributeClass?.ToDisplayString() ?? "";
+          var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
           if (attributeName == "Whizbang.Core.Perspectives.StreamIdAttribute" ||
               attributeName.EndsWith(".StreamIdAttribute", System.StringComparison.Ordinal)) {
             return true;
@@ -116,7 +116,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
 
   private static bool _hasVectorFieldAttribute(IPropertySymbol propertySymbol) {
     foreach (var attribute in propertySymbol.GetAttributes()) {
-      var attributeName = attribute.AttributeClass?.ToDisplayString() ?? "";
+      var attributeName = attribute.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : "";
       if (attributeName == "Whizbang.Core.Lenses.VectorFieldAttribute" ||
           attributeName.EndsWith(".VectorFieldAttribute", System.StringComparison.Ordinal)) {
         return true;
@@ -141,7 +141,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
     // Check if property type is an array
     if (propertyType is IArrayTypeSymbol arrayType) {
       // Get the element type for the suggestion
-      var elementType = arrayType.ElementType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+      var elementType = TypeNameUtilities.MinimallyQualified(arrayType.ElementType);
 
       // Find the property declaration syntax for accurate location
       var location = propertySymbol.Locations.FirstOrDefault() ?? Location.None;
@@ -151,7 +151,7 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
           location,
           propertySymbol.Name,
           containingType.Name,
-          propertyType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+          TypeNameUtilities.MinimallyQualified(propertyType),
           elementType
       );
       context.ReportDiagnostic(diagnostic);

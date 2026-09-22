@@ -1,17 +1,23 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -38,7 +44,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   // Test doubles
   // ============================================================
 
-  private sealed class _InstanceProvider : IServiceInstanceProvider {
+  private sealed class InstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "startup-test-svc";
     public string HostName => "startup-test-host";
@@ -51,14 +57,14 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     };
   }
 
-  private sealed class _Registry(IReadOnlyList<PerspectiveRegistrationInfo> perspectives) : IPerspectiveRunnerRegistry {
+  private sealed class Registry(IReadOnlyList<PerspectiveRegistrationInfo> perspectives) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => perspectives;
     public IReadOnlyList<Type> GetEventTypes() => [];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
-  private static _Registry _registryWithOnePerspective() => new([
+  private static Registry _registryWithOnePerspective() => new([
     new PerspectiveRegistrationInfo(
       ClrTypeName: "Test.Perspectives.OrderPerspective",
       FullyQualifiedName: "global::Test.Perspectives.OrderPerspective",
@@ -69,7 +75,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   private const string ORPHAN_EVENT_TYPE = "Test.Events.OrderCreated, Test";
 
-  private sealed class _StartupCoordinator : IWorkCoordinator, IDisposable {
+  private sealed class StartupCoordinator : IWorkCoordinator, IDisposable {
     // ── orphan reconciliation ────────────────────────────────
     public List<OrphanedLifecycleEvent> Orphans { get; init; } = [];
     public Queue<IReadOnlyList<OrphanedLifecycleEvent>> OrphanBatches { get; } = new();
@@ -121,14 +127,14 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     }
 
     // ── IWorkCoordinator surface ─────────────────────────────
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
     public Task<List<StreamEventData>> GetStreamEventsAsync(Guid instanceId, Guid[] streamIds, CancellationToken cancellationToken = default) =>
       Task.FromResult(new List<StreamEventData>());
@@ -183,7 +189,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     }
   }
 
-  private sealed class _SpyTracking(Guid eventId, List<LifecycleStage> stages, bool throwOnAdvance) : ILifecycleTracking {
+  private sealed class SpyTracking(Guid eventId, List<LifecycleStage> stages, bool throwOnAdvance) : ILifecycleTracking {
     public Guid EventId { get; } = eventId;
     public LifecycleStage CurrentStage { get; private set; }
     public bool IsComplete { get; private set; }
@@ -201,7 +207,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     public ValueTask DrainDetachedAsync() => ValueTask.CompletedTask;
   }
 
-  private sealed class _SpyLifecycleCoordinator : ILifecycleCoordinator {
+  private sealed class SpyLifecycleCoordinator : ILifecycleCoordinator {
     public HashSet<Guid> ThrowOnAdvanceFor { get; } = [];
     public ConcurrentDictionary<Guid, List<LifecycleStage>> AdvancedByEvent { get; } = new();
     public int CleanupCalls { get; private set; }
@@ -212,7 +218,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
         Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage,
         MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
       var stages = AdvancedByEvent.GetOrAdd(eventId, _ => []);
-      return new _SpyTracking(eventId, stages, ThrowOnAdvanceFor.Contains(eventId));
+      return new SpyTracking(eventId, stages, ThrowOnAdvanceFor.Contains(eventId));
     }
 
     public ILifecycleTracking? GetTracking(Guid eventId) => null;
@@ -231,7 +237,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     }
   }
 
-  private sealed class _FakeNotificationListener : IWorkNotificationListener {
+  private sealed class FakeNotificationListener : IWorkNotificationListener {
     private Action<WorkSignalCategory>? _onSignal;
     public int SubscriberCount { get; private set; }
     public bool IsHealthy => true;
@@ -243,7 +249,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       add { _onSignal += value; SubscriberCount++; Subscribed.TrySetResult(); }
       remove { _onSignal -= value; SubscriberCount--; }
     }
-    public event Action<bool>? OnHealthChanged { add { } remove { } }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public void Fire(WorkSignalCategory category) => _onSignal?.Invoke(category);
   }
 
@@ -262,24 +268,25 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     return new OrphanedLifecycleEvent(eventId, Guid.CreateVersion7(), envelope);
   }
 
-  private sealed record _Fixture(
+  private sealed record Fixture(
     PerspectiveWorker Worker,
     PerspectiveWorkerTestHarness Harness,
-    _StartupCoordinator Coordinator,
-    _SpyLifecycleCoordinator LifecycleCoordinator);
+    StartupCoordinator Coordinator,
+    SpyLifecycleCoordinator LifecycleCoordinator);
 
-  private static _Fixture _build(
-      _StartupCoordinator coordinator,
+  private static Fixture _build(
+      StartupCoordinator coordinator,
       IPerspectiveRunnerRegistry registry,
       PerspectiveWorkerOptions? options = null,
       PerspectiveRewindOptions? rewindOptions = null,
-      _SpyLifecycleCoordinator? lifecycleCoordinator = null,
+      SpyLifecycleCoordinator? lifecycleCoordinator = null,
       IWorkNotificationListener? notificationListener = null) {
     var harness = new PerspectiveWorkerTestHarness();
-    var lifecycle = lifecycleCoordinator ?? new _SpyLifecycleCoordinator();
-    var instanceProvider = new _InstanceProvider();
+    var lifecycle = lifecycleCoordinator ?? new SpyLifecycleCoordinator();
+    var instanceProvider = new InstanceProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ILifecycleCoordinator>(lifecycle);
     services.AddSingleton(registry);
@@ -288,22 +295,41 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options ?? new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options ?? new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
         MaxConcurrentDrainConsumers = 1,
       }),
-      tracingOptions: null,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new BatchedCompletionStrategy(),
+      eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: (rewindOptions is null ? null : Options.Create(rewindOptions)) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()) ?? Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       leaseRenewalChannel: harness.LeaseRenewalCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      rewindOptions: rewindOptions is null ? null : Options.Create(rewindOptions),
-      perspectiveNotificationListener: notificationListener);
-    return new _Fixture(worker, harness, coordinator, lifecycle);
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: notificationListener ?? new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options ?? new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        MaxConcurrentDrainConsumers = 1,
+      })).Value));
+    return new Fixture(worker, harness, coordinator, lifecycle);
   }
 
   private static readonly LifecycleStage[] _postLifecycleReplayStages = [
@@ -321,7 +347,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   public async Task Startup_OrphanedLifecycles_ReplaysTerminalStagesAndRecordsCompletionAsync() {
     var orphan1 = _orphan();
     var orphan2 = _orphan();
-    var coordinator = new _StartupCoordinator { Orphans = [orphan1, orphan2] };
+    var coordinator = new StartupCoordinator { Orphans = [orphan1, orphan2] };
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
@@ -351,8 +377,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
   public async Task Startup_OrphanReplayThrowsForOneEvent_ContinuesWithRemainingOrphansAsync() {
     var poisoned = _orphan();
     var healthy = _orphan();
-    var coordinator = new _StartupCoordinator { Orphans = [poisoned, healthy] };
-    var lifecycle = new _SpyLifecycleCoordinator();
+    var coordinator = new StartupCoordinator { Orphans = [poisoned, healthy] };
+    var lifecycle = new SpyLifecycleCoordinator();
     lifecycle.ThrowOnAdvanceFor.Add(poisoned.EventId);
     var fx = _build(coordinator, _registryWithOnePerspective(), lifecycleCoordinator: lifecycle);
 
@@ -377,7 +403,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     // orphans MORE lifecycles, making that loop self-sustaining).
     var fullBatch = Enumerable.Range(0, 100).Select(_ => _orphan()).ToList();
     var tailBatch = new List<OrphanedLifecycleEvent> { _orphan(), _orphan(), _orphan() };
-    var coordinator = new _StartupCoordinator();
+    var coordinator = new StartupCoordinator();
     coordinator.OrphanBatches.Enqueue(fullBatch);
     coordinator.OrphanBatches.Enqueue(tailBatch);
     var fx = _build(coordinator, _registryWithOnePerspective());
@@ -399,8 +425,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_NoPerspectivesRegistered_SkipsOrphanReconciliationAsync() {
-    var coordinator = new _StartupCoordinator();
-    var fx = _build(coordinator, new _Registry([]));
+    var coordinator = new StartupCoordinator();
+    var fx = _build(coordinator, new Registry([]));
 
     using var cts = new CancellationTokenSource();
     await fx.Worker.StartAsync(cts.Token);
@@ -417,7 +443,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_OrphanQueryThrows_StartupContinuesToRewindScanAsync() {
-    var coordinator = new _StartupCoordinator { ThrowOnOrphanQuery = true };
+    var coordinator = new StartupCoordinator { ThrowOnOrphanQuery = true };
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
@@ -438,7 +464,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_RewindScanClean_QueriesExactlyOnceAsync() {
-    var coordinator = new _StartupCoordinator();  // queue empty → every query returns []
+    var coordinator = new StartupCoordinator();  // queue empty → every query returns []
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
@@ -460,7 +486,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_RewindScanBackgroundMode_DoesNotRepollAsync() {
-    var coordinator = new _StartupCoordinator();
+    var coordinator = new StartupCoordinator();
     coordinator.RewindResults.Enqueue([
       new RewindCursorInfo(Guid.CreateVersion7(), "Test.Perspectives.OrderPerspective", null, Guid.CreateVersion7())
     ]);
@@ -485,7 +511,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync() {
-    var coordinator = new _StartupCoordinator();
+    var coordinator = new StartupCoordinator();
     coordinator.RewindResults.Enqueue([
       new RewindCursorInfo(Guid.CreateVersion7(), "Test.Perspectives.OrderPerspective", null, Guid.CreateVersion7())
     ]);
@@ -510,7 +536,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_RewindScanDisabled_NeverQueriesAsync() {
-    var coordinator = new _StartupCoordinator();
+    var coordinator = new StartupCoordinator();
     var fx = _build(coordinator, _registryWithOnePerspective(),
       rewindOptions: new PerspectiveRewindOptions { StartupScanEnabled = false });
 
@@ -532,7 +558,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Startup_RewindScanThrows_WorkerStillProcessesWorkAsync() {
-    var coordinator = new _StartupCoordinator { ThrowOnRewindQuery = true };
+    var coordinator = new StartupCoordinator { ThrowOnRewindQuery = true };
     var fx = _build(coordinator, _registryWithOnePerspective());
 
     using var cts = new CancellationTokenSource();
@@ -557,8 +583,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task Maintenance_StatisticsGatherAtSixtyCycles_SurvivesFailureAndFiresAgainAsync() {
-    var coordinator = new _StartupCoordinator { ThrowOnFirstGatherStatistics = true };
-    var lifecycle = new _SpyLifecycleCoordinator { CleanupReturnValue = 3 };
+    var coordinator = new StartupCoordinator { ThrowOnFirstGatherStatistics = true };
+    var lifecycle = new SpyLifecycleCoordinator { CleanupReturnValue = 3 };
     var fx = _build(coordinator, _registryWithOnePerspective(),
       options: new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
@@ -600,8 +626,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
 
   [Test]
   public async Task NotificationListener_SubscribedOnStart_UnsubscribedOnStopAsync() {
-    var listener = new _FakeNotificationListener();
-    var coordinator = new _StartupCoordinator();
+    var listener = new FakeNotificationListener();
+    var coordinator = new StartupCoordinator();
     var fx = _build(coordinator, _registryWithOnePerspective(),
       options: new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,

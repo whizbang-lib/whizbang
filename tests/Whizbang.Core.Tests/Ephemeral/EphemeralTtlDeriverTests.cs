@@ -29,8 +29,10 @@ public class EphemeralTtlDeriverTests {
     private readonly Dictionary<Type, EphemeralInfo> _byType = [];
     public StubResolver Add(Type type, EphemeralInfo info) { _byType[type] = info; return this; }
     public EphemeralInfo? Resolve(string clrTypeName) => null;
-    public bool IsEphemeral(string clrTypeName) => false;
+
     public EphemeralInfo? Resolve(Type type) => _byType.TryGetValue(type, out var i) ? i : null;
+    public bool IsEphemeral(string clrTypeName) => false;
+
     public bool IsEphemeral(Type type) => _byType.ContainsKey(type);
   }
 

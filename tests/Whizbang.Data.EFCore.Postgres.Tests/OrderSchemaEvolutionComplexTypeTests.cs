@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -136,7 +137,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
           SELECT pg_terminate_backend(pg_stat_activity.pid)
           FROM pg_stat_activity
           WHERE pg_stat_activity.datname = '{_testDatabaseName}' AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* ignore cleanup errors */ }
       _testDatabaseName = null;
     }
@@ -205,7 +206,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
 
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
     await Assert.That(dataJson).IsNotNull();
-    await Assert.That(dataJson!).DoesNotContain("InspectionTagIds")
+    await Assert.That(dataJson).DoesNotContain("InspectionTagIds")
       .Because("the seeded row must be genuinely old-shape — if the strip missed (JSON casing mismatch), the repro is invalid.");
   }
 
@@ -279,6 +280,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   // initializer), NOT an empty list. So any code that touches the newly-added nested collection on a
   // pre-existing row throws NullReferenceException until the row is rewritten. This is the schema-evolution
   // hazard behind the incident, and it still reproduces on the latest Whizbang / EF Core 10.0.2.
+  // CANARY: the fix is proposed in https://github.com/dotnet/efcore/pull/39014. When an EF Core bump makes this
+  // test go RED (the absent field reads back as [] instead of null), the fix has shipped: remove the workaround
+  // (grep "WORKAROUND(dotnet/efcore#38625)") and flip this assertion to an empty collection.
   // ─────────────────────────────────────────────────────────────────────────────────────────────
   [Test]
   [Timeout(120000)]
@@ -332,8 +336,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     // over an old-shape row throws InvalidOperationException in PrepareToSave because a complex collection
     // materialized as null (here the framework's PerspectiveScope.Extensions). This is NOT a Whizbang code path —
     // Whizbang's upsert (Tests 2/3) avoids it by never load-mutating the tracked graph and excluding Scope from
-    // the UPDATE (ComplexProperty(Scope).IsModified = false). If a future EF/Whizbang release fixes this, flip
-    // this assertion to IsNull() and drop the workaround.
+    // the UPDATE (ComplexProperty(Scope).IsModified = false). CANARY: the fix is proposed in
+    // https://github.com/dotnet/efcore/pull/39014; when an EF Core bump makes this test go RED, flip this assertion
+    // to IsNull() and drop the workaround (grep "WORKAROUND(dotnet/efcore#38625)").
     await Assert.That(saveError).IsNotNull()
       .Because("the underlying EF Core 10.0.2 PrepareToSave null-complex-property defect (the incident's mechanism) must still reproduce on the raw tracked-save path — this test guards that Whizbang's upsert workaround stays load-bearing.");
     await Assert.That(saveError).IsTypeOf<InvalidOperationException>();
@@ -380,9 +385,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
 
     await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds).IsNotNull()
       .Because("the coalescer replaces the JSON-absent nested collection (null on EF Core 10) with an empty list.");
-    await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds).Count().IsEqualTo(0)
       .Because("old-shape rows must read back with an EMPTY collection, not null — the materialization-coalesce fix.");
-    await Assert.That(row.Data.Shipments[0].Parcels[1].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(row.Data.Shipments[0].Parcels[1].InspectionTagIds).Count().IsEqualTo(0)
       .Because("every parcel's new nested collection is coalesced, not just the first.");
   }
 
@@ -436,7 +441,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(model).IsNotNull();
     await Assert.That(model!.Shipments[0].Parcels[0].InspectionTagIds).IsNotNull()
       .Because("the store's no-tracking read routes through CoalescedData, so the Apply path never sees a null-materialized nested collection (WORKAROUND(dotnet/efcore#38625)).");
-    await Assert.That(model.Shipments[0].Parcels[1].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(model.Shipments[0].Parcels[1].InspectionTagIds).Count().IsEqualTo(0)
       .Because("the JSON-absent field reads back as an empty list on every parcel.");
   }
 
@@ -504,9 +509,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await connection.OpenAsync(ct);
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
     var scopeJson = await connection.ExecuteScalarAsync<string>($"SELECT scope::text FROM {TableName} WHERE id = @id", new { id });
-    await Assert.That(dataJson!).Contains("\"InspectionTagIds\": []")
+    await Assert.That(dataJson).Contains("\"InspectionTagIds\": []")
       .Because("EF ToJson writes an empty primitive collection with the key present — fresh rows are new-shape.");
-    await Assert.That(scopeJson!).Contains("\"ex\": []")
+    await Assert.That(scopeJson).Contains("\"ex\": []")
       .Because("the scope JSON also carries the empty Extensions key.");
 
     var row = await _context.Set<PerspectiveRow<OrderLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
@@ -534,7 +539,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(ct);
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
-    await Assert.That(dataJson!).Contains("\"Parcels\": []")
+    await Assert.That(dataJson).Contains("\"Parcels\": []")
       .Because("the stored JSON has the key present and empty.");
 
     var row = await _context.Set<PerspectiveRow<OrderLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);

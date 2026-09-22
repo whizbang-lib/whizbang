@@ -20,7 +20,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(60_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusHealthCheckTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -81,12 +81,6 @@ public class AzureServiceBusHealthCheckTests(ServiceBusEmulatorFixtureSource fix
       TransportDestination destination,
       string? envelopeType = null,
       ReadOnlyMemory<byte>? preSerializedBytes = null,
-      CancellationToken cancellationToken = default
-    ) => throw new NotImplementedException();
-
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
       CancellationToken cancellationToken = default
     ) => throw new NotImplementedException();
 

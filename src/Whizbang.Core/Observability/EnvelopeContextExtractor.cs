@@ -25,7 +25,7 @@ namespace Whizbang.Core.Observability;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-context-extraction</docs>
-/// <tests>Whizbang.Core.Tests/Observability/EnvelopeContextExtractorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeContextExtractorTests.cs</tests>
 public static class EnvelopeContextExtractor {
   /// <summary>
   /// Result of extracting context from an envelope's hops.

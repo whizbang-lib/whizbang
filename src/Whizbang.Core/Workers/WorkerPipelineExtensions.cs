@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -22,14 +23,71 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
+  /// The ONE construction recipe for the turnkey <see cref="HousekeepingCoordinator"/> and its
+  /// meter. Every registration site must call this instead of an open
+  /// <c>TryAddSingleton&lt;HousekeepingCoordinator&gt;()</c>: TryAdd means whichever site runs
+  /// first wins, and an open registration winning resolves the parameterless test constructor —
+  /// which arbitrates fine and counts nothing. Found in production as a decisions metric that
+  /// existed in code and never once reached telemetry, fleet-wide.
+  /// </summary>
+  /// <docs>operations/workers/housekeeping-arbitration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
+    services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
+      new Whizbang.Core.Observability.HousekeepingMetrics(
+        sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
+        sp.GetService<IIdleActivityTracker>()));
+    // Tuning binds from Whizbang:Housekeeping (same turnkey contract as the dead-letter
+    // options: the section reaches the mechanism with no host code, hosts without
+    // IConfiguration keep code defaults, and the binder source generator keeps it
+    // reflection-free).
+    services.AddOptions<HousekeepingCoordinator.Settings>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<HousekeepingCoordinator.Settings>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<HousekeepingCoordinator.Settings>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: binder source generator compiles this to typed assignments
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Housekeeping"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.TryAddSingleton(sp =>
+      new HousekeepingCoordinator(
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<HousekeepingCoordinator.Settings>>().Value,
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+  }
+
+  /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
   /// and the four batched-flush workers + their channel interfaces). Idempotent — calling
-  /// multiple times has no additional effect.
+  /// multiple times has no additional effect: <c>AddWhizbang()</c> calls it, and an explicit second
+  /// call registers nothing (issue #621).
   /// </summary>
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
+  /// <docs>operations/deployment/troubleshooting#workers-not-wired</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A registration list: each branch registers one worker, and the order is the wiring the documentation describes.")]
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+
+    // Idempotent by contract, enforced once here rather than once per registration (issue #621):
+    // AddWhizbang() calls this, and the framework's own error messages tell consumers to call it
+    // too, so a second call is the common case, not a mistake. Most registrations below are TryAdd,
+    // but the additive ones — IStartupStep, IStartupStepObserver, the hosted workers — would each
+    // double, and the order resolver then refuses the duplicate step names inside a
+    // BackgroundService, where the default StopHost behavior takes the host down.
+    if (_isAlreadyRegistered(services)) {
+      return services;
+    }
+    services.AddSingleton(WorkerPipelineRegistrationMarker.Instance);
+    // Every worker below takes its collaborators as required constructor parameters; the defaults
+    // make a pipeline composed without AddWhizbang constructible (TryAdd, so AddWhizbang's own
+    // call and the host's registrations are unaffected).
+    services.TryAddWhizbangDefaults();
 
     // Establish the thread-pool reserve BEFORE registering the workers that will compete for it.
     // These workers run on the host's pool, so their burst of async database completions is what
@@ -55,6 +113,11 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
     services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
+    // A row a perspective could not read is remembered per perspective and stream: the worker
+    // records into the registry, the source counts it. The rows themselves are parked in the
+    // database, so this is what the process knows, not the state of the queue.
+    services.TryAddSingleton<Whizbang.Core.Perspectives.StoredFormFailureRegistry>();
+    services.AddWhizbangHealthSource<Health.StoredFormHealthSource>();
 
     // Transport managed-resource health: a REAL probe when a transport is registered — the driver's
     // ITransport.CheckConnectivityAsync (RabbitMQ IConnection.IsOpen / Service Bus !IsClosed) detects a
@@ -71,7 +134,7 @@ public static class WorkerPipelineExtensions {
     });
 
     // Offload managed-resource health: a REAL probe when an offload store is registered — the store's
-    // IMessageBodyStore.CheckConnectivityAsync (a blob service round-trip; in-memory is always reachable);
+    // IMessageBodyStore.CheckConnectivityAsync (a blob service round-trip, in-memory is always reachable) —
     // assumed-healthy when no offload is configured. RequiredWhenRunning, one source either way.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => {
       var lifecycle = sp.GetRequiredService<IWhizbangLifecycleState>();
@@ -100,6 +163,13 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<LifecyclePhaseWorker>();
     // Each lifecycle transition is recorded on this instance's own row so peers and the status
     // surface can observe it — the standby handshake turns on states a peer can actually see.
+    // The instance identity this run control records against. TryAdd keeps AddWhizbang's own
+    // registration authoritative when both run, and makes this extension self-contained: a
+    // pipeline composed without AddWhizbang used to leave the identity silently null rather
+    // than failing, so instance state was recorded against no instance at all.
+    services.TryAddSingleton<Observability.IServiceInstanceProvider>(sp =>
+      new Observability.ServiceInstanceProvider(
+        sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
@@ -112,35 +182,43 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineState>();
     services.TryAddSingleton<Whizbang.Core.Startup.IStartupPipelineState>(
       sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(
-      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    // Observers and steps are enumerable registrations: TryAddEnumerable keys them by
+    // implementation type, so a repeat of the SAME observer or step is a no-op while two DIFFERENT
+    // steps that share a name still reach the resolver's refusal, which is the case that check is for.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.StartupPipelineState>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>()));
     services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.LoggingStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.LoggingStartupStepObserver(
-        (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+        sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.MetricsStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
-        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>())));
     // Assess (increment 9): where this instance stands — Migrate/Serve/StandDown — decided on
     // every instance before the migration barrier. StandDown reports as a failed blocking step:
     // fail-closed readiness IS not-ready-while-alive.
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep>(sp =>
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.AssessStartupStep>(sp =>
       new Whizbang.Core.Startup.AssessStartupStep(
-        sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
-        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>()));
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+        sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
+        sp.GetRequiredService<ILogger<Whizbang.Core.Startup.AssessStartupStep>>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>(sp =>
+      new Whizbang.Core.Startup.MigrateStartupStep(sp.GetRequiredService<ISchemaReadyGate>())));
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
+      new Whizbang.Core.Startup.TableRewriteStartupStep(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],
-      // Optional: the storage driver supplies the elector. Without one, a duty degrades to a
-      // shared capability — survivable only because the framework's exclusive steps are
-      // individually idempotent and separately guarded.
-      sp.GetService<Whizbang.Core.Startup.IDutyElector>()));
+      // The storage driver supplies the elector; the null default reports IsConfigured false and a
+      // duty degrades to a shared capability — survivable only because the framework's exclusive
+      // steps are individually idempotent and separately guarded.
+      sp.GetRequiredService<Whizbang.Core.Startup.IDutyElector>()));
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineWorker>());
 
@@ -157,12 +235,12 @@ public static class WorkerPipelineExtensions {
     // this pod not ready" is answerable from the health surface without reading logs.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
-      sp.GetService<Whizbang.Core.Startup.IStartupReadySignal>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
-      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StartupReadyService>()));
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
     // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
@@ -174,20 +252,42 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-      sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
-      sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<ISchemaReadyGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
-      sp.GetService<ISchemaReadyGate>(),
-      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
-      sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
+      sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
 
     // Register each worker type as a singleton so the channel-surface registrations
     // can resolve the SAME instance the hosted-service collection runs.
     // This avoids a circular DI deadlock: if we resolved the channel via
     // sp.GetServices<IHostedService>() and any other hosted service depended on
     // a channel surface, IHostedService resolution would recurse on itself.
+    // The heartbeat carries this instance's lifecycle phase and library version to the registry.
+    // Run control (registered above) supplies the phase; the version defaults to this assembly's
+    // informational version unless a driver registered the package version first.
+    services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(static _ =>
+      new Whizbang.Core.Observability.LibraryVersionProvider(
+        typeof(HeartbeatWorker).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(HeartbeatWorker).Assembly.GetName().Version?.ToString()
+        ?? "unknown"));
     services.TryAddSingleton<HeartbeatWorker>();
+    // The claim window's churn signal lives here: the claim returns stream ids and never sees a
+    // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the
+    // registration in AddWhizbang; present here so a host wiring only the worker pipeline still
+    // gets an adapting window rather than one frozen at its start value.
+    services.TryAddSingleton<ClaimChurnFeedback>();
+
+    // Housekeeping arbitration. The heavy maintenance sweep runs on a fixed timer and takes locks
+    // the completion path also needs, so a sweep landing mid-drain queues every worker's commit
+    // behind it — throughput collapses until it finishes, then recovers in a burst. This gates the
+    // sweep on SERVICE-wide settledness and keeps it from overlapping integrity work.
+    //
+    // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
+    // directly still starts — it simply keeps the ungated behavior it has today.
+    AddHousekeepingCoordinatorCore(services);
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
@@ -209,13 +309,13 @@ public static class WorkerPipelineExtensions {
     // parks without ever touching the coordinator. Explicit factory: the resolver and
     // TimeProvider are optional dependencies.
     services.TryAddSingleton(sp => new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      sp.GetRequiredService<ISchemaReadyGate>(),
-      sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
-      sp.GetService<TimeProvider>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-      sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: sp.GetRequiredService<ISchemaReadyGate>(),
+      instanceProvider: sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
+      compositeFactory: sp.GetRequiredService<Whizbang.Core.Minting.ICompositeFactory>(),
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      timeProvider: sp.GetService<TimeProvider>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
@@ -254,14 +354,17 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions>>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
-      sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
+      sp.GetRequiredService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
     // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
-    // Factory-resolved so the IDestructionHook is optional (null = a thin pass-through to the gated truncate).
+    // The hook is required; the shipped default proceeds and observes nothing, which is what an
+    // unregistered hook used to do. TryAdd lets an application's own hook win.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IDestructionHook,
+      Whizbang.Core.Lifecycle.NoOpDestructionHook>();
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
-      sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
     // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
@@ -326,8 +429,6 @@ public static class WorkerPipelineExtensions {
     // InboxDispatchWorker uses this to skip lifecycle deserialize for cross-service events
     // that the local service has no receptor for. Registered as a singleton — adapter is
     // stateless and just forwards to the static generated lookup.
-    services.TryAddSingleton<IReceptorRegistryQuery>(sp =>
-      new WhizbangReceptorRegistryQueryAdapter(sp.GetService<IReceptorRegistry>()));
 
     // Message-discard policy: shared "should this message be skipped?" decision used by
     // the transport-receive, inbox-dispatch, and outbox-publish gates. Owns the structured
@@ -339,13 +440,13 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IReceptorRegistryQuery>(),
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
-      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
-      sp.GetService<IEventMarkerResolver>()));
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
+      sp.GetRequiredService<IEventMarkerResolver>()));
 
     // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
     // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
     // fire on a session-enabled entity, because a lock lost to connection death does not increment
-    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision;
+    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision —
     // it stays an optional injected dependency at each consumption point, so a custom transport or
     // a test double that never resolves it is unaffected (the IMessageDiscardPolicy idiom).
     services.AddOptions<Whizbang.Core.Routing.PoisonMessageOptions>();
@@ -451,20 +552,22 @@ public static class WorkerPipelineExtensions {
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
 
-    // Defense-in-depth concurrency cap on IWorkCoordinator calls. Default 50 (matches
-    // recommended Npgsql Maximum Pool Size). v0.654 adds a 30 s deadline on the internal
-    // semaphore wait so a saturated gate logs + degrades gracefully instead of hanging
-    // every caller silently. Users can register their own gate before calling
-    // AddWhizbang to override either the cap or the deadline.
-    services.TryAddSingleton(sp => new WorkCoordinatorGate(
-      maxConcurrent: 50,
-      acquireTimeoutMilliseconds: 30000,
-      logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
-      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+    _addWorkCoordinatorGate(services);
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
     services.AddOptions<ClaimWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<ClaimWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<ClaimWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Claim"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<OutboxCompletionFlushWorkerOptions>();
     services.AddOptions<PerspectiveCompletionFlushWorkerOptions>();
     services.AddOptions<FailureFlushWorkerOptions>();
@@ -472,8 +575,360 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
+    // Bound, not just registered: AddOptions<T>() alone leaves the object on code defaults,
+    // which shipped a kill switch that bound to nothing — Whizbang__DeadLetterRecovery__Enabled=false
+    // sat on production pods while recovery ran Enabled=true. Binding is turnkey (the section
+    // names below are the documented operational keys) and degrades to code defaults when the
+    // host registers no IConfiguration at all. The configuration binder source generator
+    // intercepts these Bind calls, so no reflection reaches the AOT path.
+    // #666: the integrity disable flags are only as real as this binding. The workers and
+    // the checkpoint receptor all check the options; without a turnkey bind the class
+    // resolved default-constructed (everything enabled) and configuration did nothing.
+    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+
+    // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the
+    // binder source generator intercepts each call (a generic helper would fall back to
+    // reflection and break AOT). Sections follow the established Whizbang:Workers:<Name> /
+    // Whizbang:<Area> conventions and are documented in the configuration reference.
+    services.AddOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+    services.TryAddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>().Value);
+    services.AddOptions<Whizbang.Core.Temporal.TemporalOptions>();
+    services.AddOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>();
+    services.AddOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>();
+    services.AddOptions<Whizbang.Core.Configuration.WhizbangOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.EphemeralOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.EphemeralOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Ephemeral"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:PerspectiveRowRetention"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SchemaInitializationOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SchemaInitializationOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:SchemaInitialization"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:UnobservedExceptionDiagnostics"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.BackupTickCoordinatorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.BackupTickCoordinatorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:BackupTick"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Observability.BacklogAgeOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Observability.BacklogAgeOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:BacklogAge"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.HeartbeatWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.HeartbeatWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Heartbeat"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxCompletionFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxCompletionFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxCompletionFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.PerspectiveCompletionFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.PerspectiveCompletionFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:PerspectiveCompletionFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.FailureFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.FailureFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:FailureFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.LeaseRenewalWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.LeaseRenewalWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:LeaseRenewal"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxHandlerWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxHandlerWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxHandler"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxPublishWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxPublishWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxPublish"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDispatchWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDispatchWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDispatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.MaintenanceWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.MaintenanceWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Maintenance"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.RecentlyProcessedEventCacheOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.RecentlyProcessedEventCacheOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:RecentlyProcessedEventCache"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDeserializeCacheOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDeserializeCacheOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDeserializeCache"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.LeaseHandleOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.LeaseHandleOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:LeaseHandle"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowOutboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowOutboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxBatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxBatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:WorkCoordinator"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Temporal.TemporalOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Temporal.TemporalOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Temporal"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Perspective"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:OrderedStreamProcessor"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.WhizbangOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.WhizbangOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+
     services.AddOptions<DeadLetterRecoveryOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<DeadLetterRecoveryOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<DeadLetterRecoveryOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<TransportDeadLetterDrainWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<TransportDeadLetterDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<TransportDeadLetterDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:TransportDeadLetterDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
@@ -491,29 +946,46 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowOutboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>(),
-      logger: sp.GetService<ILogger<SlidingWindowOutboxBatchStrategy>>()));
+      timeProvider: sp.GetService<TimeProvider>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
 
     // Receive-boundary inbox batcher — half A of pump-then-process. Mirror of the outbox
     // registration above. Flush callback resolves IWorkCoordinator from a fresh DI scope
-    // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher;
+    // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher —
     // override via the AddWhizbangInboxStrategy generic extension for the immediate
     // passthrough or a custom implementation.
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowInboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>(),
-      logger: sp.GetService<ILogger<SlidingWindowInboxBatchStrategy>>()));
+      timeProvider: sp.GetService<TimeProvider>()));
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
 
     return services;
+  }
+
+  /// <summary>
+  /// The registration marker <see cref="AddWhizbangWorkers"/> leaves behind, so a second call can be
+  /// recognized without auditing every descriptor. Registered as an instance — nothing to activate.
+  /// </summary>
+  private sealed class WorkerPipelineRegistrationMarker {
+    public static readonly WorkerPipelineRegistrationMarker Instance = new();
+  }
+
+  private static bool _isAlreadyRegistered(IServiceCollection services) {
+    foreach (var descriptor in services) {
+      if (descriptor.ServiceType == typeof(WorkerPipelineRegistrationMarker)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
@@ -580,7 +1052,7 @@ public static class WorkerPipelineExtensions {
       var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
       var distributeContext = new DistributeLifecycleContext(
         OutboxMessages: messages,
-        InboxMessages: Array.Empty<InboxMessage>(),
+        InboxMessages: [],
         ScopeFactory: scopeFactory,
         LifecycleMessageDeserializer: lifecycleDeserializer,
         Logger: lifecycleLogger,
@@ -630,5 +1102,36 @@ public static class WorkerPipelineExtensions {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
     };
+  }
+
+  /// <summary>
+  /// The process-wide cap on concurrent <see cref="IWorkCoordinator"/> calls. Built from
+  /// <see cref="WorkCoordinatorGateOptions"/> (bound from <c>Whizbang:WorkCoordinatorGate</c>, filled by a
+  /// Postgres driver's <c>MaxInFlightCommands</c> when the section is silent, 50 otherwise) with a 30 s
+  /// acquire deadline so a saturated gate logs and degrades instead of hanging every caller. A gate the
+  /// consumer registered before the pipeline is kept.
+  /// </summary>
+  private static void _addWorkCoordinatorGate(IServiceCollection services) {
+    services.AddOptions<WorkCoordinatorGateOptions>();
+    services.AddSingleton<IConfigureOptions<WorkCoordinatorGateOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new ConfigureOptions<WorkCoordinatorGateOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:WorkCoordinatorGate"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.TryAddSingleton(sp => {
+      var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
+      return new WorkCoordinatorGate(
+        maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
+        logger: sp.GetRequiredService<ILogger<WorkCoordinatorGate>>(),
+        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        interactiveReserve: gateOptions.InteractiveReserve);
+    });
   }
 }

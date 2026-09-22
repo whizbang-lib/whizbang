@@ -7,14 +7,14 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// <summary>
 /// SQLite-specific implementation of IDbConnectionFactory.
 /// </summary>
-/// <tests>No tests found</tests>
+/// <tests>tests/Whizbang.Data.Tests/DapperSqliteConnectionFactoryTests.cs</tests>
 public class SqliteConnectionFactory : IDbConnectionFactory {
   private readonly string _connectionString;
 
   /// <summary>
   /// Initializes a new instance of the SqliteConnectionFactory with the specified connection string.
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSqliteConnectionFactoryTests.cs:Constructor_WithNullConnectionString_ThrowsArgumentNullExceptionAsync</tests>
   public SqliteConnectionFactory(string connectionString) {
     ArgumentNullException.ThrowIfNull(connectionString);
     _connectionString = connectionString;
@@ -23,7 +23,7 @@ public class SqliteConnectionFactory : IDbConnectionFactory {
   /// <summary>
   /// Creates a new SQLite database connection asynchronously.
   /// </summary>
-  /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSqliteConnectionFactoryTests.cs:CreateConnectionAsync_ReturnsSqliteConnectionAsync</tests>
   public Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) {
     var connection = new SqliteConnection(_connectionString);
     return Task.FromResult<IDbConnection>(connection);

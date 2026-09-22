@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -12,6 +13,7 @@ using Whizbang.Core.Offloads;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -21,7 +23,7 @@ internal sealed record DropGateTestEvent(string Value);
 [JsonSerializable(typeof(DropGateTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<DropGateTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class DropGateTestJsonContext : JsonSerializerContext { }
+internal sealed partial class DropGateTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Slice 3 of plans/pump-then-process.md (Half A) — partial completion: locks the
@@ -47,32 +49,24 @@ public class ServiceBusConsumerWorkerDropGateTests {
       return Task.CompletedTask;
     }
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       BatchHandler = batchHandler;
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
 
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
 
-    public void Dispose() { }
-
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -89,10 +83,10 @@ public class ServiceBusConsumerWorkerDropGateTests {
     public int QueueInboxMessageCalls;
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) => Interlocked.Increment(ref QueueInboxMessageCalls);
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default)
       => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
@@ -151,25 +145,28 @@ public class ServiceBusConsumerWorkerDropGateTests {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new FakeServiceInstanceProvider());
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = DropGateTestJsonContext.Default };
+    _ = new JsonSerializerOptions { TypeInfoResolver = DropGateTestJsonContext.Default };
 
     var worker = new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      jsonOptions,
-      NullLogger<ServiceBusConsumerWorker>.Instance,
-      new OrderedStreamProcessor(),
-      new ServiceBusConsumerOptions {
+      transport: transport,
+      scopeFactory: scopeFactory,
+      logger: NullLogger<ServiceBusConsumerWorker>.Instance,
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
+      eventMarkerResolver: eventMarkerResolver ?? new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
-      },
-      envelopeSerializer: envelopeSerializer,
-      receptorRegistry: registry,
-      runtimeReceptorRegistry: runtimeRegistry,
-      eventMarkerResolver: eventMarkerResolver);
+      });
 
     return (worker, transport, strategy, sp);
   }

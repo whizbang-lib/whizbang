@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// invariant: the table always matches the full recompute (ComputeStreamDigestsAsync's query).
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
+[Category("Shard1")]
 public class StreamDigestTableSqlTests : EFCoreTestBase {
   private const string ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
@@ -102,9 +103,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var row = await _digestRowAsync(connection, streamId);
     await Assert.That(row).IsNotNull()
       .Because("A locally-published sourced event must fold into the zero-uuid (local origin) bucket.");
-    var expected = await _expectedDigestAsync(connection, eventId);
-    await Assert.That(row!.Value.Lo).IsEqualTo(expected.Lo).Because("digest_lo = hashtextextended(event_id, 0).");
-    await Assert.That(row.Value.Hi).IsEqualTo(expected.Hi).Because("digest_hi = hashtextextended(event_id, 1).");
+    var (Lo, Hi) = await _expectedDigestAsync(connection, eventId);
+    await Assert.That(row!.Value.Lo).IsEqualTo(Lo).Because("digest_lo = hashtextextended(event_id, 0).");
+    await Assert.That(row.Value.Hi).IsEqualTo(Hi).Because("digest_hi = hashtextextended(event_id, 1).");
     await Assert.That(row.Value.Count).IsEqualTo(1);
   }
 
@@ -175,7 +176,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       while (await r.ReadAsync()) { /* drain */ }
     }
     await using (var lease = connection.CreateCommand()) {
-      lease.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
       lease.Parameters.AddWithValue("inst", instanceId);
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();
@@ -237,7 +238,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       while (await r.ReadAsync()) { /* drain */ }
     }
     await using (var lease = connection.CreateCommand()) {
-      lease.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
       lease.Parameters.AddWithValue("inst", instanceId);
       lease.Parameters.AddWithValue("id", eventId);
       await lease.ExecuteNonQueryAsync();
@@ -292,10 +293,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var after = await _digestRowAsync(connection, streamId);
     await Assert.That(after).IsNotNull().Because("The surviving carry-forward keeps the bucket alive.");
     await Assert.That(after!.Value.Count).IsEqualTo(1).Because("close_stream subtracted the two truncated events.");
-    var expected = await _expectedDigestAsync(connection, survivorId);
-    await Assert.That(after.Value.Lo).IsEqualTo(expected.Lo)
+    var (Lo, Hi) = await _expectedDigestAsync(connection, survivorId);
+    await Assert.That(after.Value.Lo).IsEqualTo(Lo)
       .Because("XOR-ing the truncated hashes back out leaves exactly the survivor's digest (XOR is self-inverse).");
-    await Assert.That(after.Value.Hi).IsEqualTo(expected.Hi);
+    await Assert.That(after.Value.Hi).IsEqualTo(Hi);
   }
 
   [Test]
@@ -304,10 +305,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
 
     var streamId = Guid.NewGuid();
-    var messages = string.Join(",\n", new[] {
+    var messages = string.Join(",\n",
       _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0),
-      _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0)
-    });
+      _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0));
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     var seeded = await _digestRowAsync(connection, streamId);
@@ -336,13 +336,12 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var keptStream = Guid.NewGuid();
     var tenantStream = Guid.NewGuid();
     var ephemeralStream = Guid.NewGuid();
-    var messages = string.Join(",\n", new[] {
+    var messages = string.Join(",\n",
       _outboxMessage(Guid.NewGuid(), closedStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), closedStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), keptStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), tenantStream, "Whizbang.Tests.DigestSweepTenantEvent", flags: 0, scopeJson: """{"t":"tenant-9"}"""),
-      _outboxMessage(Guid.NewGuid(), ephemeralStream, "Whizbang.Tests.DigestSweepEphemeralEvent", flags: 8)
-    });
+      _outboxMessage(Guid.NewGuid(), ephemeralStream, "Whizbang.Tests.DigestSweepEphemeralEvent", flags: 8));
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     await using (var close = connection.CreateCommand()) {
@@ -401,12 +400,12 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       VALUES (@origin::uuid, @tenant, @type, @sid, @lo, @hi, @count, NOW() - INTERVAL '{(settled ? "2 hours" : "0 seconds")}')
       """;
     cmd.Parameters.AddWithValue("origin", originUuid);
-    cmd.Parameters.AddWithValue("tenant", tenant);
+    cmd.Parameters.AddWithValue(nameof(tenant), tenant);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("sid", streamId);
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
-    cmd.Parameters.AddWithValue("count", count);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
+    cmd.Parameters.AddWithValue(nameof(count), count);
     await cmd.ExecuteNonQueryAsync();
   }
 
@@ -505,9 +504,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(result.TotalDrift).IsEqualTo(3);
 
     // Healed: corrupted now matches the recompute; phantom gone; missing added.
-    var expected1 = await _expectedDigestAsync(connection, e1);
+    var (Lo, _) = await _expectedDigestAsync(connection, e1);
     var healed = await _digestRowAsync(connection, corruptedStream);
-    await Assert.That(healed!.Value.Lo).IsEqualTo(expected1.Lo);
+    await Assert.That(healed!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(healed.Value.Count).IsEqualTo(1);
     await Assert.That(await _digestRowAsync(connection, phantomStream)).IsNull();
     var added = await _digestRowAsync(connection, missingStream);
@@ -553,16 +552,15 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
-      store.Parameters.AddWithValue("version", version);
+      store.Parameters.AddWithValue(nameof(version), version);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = connection.CreateCommand()) {
-      body.CommandText = """
+    await using var body = connection.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 }

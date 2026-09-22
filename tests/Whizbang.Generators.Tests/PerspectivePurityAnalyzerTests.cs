@@ -641,4 +641,332 @@ public class PerspectivePurityAnalyzerTests {
     await Assert.That(whiz104.Length).IsGreaterThanOrEqualTo(1)
       .Because("IPerspectiveWithActionsFor Apply methods must be checked for purity — DateTime.UtcNow is impure");
   }
+
+  // ========================================
+  // WHIZ101/102/103: I/O in the Apply method
+  // ========================================
+  //
+  // Apply is replayed. Rebuilding a perspective runs it over the entire history, so anything it
+  // does beyond folding the event into the model is done again for every event ever stored —
+  // and done against today's world rather than the world at the time. An HTTP call in Apply is
+  // not just slow on rebuild, it produces a model that depends on what a remote service happens
+  // to answer during the replay. These three diagnostics are what stop that reaching production.
+
+  /// <summary>An async Apply that awaits is flagged for the await itself (WHIZ101), separately
+  /// from being async at all (WHIZ100).</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_ApplyAwaitsInsideBody_ReportsWHIZ101Async() {
+    const string source = """
+            using System;
+            using System.Threading.Tasks;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class Order { public Guid Id { get; set; } }
+            public class OrderUpdated { public Guid OrderId { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              public async Task<Order> Apply(Order current, OrderUpdated @event) {
+                await Task.Delay(1);
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ101")).IsTrue()
+      .Because("an awaited call inside Apply suspends the fold — on replay that is one suspension "
+             + "per event in the entire history");
+  }
+
+  /// <summary>A synchronous Apply with no await is not flagged.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_SynchronousApply_DoesNotReportWHIZ101Async() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class Order { public Guid Id { get; set; } public string Status { get; set; } = ""; }
+            public class OrderUpdated { public Guid OrderId { get; set; } public string NewStatus { get; set; } = ""; }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              public Order Apply(Order current, OrderUpdated @event) {
+                current.Status = @event.NewStatus;
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ101")).IsFalse()
+      .Because("the pure fold is the shape the analyzer exists to protect — flagging it would "
+             + "make the whole diagnostic unusable");
+  }
+
+  /// <summary>Reading the database from Apply reports WHIZ102.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_ApplyCallsPerspectiveStore_ReportsWHIZ102Async() {
+    // A perspective that reads the store to compute its own next state cannot be rebuilt: the
+    // replay would read whatever the store holds now, not what it held at that point in history.
+    const string source = """
+            using System;
+            using System.Threading.Tasks;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public interface IPerspectiveStore {
+              Task<Order> GetAsync(Guid id);
+            }
+
+            public class Order { public Guid Id { get; set; } public string Status { get; set; } = ""; }
+            public class OrderUpdated { public Guid OrderId { get; set; } public string NewStatus { get; set; } = ""; }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              private readonly IPerspectiveStore _store;
+              public OrderPerspective(IPerspectiveStore store) { _store = store; }
+
+              public Order Apply(Order current, OrderUpdated @event) {
+                var task = _store.GetAsync(@event.OrderId);
+                current.Status = @event.NewStatus;
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ102")).IsTrue()
+      .Because("a store read inside the fold makes the perspective unrebuildable");
+  }
+
+  /// <summary>The diagnostic names the call it found, so the fix is obvious from the message.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_WHIZ102_NamesTheOffendingCallAsync() {
+    const string source = """
+            using System;
+            using System.Threading.Tasks;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public interface IPerspectiveStore {
+              Task<Order> FindAsync(Guid id);
+            }
+
+            public class Order { public Guid Id { get; set; } }
+            public class OrderUpdated { public Guid OrderId { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              private readonly IPerspectiveStore _store;
+              public OrderPerspective(IPerspectiveStore store) { _store = store; }
+
+              public Order Apply(Order current, OrderUpdated @event) {
+                var task = _store.FindAsync(@event.OrderId);
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    var whiz102 = diagnostics.FirstOrDefault(d => d.Id == "WHIZ102");
+    await Assert.That(whiz102).IsNotNull();
+    await Assert.That(whiz102!.GetMessage(CultureInfo.InvariantCulture)).Contains("FindAsync")
+      .Because("a purity complaint that does not say which call is impure leaves the author "
+             + "hunting through the method");
+  }
+
+  /// <summary>An HTTP call from Apply reports WHIZ103.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_ApplyCallsHttpClient_ReportsWHIZ103Async() {
+    // The worst case for replay: the model ends up depending on what a remote service answered
+    // during the rebuild, so two rebuilds of the same history can disagree.
+    const string source = """
+            using System;
+            using System.Net.Http;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class Order { public Guid Id { get; set; } public string Status { get; set; } = ""; }
+            public class OrderUpdated { public Guid OrderId { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              private readonly HttpClient _http;
+              public OrderPerspective(HttpClient http) { _http = http; }
+
+              public Order Apply(Order current, OrderUpdated @event) {
+                var task = _http.GetStringAsync("https://example.invalid/status");
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ103")).IsTrue()
+      .Because("a remote call inside the fold makes two rebuilds of the same history disagree");
+  }
+
+  /// <summary>
+  /// A consumer's own HTTP abstraction is caught too, by the Get/Post/Put/Delete prefix on a
+  /// type whose name mentions Http.
+  /// </summary>
+  /// <remarks>
+  /// Most real perspectives never touch HttpClient directly — they inject a wrapper. Matching
+  /// only the concrete BCL type would miss exactly the shape the analyzer is most likely to meet.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_ApplyCallsAnHttpNamedGateway_ReportsWHIZ103Async() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public interface IHttpPricingGateway {
+              decimal GetPrice(Guid sku);
+            }
+
+            public class Order { public Guid Id { get; set; } public decimal Price { get; set; } }
+            public class OrderUpdated { public Guid OrderId { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              private readonly IHttpPricingGateway _gateway;
+              public OrderPerspective(IHttpPricingGateway gateway) { _gateway = gateway; }
+
+              public Order Apply(Order current, OrderUpdated @event) {
+                current.Price = _gateway.GetPrice(@event.OrderId);
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id == "WHIZ103")).IsTrue()
+      .Because("a wrapper is the usual way a perspective reaches the network — catching only "
+             + "HttpClient itself would miss the common case");
+  }
+
+  /// <summary>A pure Apply reports none of the I/O diagnostics.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_PureApply_ReportsNoImpurityDiagnosticsAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public class Order {
+              public Guid Id { get; set; }
+              public string Status { get; set; } = "";
+              public int Version { get; set; }
+            }
+            public class OrderUpdated {
+              public Guid OrderId { get; set; }
+              public string NewStatus { get; set; } = "";
+              public DateTimeOffset OccurredAt { get; set; }
+            }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              public Order Apply(Order current, OrderUpdated @event) {
+                current.Id = @event.OrderId;
+                current.Status = @event.NewStatus;
+                current.Version++;
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d =>
+      d.Id is "WHIZ100" or "WHIZ101" or "WHIZ102" or "WHIZ103" or "WHIZ104")).IsFalse()
+      .Because("folding the event into the model, and reading the event's own timestamp, is "
+             + "exactly what Apply is supposed to do");
+  }
+
+  /// <summary>Every impure call is reported, not just the first.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_MultipleImpureCalls_ReportsEachOneAsync() {
+    // Reporting only the first would send the author round the fix-build-fix loop once per call.
+    const string source = """
+            using System;
+            using System.Threading.Tasks;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestApp;
+
+            public interface IPerspectiveStore {
+              Task<Order> GetAsync(Guid id);
+              Task<Order> FindAsync(Guid id);
+            }
+
+            public class Order { public Guid Id { get; set; } }
+            public class OrderUpdated { public Guid OrderId { get; set; } }
+
+            public class OrderPerspective : IPerspectiveFor<Order, OrderUpdated> {
+              private readonly IPerspectiveStore _store;
+              public OrderPerspective(IPerspectiveStore store) { _store = store; }
+
+              public Order Apply(Order current, OrderUpdated @event) {
+                var a = _store.GetAsync(@event.OrderId);
+                var b = _store.FindAsync(@event.OrderId);
+                return current;
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ102")).IsGreaterThanOrEqualTo(2)
+      .Because("one diagnostic per impure call keeps the fix to a single pass");
+  }
+
+  /// <summary>A method that is not named Apply is left alone.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_NonApplyMethod_IsNotCheckedForPurityAsync() {
+    // Only the replayed fold has to be pure. A perspective's other members are ordinary code,
+    // and flagging them would make the analyzer noise rather than signal.
+    const string source = """
+            using System;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            public interface IPerspectiveStore {
+              Task<Order> GetAsync(Guid id);
+            }
+
+            public class Order { public Guid Id { get; set; } }
+
+            public class OrderPerspective {
+              private readonly IPerspectiveStore _store;
+              public OrderPerspective(IPerspectiveStore store) { _store = store; }
+
+              public Task<Order> LoadAsync(Guid id) => _store.GetAsync(id);
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    await Assert.That(diagnostics.Any(d => d.Id is "WHIZ101" or "WHIZ102" or "WHIZ103")).IsFalse()
+      .Because("purity is a constraint on the replayed fold, not on the class around it");
+  }
 }

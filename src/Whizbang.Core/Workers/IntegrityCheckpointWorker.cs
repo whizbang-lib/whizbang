@@ -36,7 +36,7 @@ public sealed partial class IntegrityCheckpointWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.CheckpointsEnabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     LogStarted(_logger, _options.CheckpointIntervalSeconds);
@@ -67,6 +67,7 @@ public sealed partial class IntegrityCheckpointWorker(
   /// <summary>One checkpoint cycle: advance the watermark, publish the window (empty included).</summary>
   public async Task RunCheckpointOnceAsync(CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
@@ -106,7 +107,7 @@ public sealed partial class IntegrityCheckpointWorker(
     // resolvable topic) is absent — in-memory hosts keep the original behavior.
     // CONTROL CLASS (topology arc phase 9): the checkpoint is the archetypal supersedable control
     // signal — the next cycle re-derives it from the same watermarks, so a copy that outlives its
-    // successor is pure backlog. mint.Checkpoints owns the lifetime derivation (TTL ≈ 2× cadence);
+    // successor is pure backlog. mint.Checkpoints owns the lifetime derivation (TTL ≈ 2× cadence) —
     // the worker supplies only the cadence it actually runs on, so retuning the interval retunes
     // the lifetime with it. Absent mint (host built without AddWhizbang) ⇒ no TTL, pre-phase-9.
     var minted = scope.ServiceProvider.GetService<Minting.ICheckpointMint>()?.Mint(
@@ -210,14 +211,11 @@ public sealed partial class IntegrityCheckpointWorker(
 
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = checkpoint,
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityCheckpoint), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     };

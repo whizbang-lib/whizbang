@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 [Category("Integration")]
+[Category("Shard3")]
 public class InboxFetchByteBudgetSqlTests : EFCoreTestBase {
 
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
@@ -44,13 +45,19 @@ public class InboxFetchByteBudgetSqlTests : EFCoreTestBase {
                                        Guid instanceId, int payloadBytes) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata,
-                            stream_id, is_event, status, attempts, instance_id, lease_expiry,
-                            source_service_id)
-      VALUES (@id, 'h', 'T, A',
-              jsonb_build_object('p', repeat('x', @bytes)), '{}'::jsonb,
-              @stream, true, 1, 0, @inst, NOW() + interval '5 minutes',
-              '00000000-0000-0000-0000-000000000001')
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata,
+                              stream_id, is_event, source_service_id)
+        VALUES (@id, 'h', 'T, A',
+                jsonb_build_object('p', repeat('x', @bytes)), '{}'::jsonb,
+                @stream, true,
+                '00000000-0000-0000-0000-000000000001')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event,
+                                  status, attempts, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, 0, @inst, NOW() + interval '5 minutes' FROM m
       """;
     cmd.Parameters.AddWithValue("id", messageId);
     cmd.Parameters.AddWithValue("bytes", payloadBytes);

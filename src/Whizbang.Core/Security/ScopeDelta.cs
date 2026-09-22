@@ -12,7 +12,7 @@ namespace Whizbang.Core.Security;
 /// Uses byte-sized enum for minimal serialization.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Serializes with 2-character abbreviated names via <see cref="ScopePropJsonConverter"/>:
 /// Scope=Sc, Roles=Ro, Perms=Pe, Principals=Pr, Claims=Cl, Actual=Ac, Effective=Ef, Type=Ty
@@ -49,7 +49,7 @@ public enum ScopeProp : byte {
 /// Supports Set (replace all), Add, and Remove operations.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Apply order: Set takes precedence, otherwise Remove first then Add.
 /// Missing property = inherit from previous hop.
@@ -88,7 +88,7 @@ public readonly struct CollectionChanges {
 /// Only stores what changed from previous hop to minimize wire size.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Used instead of storing full scope on every hop. Pattern:
@@ -133,9 +133,12 @@ public sealed class ScopeDelta {
       return null;
     }
 
+    // An all-empty scope is neither an authority nor a statement of intent, so it stays
+    // indistinguishable from nothing. A system marker IS a statement of intent, and collapsing it
+    // to null here would restore the very ambiguity the marker exists to remove.
     if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
         && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
-        && scope.Extensions.Count == 0) {
+        && scope.Extensions.Count == 0 && !scope.IsSystem && !scope.IsDeclaredUnscoped) {
       return null;
     }
 
@@ -145,6 +148,30 @@ public sealed class ScopeDelta {
       }
     };
   }
+
+  /// <summary>
+  /// The well-known scope for messages that carry NO user authority by design — control-plane
+  /// traffic published by background workers.
+  /// </summary>
+  /// <remarks>
+  /// Marks intent, not permission: it resolves to no tenant, no user and no principal. Stamping it
+  /// is what makes an absent scope unambiguous, so that "this event has no scope" can be asserted
+  /// as a defect rather than investigated as one.
+  /// </remarks>
+  public static ScopeDelta System { get; } =
+    FromPerspectiveScope(new PerspectiveScope { IsSystem = true })!;
+
+  /// <summary>
+  /// The well-known scope for an event whose AUTHOR declared it carries no authority — a
+  /// pre-authentication event, a health check, an anonymous action.
+  /// </summary>
+  /// <remarks>
+  /// Kept separate from <see cref="System"/> so provenance survives: an auditor can tell framework
+  /// infrastructure from a human's assertion, and application code cannot claim the framework's.
+  /// </remarks>
+  public static ScopeDelta DeclaredUnscoped { get; } =
+    FromPerspectiveScope(new PerspectiveScope { IsDeclaredUnscoped = true })!;
+
 
   /// <summary>
   /// Creates a ScopeDelta from the old SecurityContext type.
@@ -373,6 +400,16 @@ public sealed class ScopeDelta {
     _appendJsonStringProperty(sb, "u", scope.UserId, ref first);
     _appendJsonStringProperty(sb, "c", scope.CustomerId, ref first);
     _appendJsonStringProperty(sb, "o", scope.OrganizationId, ref first);
+    if (scope.IsSystem) {
+      if (!first) { sb.Append(','); }
+      sb.Append("\"sys\":true");
+      first = false;
+    }
+    if (scope.IsDeclaredUnscoped) {
+      if (!first) { sb.Append(','); }
+      sb.Append("\"dec\":true");
+      first = false;
+    }
     _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
     _appendExtensions(sb, scope.Extensions, ref first);
 
@@ -437,6 +474,12 @@ public sealed class ScopeDelta {
   private static PerspectiveScope _deserializeScope(JsonElement element) {
     var scope = new PerspectiveScope();
 
+    if (element.TryGetProperty("sys", out var sys) && sys.ValueKind == JsonValueKind.True) {
+      scope.IsSystem = true;
+    }
+    if (element.TryGetProperty("dec", out var dec) && dec.ValueKind == JsonValueKind.True) {
+      scope.IsDeclaredUnscoped = true;
+    }
     if (element.TryGetProperty("t", out var t) && t.ValueKind != JsonValueKind.Null) {
       scope.TenantId = t.GetString();
     }

@@ -1,6 +1,7 @@
 #pragma warning disable CA1707
 
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Text.Json;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -33,7 +34,7 @@ public class DapperCollectiveSpecCompilerTests {
   public async Task Compile_ConstantString_EmitsJsonbSetWithQuotedValueAsync() {
     var spec = _spec(s => s.SetProperty(j => j.Status, "Archived"));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     await Assert.That(compiled.SqlFragment).Contains("jsonb_set(data, '{Status}'")
       .Because("Top-level property selector must navigate to '{Status}' inside the data jsonb column.");
@@ -48,7 +49,7 @@ public class DapperCollectiveSpecCompilerTests {
   public async Task Compile_ConstantInt_EmitsJsonbSetWithNumericLiteralAsync() {
     var spec = _spec(s => s.SetProperty(j => j.ViewCount, 42));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     await Assert.That(compiled.SqlFragment).Contains("'{ViewCount}'");
     await Assert.That(compiled.Parameters.Values.Single()).IsEqualTo("42")
@@ -63,7 +64,7 @@ public class DapperCollectiveSpecCompilerTests {
       .SetProperty(j => j.Status, "Archived")
       .SetProperty(j => j.ViewCount, 0));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     // The fragment should contain TWO jsonb_set calls — outer is the
     // second-emitted (chained) call, inner is the first.
@@ -81,23 +82,23 @@ public class DapperCollectiveSpecCompilerTests {
   public async Task Compile_EmptySpec_ThrowsInvalidOperationAsync() {
     // Statement-body lambdas can't convert to Expression trees, so build
     // an empty Expression manually (a no-op Action lambda body).
-    var sParam = Expression.Parameter(typeof(ICollectiveSetters<_jobModel>), "s");
-    var empty = Expression.Lambda<Action<ICollectiveSetters<_jobModel>>>(
+    var sParam = Expression.Parameter(typeof(ICollectiveSetters<JobModel>), "s");
+    var empty = Expression.Lambda<Action<ICollectiveSetters<JobModel>>>(
       Expression.Empty(), sParam);
-    var spec = new _stubSpec(empty);
+    var spec = new StubSpec(empty);
 
-    await Assert.That(() => DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions))
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions))
       .ThrowsExactly<InvalidOperationException>()
       .Because("A spec that mutates zero properties translates to a SQL UPDATE with no SET clause — that's a malformed handler, not a domain condition.");
   }
 
   [Test]
   public async Task Compile_ComputedArithmeticExpression_ThrowsNotSupportedAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> body =
+    Expression<Action<ICollectiveSetters<JobModel>>> body =
       s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
-    var spec = new _stubSpec(body);
+    var spec = new StubSpec(body);
 
-    await Assert.That(() => DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions))
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions))
       .ThrowsExactly<NotSupportedException>()
       .Because("Computed arithmetic (j => j.ViewCount + 1) is still RawSql-only — only property-vs-constant comparisons are compiled.");
   }
@@ -109,7 +110,7 @@ public class DapperCollectiveSpecCompilerTests {
     var target = Guid.NewGuid();
     var spec = _spec(s => s.SetProperty(j => j.IsActive, j => j.Id == target));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     await Assert.That(compiled.SqlFragment).Contains("jsonb_set(data, '{IsActive}'")
       .Because("The target property is still a top-level jsonb path.");
@@ -129,7 +130,7 @@ public class DapperCollectiveSpecCompilerTests {
     var target = Guid.NewGuid();
     var spec = _spec(s => s.SetProperty(j => j.IsActive, j => j.Id != target));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     await Assert.That(compiled.SqlFragment).Contains("<>")
       .Because("!= compiles to the SQL inequality operator.");
@@ -138,25 +139,25 @@ public class DapperCollectiveSpecCompilerTests {
 
   [Test]
   public async Task Compile_NestedPropertyPath_ThrowsNotSupportedAsync() {
-    Expression<Action<ICollectiveSetters<_complexModel>>> body =
+    Expression<Action<ICollectiveSetters<ComplexModel>>> body =
       s => s.SetProperty(j => j.Nested.Inner, "v");
-    var spec = new _stubSpecComplex(body);
+    var spec = new StubSpecComplex(body);
 
-    await Assert.That(() => DapperCollectiveSpecCompiler<_complexModel>.Compile(spec, _jsonOptions))
+    await Assert.That(() => DapperCollectiveSpecCompiler<ComplexModel>.Compile(spec, _jsonOptions))
       .ThrowsExactly<NotSupportedException>()
       .Because("Nested paths require multi-level jsonb_set composition — out of scope for the first cut.");
   }
 
   [Test]
   public async Task Compile_NullSpec_ThrowsArgumentNullAsync() {
-    await Assert.That(() => DapperCollectiveSpecCompiler<_jobModel>.Compile(null!, _jsonOptions))
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(null!, _jsonOptions))
       .ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
   public async Task Compile_NullJsonOptions_ThrowsArgumentNullAsync() {
     var spec = _spec(s => s.SetProperty(j => j.Status, "X"));
-    await Assert.That(() => DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, null!))
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -164,41 +165,156 @@ public class DapperCollectiveSpecCompilerTests {
 
   [Test]
   public async Task Compile_CapturedLocal_ResolvedAtCompileTimeAsync() {
-    var statusValue = "Pending";
+    const string statusValue = "Pending";
     var spec = _spec(s => s.SetProperty(j => j.Status, statusValue));
 
-    var compiled = DapperCollectiveSpecCompiler<_jobModel>.Compile(spec, _jsonOptions);
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
 
     await Assert.That(compiled.Parameters.Values.Single()).IsEqualTo("\"Pending\"")
       .Because("Captured-local value bound at compile time, JSON-serialized into the parameter dictionary.");
   }
 
+  // ── Setter calls that aren't SetProperty ────────────────────────────────
+
+  [Test]
+  public async Task Compile_SetterCallsObjectInheritedMethod_ThrowsInvalidOperationAsync() {
+    // A spec author could accidentally call an object-inherited method (e.g. ToString()) on
+    // the setter instead of SetProperty. If the visitor mistook that call for a setter
+    // mutation it could crash or silently drop the property; instead it must fall through to
+    // the base visitor and be caught by the same "zero SetProperty calls" guard as a truly
+    // empty spec, rather than something more exotic.
+    Expression<Action<ICollectiveSetters<JobModel>>> body = s => Console.WriteLine(s);
+    var spec = new StubSpec(body);
+
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("A method call on the setter that isn't SetProperty (here, an object-inherited method) must fall through to the base visitor and surface as the standard empty-spec error, not a crash deeper in property extraction.");
+  }
+
+  // ── Manually constructed selector arguments (unreachable via C# call syntax) ───────────
+
+  [Test]
+  public async Task Compile_NonLambdaSelectorArgument_ThrowsInvalidOperationAsync() {
+    // Ordinary C# call syntax can never produce a SetProperty selector argument that isn't a
+    // lambda — the compiler only ever emits a direct LambdaExpression or a Quote-wrapped one.
+    // This guards against a broken spec-building tool that assembles the call tree by hand and
+    // substitutes something else into the selector slot: the compiler must fail loudly naming
+    // the unexpected node kind, not misread garbage as a property path.
+    var setPropertyMethod = _constantSetPropertyMethod(typeof(int));
+    var sParam = Expression.Parameter(typeof(ICollectiveSetters<JobModel>), "s");
+    // A ConstantExpression whose declared Type is set to the selector's expected
+    // Expression<Func<...>> type satisfies Expression.Call's parameter-type check directly
+    // (no quoting involved), so it lands in Arguments[0] exactly as a ConstantExpression —
+    // a node kind _unwrapLambda's switch has no named arm for, only its default throw arm.
+    var notASelector = Expression.Constant(null, typeof(Expression<Func<JobModel, int>>));
+    var call = Expression.Call(sParam, setPropertyMethod, notASelector, Expression.Constant(42));
+    var body = Expression.Lambda<Action<ICollectiveSetters<JobModel>>>(call, sParam);
+    var spec = new StubSpec(body);
+
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions))
+      .ThrowsExactly<InvalidOperationException>()
+      .WithMessageContaining("Constant")
+      .Because("The selector argument's actual node kind (Constant, not a lambda) belongs in the message so a broken spec-building tool can be diagnosed without stepping through the compiler.");
+  }
+
+  [Test]
+  public async Task Compile_BoxedIntPropertySelector_EmitsJsonbSetForUnderlyingPropertyAsync() {
+    // Forcing TProp to object via an explicit type argument makes the compiler box the int
+    // property access in a Convert node before the selector reaches property extraction.
+    // Nothing in ordinary spec-writing needs this, but generic spec-building helpers can
+    // produce it — if the Convert wasn't stripped, an otherwise-ordinary scalar selector would
+    // be misclassified as an unsupported computed/nested selector.
+    Expression<Action<ICollectiveSetters<JobModel>>> body =
+      s => s.SetProperty<object>(m => m.ViewCount, (object)42);
+    var spec = new StubSpec(body);
+
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("'{ViewCount}'")
+      .Because("The boxed selector must still resolve to the underlying int property's jsonb path.");
+    await Assert.That(compiled.Parameters.Values.Single()).IsEqualTo("42")
+      .Because("The boxed value must still serialize as the plain numeric JSON literal, not an object wrapper.");
+  }
+
+  [Test]
+  public async Task Compile_ComputedComparisonWithWidenedNumericProperty_EmitsToJsonbComparisonAsync() {
+    // Comparing an int property against a long literal forces the compiler to widen the
+    // property side with an implicit numeric-conversion Convert node before the comparison —
+    // an ordinary consequence of C# numeric promotion, not a different spec shape. If that
+    // Convert wasn't stripped before reading the compared property's name, an everyday
+    // cross-width comparison would be rejected as unsupported instead of compiling the same
+    // as a same-width one.
+    var spec = _spec(s => s.SetProperty(j => j.IsActive, j => j.ViewCount == 100L));
+
+    var compiled = DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions);
+
+    await Assert.That(compiled.SqlFragment).Contains("jsonb_set(data, '{IsActive}'")
+      .Because("The target property is still a top-level jsonb path.");
+    await Assert.That(compiled.SqlFragment).Contains("data->'ViewCount'")
+      .Because("The compared property's name must resolve correctly despite the compiler-inserted widening Convert on that side.");
+    await Assert.That(compiled.SqlFragment).Contains("to_jsonb(")
+      .Because("A computed boolean comparison is still wrapped in to_jsonb regardless of which side needed widening.");
+    await Assert.That(compiled.Parameters).Count().IsEqualTo(1);
+    await Assert.That(compiled.Parameters.Values.Single()).IsEqualTo("100")
+      .Because("The long literal serializes as a plain numeric JSON literal on the right-hand side.");
+  }
+
+  [Test]
+  public async Task Compile_ConstantValueFromMethodCall_ThrowsNotSupportedAsync() {
+    // A value argument that's a method call is neither a constant literal, a captured local,
+    // nor a captured field — resolving it would mean re-executing arbitrary code every time the
+    // compiled SQL runs against a different row. The compiler must reject it loudly and name the
+    // unsupported node kind, pointing the author at RawSql instead of silently binding a stale
+    // or null parameter.
+    Expression<Action<ICollectiveSetters<JobModel>>> body =
+      s => s.SetProperty(m => m.ViewCount, _computeValue());
+    var spec = new StubSpec(body);
+
+    await Assert.That(() => DapperCollectiveSpecCompiler<JobModel>.Compile(spec, _jsonOptions))
+      .ThrowsExactly<NotSupportedException>()
+      .WithMessageContaining("Call")
+      .Because("The message should name the unsupported node kind (a method Call) so the author knows what part of the value expression is unsupported, not just that something failed.");
+  }
+
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = string.Empty;
-    public int ViewCount { get; set; }
-    public Guid Id { get; set; }
-    public bool IsActive { get; set; }
+    public int ViewCount { get; }
+    public Guid Id { get; }
+    public bool IsActive { get; }
   }
 
-  private sealed class _complexModel {
-    public _nested Nested { get; set; } = new();
+  private sealed class ComplexModel {
+    public NestedModel Nested { get; set; } = new();
   }
-  private sealed class _nested {
+  private sealed class NestedModel {
     public string Inner { get; set; } = string.Empty;
   }
 
 #pragma warning disable CA1859 // analyzer suggestion ignored — tests assert against the interface, not the concrete record
-  private static ICollectiveSpec<_jobModel> _spec(Expression<Action<ICollectiveSetters<_jobModel>>> expr)
-    => new _stubSpec(expr);
+  private static ICollectiveSpec<JobModel> _spec(Expression<Action<ICollectiveSetters<JobModel>>> expr)
+    => new StubSpec(expr);
 #pragma warning restore CA1859
 
-  private sealed class _stubSpec(Expression<Action<ICollectiveSetters<_jobModel>>> setters) : ICollectiveSpec<_jobModel> {
-    public Expression<Action<ICollectiveSetters<_jobModel>>> Setters { get; } = setters;
+  private sealed class StubSpec(Expression<Action<ICollectiveSetters<JobModel>>> setters) : ICollectiveSpec<JobModel> {
+    public Expression<Action<ICollectiveSetters<JobModel>>> Setters { get; } = setters;
   }
 
-  private sealed class _stubSpecComplex(Expression<Action<ICollectiveSetters<_complexModel>>> setters) : ICollectiveSpec<_complexModel> {
-    public Expression<Action<ICollectiveSetters<_complexModel>>> Setters { get; } = setters;
+  private sealed class StubSpecComplex(Expression<Action<ICollectiveSetters<ComplexModel>>> setters) : ICollectiveSpec<ComplexModel> {
+    public Expression<Action<ICollectiveSetters<ComplexModel>>> Setters { get; } = setters;
   }
+
+  // Closed MethodInfo for the constant-value SetProperty<TProp> overload (as opposed to the
+  // computed-value overload) — distinguished by its second parameter being TProp itself rather
+  // than Expression<Func<TModel, TProp>>. Manually built expression trees need the exact
+  // MethodInfo to construct a MethodCallExpression by hand.
+  private static MethodInfo _constantSetPropertyMethod(Type propertyType) =>
+    typeof(ICollectiveSetters<JobModel>).GetMethods()
+      .Single(m => m.Name == nameof(ICollectiveSetters<>.SetProperty) && m.GetParameters()[1].ParameterType.IsGenericParameter)
+      .MakeGenericMethod(propertyType);
+
+  // A non-constant value source (a plain method call) for Compile_ConstantValueFromMethodCall_ThrowsNotSupportedAsync.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3400:Methods should not return constants", Justification = "A method-call operand is the spelling under test; a constant would be inlined into the expression tree.")]
+  private static int _computeValue() => 42;
 }

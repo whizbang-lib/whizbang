@@ -141,12 +141,12 @@ public class RestMutationEndpointBaseTests {
   }
 
   [Test]
-  public async Task Execute_WhenCancelled_ShouldThrowOperationCanceledAsync() {
+  public async Task Execute_WhenCanceled_ShouldThrowOperationCanceledAsync() {
     // Arrange
     var endpoint = new TestRestMutationEndpoint();
     var command = new TestCommand { Value = "test" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

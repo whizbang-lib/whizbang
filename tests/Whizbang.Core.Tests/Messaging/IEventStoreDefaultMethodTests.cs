@@ -182,5 +182,5 @@ public class IEventStoreDefaultMethodTests {
     public string Payload { get; init; } = string.Empty;
   }
 
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 }

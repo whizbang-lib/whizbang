@@ -33,7 +33,7 @@ Whizbang LSP Process (RUNNING independently)
 |----------|---------|-------------|:---:|
 | Work coordinator leases (wh_outbox/wh_inbox) | 300s (5 min) | Other instances steal work | YES — WorkCoordinatorPublisherWorker renews |
 | Instance heartbeat (wh_service_instances) | 600s (10 min) | Instance deleted, work released | YES — Worker updates heartbeat |
-| DB command timeout | 5s | Query cancelled, retried | YES — Worker polls normally |
+| DB command timeout | 5s | Query canceled, retried | YES — Worker polls normally |
 | RabbitMQ connection heartbeat | Broker default | Connection drops, auto-recovery | YES — Transport in LSP keeps connection |
 | Azure SB message locks | 60s | Messages redeliver | PARTIAL — Transport helps but lock tokens are in frozen app |
 | Perspective sync (DebugAwareClock) | 5s | Already debug-aware | YES — ExternalHook mode |

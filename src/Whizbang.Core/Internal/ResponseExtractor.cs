@@ -12,7 +12,7 @@ namespace Whizbang.Core.Internal;
 /// AOT-compatible: uses ITuple interface and pattern matching, no reflection.
 /// </summary>
 /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-/// <tests>Whizbang.Core.Tests/Internal/ResponseExtractorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/ResponseExtractorTests.cs</tests>
 public static class ResponseExtractor {
   /// <summary>
   /// Tries to extract a value of type TResponse from a potentially complex return value.

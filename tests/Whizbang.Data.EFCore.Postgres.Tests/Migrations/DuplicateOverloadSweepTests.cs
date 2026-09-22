@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class DuplicateOverloadSweepTests : EFCoreTestBase {
 
   [Test]
@@ -100,7 +101,7 @@ public class DuplicateOverloadSweepTests : EFCoreTestBase {
       SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE p.proname = @name AND n.nspname = 'public'
       """;
-    cmd.Parameters.AddWithValue("name", name);
+    cmd.Parameters.AddWithValue(nameof(name), name);
     return (long)(await cmd.ExecuteScalarAsync(ct))!;
   }
 

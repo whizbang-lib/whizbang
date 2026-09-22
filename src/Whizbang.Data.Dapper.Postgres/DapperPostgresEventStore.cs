@@ -23,7 +23,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Stream ID is inferred from event's [AggregateId] property.
 /// Uses JsonbSizeValidator for C#-based size validation.
 /// </summary>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 #pragma warning disable CS9113 // Primary constructor parameters are unread - retained for backward compatibility
 public class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
@@ -47,12 +47,12 @@ public class DapperPostgresEventStore(
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Splits envelope into 3 JSONB columns, validates size, handles concurrent writes with retry.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -74,8 +74,8 @@ public class DapperPostgresEventStore(
   /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Reconstructs envelope from 3 JSONB columns.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
@@ -160,11 +160,11 @@ public class DapperPostgresEventStore(
   /// <summary>
   /// Determines whether an exception represents a PostgreSQL unique constraint violation (23505 error or message pattern match).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_CaseInsensitive_ShouldReturnTrueAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DifferentMessage_ShouldReturnFalseAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithArgumentException_DifferentMessage_ShouldReturnFalseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_CaseInsensitive_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DifferentMessage_ShouldReturnFalseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithArgumentException_DifferentMessage_ShouldReturnFalseAsync</tests>
   internal static bool IsUniqueConstraintViolation(Exception ex) {
     if (ex is Npgsql.PostgresException pgEx) {
       return pgEx.SqlState == "23505"; // unique_violation
@@ -225,6 +225,54 @@ public class DapperPostgresEventStore(
     FROM wh_event_store
     WHERE stream_id = @StreamId";
 
+  /// <summary>
+  /// Perspective row retention, the resurrection-on-wake history probe: does this stream hold any
+  /// event ordered before the given id? An indexed EXISTS over the stream's pointer rows; uuid
+  /// ordering is the store's own ordering (UUIDv7 ids), the same comparison the EF Core driver uses.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var exists = await Executor.ExecuteScalarAsync<bool?>(
+      connection,
+      "SELECT EXISTS (SELECT 1 FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId)",
+      new { StreamId = streamId, BeforeEventId = beforeEventId },
+      cancellationToken: cancellationToken);
+    return exists == true;
+  }
+
+  /// <summary>
+  /// The perspective-aware history probe (issue #696): the stream's distinct pre-batch
+  /// <c>event_type</c> values are read and matched in process through
+  /// <see cref="EventTypeMatchingHelper"/>, the one strategy every read path shares, so a name a
+  /// producer wrote in the decorated assembly-qualified form still matches. Mirrors the EF Core
+  /// driver.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return false;
+    }
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var storedTypes = await Executor.QueryAsync<string>(
+      connection,
+      "SELECT DISTINCT event_type FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId",
+      new { StreamId = streamId, BeforeEventId = beforeEventId },
+      cancellationToken: cancellationToken);
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    foreach (var stored in storedTypes) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // --- Private helper methods ---
 
   /// <summary>
@@ -232,7 +280,9 @@ public class DapperPostgresEventStore(
   /// </summary>
   private async Task<JsonbPersistenceModel> _prepareJsonbAsync<TMessage>(MessageEnvelope<TMessage> envelope) {
     var payload = envelope.Payload!;
-    var policyCtx = new PolicyContext(payload, envelope);
+    // Persistence policies here are matched on the message and envelope alone; no scoped services
+    // take part in the decision, so none are offered.
+    var policyCtx = new PolicyContext(payload, envelope, services: null);
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
     var jsonb = _adapter.ToJsonb(envelope, policy);
@@ -320,6 +370,7 @@ public class DapperPostgresEventStore(
   /// </summary>
   private static MessageEnvelope<TMessage> _createMinimalEnvelope<TMessage>(TMessage message) {
     return new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [
@@ -425,11 +476,11 @@ public class DapperPostgresEventStore(
   private object _deserializeEventData(JsonbPersistenceModel jsonb, Type concreteType) {
     var typeInfo = JsonOptions.GetTypeInfo(concreteType)
       ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for type {concreteType.FullName}. " +
+        $"No JsonTypeInfo found for type {TypeNameFormatter.DisplayName(concreteType)}. " +
         "Ensure the event type is registered in your JsonSerializerContext.");
 
     return JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
-      ?? throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
+      ?? throw new InvalidOperationException($"Failed to deserialize event of type {TypeNameFormatter.DisplayName(concreteType)}");
   }
 
   /// <summary>
@@ -442,7 +493,7 @@ public class DapperPostgresEventStore(
 
     if (eventData is not IEvent eventPayload) {
       throw new InvalidOperationException(
-        $"Deserialized event of type {eventData.GetType().FullName} does not implement IEvent.");
+        $"Deserialized event of type {TypeNameFormatter.DisplayName(eventData.GetType())} does not implement IEvent.");
     }
 
     return new MessageEnvelope<IEvent> {
@@ -476,8 +527,22 @@ public class DapperPostgresEventStore(
   }
 
   private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson) || hops.Count == 0 || hops[0].Scope != null) {
+    if (string.IsNullOrEmpty(scopeJson) || (hops.Count > 0 && hops[0].Scope != null)) {
       return;
+    }
+
+    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
+    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
+    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
+    // any perspective requiring a security context rejected the event on every retry until it
+    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
+    // scope still yields none, because the emptiness check above returns first.
+    if (hops.Count == 0) {
+      hops.Add(new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      });
     }
 
     var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))

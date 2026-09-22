@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
@@ -18,8 +20,11 @@ public class TableStatisticsCollectorTests {
     // Reproduces: Kestrel bind failure → DI container disposed → TableStatisticsCollector
     // used to catch ObjectDisposedException, log a warning, then wait 30s and retry forever.
     // After the fix it should break out of the loop and exit cleanly.
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
-    var worker = new TableStatisticsCollector(new AlwaysDisposedScopeFactory(), metrics);
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var worker = new TableStatisticsCollector(
+  scopeFactory: new AlwaysDisposedScopeFactory(),
+  metrics: metrics,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -54,16 +59,19 @@ public class TableStatisticsCollectorTests {
   }
 
   /// <summary>
+  /// <para>
   /// A table that occupies far more space than its live rows need costs on every read: index
   /// heap-fetches pull emptier pages and the buffer cache holds fewer useful rows. The usual
   /// cause is dead tuples awaiting vacuum; the invisible one is a dropped column, whose bytes
   /// Postgres keeps in every pre-existing row until the table is rewritten — autovacuum never
   /// returns them. Either way the operator has no way to see it without going looking, which is
   /// exactly how a table ends up several times its necessary size unnoticed.
-  ///
+  /// </para>
+  /// <para>
   /// So the collector must actually PUBLISH the ratio, not merely be able to compute it. This
   /// asserts the value reaches the metric, because a gauge that is wired but never fed reports
   /// a healthy silence indistinguishable from a healthy system.
+  /// </para>
   ///
   /// <para>
   /// Waits on <c>CycleCompleted</c>, which fires after the caches are written. An earlier version
@@ -75,8 +83,11 @@ public class TableStatisticsCollectorTests {
   [Test]
   public async Task Collector_PublishesTableBloatRatioAsync() {
     var provider = new BloatReportingProvider();
-    var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
-    var worker = new TableStatisticsCollector(new SingleProviderScopeFactory(provider), metrics);
+    var metrics = new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var worker = new TableStatisticsCollector(
+  scopeFactory: new SingleProviderScopeFactory(provider),
+  metrics: metrics,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
 
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     double? ratioWhenSignalled = null;
@@ -100,7 +111,7 @@ public class TableStatisticsCollectorTests {
                + "is indistinguishable from a lean table");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   #region Test Fakes

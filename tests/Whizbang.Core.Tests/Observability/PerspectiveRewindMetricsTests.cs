@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -13,7 +15,7 @@ public class PerspectiveRewindMetricsTests {
 
   [Test]
   public async Task PerspectiveMetrics_RewindInstruments_CreatedAsync() {
-    var metrics = new PerspectiveMetrics(new WhizbangMetrics());
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.Rewinds).IsNotNull();
     await Assert.That(metrics.RewindDuration).IsNotNull();
@@ -33,8 +35,10 @@ public class PerspectiveRewindMetricsTests {
       new KeyValuePair<string, object?>("has_snapshot", true));
 
     var measurements = helper.GetByName("whizbang.perspective.rewinds");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Value).IsEqualTo(1);
+    var rewinds = measurements.Where(m => m.Tags.GetValueOrDefault("perspective_name") == "OrderPerspective").ToList();
+    await Assert.That(rewinds).Count().IsEqualTo(1);
+    await Assert.That(rewinds[0].Value).IsEqualTo(1);
+    await Assert.That(rewinds[0].Tags["has_snapshot"]).IsEqualTo("True");
   }
 
   [Test]

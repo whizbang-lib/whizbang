@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -11,7 +12,7 @@ namespace Whizbang.Generators;
 /// inbox-handler-vs-lifecycle-hook determination, so the generator's registry and the
 /// analyzer's enforcement can never disagree about what a receptor claims.
 /// </summary>
-internal static class CompileTimeMessageClassification {
+public static class CompileTimeMessageClassification {
   private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string MESSAGE_KIND_ATTRIBUTE = "Whizbang.Core.Routing.MessageKindAttribute";
   private const string ICOMMAND_INTERFACE = "global::Whizbang.Core.ICommand";
@@ -27,21 +28,19 @@ internal static class CompileTimeMessageClassification {
   /// conventions (OwnDomains patterns, broker routing keys). Empty for global-namespace types.
   /// </summary>
   internal static string ContractNamespaceOf(ITypeSymbol messageType) {
-    var ns = messageType.ContainingNamespace;
-    return ns is null || ns.IsGlobalNamespace
-      ? string.Empty
-      : ns.ToDisplayString().ToLowerInvariant();
+    return TypeNameUtilities.NamespaceName(messageType.ContainingNamespace).ToLowerInvariant();
   }
 
+#pragma warning disable S3776 // the classification is one decision table over the type's markers and base types; a split would hide the table
   /// <summary>
   /// Compile-time mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s priority
   /// rules: [MessageKind] attribute, framework system namespace, marker interface,
   /// namespace convention, type-name suffix. Returns the MessageKind member NAME.
   /// </summary>
-  internal static string DetectMessageKind(ITypeSymbol messageType) {
+  public static string DetectMessageKind(ITypeSymbol messageType) {
     // Priority 1: [MessageKind] attribute (explicit override)
     foreach (var attr in messageType.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != MESSAGE_KIND_ATTRIBUTE
+      if (!TypeNameUtilities.IsNamed(attr.AttributeClass, MESSAGE_KIND_ATTRIBUTE)
           || attr.ConstructorArguments.Length == 0) {
         continue;
       }
@@ -57,9 +56,7 @@ internal static class CompileTimeMessageClassification {
 
     // Priority 2: framework system namespace subtree (outranks interfaces — framework
     // system commands implement ICommand yet are broadcast/run-control traffic)
-    var ns = messageType.ContainingNamespace is { IsGlobalNamespace: false } containing
-      ? containing.ToDisplayString()
-      : string.Empty;
+    var ns = TypeNameUtilities.NamespaceName(messageType.ContainingNamespace);
     if (ns == FRAMEWORK_SYSTEM_NAMESPACE
         || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", System.StringComparison.Ordinal)) {
       return "System";
@@ -67,7 +64,7 @@ internal static class CompileTimeMessageClassification {
 
     // Priority 3: marker interfaces
     foreach (var iface in messageType.AllInterfaces) {
-      var display = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var display = TypeNameUtilities.FullyQualified(iface);
       if (display == ICOMMAND_INTERFACE) {
         return "Command";
       }
@@ -109,15 +106,16 @@ internal static class CompileTimeMessageClassification {
 
     return "Unknown";
   }
+#pragma warning restore S3776
 
   /// <summary>
   /// Extracts the [FireAt] lifecycle stage NAMES declared on a receptor class (one entry per
   /// attribute).
   /// </summary>
-  internal static ImmutableArray<string> FireAtStagesOf(INamedTypeSymbol receptorClass) {
+  public static ImmutableArray<string> FireAtStagesOf(INamedTypeSymbol receptorClass) {
     var stages = ImmutableArray.CreateBuilder<string>();
     foreach (var attr in receptorClass.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != FIREAT_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attr.AttributeClass, FIREAT_ATTRIBUTE)) {
         continue;
       }
       if (attr.ConstructorArguments.Length == 0) {

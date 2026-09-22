@@ -172,13 +172,27 @@ public class EnvelopeRegistryTests {
 
   [Test]
   public async Task Unregister_NonExistentMessage_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a registered neighbor shares the registry with the message being unregistered.
     using var registry = new EnvelopeRegistry();
-    var message = new TestMessage("never-registered");
+    var registered = new TestMessage("still-registered");
+    var envelope = _createEnvelope(registered);
+    registry.Register(envelope);
+    var neverRegistered = new TestMessage("never-registered");
 
-    // Act & Assert - should not throw
-    registry.Unregister(message);
-    // Implicit success - method completed without throwing
+    // Act
+    registry.Unregister(neverRegistered);
+
+    // Assert - not throwing is the easy half. Unregister runs on every message completion,
+    // including ones that were never registered (a locally-dispatched message, a retry after the
+    // entry was already removed). A remove that hit the wrong entry — or cleared the map — would
+    // strip envelopes off messages that are still in flight, and the loss surfaces far away, as a
+    // null envelope during a hop or correlation lookup rather than here.
+    var survivor = registry.TryGetEnvelope(registered);
+    await Assert.That(survivor).IsNotNull()
+      .Because("removing an entry that was never there must not disturb the ones that are");
+    await Assert.That(survivor!.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(registry.TryGetEnvelope(neverRegistered)).IsNull()
+      .Because("the unregistered message must still be absent — the no-op must not have added it");
   }
 
   [Test]

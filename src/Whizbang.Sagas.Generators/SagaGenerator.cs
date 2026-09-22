@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Sagas.Generators;
 
@@ -17,6 +18,9 @@ namespace Whizbang.Sagas.Generators;
 /// </summary>
 [Generator]
 public sealed class SagaGenerator : IIncrementalGenerator {
+  private const string CONTINUES_WITH_ATTRIBUTE = "Whizbang.Sagas.ContinuesWithAttribute";
+  private const int RAN_TO_THE_END = 3;   // Completed | CompletedWithFailures
+
 
   // SagaAttribute and SagaAttribute<TEventBase> live in
   // Whizbang.Sagas.Contracts as regular runtime types — not emitted via
@@ -93,18 +97,17 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     string eventBaseFullName = "global::Whizbang.Sagas.SagaEventBase";
     if (hasTypeArg && attrData.AttributeClass is { TypeArguments: { Length: 1 } typeArgs } && typeArgs[0] is INamedTypeSymbol baseSymbol) {
-      eventBaseFullName = "global::" + baseSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+      eventBaseFullName = TypeNameUtilities.FullyQualified(baseSymbol);
     }
 
     return new SagaInfo(
-      @namespace: typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : typeSymbol.ContainingNamespace.ToDisplayString(),
+      @namespace: typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : TypeNameUtilities.Display(typeSymbol.ContainingNamespace),
       className: typeSymbol.Name,
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,
-      includeHooks: includeHooks,
-      generateService: generateService,
-      isPartial: isPartial,
-      location: classDecl.Identifier.GetLocation());
+      options: new SagaEmitOptions(includeHooks, generateService, isPartial),
+      location: classDecl.Identifier.GetLocation(),
+      continuations: _readContinuations(typeSymbol));
   }
 
   private static void _emit(SourceProductionContext spc, SagaInfo info) {
@@ -145,6 +148,10 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     if (info.GenerateService) {
       _emitServiceCollectionExtension(sb, info);
+    }
+
+    if (info.Continuations.Length > 0) {
+      _emitContinuationRegistration(sb, info);
     }
 
     var fileName = (info.Namespace is null ? "" : info.Namespace + ".") + info.ClassName + ".g.cs";
@@ -349,6 +356,76 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
   }
 
+  /// <summary>
+  /// The <c>[ContinuesWith]</c> declarations on a saga class, in source order.
+  /// </summary>
+  /// <remarks>
+  /// Read from the class symbol rather than the generator's attribute context, which holds only the
+  /// <c>[Saga]</c> attribute that triggered this generator.
+  /// </remarks>
+  private static ImmutableArray<ContinuationDeclaration> _readContinuations(INamedTypeSymbol typeSymbol) {
+    var declarations = ImmutableArray.CreateBuilder<ContinuationDeclaration>();
+
+    foreach (var attribute in typeSymbol.GetAttributes()) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, CONTINUES_WITH_ATTRIBUTE)) {
+        continue;
+      }
+      if (attribute.ConstructorArguments.Length == 0
+          || attribute.ConstructorArguments[0].Value is not string name
+          || string.IsNullOrWhiteSpace(name)) {
+        continue;   // a blank name is the attribute's own argument check, not this generator's
+      }
+
+      var trigger = attribute.ConstructorArguments.Length > 1
+                    && attribute.ConstructorArguments[1].Value is int declared
+        ? declared
+        : RAN_TO_THE_END;
+
+      declarations.Add(new ContinuationDeclaration(name, trigger));
+    }
+
+    return declarations.ToImmutable();
+  }
+
+  /// <summary>
+  /// Emits the registration that puts this saga's chain in the runtime registry.
+  /// </summary>
+  /// <remarks>
+  /// A module initializer rather than the DI extension, so the chain is registered even for a saga
+  /// generated with <c>GenerateService = false</c>, and so it does not depend on the host remembering
+  /// to call an Add method. This is the same shape <c>SagasJsonContextInitializer</c> uses to register
+  /// the framework's own serialization context.
+  /// </remarks>
+  private static void _emitContinuationRegistration(StringBuilder sb, SagaInfo info) {
+    sb.AppendLine();
+    sb.Append("internal static class ").Append(info.ClassName).AppendLine("ContinuationRegistration {");
+    sb.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    sb.AppendLine("  internal static void RegisterContinuations() {");
+
+    foreach (var continuation in info.Continuations) {
+      sb.AppendLine("    global::Whizbang.Sagas.SagaContinuationRegistry.Register(");
+      sb.Append("      \"").Append(info.SagaName).AppendLine("\",");
+      sb.Append("      new global::Whizbang.Sagas.SagaContinuation(\"").Append(continuation.SagaName).Append("\", ")
+        .Append(_renderTrigger(continuation.Trigger)).AppendLine("));");
+    }
+
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+  }
+
+  /// <summary>
+  /// The trigger as named flags, so the generated call reads like the declaration it came from.
+  /// </summary>
+  private static string _renderTrigger(int trigger) {
+    var names = new List<string>();
+    if ((trigger & 1) != 0) { names.Add("Completed"); }
+    if ((trigger & 2) != 0) { names.Add("CompletedWithFailures"); }
+    if ((trigger & 4) != 0) { names.Add("Failed"); }
+    if (names.Count == 0) { names.Add("None"); }
+
+    return string.Join(" | ", names.Select(static n => "global::Whizbang.Sagas.SagaContinuationTriggers." + n));
+  }
+
   private static void _emitServiceCollectionExtension(StringBuilder sb, SagaInfo info) {
     sb.AppendLine();
     sb.Append("public static class ").Append(info.ClassName).AppendLine("ServiceCollectionExtensions {");
@@ -357,24 +434,42 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
   }
 
-  private sealed class SagaInfo {
-    public SagaInfo(string? @namespace, string className, string sagaName, string eventBaseFullName, bool includeHooks, bool generateService, bool isPartial, Location location) {
-      Namespace = @namespace;
-      ClassName = className;
-      SagaName = sagaName;
-      EventBaseFullName = eventBaseFullName;
-      IncludeHooks = includeHooks;
-      GenerateService = generateService;
-      IsPartial = isPartial;
-      Location = location;
-    }
-    public string? Namespace { get; }
-    public string ClassName { get; }
-    public string SagaName { get; }
-    public string EventBaseFullName { get; }
-    public bool IncludeHooks { get; }
-    public bool GenerateService { get; }
-    public bool IsPartial { get; }
-    public Location Location { get; }
+  /// <summary>One <c>[ContinuesWith]</c> declaration read off a saga class.</summary>
+  private readonly struct ContinuationDeclaration(string sagaName, int trigger) {
+    public string SagaName { get; } = sagaName;
+    public int Trigger { get; } = trigger;
+  }
+
+  /// <summary>
+  /// What the generator was asked to emit, as opposed to what the saga is called.
+  /// </summary>
+  /// <remarks>
+  /// Grouped rather than passed alongside the names because they answer a different question, and
+  /// because a constructor that keeps growing one flag at a time is how a parameter list reaches the
+  /// point where call sites stop being readable.
+  /// </remarks>
+  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial) {
+    public bool IncludeHooks { get; } = includeHooks;
+    public bool GenerateService { get; } = generateService;
+    public bool IsPartial { get; } = isPartial;
+  }
+
+  private sealed class SagaInfo(
+      string? @namespace,
+      string className,
+      string sagaName,
+      string eventBaseFullName,
+      SagaEmitOptions options,
+      Location location,
+      ImmutableArray<ContinuationDeclaration> continuations) {
+    public ImmutableArray<ContinuationDeclaration> Continuations { get; } = continuations;
+    public string? Namespace { get; } = @namespace;
+    public string ClassName { get; } = className;
+    public string SagaName { get; } = sagaName;
+    public string EventBaseFullName { get; } = eventBaseFullName;
+    public bool IncludeHooks => options.IncludeHooks;
+    public bool GenerateService => options.GenerateService;
+    public bool IsPartial => options.IsPartial;
+    public Location Location { get; } = location;
   }
 }

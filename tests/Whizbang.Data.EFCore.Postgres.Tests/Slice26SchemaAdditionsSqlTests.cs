@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard4")]
 public class Slice26SchemaAdditionsSqlTests : EFCoreTestBase {
 
   // ----- wh_service_config -----

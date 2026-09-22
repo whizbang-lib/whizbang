@@ -171,7 +171,8 @@ public class ServiceBusInfrastructureProvisionerTests {
   }
 
   /// <summary>
-  /// When topic already exists, should not attempt to create it.
+  /// When topic already exists, should not attempt to create it, and should report which
+  /// topic was found to already exist.
   /// </summary>
   [Test]
   public async Task EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync() {
@@ -179,19 +180,24 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient {
       ExistingTopics = { "myapp.orders" }
     };
-    var provisioner = new ServiceBusInfrastructureProvisioner(
-      adminClient,
-      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
 
     // Act
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
 
     // Assert
     await Assert.That(adminClient.CreatedTopics).IsEmpty();
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("myapp.orders", StringComparison.Ordinal)
+        && m.Contains("already exists", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic was found to already exist, not merely fire");
   }
 
   /// <summary>
-  /// When a race condition occurs (409), should handle gracefully.
+  /// When a race condition occurs (409), should handle gracefully and report which topic
+  /// raced.
   /// </summary>
   [Test]
   public async Task EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync() {
@@ -199,15 +205,19 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient {
       SimulateRaceConditionForTopic = "myapp.orders"
     };
-    var provisioner = new ServiceBusInfrastructureProvisioner(
-      adminClient,
-      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
 
     // Act - should not throw
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
 
     // Assert - no topics created (race condition swallowed)
     await Assert.That(adminClient.CreatedTopics).IsEmpty();
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("myapp.orders", StringComparison.Ordinal)
+        && m.Contains("race condition", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic raced during creation, not merely fire");
   }
 
   /// <summary>
@@ -306,5 +316,66 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
   }
-}
 
+  // ============================================================
+  // Logging on the provisioning path
+  // ============================================================
+
+  /// <summary>
+  /// Provisioning reports how many topics it is about to create.
+  /// </summary>
+  /// <remarks>
+  /// Provisioning happens once at startup and is otherwise invisible. When a deploy comes up
+  /// against a namespace whose entities are missing, this line is what tells an operator the
+  /// service noticed and is creating them — as opposed to a service that is simply hanging on a
+  /// broker it cannot reach.
+  /// </remarks>
+  [Test]
+  public async Task ProvisionOwnedDomains_ReportsHowManyTopicsItWillCreateAsync() {
+    var adminClient = new TrackingAdminClient();
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
+
+    await provisioner.ProvisionOwnedDomainsAsync(
+      new HashSet<string> { "myapp.users", "myapp.orders" });
+
+    await Assert.That(logger.Messages.Any(m => m.Contains("Provisioning", StringComparison.Ordinal)))
+      .IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains('2', StringComparison.Ordinal))).IsTrue()
+      .Because("the count is what tells an operator how much of the topology was missing");
+  }
+
+  [Test]
+  public async Task ProvisionOwnedDomains_WithNothingToDo_StillReportsAsync() {
+    // Zero is a meaningful answer: it says the topology was already there, which is what a
+    // steady-state restart should show.
+    var adminClient = new TrackingAdminClient();
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
+
+    await provisioner.ProvisionOwnedDomainsAsync(new HashSet<string>());
+
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>A logger that is enabled at every level and keeps what it was told.</summary>
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+
+    public List<string> Messages {
+      get { lock (_lock) { return [.. _messages]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    // Deliberately enabled everywhere: the guarded log statements are the point, and a logger
+    // that answers false would skip them exactly as NullLogger does.
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) { _messages.Add(formatter(state, exception)); }
+    }
+  }
+}

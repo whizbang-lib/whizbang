@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -465,7 +466,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcher() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -476,7 +477,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcherWithDebugLogging() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Add logging with Debug level to exercise debug log blocks
     services.AddLogging(builder => {
@@ -494,7 +495,7 @@ public class DispatcherNewCodeCoverageTests {
   private static IDispatcher _createDispatcherWithOutbox(IWorkCoordinatorStrategy strategy) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddReceptors();

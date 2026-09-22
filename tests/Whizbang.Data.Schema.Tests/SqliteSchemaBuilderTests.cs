@@ -196,9 +196,12 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
-    // Inbox indexes
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_inbox_processed_at");
+    // Inbox indexes. The descriptors are shared across providers, so the work-state split's index
+    // removal reaches SQLite too. That is correct here rather than merely tolerated: this provider
+    // has no inbox claim or lease path and reads none of the moved columns, so the seven indexes
+    // served no query on this side even before the split.
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_inbox_received_at");
+    await Assert.That(sql).DoesNotContain("idx_inbox_processed_at");
 
     // Outbox indexes
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_outbox_status_created_at");

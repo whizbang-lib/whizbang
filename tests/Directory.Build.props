@@ -6,6 +6,10 @@
     <!-- Temporarily suppress Guid usage analyzer warnings in test projects -->
     <!-- Remove after Phase 5 migration completes all usages -->
     <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
+    <!-- Suppress the DI-factory construction rule here: fixtures and samples construct
+         services by hand on purpose, supplying only what a scenario needs. The rule exists
+         for registrations that stand in for the container in shipping code. -->
+    <NoWarn>$(NoWarn);WHIZ500</NoWarn>
     <!-- Suppress [PinnedId] enforcement in tests: test-only message/perspective types -->
     <!-- (TestEvent, TestCommand, TestPerspective, etc.) are ephemeral fixtures, not stored data. -->
     <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>
@@ -17,4 +21,10 @@
     <!-- single compilation that is not one service. -->
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
+
+  <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings
+       are errors here exactly as they are in src/. Test code gets no downgraded rule list: a rule
+       either holds for the whole repository or is turned off for the whole repository, with the
+       reason recorded next to the setting in .editorconfig. -->
+
 </Project>

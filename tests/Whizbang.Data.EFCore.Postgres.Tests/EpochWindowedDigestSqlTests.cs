@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard3")]
 public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openAsync() {
@@ -39,7 +40,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task _setWidthAsync(NpgsqlConnection conn, long width) {
@@ -69,14 +70,13 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
       store.Parameters.AddWithValue("seq", commitSeq);
       await store.ExecuteNonQueryAsync();
     }
-    await using (var body = conn.CreateCommand()) {
-      body.CommandText = """
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
         INSERT INTO wh_event_body (event_id, event_data, metadata)
         VALUES (@event, '{"seeded":true}'::jsonb, '{}'::jsonb)
         """;
-      body.Parameters.AddWithValue("event", eventId);
-      await body.ExecuteNonQueryAsync();
-    }
+    body.Parameters.AddWithValue("event", eventId);
+    await body.ExecuteNonQueryAsync();
   }
 
   private static async Task<int> _closeAsync(NpgsqlConnection conn) {
@@ -92,8 +92,8 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
       UPDATE wh_digest_epochs SET digest_lo = @lo, digest_hi = @hi
       WHERE event_type = @type AND epoch_id = @epoch
       """;
-    cmd.Parameters.AddWithValue("lo", lo);
-    cmd.Parameters.AddWithValue("hi", hi);
+    cmd.Parameters.AddWithValue(nameof(lo), lo);
+    cmd.Parameters.AddWithValue(nameof(hi), hi);
     cmd.Parameters.AddWithValue("type", eventType);
     cmd.Parameters.AddWithValue("epoch", epochId);
     if (await cmd.ExecuteNonQueryAsync() == 0) {
@@ -175,7 +175,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
     await _corruptEpochAsync(conn, TYPE, 0, lo: 111, hi: 222);
     await _corruptEpochAsync(conn, TYPE, 1, lo: 333, hi: 444);
-    var tail = await _expectedFoldAsync(conn, e250);
+    var (Lo, _) = await _expectedFoldAsync(conn, e250);
 
     var result = await coordinator.ComputeTypeDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 0, untilSequence: null, TimeSpan.FromHours(1));
@@ -184,7 +184,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
     await Assert.That(result!.ComputedThrough).IsEqualTo(251)
       .Because("until was unbounded, so the answer covers everything settled; the watermark is the NEXT ask's since");
     await Assert.That(result.Digests.Count).IsEqualTo(1);
-    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(111 ^ 333 ^ tail.Lo)
+    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(111 ^ 333 ^ Lo)
       .Because("both fully-covered seals compose with the live open tail — a live re-aggregation would hide the sabotage");
     await Assert.That(result.Digests[0].EventCount).IsEqualTo(5);
   }
@@ -226,14 +226,14 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
     await _corruptEpochAsync(conn, TYPE, 0, lo: 111, hi: 222);
     await _corruptEpochAsync(conn, TYPE, 1, lo: 333, hi: 444);
-    var expected = await _expectedFoldAsync(conn, e10, e150);
+    var (Lo, _) = await _expectedFoldAsync(conn, e10, e150);
 
     var result = await coordinator.ComputeTypeDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 6, untilSequence: 151, TimeSpan.FromHours(1));
 
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Digests.Count).IsEqualTo(1);
-    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(expected.Lo)
+    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(Lo)
       .Because("partially-covered epochs fold live over just the covered fringe — the seal answers only for its whole range");
     await Assert.That(result.Digests[0].EventCount).IsEqualTo(2);
   }
@@ -317,13 +317,13 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
     await _seedAsync(conn, stream, inside, TYPE, 20);
     await _seedAsync(conn, stream, above, TYPE, 30);
 
-    var expected = await _expectedFoldAsync(conn, inside);
+    var (Lo, _) = await _expectedFoldAsync(conn, inside);
     var result = await coordinator.ComputeStreamDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 15, untilSequence: 25, resumeAfterStreamId: null,
       maxDigests: 100, TimeSpan.FromHours(1));
 
     await Assert.That(result!.Digests.Count).IsEqualTo(1);
-    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(expected.Lo)
+    await Assert.That(result.Digests[0].DigestLo).IsEqualTo(Lo)
       .Because("seq 10 sits below since (already verified) and seq 30 at/above until — neither may re-ship");
     await Assert.That(result.Digests[0].EventCount).IsEqualTo(1);
   }

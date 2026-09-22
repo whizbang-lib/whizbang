@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -32,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityCheckpointReceptor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityGapTracker.cs</code-under-test>
+[Category("Shard4")]
 public class IntegrityCheckpointReceptorTests {
 
   public sealed record VerifiedEvent : IEvent {
@@ -161,7 +163,7 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(command.FromCommitSequence).IsEqualTo(10L);
     await Assert.That(command.ToCommitSequence).IsEqualTo(20L)
       .Because("the repair is scoped to EXACTLY the confirmed window.");
-    await Assert.That(command.EventTypes!).IsEquivalentTo([_verifiedType]);
+    await Assert.That(command.EventTypes).IsEquivalentTo([_verifiedType]);
     await Assert.That(command.TenantScope).IsEqualTo("tenant-a");
     await Assert.That(command.RequesterService).IsEqualTo("consumer-svc")
       .Because("the requester names itself — it becomes the returned bundles' Target.");
@@ -227,7 +229,7 @@ public class IntegrityCheckpointReceptorTests {
 
   [Test]
   public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var services = new ServiceCollection();
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
@@ -240,51 +242,175 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(registry.Registered.All(r => r.Msg == typeof(IntegrityCheckpoint))).IsTrue();
   }
 
+  private sealed class CaptureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Entries) { Entries.Add((logLevel, eventId.Id, formatter(state, exception))); }
+    }
+  }
+
+  [Test]
+  public async Task DeficitWhileConsumerBehind_IsDeferredNotConfirmedAsync() {
+    // #667 half 1: during a bulk ingest the producer runs ahead by design — the deficit is
+    // in-flight lag, not loss. Confirming it (and warning, per type, per cycle) misreads
+    // ordinary back-pressure as data loss. While the service is measurably unsettled the
+    // pending DEFERS: no confirmation, no warning, carried to a later cycle. Once settled,
+    // a deficit that persists is real and confirms exactly as before.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var meter = metrics.GapsDetected.Meter;
+    long gaps = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "whizbang.stream_integrity.gaps_detected") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref gaps, value));
+    listener.Start();
+    // Passive counters (#711) report every series' cumulative value at collection, so a read is a
+    // fresh collection, not an accumulation across reads.
+    long readGaps() {
+      Interlocked.Exchange(ref gaps, 0);
+      listener.RecordObservableInstruments();
+      return Interlocked.Read(ref gaps);
+    }
+
+    var fx = _fixture(metrics: metrics);
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      ActiveLeasedRows = 12,
+      OldestUnprocessedAge = TimeSpan.FromSeconds(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));                     // deficit -> pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // would confirm today
+
+    await Assert.That(readGaps()).IsEqualTo(0L)
+      .Because("a deficit measured while the consumer is visibly behind is expected back-"
+             + "pressure — CONFIRMED must mean the pipeline is drained and the events are "
+             + "genuinely absent");
+
+    fx.Coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // settled -> confirms
+
+    await Assert.That(readGaps()).IsEqualTo(1L)
+      .Because("the deferral carries the pending forward — a deficit that survives the "
+             + "drain is a real gap and must still confirm");
+  }
+
+  [Test]
+  public async Task SameWindowReconfirmed_WarnsOnceThenLogsQuietlyAsync() {
+    // #667 half 2: an origin that keeps checkpointing the same watermark re-registers the
+    // same deficit every cycle, and each re-confirmation logged a fresh WARNING — hundreds
+    // of identical lines for one condition. The first confirmation of a window warns —
+    // re-confirmations of the SAME window log at Debug (the condition is already surfaced
+    // and stays countable on the meter).
+    var logger = new CaptureLogger();
+    var policy = new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings {
+      RecountBackoffAfterUnchanged = 99,   // keep recounts flowing — the governor is not under test
+    });
+    var fx = _fixture(policy: policy, logger: logger);
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // confirms + re-registers
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // re-confirms same window
+
+    List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> entries;
+    lock (logger.Entries) { entries = [.. logger.Entries]; }
+    var confirmedWarnings = entries.Count(e =>
+      e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("CONFIRMED integrity gap:"));
+    await Assert.That(confirmedWarnings).IsEqualTo(1)
+      .Because("one condition earns one warning — per-cycle repeats of the identical line "
+             + "bury the log precisely when there is most to read");
+    await Assert.That(entries.Any(e =>
+        e.Level == Microsoft.Extensions.Logging.LogLevel.Debug && e.Message.Contains("re-confirmed"))).IsTrue()
+      .Because("the re-confirmation is still visible at Debug for forensic timelines");
+  }
+
   // ── fixture ─────────────────────────────────────────────────────────────
 
-  private sealed class _fixtureState {
-    public required _verifyCoordinator Coordinator { get; init; }
-    public required _captureDispatcher Dispatcher { get; init; }
-    public required _captureTransport Transport { get; init; }
+  private sealed class FixtureState {
+    public required VerifyCoordinator Coordinator { get; init; }
+    public required CaptureDispatcher Dispatcher { get; init; }
+    public required CaptureTransport Transport { get; init; }
     public required IntegrityCheckpointReceptor Receptor { get; init; }
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
   }
 
-  private static _fixtureState _fixture(
+  [Test]
+  public async Task DeficitWhileConsumerBehind_DeferralLineSaysRepairIsWithheldAsync() {
+    // Issue #708: the deferral guard returns before the confirmation, so the "auto-repair
+    // WITHHELD" line that explained a confirmed gap with autoRepair=false could never fire. The
+    // distinction it carried (a service deliberately withholding repair while it drains reads the
+    // same as one with repair disabled) now lives on the deferral line itself, so the operator
+    // reading the deferral knows both facts from the one line that does fire.
+    var logger = new CaptureLogger();
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger: logger);
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      ActiveLeasedRows = 12,
+      OldestUnprocessedAge = TimeSpan.FromSeconds(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var deferrals = logger.Entries.Where(e => e.EventId == 62).ToList();
+    await Assert.That(deferrals).IsNotEmpty().Because("the unsettled service defers the deficit");
+    await Assert.That(deferrals.All(d => d.Message.Contains("repair", StringComparison.OrdinalIgnoreCase)
+                                       && d.Message.Contains("withheld", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a deferral while repair is enabled must say repair is withheld until the service settles, or it reads like repair is off");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 59)).IsFalse()
+      .Because("the separate withheld line sat behind the deferral's continue and could never fire; it is folded, not kept");
+  }
+
+  private static FixtureState _fixture(
       StreamIntegrityOptions? options = null,
-      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
-    var coordinator = new _verifyCoordinator();
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
+      IntegrityRepairPolicy? policy = null,
+      Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null) {
+    var coordinator = new VerifyCoordinator();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(metrics
-      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+      ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
+    services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
+    // A fresh policy per fixture: its window state is the subject under test, and the receptor's
+    // static fallback is process-wide, which would leak state between parallel tests.
+    services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
-    return new _fixtureState {
+    return new FixtureState {
       Coordinator = coordinator,
       Dispatcher = dispatcher,
       Transport = transport,
       Receptor = new IntegrityCheckpointReceptor(
-        sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance),
+        sp.GetRequiredService<IServiceScopeFactory>(), logger ?? NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
   }
 
   [Test]
-  public async Task ConfirmedGap_WithDefaultOptions_EmitsGapAndRepairCountersAsync() {
+  public async Task ConfirmedGap_WithDefaultOptions_EmitsGapCounterAndRequestsNoRepairAsync() {
     // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
-    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var meter = metrics.GapsDetected.Meter;
     var measurements = new Dictionary<string, long>();
     using var listener = new System.Diagnostics.Metrics.MeterListener();
@@ -300,44 +426,81 @@ public class IntegrityCheckpointReceptorTests {
     });
     listener.Start();
 
-    var fx = _fixture(metrics: metrics);   // DEFAULT options — the self-healing posture
+    var fx = _fixture(metrics: metrics);   // DEFAULT options: report-only
     fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));   // confirms
+    listener.RecordObservableInstruments();   // passive counters (#711) report at collection
+
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.checkpoints_received")).IsEqualTo(2L);
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.gaps_detected")).IsEqualTo(1L)
+      .Because("the confirmed gap must be countable — sustained non-zero is the operator's alarm.");
+    await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.repairs_requested")).IsEqualTo(0L)
+      .Because("the DEFAULT posture is report-only: the gap is counted and reported, and nothing mutates data until an operator opts in to repair.");
+  }
+  [Test]
+  public async Task ConfirmedGap_WithAutoRepairCapped_EmitsGapAndRepairCountersAsync() {
+    // Filter on THIS test's meter INSTANCE (not the name) — parallel tests share the meter name.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var meter = metrics.GapsDetected.Meter;
+    var measurements = new Dictionary<string, long>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (measurements) {
+        measurements[instrument.Name] = measurements.GetValueOrDefault(instrument.Name) + value;
+      }
+    });
+    listener.Start();
+
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = true }, metrics: metrics);
+    fx.Coordinator.Counts = _ => [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = 1 }];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));   // confirms
+    listener.RecordObservableInstruments();   // passive counters (#711) report at collection
 
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.checkpoints_received")).IsEqualTo(2L);
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.gaps_detected")).IsEqualTo(1L)
       .Because("the confirmed gap must be countable — sustained non-zero is the operator's alarm.");
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.repairs_requested")).IsEqualTo(1L)
-      .Because("the DEFAULT posture auto-repairs; the counter proves the healer acted, not just detected.");
+      .Because("with AutoRepairCapped opted in, the counter proves the healer acted, not just detected.");
   }
 
   private static IntegrityCheckpoint _checkpoint(
-      _fixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
-      IReadOnlyList<string>? tenantScopes = null) => new() {
-        CheckpointStreamId = fx.OriginId,
-        OriginServiceId = fx.OriginId,
-        OriginServiceName = "origin-svc",
-        RequestTopic = requestTopic,
-        FromCommitSequence = from,
-        ToCommitSequence = to,
-        Buckets = emptyBuckets
-      ? []
-      : tenantScopes is not null
-        // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
-        // count grows past anything a batch size bounds — the shape that has to stay capped.
-        ? [.. tenantScopes.Select(t => new CheckpointBucket { TenantScope = t, EventType = _verifiedType, Count = count })]
-        : [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }],
-      };
+      FixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
+      IReadOnlyList<string>? tenantScopes = null) {
+    List<CheckpointBucket> buckets = [];
+    if (!emptyBuckets && tenantScopes is not null) {
+      // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
+      // count grows past anything a batch size bounds — the shape that has to stay capped.
+      buckets = [.. tenantScopes.Select(t => new CheckpointBucket { TenantScope = t, EventType = _verifiedType, Count = count })];
+    } else if (!emptyBuckets) {
+      buckets = [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }];
+    }
+    return new() {
+      CheckpointStreamId = fx.OriginId,
+      OriginServiceId = fx.OriginId,
+      OriginServiceName = "origin-svc",
+      RequestTopic = requestTopic,
+      FromCommitSequence = from,
+      ToCommitSequence = to,
+      Buckets = buckets,
+    };
+  }
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(VerifiedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -350,9 +513,13 @@ public class IntegrityCheckpointReceptorTests {
     };
   }
 
-  private sealed class _verifyCoordinator : IWorkCoordinator {
+  private sealed class VerifyCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
+    public ServiceBacklog? Backlog { get; set; }
+
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(Backlog);
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);
@@ -361,21 +528,19 @@ public class IntegrityCheckpointReceptorTests {
       Guid originServiceId, long fromCommitSequence, long toCommitSequence, CancellationToken cancellationToken = default) =>
       Task.FromResult(Counts((originServiceId, fromCommitSequence, toCommitSequence)));
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -390,7 +555,7 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       Registered.Add((typeof(TMessage), stage));
@@ -401,12 +566,12 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   /// <summary>Captures PublishAsync payloads; every other dispatcher member is unused here.</summary>
-  private sealed class _captureDispatcher : IDispatcher {
+  private sealed class CaptureDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => PublishAsync(eventData);
@@ -432,7 +597,6 @@ public class IntegrityCheckpointReceptorTests {
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
@@ -442,7 +606,7 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;
@@ -453,4 +617,112 @@ public class IntegrityCheckpointReceptorTests {
       public Guid? StreamId => null;
     }
   }
+
+  [Test]
+  public async Task UnhealableGap_IsNotRepairRequestedForeverAcrossCheckpointsAsync() {
+    // IntegrityRepairMode.AutoRepairCapped documents itself as "hard-capped at every rung so a mass
+    // divergence can never storm". MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch,
+    // and checkpoints fire on CheckpointIntervalSeconds (60 by default), so a gap whose events are
+    // genuinely gone is re-requested on every checkpoint for as long as the service runs. Capping
+    // the batch does not cap the repeat.
+    //
+    // The manifest path already guards this with the repair ledger's backoff and
+    // MaxRepairAttemptsPerBucket. This is the same guard on the checkpoint path.
+    var fx = _fixture(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      MaxRepairAttemptsPerBucket = 2,
+      RepairRequestBackoffSeconds = 300,
+    });
+    // Never heals: the events are gone, so every recount reports the same deficit.
+    fx.Coordinator.Counts = _ => [];
+
+    // Six confirmation cycles, which at the default interval is six minutes of a service running.
+    for (var cycle = 0; cycle < 6; cycle++) {
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+    }
+
+    await Assert.That(fx.Transport.Published.Count).IsLessThanOrEqualTo(2)
+      .Because("the same unrepairable bucket must stop being re-requested once it has burned its "
+               + "MaxRepairAttemptsPerBucket; otherwise every checkpoint re-asks forever and the "
+               + "per-checkpoint cap only sets the storm's rate, not its size");
+  }
+
+
+  [Test]
+  public async Task ConfirmedGap_OnLaggingService_IsNotRepairedAsync() {
+    // The third settledness signal, and the one the depth gate cannot provide: an operator who
+    // raises the settled-depth threshold to tolerate a small queue still must not repair while
+    // something in that queue has been sitting far beyond the checkpoint cadence. The events being
+    // counted as missing may be exactly what the service is stuck behind. IntegrityRepairPolicy
+    // vetoes this as ConsumerBehind; before it was wired, the receptor only asked depth and leases.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 0,
+      ActiveLeasedRows = 0,
+      OldestUnprocessedAge = TimeSpan.FromMinutes(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("a service running half an hour behind must not repair: the missing events are late, "
+             + "not lost, and repairing re-delivers into the very queue that is behind");
+  }
+
+  [Test]
+  public async Task ConfirmedGaps_BeyondTheGlobalWindowBudget_StopAtTheBudgetAsync() {
+    // The per-checkpoint budget bounds ONE checkpoint; the policy's MaxConcurrentWindowsUnderRepair
+    // bounds how many windows may be under repair AT ONCE, which is the only cap that limits the
+    // total rate at which repair adds load. Twelve tenants confirm gaps in the same window with the
+    // per-checkpoint budget out of the way; only the global budget should hold the line.
+    var fx = _fixture(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      MaxAutoRepairRequestsPerCheckpoint = 20,
+    });
+    fx.Coordinator.Counts = _ => [];
+    var tenants = Enumerable.Range(0, 12).Select(i => $"tenant-{i}").ToList();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests", tenantScopes: tenants));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Transport.Published.Count).IsEqualTo(8)
+      .Because("windows under repair are globally budgeted at 8 by default; past that the deficit "
+             + "is still detected and reported, but repair stops adding load");
+  }
+
+
+  [Test]
+  public async Task UnhealableGap_StopsBeingRescannedOnEveryCheckpointAsync() {
+    // #634: repair was bounded per window, but the recount that CONFIRMS the gap was not, so a gap
+    // whose events are genuinely gone paid a full event-store scan on every checkpoint for the life
+    // of the service. With the governor, an answer that stops changing stops being re-asked: after
+    // the unchanged threshold the window cools down, and one recount per cooldown keeps it honest.
+    var policy = new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings {
+      RecountBackoffAfterUnchanged = 2,
+      UnchangedRecountCooldown = TimeSpan.FromHours(1),
+    });
+    var fx = _fixture(
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      policy: policy);
+    var scans = 0;
+    fx.Coordinator.Counts = _ => { scans++; return []; };
+
+    for (var cycle = 0; cycle < 6; cycle++) {
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+    }
+    var total = scans;
+
+    // Every checkpoint still pays a first-sight count of its OWN window (both halves of each pair,
+    // so 12 across six cycles); those windows advance in production and are per-checkpoint cost,
+    // not per-gap cost. The governor bounds the repeated CONFIRMATION recount of the same stale
+    // window: two (the unchanged threshold), then the cooldown holds.
+    await Assert.That(total).IsEqualTo(14)
+      .Because("detection cost on an unchanged answer must be bounded: 12 first-sight counts + 2 "
+             + "confirmation recounts, then the cooldown holds. Unbounded is 18");
+  }
+
 }

@@ -1,17 +1,22 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -29,27 +34,37 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
   /// <summary>Captures the batch handler so the test can deliver simulated batches.</summary>
   private sealed class CapturingBatchTransport : ITransport {
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    private readonly TaskCompletionSource _firstBatchSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first batch subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// Tests await this instead of sleeping. <c>StartAsync</c> returning only proves
+    /// <c>ExecuteAsync</c> was queued -- .NET 10 dispatches it via <c>Task.Run</c> -- so a fixed
+    /// delay bets the thread pool's progress against a stopwatch rather than proving the batch
+    /// handler has been captured.
+    /// </remarks>
+    public Task FirstBatchSubscribe => _firstBatchSubscribe.Task;
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      _firstBatchSubscribe.TrySetResult();
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
-    public void Dispose() { }
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
       if (_batchHandler is null) {
@@ -58,7 +73,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       await _batchHandler(batch, CancellationToken.None);
     }
 
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -125,21 +140,33 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var transport = new CapturingBatchTransport();
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     return (worker, transport, coordinator, sp);
   }
@@ -155,7 +182,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       var batch = new TransportMessage[100];
       for (var i = 0; i < 100; i++) {
@@ -163,7 +193,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       }
       await transport.SimulateBatchReceivedAsync(batch);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
         .Because("100 messages in one transport batch must produce exactly ONE StoreInboxMessagesAsync call.");
@@ -184,7 +214,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       // 7 consumed + 3 dropped, interleaved
       await transport.SimulateBatchReceivedAsync([
@@ -200,7 +233,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         new TransportMessage(_makeEnvelope(), CONSUMED_ENVELOPE_TYPE),
       ]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
         .Because("Even with drops mixed in, the surviving messages still bulk-insert as one call.");
@@ -219,7 +252,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       await transport.SimulateBatchReceivedAsync([
         new TransportMessage(_makeEnvelope(), DROPPED_ENVELOPE_TYPE),
@@ -227,7 +263,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         new TransportMessage(_makeEnvelope(), DROPPED_ENVELOPE_TYPE),
       ]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0)
         .Because("All-dropped batch must skip the bulk-insert call entirely.");
@@ -247,8 +283,9 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     var transport = new CapturingBatchTransport();
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     await using var sp = services.BuildServiceProvider();
     var countingFactory = new CountingScopeFactory(sp.GetRequiredService<IServiceScopeFactory>());
 
@@ -256,17 +293,31 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      countingFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: countingFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: registry,
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(150);
+    // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+    // throws until the worker has handed its handler over, and StartAsync returning only proves
+    // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // StartAsync spins one scope for transport-readiness + infrastructure provisioning.
     // That scope is one-shot (not per-batch), so capture the count after startup settles
@@ -280,7 +331,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     }
     await transport.SimulateBatchReceivedAsync(batch);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var perBatchDelta = countingFactory.CreateScopeCallCount - preBatchScopeCount;
     await Assert.That(perBatchDelta).IsEqualTo(1)
@@ -297,7 +348,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       var batch1 = new TransportMessage[5];
       for (var i = 0; i < 5; i++) {
@@ -311,7 +365,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       }
       await transport.SimulateBatchReceivedAsync(batch2);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(2)
         .Because("Two transport batches must produce two StoreInboxMessagesAsync calls.");

@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// not when events are directly dispatched. These tests use command handlers
 /// that return events with different routing modes to verify the cascade flow.</para>
 /// </remarks>
+[Category("Shard4")]
 public class LocalEventStorageTests : EFCoreTestBase {
   #region Test Messages
 
@@ -496,10 +499,11 @@ public class LocalEventStorageTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Register service instance provider
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     // Register DbContext with our test options
     services.AddScoped(_ => CreateDbContext());
@@ -531,11 +535,12 @@ public class LocalEventStorageTests : EFCoreTestBase {
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
-        coordinator,
-        instanceProvider,
+        coordinator: coordinator,
+        instanceProvider: instanceProvider,
         workChannelWriter: null,
-        options,
-        logger
+        options: options,
+        logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+        inboxChannelWriter: new InboxChannelWriter()
       );
     });
 

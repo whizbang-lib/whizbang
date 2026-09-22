@@ -9,7 +9,7 @@ namespace Whizbang.Core.RunControl;
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
 public sealed class WhizbangRunPermit {
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private TaskCompletionSource _gate;
   private bool _stopped;
 

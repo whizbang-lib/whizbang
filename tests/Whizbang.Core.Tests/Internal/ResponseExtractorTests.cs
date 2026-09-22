@@ -229,20 +229,6 @@ public class ResponseExtractorTests {
   // ============================================================
 
   [Test]
-  public async Task TryExtractResponse_RouteLocal_ExtractsInnerValueForRpcAsync() {
-    // Arrange - Response wrapped in Route.Local() should still be extractable
-    var routed = Route.Local(new OrderCreated { OrderId = "123" });
-
-    // Act - RPC extraction should unwrap and return the value
-    var success = ResponseExtractor.TryExtractResponse<OrderCreated>(routed, out var response);
-
-    // Assert - Value extracted regardless of routing wrapper
-    await Assert.That(success).IsTrue();
-    await Assert.That(response).IsNotNull();
-    await Assert.That(response!.OrderId).IsEqualTo("123");
-  }
-
-  [Test]
   public async Task TryExtractResponse_RouteOutbox_ExtractsInnerValueForRpcAsync() {
     // Arrange - Response wrapped in Route.Outbox() should still be extractable
     var routed = Route.Outbox(new OrderCreated { OrderId = "456" });

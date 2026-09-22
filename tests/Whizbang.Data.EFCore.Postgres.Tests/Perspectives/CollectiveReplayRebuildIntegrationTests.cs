@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <tests>src/Whizbang.Data.Postgres/Collective/CollectiveReplayApplier.cs</tests>
 /// <tests>src/Whizbang.Data.Postgres/Collective/CollectiveInMemoryEvaluator.cs</tests>
 [Category("Integration")]
+[Category("Shard3")]
 public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
 
   private const string RebuildBalancePerspectiveName =

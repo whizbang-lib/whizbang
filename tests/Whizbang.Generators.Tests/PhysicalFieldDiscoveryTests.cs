@@ -25,7 +25,8 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid ProductId { get; init; }
 
-              [PhysicalField(Indexed = true)]
+              [PhysicalField]
+              [Indexed]
               public decimal Price { get; init; }
 
               public string Description { get; init; } = string.Empty;
@@ -67,6 +68,7 @@ public class PhysicalFieldDiscoveryTests {
               public Guid ProductId { get; init; }
 
               [VectorField(1536, DistanceMetric = VectorDistanceMetric.Cosine)]
+              [Indexed]
               public float[]? Embedding { get; init; }
 
               public string Name { get; init; } = string.Empty;
@@ -107,13 +109,15 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid OrderId { get; init; }
 
-              [PhysicalField(Indexed = true)]
+              [PhysicalField]
+              [Indexed]
               public string CustomerName { get; init; } = string.Empty;
 
-              [PhysicalField(Indexed = true)]
+              [PhysicalField]
+              [Indexed]
               public decimal TotalAmount { get; init; }
 
-              [PhysicalField(Indexed = false)]
+              [PhysicalField]
               public bool IsActive { get; init; }
 
               public string Notes { get; init; } = string.Empty;
@@ -155,7 +159,8 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid ProductId { get; init; }
 
-              [PhysicalField(Indexed = true, MaxLength = 200)]
+              [PhysicalField(MaxLength = 200)]
+              [Indexed]
               public string Sku { get; init; } = string.Empty;
             }
 
@@ -194,6 +199,7 @@ public class PhysicalFieldDiscoveryTests {
               public Guid ItemId { get; init; }
 
               [VectorField(768, DistanceMetric = VectorDistanceMetric.Cosine, IndexType = VectorIndexType.HNSW)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
             }
 
@@ -270,7 +276,8 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid ProductId { get; init; }
 
-              [PhysicalField(ColumnName = "product_price", Indexed = true)]
+              [PhysicalField(ColumnName = "product_price")]
+              [Indexed]
               public decimal Price { get; init; }
             }
 
@@ -309,6 +316,7 @@ public class PhysicalFieldDiscoveryTests {
               public Guid DocId { get; init; }
 
               [VectorField(512, DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.IVFFlat, IndexLists = 50)]
+              [Indexed]
               public float[]? DocEmbedding { get; init; }
             }
 
@@ -347,7 +355,8 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid ProductId { get; init; }
 
-              [PhysicalField(Indexed = true, Unique = true)]
+              [PhysicalField(Unique = true)]
+              [Indexed]
               public string Sku { get; init; } = string.Empty;
             }
 
@@ -386,6 +395,7 @@ public class PhysicalFieldDiscoveryTests {
               public Guid ItemId { get; init; }
 
               [VectorField(384, DistanceMetric = VectorDistanceMetric.InnerProduct, IndexType = VectorIndexType.HNSW)]
+              [Indexed]
               public float[]? ItemEmbedding { get; init; }
             }
 
@@ -423,10 +433,12 @@ public class PhysicalFieldDiscoveryTests {
               [StreamId]
               public Guid ProductId { get; init; }
 
-              [PhysicalField(Indexed = true)]
+              [PhysicalField]
+              [Indexed]
               public decimal Price { get; init; }
 
               [VectorField(1536)]
+              [Indexed]
               public float[]? Embedding { get; init; }
             }
 

@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <!-- Unit: No external dependencies (Azure Service Bus, Docker) required -->
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Suppress TUnit0015: Missing CancellationToken parameter (tests use class-level Timeout) -->

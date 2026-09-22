@@ -265,9 +265,31 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return;
     }
     var finalStatus = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
-    await CompleteSagaAsync(
-      ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
-      .ConfigureAwait(false);
+    try {
+      await CompleteSagaAsync(
+        ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
+        .ConfigureAwait(false);
+    } catch {
+      _releaseCompletionDispatch(ctx.SagaId);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Undoes the tracker's optimistic "completion dispatched" mark after an emission that did NOT
+  /// happen. The flag is claimed BEFORE the emit so two threads cannot both drive one, but the
+  /// emit can still fail — and a flag left set is permanent for this instance: every later
+  /// per-item terminal short-circuits, and the watchdog's in-memory fast path declines too, so a
+  /// saga with no projection loader wired is stranded by one transient publish failure. Releasing
+  /// it costs nothing in exactly-once terms: <see cref="CompleteSagaAsync"/> claims through
+  /// <c>PublishOnceAsync</c>, which is what actually dedups a retry.
+  /// </summary>
+  private void _releaseCompletionDispatch(Guid sagaId) {
+    lock (_completionLock) {
+      if (_completionTrackers.TryGetValue(sagaId, out var tracker)) {
+        tracker.DispatchedCompletion = false;
+      }
+    }
   }
 
   /// <summary>
@@ -301,6 +323,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// (saga not registered, already terminal, projection unavailable, or projection counts
   /// not yet at terminal).
   /// </returns>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs</tests>
   public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -327,9 +350,14 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     }
     if (inMemoryTerminal) {
       var status = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
-      await CompleteSagaAsync(
-        ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
-        .ConfigureAwait(false);
+      try {
+        await CompleteSagaAsync(
+          ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
+          .ConfigureAwait(false);
+      } catch {
+        _releaseCompletionDispatch(ctx.SagaId);
+        throw;
+      }
       return true;
     }
 
@@ -544,8 +572,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     return (_clamp(stalledDelay, min, max), nextStallCount, false);
   }
 
-  private static TimeSpan _clamp(TimeSpan value, TimeSpan min, TimeSpan max) =>
-    value < min ? min : value > max ? max : value;
+  private static TimeSpan _clamp(TimeSpan value, TimeSpan min, TimeSpan max) {
+    if (value < min) {
+      return min;
+    }
+    return value > max ? max : value;
+  }
 
   /// <summary>
   /// Emits the saga's terminal completion event exactly once — routes
@@ -558,7 +590,60 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     cancellationToken.ThrowIfCancellationRequested();
     var evt = BuildCompletedEvent(ctx, finalStatus, completedByItemIdentifier, completedItems, failedItems, totalItems, DateTimeOffset.UtcNow);
     var claimKey = SagaCompletionGuard.ClaimKey(_sagaName, ctx.SagaId);
-    return await _emitter.PublishOnceAsync(claimKey, evt, cancellationToken).ConfigureAwait(false);
+    var won = await _emitter.PublishOnceAsync(claimKey, evt, cancellationToken).ConfigureAwait(false);
+    await _requestContinuationsAsync(ctx, finalStatus, cancellationToken).ConfigureAwait(false);
+    return won;
+  }
+
+  /// <summary>
+  /// Asks for each declared continuation whose trigger matches the final status.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Attempted whether or not this caller won the completion claim, and each request carries its own
+  /// claim key. If only the completion winner asked, a process dying between the two publishes would
+  /// strand the chain for good: the completion claim is taken, so no retry and no watchdog tick
+  /// re-emits it. Letting every terminal caller ask, deduped by the continuation's own claim, removes
+  /// that single point of failure and still yields one request.
+  /// </para>
+  /// <para>
+  /// A failed request does not fail the completion. The saga did finish, the completion event is the
+  /// durable record of that, and propagating a transient publish failure here would roll back the
+  /// caller's transaction and re-run the terminal path. The watchdog can drive the request again; an
+  /// undone completion is worse.
+  /// </para>
+  /// </remarks>
+  private async Task _requestContinuationsAsync(
+      SagaContext ctx, SagaStatus finalStatus, CancellationToken cancellationToken) {
+    var continuations = SagaContinuationRegistry.For(_sagaName);
+    if (continuations.Count == 0) {
+      return;
+    }
+
+    foreach (var continuation in continuations) {
+      if (!continuation.StartsAfter(finalStatus)) {
+        continue;
+      }
+
+      var request = new SagaContinuationRequestedEvent {
+        SagaName = continuation.SagaName,
+        EntityId = ctx.EntityId,
+        StreamId = ctx.SagaId,
+        ParentSagaName = _sagaName,
+        ParentSagaId = ctx.SagaId,
+        ParentFinalStatus = finalStatus,
+      };
+      var continuationClaim =
+        SagaContinuationGuard.ClaimKey(_sagaName, ctx.SagaId, continuation.SagaName);
+
+      try {
+        await _emitter.PublishOnceAsync(continuationClaim, request, cancellationToken)
+          .ConfigureAwait(false);
+        LogContinuationRequested(_logger, continuation.SagaName, _sagaName, ctx.SagaId, null);
+      } catch (Exception ex) {
+        LogContinuationRequestFailed(_logger, continuation.SagaName, _sagaName, ctx.SagaId, ex);
+      }
+    }
   }
 
   public async Task ResetItemAsync(SagaContext ctx, string itemIdentifier, SagaItemState previousStatus, CancellationToken cancellationToken) {
@@ -618,6 +703,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   }
 
   // ── LoggerMessage source-gen partials ────────────────────────────────
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Requested continuation saga {ContinuationSagaName} after {SagaName} {SagaId}")]
+  private static partial void LogContinuationRequested(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Error, Message = "Could not request continuation saga {ContinuationSagaName} after {SagaName} {SagaId} — the saga still completed; the watchdog can drive the request again")]
+  private static partial void LogContinuationRequestFailed(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Hook {HookName} already terminal on saga {SagaName} {SagaId} — skip")]
   private static partial void LogHookSkipped(ILogger logger, string HookName, string SagaName, Guid SagaId, Exception? exception);

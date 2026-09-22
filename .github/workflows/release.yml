@@ -108,14 +108,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
         with:
-          versionSpec: '6.1.x'
+          versionSpec: '6.2.x'
 
       - name: Determine Base Version
         id: gitversion
@@ -285,7 +285,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/actions/notify-pushover
 
@@ -336,7 +336,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -437,7 +437,7 @@ jobs:
 
     steps:
       - name: Checkout tag
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: v${{ needs.check-release.outputs.version }}
 
@@ -447,7 +447,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Cache NuGet packages
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
@@ -459,7 +459,7 @@ jobs:
       - name: Build
         env:
           VERSION: ${{ needs.check-release.outputs.version }}
-        run: dotnet build --configuration Release --no-restore -maxcpucount:1 -p:Version="$VERSION"
+        run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
 
       - name: Pack NuGet packages
         env:
@@ -539,6 +539,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write   # nuget-push attests provenance before pushing
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.check-release.outputs.version }}
@@ -608,7 +609,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           # RELEASE_PAT (not GITHUB_TOKEN) so the sync PR triggers CI — GITHUB_TOKEN-created
@@ -690,7 +691,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/actions/notify-pushover
 

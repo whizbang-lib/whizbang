@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// EF's reader can deserialize Path 1's output.
 /// </para>
 /// </remarks>
+[Category("Shard3")]
 public class PerspectivePersistenceByteFormatIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task PathOneWrite_ProducesJsonSemanticallyEquivalentToEFWriteAsync() {
@@ -79,7 +80,7 @@ public class PerspectivePersistenceByteFormatIntegrationTests : EFCoreTestBase {
     var orderTypeInfo = pathOneOptions.GetTypeInfo(typeof(Order));
     var pathOneJson = JsonSerializer.Serialize(order, orderTypeInfo);
 
-    // Assert — semantic equivalence. Property order may differ between EF and STJ;
+    // Assert — semantic equivalence. Property order may differ between EF and STJ —
     // what matters is the parsed structure.
     var efDoc = JsonDocument.Parse(efJson);
     var pathOneDoc = JsonDocument.Parse(pathOneJson);

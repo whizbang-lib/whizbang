@@ -23,12 +23,17 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_TrackEmittedEvent_AddsToTrackedEventsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_GetEmittedEvents_WithAndFilter_ReturnsIntersectionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs:ScopedEventTracker_AreAllProcessed_WithFilteredSubset_ChecksOnlyMatchingAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersScopedEventTracker_AsScopedAsync</tests>
 public interface IScopedEventTracker {
+  /// <summary>True when a request-scoped tracker is present. The framework's null default and the ambient
+  /// forwarder outside a tracked scope return false, so the append-and-wait path reports Synced without
+  /// waiting, exactly as it did when no tracker was registered.</summary>
+  bool IsAvailable => true;
+
   /// <summary>
   /// Tracks an event that has been emitted in the current scope.
   /// </summary>

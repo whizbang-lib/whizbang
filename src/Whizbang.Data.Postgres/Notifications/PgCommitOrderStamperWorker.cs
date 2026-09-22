@@ -85,6 +85,17 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// <summary>Fires after each <c>stamp_pending_commit_sequences</c> call with the count stamped this call.</summary>
   public event Action<int>? OnStampCompleted;
 
+  /// <summary>
+  /// Fires when a wake found nothing unstamped and the stamp was not run.
+  /// </summary>
+  /// <remarks>
+  /// The stamp's eligibility query sorts every unstamped row by transaction id before taking a
+  /// batch, and it used to run on every wake whether or not anything was unstamped: about half a
+  /// core per busy database on the backstop tick under a bulk load. The partial-index existence
+  /// probe costs nothing, so it decides whether the stamp runs at all.
+  /// </remarks>
+  public event Action? OnStampSkipped;
+
   /// <inheritdoc />
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Stamper drives the full leader-election + NOTIFY-driven wake + back-pressured stamping protocol. Splitting would require sharing the lock-conn lifetime + leader-state semaphore across helpers and lose the visible try/finally structure.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -129,8 +140,8 @@ public sealed partial class PgCommitOrderStamperWorker(
     //     version pre-dates the RelationalOptionsExtension fix, or the DbContext was
     //     configured with NpgsqlDataSource which doesn't expose the original string)
     //   - explicit option (WhizbangNotificationOptions.DirectConnectionString missing password)
-    var summary = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
-    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, summary.HasUsername, summary.HasSecret);
+    var (HasUsername, HasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, HasUsername, HasSecret);
 
     // Loud-and-early warning mirroring PgSharedNotifyConnection: PooledKeyFallback
     // means the leader-lock connection routes through pgbouncer in tx-pooling mode.
@@ -154,7 +165,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     // let the next loop iteration recompute the effective interval. When the gate
     // flips back to true, wake too — if we were mid-sleep in floor cadence, the
     // next iteration picks up the relaxed cadence right away.
-    Action<bool> handleGateChange = _ => Wake();
+    void handleGateChange(bool _) => Wake();
     if (_notifySignalingGate is not null) {
       _notifySignalingGate.OnAvailabilityChanged += handleGateChange;
     }
@@ -203,6 +214,13 @@ public sealed partial class PgCommitOrderStamperWorker(
                 } catch (OperationCanceledException) { break; }
               }
               skipWakeWait = false;
+
+              // Nothing unstamped, nothing to sort: the probe hits the partial index and costs
+              // nothing, the stamp's eligibility CTE orders every unstamped row and does not.
+              if (!await _hasPendingUnstampedAsync(lockConn, stoppingToken)) {
+                OnStampSkipped?.Invoke();
+                continue;
+              }
 
               var stamped = await _stampOnceAsync(lockConn, notifyOwners: fencedDrain, stoppingToken);
               _ = Interlocked.Add(ref _totalStamped, stamped);
@@ -326,7 +344,12 @@ public sealed partial class PgCommitOrderStamperWorker(
     cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
     cmd.Parameters.AddWithValue("notify", notifyOwners);
     var result = await cmd.ExecuteScalarAsync(ct);
-    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    var stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    if (notifyOwners && stamped > 0) {
+      // #720: the make-up doorbells were queued inside the stamp's transaction; ring them after it commits.
+      await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, ct);
+    }
+    return stamped;
   }
 
   /// <summary>

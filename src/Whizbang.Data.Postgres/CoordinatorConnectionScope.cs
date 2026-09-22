@@ -18,8 +18,15 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// The pool — NOT the coordinator — owns the lifetime of a pinned
 /// connection. When this scope was constructed with
-/// <c>ownsConnection: false</c>, <see cref="DisposeAsync"/> is a no-op:
-/// closing or disposing the borrowed connection would corrupt the pool.
+/// <c>ownsConnection: false</c>, <see cref="DisposeAsync"/> never disposes
+/// the connection: disposing a borrowed connection would corrupt the pool.
+/// </para>
+/// <para>
+/// On the EF Core path the DbContext owns its connection, but EF Core only closes a connection it
+/// opened itself. A scope that finds the DbContext's connection closed opens it for the call and
+/// closes it again when the call ends, returning it to the Npgsql pool; otherwise every DI scope that
+/// made one coordinator call would hold a pooled connection, idle, for the scope's whole life. A
+/// connection the caller already had open (a query or a transaction in progress) is left as found.
 /// </para>
 /// <para>
 /// Reading <see cref="PinnedConnectionContext.Current"/> as
@@ -34,10 +41,12 @@ public readonly struct CoordinatorConnectionScope : IAsyncDisposable {
   /// <summary>The acquired connection. Always open when the scope is returned.</summary>
   public NpgsqlConnection Connection { get; }
   private readonly bool _ownsConnection;
+  private readonly bool _closeOnDispose;
 
-  internal CoordinatorConnectionScope(NpgsqlConnection connection, bool ownsConnection) {
+  internal CoordinatorConnectionScope(NpgsqlConnection connection, bool ownsConnection, bool closeOnDispose = false) {
     Connection = connection;
     _ownsConnection = ownsConnection;
+    _closeOnDispose = closeOnDispose;
   }
 
   /// <summary>
@@ -69,8 +78,9 @@ public readonly struct CoordinatorConnectionScope : IAsyncDisposable {
   /// Acquires a connection for an EF Core-style coordinator. Prefers the
   /// pinned connection when one is in flight; otherwise pulls the
   /// DbContext's underlying connection (which the DbContext owns — the scope
-  /// will NOT dispose it on the EF Core path).
+  /// never disposes it, but it does close what it opened).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorConnectionScopeLifetimeTests.cs</tests>
   /// <param name="dbContextConnection">The DbContext's underlying connection (obtained via <c>DbContext.Database.GetDbConnection()</c>).</param>
   /// <param name="cancellationToken">Caller cancellation; honoured during the open round-trip.</param>
   public static async ValueTask<CoordinatorConnectionScope> AcquireForEfCoreAsync(
@@ -85,14 +95,23 @@ public readonly struct CoordinatorConnectionScope : IAsyncDisposable {
       return new CoordinatorConnectionScope(pinned, ownsConnection: false);
     }
 
+    var openedHere = false;
     if (dbContextConnection.State != ConnectionState.Open) {
       await dbContextConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      openedHere = true;
     }
-    // The DbContext owns the connection lifetime; scope does NOT dispose.
-    return new CoordinatorConnectionScope(dbContextConnection, ownsConnection: false);
+    // The DbContext owns the connection; the scope never disposes it. It does close what it opened:
+    // EF Core only closes connections it opened itself, so a connection left open here stayed checked
+    // out of the pool for the DbContext's whole life (one idle pooled connection per DI scope that made
+    // a single coordinator call). One the caller already had open is left as found.
+    return new CoordinatorConnectionScope(dbContextConnection, ownsConnection: false, closeOnDispose: openedHere);
   }
 
   /// <inheritdoc />
-  public ValueTask DisposeAsync()
-    => _ownsConnection ? Connection.DisposeAsync() : ValueTask.CompletedTask;
+  public ValueTask DisposeAsync() {
+    if (_ownsConnection) {
+      return Connection.DisposeAsync();
+    }
+    return _closeOnDispose ? new ValueTask(Connection.CloseAsync()) : ValueTask.CompletedTask;
+  }
 }

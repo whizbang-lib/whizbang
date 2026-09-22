@@ -31,6 +31,8 @@ public class MaintenanceWorkerEpochClosureTests {
 
   private sealed class ClosureCoordinator : IWorkCoordinator {
     public bool Throw { get; init; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; init; }
     public int SettleSecondsSeen { get; private set; } = -1;
     public int MaxEpochsSeen { get; private set; } = -1;
     public int Calls { get; private set; }
@@ -40,21 +42,24 @@ public class MaintenanceWorkerEpochClosureTests {
       Calls++;
       SettleSecondsSeen = settleSeconds;
       MaxEpochsSeen = maxEpochs;
+      if (ThrowSpecific is not null) {
+        return Task.FromException<int>(ThrowSpecific);
+      }
       return Throw
         ? Task.FromException<int>(new InvalidOperationException("closure unavailable"))
         : Task.FromResult(1);
     }
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private static MaintenanceWorker _build(ClosureCoordinator coord, StreamIntegrityOptions? integrity) {
@@ -125,5 +130,20 @@ public class MaintenanceWorkerEpochClosureTests {
 
     await Assert.That(coord.Calls).IsEqualTo(1)
       .Because("the cycle attempted closure and completed despite the failure");
+  }
+
+  [Test]
+  public async Task ClosureCanceled_StopsTheCycleRatherThanAdvancingToTheReaperAsync() {
+    // The companion to ClosureFailure_DoesNotFailTheMaintenanceCycle, and the opposite answer.
+    // Convergence bookkeeping must never stop the reaper when it FAILS — but a canceled closure
+    // is a stopping host, and what follows it in the cycle is the reap and the sweep, which take
+    // the locks the completion path needs.
+    var coord = new ClosureCoordinator { ThrowSpecific = new OperationCanceledException() };
+    var worker = _build(coord, new StreamIntegrityOptions());
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("the frontier advancing on a later cycle is fine; reaping rows on a host that "
+             + "asked to stop is not");
   }
 }

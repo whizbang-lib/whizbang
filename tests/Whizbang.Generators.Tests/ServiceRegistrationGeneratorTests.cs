@@ -15,20 +15,6 @@ namespace Whizbang.Generators.Tests;
 [Category("Generators")]
 [Category("DependencyInjection")]
 public class ServiceRegistrationGeneratorTests {
-
-  /// <summary>
-  /// Helper to count occurrences of a string in text.
-  /// </summary>
-  private static int _countOccurrences(string text, string pattern) {
-    var count = 0;
-    var index = 0;
-    while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) != -1) {
-      count++;
-      index += pattern.Length;
-    }
-    return count;
-  }
-
   // ===========================================
   // LENS SERVICE REGISTRATION TESTS
   // ===========================================

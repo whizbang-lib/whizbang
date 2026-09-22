@@ -26,9 +26,11 @@ public class EphemeralFlagDeriverTests {
   private sealed class StubResolver(params Type[] ephemeralTypes) : IEphemeralModeResolver {
     private readonly HashSet<Type> _ephemeral = [.. ephemeralTypes];
     public EphemeralInfo? Resolve(string clrTypeName) => null;
-    public bool IsEphemeral(string clrTypeName) => false;
+
     public EphemeralInfo? Resolve(Type type) =>
       _ephemeral.Contains(type) ? new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.InMemory) : null;
+    public bool IsEphemeral(string clrTypeName) => false;
+
     public bool IsEphemeral(Type type) => _ephemeral.Contains(type);
   }
 

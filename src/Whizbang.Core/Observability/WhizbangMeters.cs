@@ -33,7 +33,7 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/observability</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangMetersTests.cs</tests>
 public static class WhizbangMeters {
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   // Core's own meters, by reference to each owner's METER_NAME — a rename cannot desync this
   // list, and the reflection drift-lock test catches an addition that forgets it.
@@ -41,6 +41,8 @@ public static class WhizbangMeters {
     DeadLetterMetrics.METER_NAME,
     DispatcherMetrics.METER_NAME,
     EventCategoryMetrics.METER_NAME,
+    GovernorMetrics.METER_NAME,
+    HousekeepingMetrics.METER_NAME,
     LifecycleCoordinatorMetrics.METER_NAME,
     LifecycleMetrics.METER_NAME,
     MaintenanceMetrics.METER_NAME,
@@ -51,7 +53,11 @@ public static class WhizbangMeters {
     StartupPipelineMetrics.METER_NAME,
     StreamIntegrityMetrics.METER_NAME,
     BacklogAgeMetrics.METER_NAME,
+    InstanceLivenessMetrics.METER_NAME,
+    CompositeMetrics.METER_NAME,
+    ProbeCadenceMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,
+    NotifyDebounceMetrics.METER_NAME,
     TransportDeadLetterDrainWorker.METER_NAME,
     TransportMetrics.METER_NAME,
     TypeRegistryMetrics.METER_NAME,

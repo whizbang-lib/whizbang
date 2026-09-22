@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -37,17 +39,18 @@ public class ClaimWorkerSignalCoalescingTests {
     // simulating an in-flight claim cycle during which signals arrive.
     var coord = new BlockingFakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         // Long backoff so the natural poll cadence doesn't add calls during the
         // observation window — every claim_work call within ~500 ms after the
         // release MUST be signal-driven.
@@ -55,7 +58,16 @@ public class ClaimWorkerSignalCoalescingTests {
         PollingMaxIntervalMilliseconds = 60_000,
         NotifyHealthyPollingIntervalMilliseconds = null
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -121,7 +133,7 @@ public class ClaimWorkerSignalCoalescingTests {
     public TaskCompletionSource FirstCallStarted => _firstCallStarted;
     public void ReleaseFirstCall() => _firstCallRelease.TrySetResult();
 
-    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       bool isFirst;
       lock (_lock) {
         CallCount++;
@@ -130,7 +142,7 @@ public class ClaimWorkerSignalCoalescingTests {
       }
       if (isFirst) {
         _firstCallStarted.TrySetResult();
-        await _firstCallRelease.Task.WaitAsync(ct).ConfigureAwait(false);
+        await _firstCallRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
       }
       return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
     }
@@ -155,7 +167,5 @@ public class ClaimWorkerSignalCoalescingTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 }

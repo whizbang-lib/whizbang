@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// The outcome of a perspective synchronization wait operation.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 public enum SyncOutcome {
   /// <summary>
   /// All matching events were processed successfully.

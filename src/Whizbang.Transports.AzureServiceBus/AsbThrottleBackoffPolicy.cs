@@ -18,7 +18,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <docs>transports/azure-service-bus</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbThrottleBackoffPolicyTests.cs</tests>
 public sealed class AsbThrottleBackoffPolicy(TimeSpan baseDelay, TimeSpan maxDelay, TimeSpan quietReset) {
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private int _streak;
   private DateTimeOffset? _lastThrottle;
   private bool _pauseInFlight;

@@ -7,6 +7,7 @@ namespace Whizbang.Core.Routing;
 /// Marker interface to indicate that <see cref="RoutingBuilderExtensions.WithRouting"/> was called.
 /// Used by <c>AddTransportConsumer</c> to verify routing is configured.
 /// </summary>
+/// <docs>fundamentals/dispatcher/routing</docs>
 internal interface IRoutingConfigured;
 
 /// <summary>
@@ -128,6 +129,10 @@ public static class RoutingBuilderExtensions {
       // once every command namespace is flipped — runs AFTER configuration binding so
       // code-callback and configuration-driven retirement are guarded identically.
       options.ThrowIfRetirementIncomplete();
+      // Startup validation (issue #636): a namespace that is both owned and manually subscribed is
+      // a subscription discovery would silently discard — refuse it here, where the failure is a
+      // clear exception at first resolution rather than a topic with no subscriber.
+      options.ThrowIfSubscribedNamespaceIsOwned();
       return Options.Create(options);
     });
 
@@ -142,6 +147,7 @@ public static class RoutingBuilderExtensions {
     builder.Services.AddSingleton<IInboxRoutingStrategy>(options.InboxStrategy);
 
     // Register EventSubscriptionDiscovery for event namespace discovery
+    builder.Services.TryAddWhizbangDefaults();
     builder.Services.AddSingleton<EventSubscriptionDiscovery>();
 
     // Register marker to indicate routing was configured

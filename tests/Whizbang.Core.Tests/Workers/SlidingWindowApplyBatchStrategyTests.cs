@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,11 +27,12 @@ public class SlidingWindowApplyBatchStrategyTests {
     var streamId = _idProvider.NewGuid();
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => {
+      flush: (sid, count, _) => {
         flushed.Add((sid, count));
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
@@ -59,13 +61,14 @@ public class SlidingWindowApplyBatchStrategyTests {
     var flushCount = 0;
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => {
+      flush: (sid, count, _) => {
         flushed.Add((sid, count));
         if (System.Threading.Interlocked.Increment(ref flushCount) == 2) {
           done.TrySetResult();
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromMilliseconds(500),
@@ -81,8 +84,8 @@ public class SlidingWindowApplyBatchStrategyTests {
     var arr = flushed.ToArray();
     await Assert.That(arr.Length).IsEqualTo(2);
     // Each stream should produce one flush with the right count.
-    var streamAFlush = System.Linq.Enumerable.Single(arr, t => t.StreamId == streamA);
-    var streamBFlush = System.Linq.Enumerable.Single(arr, t => t.StreamId == streamB);
+    var streamAFlush = arr.Single(t => t.StreamId == streamA);
+    var streamBFlush = arr.Single(t => t.StreamId == streamB);
     await Assert.That(streamAFlush.Count).IsEqualTo(2);
     await Assert.That(streamBFlush.Count).IsEqualTo(1);
   }
@@ -97,6 +100,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushed.Add(sid);
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         // Long window so we'd never flush in time without FlushAndStopAsync forcing it.
         SlidingWindow = TimeSpan.FromSeconds(30),
@@ -116,7 +120,8 @@ public class SlidingWindowApplyBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterDispose_ThrowsObjectDisposedAsync() {
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (_, _, _) => Task.CompletedTask);
+      flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
     await sut.DisposeAsync();
 
     await Assert.That(async () => await sut.AppendAsync(_idProvider.NewGuid()))
@@ -141,6 +146,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -168,31 +174,52 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// blocked worker keeps `Task.WhenAll` waiting until the caller's cancellation token
   /// fires, which exercises the OCE catch + CancelAsync path.
   /// </summary>
+  /// <remarks>
+  /// Both waits here are signals rather than durations. Sleeping to "let the flush start" and arming the caller's
+  /// token on a timer made this fail on a loaded runner, where the flush had not begun inside the sleep: the test
+  /// then asserted against a token no flush was ever handed, and read as a defect in the strategy.
+  /// </remarks>
   [Test]
-  public async Task FlushAndStopAsync_CallerCancelled_CancelsStopCtsAsync() {
+  public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync() {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
+    var flushStarted = new TaskCompletionSource();
+    // The token the in-flight flush was handed — the strategy's own stop token.
+    var flushToken = CancellationToken.None;
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: async (_, _, _) => await keepFlushBusy.Task.ConfigureAwait(false),
+      flush: async (_, _, ct) => {
+        flushToken = ct;
+        flushStarted.TrySetResult();
+        await keepFlushBusy.Task.ConfigureAwait(false);
+      },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
       });
 
     await sut.AppendAsync(streamId);
-    await Task.Delay(60);  // let the flush start
+    await flushStarted.Task;  // the flush is in flight and stuck, whatever the machine's load
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+    using var cts = new CancellationTokenSource();
+    var stopping = sut.FlushAndStopAsync(cts.Token);
+    await cts.CancelAsync();  // the caller gives up while that flush is still blocked
     try {
-      await sut.FlushAndStopAsync(cts.Token);
+      await stopping;
     } catch (OperationCanceledException) {
       // expected when WaitAsync surfaces the cancellation
     }
+    await Assert.That(flushToken.IsCancellationRequested).IsTrue()
+      .Because("when the caller's token gives up first, the strategy cancels its OWN stop token so the "
+             + "flush still in flight is told to abandon the drain. Without it that flush keeps running "
+             + "past a shutdown nobody is waiting on any more.");
+
     // Release the stuck flush so the worker can drain.
     keepFlushBusy.TrySetResult();
   }
 
   /// <summary>
+  /// <para>
   /// The idle sweep evicts a stream buffer in two steps — remove from the active map, then
   /// complete its writer. <c>AppendAsync</c> reads the map and then writes, so a caller can be
   /// holding a buffer the sweep completes in between, and the write throws
@@ -200,10 +227,12 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// perspective apply path, not a test artifact: it surfaced as an intermittent CI failure in
   /// this class's own idle-sweep test, where a 20ms sweep interval made the window easy to hit
   /// under load.
-  ///
+  /// </para>
+  /// <para>
   /// Append must survive it — a stream being evicted for idleness is a normal, expected event
   /// and must never fail the append that raced it. Deterministic: the seam completes a still-
   /// mapped writer, exactly the state the sweep produces, with no sleeps or scheduling luck.
+  /// </para>
   /// </summary>
   [Test]
   public async Task Append_WhenIdleSweepCompletedTheBufferItGrabbed_StillSucceedsAsync() {
@@ -217,6 +246,7 @@ public class SlidingWindowApplyBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),

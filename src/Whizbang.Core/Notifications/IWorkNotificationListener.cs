@@ -31,17 +31,24 @@ public enum WorkSignalCategory {
 /// Phase D of work-pump decomposition.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Implementations open a long-lived direct connection (one per pod) that bypasses
 /// pgbouncer (LISTEN doesn't survive transaction-pooling). When notifications arrive,
 /// fire <see cref="OnSignal"/>; subscribers (typically <c>ClaimWorker.RequestImmediatePoll</c>)
 /// wake immediately. <see cref="IsHealthy"/> reflects connection state — when unhealthy,
 /// claim workers should fall back to fast polling cadence.
-///
+/// </para>
+/// <para>
 /// A NoOp implementation is bound when no <c>DirectConnectionString</c> is configured;
 /// the system runs polling-only in that mode.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public interface IWorkNotificationListener {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>True when the listener has an active connection and recent keepalive.</summary>
   bool IsHealthy { get; }
 
@@ -59,13 +66,16 @@ public interface IWorkNotificationListener {
 /// No-op implementation bound when no <c>DirectConnectionString</c> is configured.
 /// Always reports unhealthy so claim workers stay on aggressive polling cadence.
 /// </summary>
-public sealed class NoOpWorkNotificationListener : IWorkNotificationListener {
+public sealed class NoOpWorkNotificationListener : IWorkNotificationListener, INullDefault {
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
   /// <inheritdoc />
   public bool IsHealthy => false;
   /// <inheritdoc />
   public DateTimeOffset? LastSignalAt => null;
   /// <inheritdoc />
-  public event Action<WorkSignalCategory>? OnSignal { add { } remove { } }
+  public event Action<WorkSignalCategory>? OnSignal { add { /* the null default has no listeners to notify */ } remove { /* the null default has no listeners to notify */ } }
   /// <inheritdoc />
-  public event Action<bool>? OnHealthChanged { add { } remove { } }
+  public event Action<bool>? OnHealthChanged { add { /* the null default has no listeners to notify */ } remove { /* the null default has no listeners to notify */ } }
 }

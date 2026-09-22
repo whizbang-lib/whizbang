@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class FullLinqSupportTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
@@ -60,6 +61,7 @@ public class FullLinqSupportTests : IAsyncDisposable {
   /// <summary>
   /// Test model with various property types for comprehensive LINQ testing.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows and exists to exercise query translation")]
   public class CustomerOrder {
     public string CustomerName { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
@@ -172,7 +174,7 @@ public class FullLinqSupportTests : IAsyncDisposable {
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
 
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors
       }

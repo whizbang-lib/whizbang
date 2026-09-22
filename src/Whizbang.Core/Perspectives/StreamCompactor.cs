@@ -23,7 +23,7 @@ public sealed record CompactionResult(string Status, long ThroughVersion, long E
 /// BEFORE the truncate), then gated-truncate the folded detail via the A1 <see cref="IStreamCloser"/>. The
 /// compacted stream then replays only back to the <see cref="Compacted"/> event.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IStreamCompactor {
   /// <summary>Compact <paramref name="streamId"/> to the authoritative model of <paramref name="perspectiveName"/>.</summary>
   Task<CompactionResult> CompactAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default);
@@ -31,23 +31,15 @@ public interface IStreamCompactor {
 
 /// <inheritdoc cref="IStreamCompactor" />
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed partial class StreamCompactor : IStreamCompactor {
-  private readonly IPerspectiveSnapshotStore _snapshots;
-  private readonly IWorkCoordinator _coordinator;
-  private readonly IEventStore _eventStore;
-  private readonly IStreamCloser _closer;
-  private readonly ILogger<StreamCompactor> _logger;
-
-  /// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 closer.</summary>
-  public StreamCompactor(
-      IPerspectiveSnapshotStore snapshots, IWorkCoordinator coordinator, IEventStore eventStore,
-      IStreamCloser closer, ILogger<StreamCompactor> logger) {
-    _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
-    _closer = closer ?? throw new ArgumentNullException(nameof(closer));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+/// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 closer.</summary>
+public sealed partial class StreamCompactor(
+    IPerspectiveSnapshotStore snapshots, IWorkCoordinator coordinator, IEventStore eventStore,
+    IStreamCloser closer, ILogger<StreamCompactor> logger) : IStreamCompactor {
+  private readonly IPerspectiveSnapshotStore _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly IEventStore _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
+  private readonly IStreamCloser _closer = closer ?? throw new ArgumentNullException(nameof(closer));
+  private readonly ILogger<StreamCompactor> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async Task<CompactionResult> CompactAsync(
@@ -82,7 +74,7 @@ public sealed partial class StreamCompactor : IStreamCompactor {
       ThroughVersion = throughVersion.Value,
     };
     // Compacted is ICompactedEvent, so the flag deriver stamps EventFlags.Compacted (permanent StateBased) —
-    // the reaper (self-destruct = flags&8) never targets it. The authoritative origin is protected BY MODE;
+    // the reaper (self-destruct, flag bit 8) never targets it. The authoritative origin is protected BY MODE —
     // no hold-at-infinity is needed (the design-review payoff of the StateBased factoring).
     await _eventStore.AppendAsync(streamId, compacted, cancellationToken).ConfigureAwait(false);
 

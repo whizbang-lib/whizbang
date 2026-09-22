@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -35,6 +37,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -74,7 +77,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var seenB = false;
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         var stream = msgs[0].StreamId;
         lock (lockObj) {
           captured.Add((stream, msgs.Length));
@@ -90,6 +93,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -126,6 +130,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         firstFlush.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(10),
@@ -155,6 +160,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -186,6 +192,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMinutes(1),  // very long; only Stop drains
@@ -216,7 +223,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: (_, _) => Task.CompletedTask);
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync();
 
@@ -225,6 +233,79 @@ public class SlidingWindowOutboxBatchStrategyTests {
   }
 
   // ===== helpers =====
+
+  // ===== idle eviction: the only thing bounding the buffer map =====
+
+  /// <summary>Options whose batch window cannot elapse during these tests, so the only thing that
+  /// can flush is eviction completing a writer.</summary>
+  private static SlidingWindowOutboxOptions _evictionOptions() => new() {
+    SlidingWindow = TimeSpan.FromHours(1),
+    MaxWait = TimeSpan.FromHours(1),
+    MaxSize = 10_000,
+    IdleEvictionWindow = TimeSpan.FromSeconds(30),
+    IdleSweepInterval = TimeSpan.FromSeconds(5),
+  };
+
+  [Test]
+  [Timeout(30000)]
+  public async Task IdleStream_IsEvicted_SoTheBufferMapCannotGrowWithoutBoundAsync(
+      CancellationToken cancellationToken) {
+    // Every distinct stream id gets its own buffer, channel and drain task, and stream ids are
+    // unbounded -- one per aggregate instance the service ever touches. Eviction is the only
+    // thing that gives that map a ceiling, so without it a long-lived process accumulates a
+    // channel and a task per stream it has ever seen and never gives one back.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero));
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: _evictionOptions(),
+      timeProvider: clock);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the append created the stream's buffer, which is what eviction later reclaims");
+
+    clock.Advance(TimeSpan.FromSeconds(60));
+
+    // The sweep takes the buffer out of the map BEFORE completing its writer, so the flush that
+    // completion drains can only run after the removal. Awaiting it is what makes the count below
+    // an observation instead of a race against a fire-and-forget sweep.
+    await flushed.Task.WaitAsync(cancellationToken);
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("a stream that has gone quiet must give its buffer back; with stream ids unbounded, "
+             + "a map that only ever grows is a leak with no ceiling");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ActiveStream_SurvivesTheSweep_AndKeepsItsBufferedWorkAsync(
+      CancellationToken cancellationToken) {
+    // The other half of the same contract. Evicting a stream that is still in use would complete
+    // its writer underneath it and flush a partial batch early -- turning the sweep meant to bound
+    // memory into a source of undersized writes on exactly the busiest streams.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero));
+    var flushes = 0;
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => { Interlocked.Increment(ref flushes); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: _evictionOptions(),
+      timeProvider: clock);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+
+    // Two sweep intervals pass, both well inside the eviction window. A sweep that evicts nothing
+    // never awaits, so it has finished by the time Advance returns -- the assertions below are
+    // about a sweep that ran and declined, not one that had yet to start.
+    clock.Advance(TimeSpan.FromSeconds(10));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the stream was used inside the eviction window, so the sweep must leave it alone");
+    await Assert.That(Volatile.Read(ref flushes)).IsEqualTo(0)
+      .Because("nothing completed the writer, so the buffered message is still waiting for its "
+             + "window rather than having been flushed early as an undersized batch");
+  }
 
   private OutboxMessage _make(Guid? streamId) {
     var messageId = _idProvider.NewGuid();
@@ -243,5 +324,145 @@ public class SlidingWindowOutboxBatchStrategyTests {
         Hops = [],
       },
     };
+  }
+
+  // ===== failure and shutdown paths =====
+
+  [Test]
+  public async Task ActiveStreamCount_TracksDistinctStreamsAsync() {
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
+        MaxSize = 100,
+      });
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task AppendAsync_WithoutStreamId_SharesTheDefaultBufferAsync() {
+    // A null stream id is not "no stream": those messages still have to serialise
+    // against each other, so they share one keyed buffer rather than one buffer each.
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(null));
+    await sut.AppendAsync(_make(null));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync() {
+    // A failed bulk flush must not tear down the batcher: the dispatcher re-emits, and
+    // killing the strategy would take every other stream's buffer down with it.
+    // Signalling before the throw would release the test while the failure had not happened yet,
+    // let alone been handled -- so the assertions below would run against a strategy that had not
+    // been asked to survive anything, and would pass just as well if it tore down. Count the
+    // attempts instead and wait for a SECOND one: only a strategy that survived the first failure
+    // and kept flushing can produce it.
+    var attempts = 0;
+    var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => {
+        if (Interlocked.Increment(ref attempts) >= 2) {
+          secondAttempt.TrySetResult();
+        }
+        throw new InvalidOperationException("bulk flush failed");
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        MaxWait = TimeSpan.FromMilliseconds(100),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+
+    // Waits on the strategy having flushed again after a failed flush, which is the property
+    // under test -- not merely on the first failure having been reached.
+    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1)
+      .Because("a failed bulk flush must not tear the batcher down: the dispatcher re-emits, and "
+             + "killing the strategy would take every other stream's buffer with it");
+  }
+
+  [Test]
+  public async Task AppendAsync_AfterStop_ThrowsObjectDisposedAsync() {
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+
+    await Assert.That(async () => await sut.AppendAsync(_make(null)))
+        .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_CalledTwice_IsIdempotentAsync() {
+    // DisposeAsync also routes here, so a using-block around an explicit stop must not
+    // double-dispose the stop token source.
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.DisposeAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync() {
+    // Shutdown deadline reached with a flush still in flight: the drain is abandoned
+    // rather than waited on forever.
+    var releaseFlush = new TaskCompletionSource();
+    var flushEntered = new TaskCompletionSource();
+    var flushToken = CancellationToken.None;
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: async (_, ct) => {
+        flushToken = ct;
+        flushEntered.TrySetResult();
+        await releaseFlush.Task;
+      },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        MaxWait = TimeSpan.FromMilliseconds(100),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    // "Without hanging" has to be enforced rather than hoped for: a stop that in fact waits on the
+    // drain would otherwise sit here until the suite-level timeout kills the whole run.
+    await sut.FlushAndStopAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Abandoning is more than returning early: the flush still in flight is TOLD to give up. That
+    // signal is what lets the deadline end the process, instead of leaving a batch writing into a
+    // host that has already torn its connections down.
+    await Assert.That(flushToken.IsCancellationRequested).IsTrue();
+
+    releaseFlush.TrySetResult();
   }
 }

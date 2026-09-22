@@ -130,10 +130,14 @@ public class PoisonMessageDetectorTests {
     var options = new PoisonMessageOptions { MaxDurableObservations = 5 };
     var detector = _detector(options);
 
+    // ProcessingAttempts is now REQUIRED evidence: the observation counter counts DELIVERIES, so
+    // crossing the bound proves redelivery, not failure. A genuine loop is one that has been
+    // ATTEMPTED and keeps returning — modelled here. Without it, broadcast fan-out to more
+    // subscriptions than the bound would be quarantined despite never having been processed.
     var verdict = detector.Evaluate(_context(
       firstEnqueuedAt: null,
       brokerDeliveryCount: 1,
-      durableObservationCount: 5));
+      durableObservationCount: 5) with { ProcessingAttempts = 5 });
 
     await Assert.That(verdict.ShouldQuarantine).IsTrue();
     await Assert.That(verdict.Reason).IsEqualTo(PoisonQuarantineReason.ObservationCountExceeded);
@@ -371,7 +375,7 @@ public class PoisonMessageDetectorTests {
     await Assert.That(health.State).IsEqualTo(ComponentState.Degraded);
     await Assert.That(source.Component).IsEqualTo("poison-detection");
     await Assert.That(health.Detail).IsNotNull();
-    await Assert.That(health.Detail!).Contains("inbox.orders");
+    await Assert.That(health.Detail).Contains("inbox.orders");
   }
 
   #endregion
@@ -437,8 +441,9 @@ internal sealed class RecordingLogger<T> : ILogger<T> {
   public int Count(LogLevel level, string fragment) =>
     Entries.Count(e => e.Level == level && e.Message.Contains(fragment, StringComparison.OrdinalIgnoreCase));
 
-  private sealed class NullScope : IDisposable {
-    internal static readonly NullScope Instance = new();
-    public void Dispose() { }
-  }
+}
+
+internal sealed class NullScope : IDisposable {
+  internal static readonly NullScope Instance = new();
+  public void Dispose() { }
 }

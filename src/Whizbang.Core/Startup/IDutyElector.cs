@@ -52,6 +52,10 @@ public interface IDutyGrant : IAsyncDisposable {
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
 public interface IDutyElector {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Attempts to win <paramref name="duty"/>. Returns a granted attempt when this instance now
   /// holds it, or a refused attempt that says WHY not — losing the race is the only refusal
@@ -115,4 +119,23 @@ public sealed record DutyAttempt {
     ArgumentException.ThrowIfNullOrEmpty(detail);
     return new DutyAttempt(null, refusal, detail);
   }
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IDutyElector"/>: reports <see cref="IDutyElector.IsConfigured"/> false, so
+/// exclusive startup duties run on every instance. A notification transport supplies the real elector; callers check the
+/// flag first and this implementation throws if they do not.
+/// </summary>
+public sealed class NullDutyElector : IDutyElector, INullDefault {
+  private NullDutyElector() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullDutyElector Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException("No duty elector is registered; a notification transport supplies one. Check IsConfigured before calling.");
 }

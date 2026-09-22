@@ -6,13 +6,16 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -53,11 +56,11 @@ public class InboxDispatchWorkerSchedulingTests {
   }
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class AllStagesReceptorRegistry : IReceptorRegistryQuery {
@@ -69,7 +72,7 @@ public class InboxDispatchWorkerSchedulingTests {
   private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType) => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
@@ -77,7 +80,7 @@ public class InboxDispatchWorkerSchedulingTests {
     private int _count;
     public int CallCount => Volatile.Read(ref _count);
     public ValueTask<IScopeContext?> EstablishContextAsync(
-        IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken ct = default) {
+        IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _count);
       return ValueTask.FromResult<IScopeContext?>(null);
     }
@@ -134,13 +137,24 @@ public class InboxDispatchWorkerSchedulingTests {
       FakeFailureChannel failure,
       SchemaReadyGate gate) =>
     new(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
-      receptorRegistry: new AllStagesReceptorRegistry());
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new AllStagesReceptorRegistry(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
   [Test]
   public async Task PostInboxDetached_RunsOnThreadPoolThread_NotLongRunningAsync() {
@@ -159,6 +173,7 @@ public class InboxDispatchWorkerSchedulingTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     await using var sp = services.BuildServiceProvider();
     var worker = _buildWorker(sp, instance, inbox, handlerCommit, failure, gate);
@@ -174,7 +189,7 @@ public class InboxDispatchWorkerSchedulingTests {
                "TaskCreationOptions.LongRunning spawns a dedicated OS thread per message, " +
                "dominating per-message dispatch cost on busy services.");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
@@ -196,6 +211,7 @@ public class InboxDispatchWorkerSchedulingTests {
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddSingleton<IMessageSecurityContextProvider>(counter);
     await using var sp = services.BuildServiceProvider();
@@ -219,6 +235,6 @@ public class InboxDispatchWorkerSchedulingTests {
                "NOT re-establish — that work is pure overhead and (in production) competes " +
                "for DB connections with the actual dispatch path.");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

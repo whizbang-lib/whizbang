@@ -49,7 +49,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
 
   [Test]
   public async Task ItemCompletedRecoveryHandler_IsRoutedForItsSagaEventAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     var receptors = registry.GetReceptorsFor(
@@ -62,7 +62,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
 
   [Test]
   public async Task ItemFailedRecoveryHandler_IsRoutedForItsSagaEventAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     var receptors = registry.GetReceptorsFor(
@@ -75,7 +75,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
 
   [Test]
   public async Task WatchdogTickHandler_IsRoutedForTheFrameworkTickEventAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     // The watchdog handler carries no [FireAt], so it lands on the default stage.
@@ -89,7 +89,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
 
   [Test]
   public async Task RecoveryHandlers_AreResolvableFromTheContainerAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
 
     var handler = provider.GetService<IReceptor<GeneratorTestDefaultSaga.ItemCompletedEvent>>();
 
@@ -99,7 +99,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
 
   [Test]
   public async Task EverySagaInTheAssembly_GetsItsOwnRoutedHandlersAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     var defaultSaga = registry.GetReceptorsFor(
@@ -122,7 +122,7 @@ public class SagaRecoveryReceptorDiscoveryTests {
   /// </summary>
   [Test]
   public async Task RoutedHandlers_MatchTheEmittedRecoveryReceptorsAsync() {
-    using var provider = _buildProvider();
+    await using var provider = _buildProvider();
     var registry = provider.GetRequiredService<IReceptorRegistry>();
 
     // What the saga generator actually emitted, discovered by reflection.

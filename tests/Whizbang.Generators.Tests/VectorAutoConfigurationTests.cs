@@ -30,6 +30,7 @@ public class VectorAutoConfigurationTests {
         public string Name { get; init; } = string.Empty;
 
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embedding { get; init; }
       }
 
@@ -107,12 +108,14 @@ public class VectorAutoConfigurationTests {
       public record ProductDto {
         public Guid Id { get; init; }
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embedding { get; init; }
       }
 
       public record ArticleDto {
         public Guid Id { get; init; }
         [VectorField(768)]
+        [Indexed]
         public float[]? ContentEmbedding { get; init; }
       }
 
@@ -166,6 +169,7 @@ public class VectorAutoConfigurationTests {
       public record ArticleDto {
         public Guid Id { get; init; }
         [VectorField(768)]
+        [Indexed]
         public float[]? Embedding { get; init; }
       }
 
@@ -211,6 +215,7 @@ public class VectorAutoConfigurationTests {
       public record ProductDto {
         public Guid Id { get; init; }
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embedding { get; init; }
       }
 
@@ -256,6 +261,7 @@ public class VectorAutoConfigurationTests {
       public record ProductDto {
         public Guid Id { get; init; }
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embedding { get; init; }
       }
 

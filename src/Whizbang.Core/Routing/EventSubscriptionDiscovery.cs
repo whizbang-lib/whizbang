@@ -19,7 +19,7 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#event-subscription-discovery</docs>
 public sealed class EventSubscriptionDiscovery {
-  private readonly IEventNamespaceRegistry? _registry;
+  private readonly IEventNamespaceRegistry _registry;
   private readonly RoutingOptions _routingOptions;
 
   /// <summary>
@@ -29,7 +29,7 @@ public sealed class EventSubscriptionDiscovery {
   /// <param name="registry">Event namespace registry for testing (optional). When null, uses static <see cref="EventNamespaceRegistry"/>.</param>
   public EventSubscriptionDiscovery(
       IOptions<RoutingOptions> routingOptions,
-      IEventNamespaceRegistry? registry = null) {
+      IEventNamespaceRegistry registry) {
     ArgumentNullException.ThrowIfNull(routingOptions);
     _routingOptions = routingOptions.Value;
     _registry = registry;
@@ -40,13 +40,23 @@ public sealed class EventSubscriptionDiscovery {
   /// Excludes namespaces that overlap with owned domains (this service publishes those, not subscribes).
   /// </summary>
   /// <returns>Combined set of event namespaces from auto-discovery and manual configuration, excluding owned namespaces.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when a manually subscribed namespace is also
+  /// owned and not absorbed — see <see cref="RoutingOptions.ThrowIfSubscribedNamespaceIsOwned"/>.</exception>
+  /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync</tests>
   public IReadOnlySet<string> DiscoverEventNamespaces() {
+    // Defense in depth (issue #636): the WithRouting factory refuses an owned-and-subscribed
+    // namespace at first resolution, but hand-constructed options never pass through the factory.
+    // Refusing here too means the contradiction can never reach the owned-domain subtraction below
+    // and be discarded silently.
+    _routingOptions.ThrowIfSubscribedNamespaceIsOwned();
+
     var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Add auto-discovered namespaces from perspectives and receptors
     // Use injected registry (for testing) or static registry (production)
-    var autoNamespaces = _registry?.GetAllEventNamespaces()
-        ?? EventNamespaceRegistry.GetAllNamespaces();
+    var autoNamespaces = _registry.GetAllEventNamespaces();
 
     foreach (var ns in autoNamespaces) {
       namespaces.Add(ns);
@@ -57,21 +67,11 @@ public sealed class EventSubscriptionDiscovery {
       namespaces.Add(ns);
     }
 
-    // Remove namespaces that overlap with owned domains
-    // (this service publishes to those, it shouldn't subscribe to them)
-    foreach (var ownedDomain in _routingOptions.OwnedDomains) {
-      // Remove exact matches
-      namespaces.Remove(ownedDomain);
-
-      // Remove namespaces that are children of owned domains
-      // e.g., if owned is "app.contracts", remove "app.contracts.events"
-      var ownedPrefix = ownedDomain.EndsWith('.')
-        ? ownedDomain
-        : ownedDomain + ".";
-
-      namespaces.RemoveWhere(ns =>
-        ns.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase));
-    }
+    // Remove namespaces that overlap with owned domains (exactly, or as children — see
+    // OwnedNamespaceMatcher): this service publishes to those, it shouldn't subscribe to them.
+    // Only auto-discovered namespaces can reach this point as owned; a MANUAL subscription on an
+    // owned namespace was refused above rather than silently discarded here.
+    namespaces.RemoveWhere(ns => OwnedNamespaceMatcher.IsOwned(ns, _routingOptions.OwnedDomains));
 
     // Absorbed namespaces are subscribed unconditionally: add them AFTER the owned-domain subtraction so it
     // can never strip a topic we explicitly chose to absorb, and so the binding is always created (otherwise
@@ -89,8 +89,7 @@ public sealed class EventSubscriptionDiscovery {
   /// <returns>Set of auto-discovered event namespaces.</returns>
   public IReadOnlySet<string> GetAutoDiscoveredNamespaces() {
     // Use injected registry (for testing) or static registry (production)
-    return _registry?.GetAllEventNamespaces()
-        ?? EventNamespaceRegistry.GetAllNamespaces();
+    return _registry.GetAllEventNamespaces();
   }
 
   /// <summary>
@@ -112,6 +111,7 @@ public static class EventSubscriptionDiscoveryExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection for chaining.</returns>
   public static IServiceCollection AddEventSubscriptionDiscovery(this IServiceCollection services) {
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<EventSubscriptionDiscovery>();
     return services;
   }

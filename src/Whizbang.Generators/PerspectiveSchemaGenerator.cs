@@ -95,7 +95,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveBase — unified marker for all perspective types
           return originalDef.Contains("IPerspectiveBase");
         })
@@ -142,7 +142,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     return new PerspectiveCandidate(
         ClassName: className,
-        FullyQualifiedClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        FullyQualifiedClassName: TypeNameUtilities.FullyQualified(classSymbol),
         ModelClassName: modelClassName,
         TableBaseName: tableBaseName,
         PropertyCount: propertyCount,
@@ -181,7 +181,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
 
     foreach (var attribute in modelType.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass?.ToDisplayString();
+      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
       if (attrClassName == PERSPECTIVE_STORAGE_ATTRIBUTE && attribute.ConstructorArguments.Length > 0) {
         var modeArg = attribute.ConstructorArguments[0];
         if (modeArg.Value is int modeValue) {
@@ -196,6 +196,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Discovers physical fields from [PhysicalField] and [VectorField] attributes on model properties.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads both field attributes with every optional argument in one pass over the properties.")]
   private static PhysicalFieldInfo[] _discoverPhysicalFields(System.Collections.Generic.List<IPropertySymbol> properties) {
     const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
     const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
@@ -204,7 +205,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass?.ToDisplayString();
+        var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
 
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractPhysicalFieldInfo(property, attribute);
@@ -228,19 +229,19 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
-    bool isIndexed = false;
+    // [Indexed] is how any field asks for an index, promoted or not, so this reads it rather than a
+    // flag on the promotion attribute.
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
+    string? columnType = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -256,6 +257,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
+          break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
           break;
       }
     }
@@ -274,7 +280,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -283,7 +290,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;
@@ -294,7 +301,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Extract named arguments
     var distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     var indexType = GeneratorVectorIndexType.IVFFlat; // Default
-    bool isIndexed = true; // Default
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     int? indexLists = null;
     string? columnName = null;
 
@@ -311,9 +318,6 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
           if (typeVal != null) {
             indexType = (GeneratorVectorIndexType)System.Convert.ToInt32(typeVal, CultureInfo.InvariantCulture);
           }
-          break;
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
           break;
         case "IndexLists":
           var indexListsVal = namedArg.Value.Value;
@@ -525,6 +529,14 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private static string _mapToPostgresType(PhysicalFieldInfo field) {
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // The author's own type wins over the derived one, and is consulted BEFORE the mapping table
+    // rather than as its default arm. That arm is TEXT, so a native array, a domain or a type from
+    // an extension would otherwise be silently downgraded -- and storing an array as text is the
+    // exact defect the option exists to remove.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
     }
 
     // Normalize the type name by removing global:: and nullable markers

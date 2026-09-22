@@ -89,7 +89,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Act & Assert
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(42),
+      (_, ctx) => ValueTask.FromResult(42),
       context
     )).Throws<InvalidOperationException>();
   }
@@ -162,7 +162,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Act
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(42),
+      (_, ctx) => ValueTask.FromResult(42),
       context
     );
 
@@ -183,7 +183,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Act
     var executeTask = executor.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => {
+      async (_, ctx) => {
         await tcs.Task;
         return 42;
       },
@@ -210,7 +210,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Act & Assert
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => throw new InvalidOperationException("Test exception"),
+      (_, ctx) => throw new InvalidOperationException("Test exception"),
       context
     )).Throws<InvalidOperationException>();
 
@@ -230,9 +230,11 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var tcs3 = new TaskCompletionSource<int>();
 
     // Act - Start 3 async operations
-    var task1 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs1.Task, context).AsTask();
-    var task2 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs2.Task, context).AsTask();
-    var task3 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs3.Task, context).AsTask();
+    Task<int> Start(TaskCompletionSource<int> tcs) =>
+      executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs.Task, context).AsTask();
+    var task1 = Start(tcs1);
+    var task2 = Start(tcs2);
+    var task3 = Start(tcs3);
 
     await Task.Delay(50); // Let tasks queue
 
@@ -267,8 +269,24 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Arrange
     var executor = new SerialExecutor();
 
-    // Act & Assert - Should complete immediately without throwing
-    await executor.DrainAsync();
+    // Act - draining before the first StartAsync
+    var drain = executor.DrainAsync();
+    await drain;
+
+    // Assert - it really returned immediately (no worker to await, nothing queued)...
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue();
+
+    // ...and, crucially, the early return did NOT complete the channel writer: an executor that
+    // was drained before it started must still be startable and still accept work. Completing
+    // the writer here would make every later ExecuteAsync throw ChannelClosedException.
+    await executor.StartAsync();
+    var result = await executor.ExecuteAsync<int>(
+      CreateTestEnvelope("test"),
+      (_, _) => ValueTask.FromResult(42),
+      CreateTestContext());
+    await Assert.That(result).IsEqualTo(42);
+
+    await executor.StopAsync();
   }
 
   [Test]
@@ -287,7 +305,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
       var index = i;
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, _) => {
           lock (executionOrder) {
             executionOrder.Add(index);
           }
@@ -312,7 +330,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
   }
 
   [Test]
-  public async Task ExecuteAsync_CancellationToken_SkipsCancelledWorkAsync() {
+  public async Task ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync() {
     // Arrange - Use bounded channel with capacity of 1
     var executor = new SerialExecutor(channelCapacity: 1);
     await executor.StartAsync();
@@ -320,20 +338,21 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var context = CreateTestContext();
 
     var blockingTcs = new TaskCompletionSource<int>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var handlerCalled = 0;
 
     // Act - Queue blocking work first to fill the channel
-    var blockingTask = executor.ExecuteAsync<int>(
+    async Task<int> StartBlockingTask() => await executor.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => await blockingTcs.Task,
+      async (_, _) => await blockingTcs.Task,
       context
-    ).AsTask();
+    );
+    var blockingTask = StartBlockingTask();
 
     // Queue work with cancellation token (will queue successfully)
-    var cancellableTask = executor.ExecuteAsync<int>(
+    _ = executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (_, _) => {
         Interlocked.Increment(ref handlerCalled);
         return ValueTask.FromResult(42);
       },
@@ -345,13 +364,13 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     await Task.Delay(100);
 
     // Cancel AFTER work is queued but BEFORE worker processes it
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    // Unblock worker to process the cancelled work (should skip it via line 165)
+    // Unblock worker to process the canceled work (should skip it via line 165)
     blockingTcs.SetResult(1);
     await blockingTask;
 
-    // Give worker time to process (and skip) the cancelled work
+    // Give worker time to process (and skip) the canceled work
     await Task.Delay(200);
 
     // Assert - Handler should not have been called (work was skipped via continue)
@@ -371,25 +390,29 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var tcs = new TaskCompletionSource<int>();
 
     // Act - Queue long-running work
-    var task = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs.Task, context
+    var task = executor.ExecuteAsync<int>(envelope, async (_, _) => await tcs.Task, context
 , cancellationToken).AsTask();
 
     // Complete the work BEFORE stopping to avoid deadlock
     tcs.SetResult(42);
 
-    try {
-      await task; // Wait for work to complete
-    } catch {
-      // Work may have been cancelled
-    }
+    // The queued work must finish normally: StopAsync cancels the worker token, so anything
+    // still in flight when the shutdown lands is what would surface as a canceled caller.
+    var completed = await task;
 
     // Stop executor (triggers cancellation of worker)
     await executor.StopAsync(cancellationToken);
 
-    // Drain should handle OperationCanceledException from worker (line 158)
-    await executor.DrainAsync(cancellationToken);
+    // Drain AFTER a stop: DrainAsync sees State.Stopped and returns without awaiting the worker,
+    // so a worker canceled by the stop can never fault the drain.
+    var drain = executor.DrainAsync(cancellationToken);
+    await drain;
 
-    // Assert - No exception should be thrown
+    // Assert
+    await Assert.That(completed).IsEqualTo(42)
+      .Because("work that finished before the stop must not be lost to the worker's cancellation");
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
+      .Because("draining a stopped executor is an immediate no-op, not a faulted await on a canceled worker");
   }
 
   [Test]
@@ -405,7 +428,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     try {
       await executor.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => {
+        (_, _) => {
           exceptionThrown = true;
           throw new InvalidOperationException("Test exception");
         },
@@ -430,7 +453,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(7),
+      (_, _) => ValueTask.FromResult(7),
       context
     );
     await Assert.That(result).IsEqualTo(7);
@@ -441,7 +464,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Assert - executor is stopped; further executions are rejected
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(0),
+      (_, _) => ValueTask.FromResult(0),
       context
     )).Throws<InvalidOperationException>();
   }
@@ -488,7 +511,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     for (int i = 0; i < capacity + 10; i++) {
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, _) => {
           await tcs.Task;
           return 42;
         },
@@ -506,4 +529,51 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     await executor.StopAsync();
   }
+
+  [Test]
+  [Timeout(10000)]
+  public async Task ExecuteAsync_WorkCanceledWhileQueued_FaultsTheCallerInsteadOfHangingAsync(
+      CancellationToken cancellationToken) {
+    // The companion to ExecuteAsync_CancellationToken_SkipsCanceledWork, which asserts the
+    // handler does not run and then abandons the caller's task without awaiting it. Skipping
+    // the work is only half the contract: the caller is sitting on a ValueTask backed by a
+    // PooledValueTaskSource that only the execute path ever completes, so a skip that does not
+    // finish the source hangs that caller for the life of the process -- no exception, nothing
+    // logged. Cancellation has to surface as OperationCanceledException.
+    var executor = new SerialExecutor(channelCapacity: 1);
+    await executor.StartAsync(cancellationToken);
+    var envelope = CreateTestEnvelope("test");
+    var context = CreateTestContext();
+
+    var blocking = new TaskCompletionSource<int>();
+    using var cts = new CancellationTokenSource();
+    var handlerCalled = 0;
+
+    // Occupy the worker so the next item stays queued.
+    async Task<int> StartBlockingTask() => await executor.ExecuteAsync<int>(
+      envelope, async (env, ctx) => await blocking.Task, context, CancellationToken.None);
+    var blockingTask = StartBlockingTask();
+
+    var queued = executor.ExecuteAsync<int>(
+      envelope,
+      (env, ctx) => {
+        Interlocked.Increment(ref handlerCalled);
+        return ValueTask.FromResult(42);
+      },
+      context,
+      cts.Token).AsTask();
+
+    // Cancel after it is queued but before the worker can reach it, then let the worker run.
+    await cts.CancelAsync();
+    blocking.SetResult(1);
+    await blockingTask;
+
+    await Assert.That(async () => await queued).Throws<OperationCanceledException>()
+      .Because("a caller whose work is dropped must observe the cancellation, not wait forever");
+    await Assert.That(handlerCalled).IsEqualTo(0)
+      .Because("the handler is still not run -- that half of the contract is unchanged");
+
+    await executor.StopAsync(CancellationToken.None);
+  }
+
 }

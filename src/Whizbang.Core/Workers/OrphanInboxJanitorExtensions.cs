@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 
@@ -22,30 +23,24 @@ public static class OrphanInboxJanitorExtensions {
   /// — calling twice replaces the snapshot with the latest state.
   /// </remarks>
   public static IServiceCollection AddOrphanInboxJanitor(this IServiceCollection services) {
+    // Self-contained: the janitor waits on schema readiness, so this extension guarantees the
+    // gate rather than assuming a fuller composition registered it first.
+    services.AddWhizbangSchemaReadyGate();
     ArgumentNullException.ThrowIfNull(services);
 
     var receptorTypes = _snapshotReceptorMessageTypes(services);
     services.AddSingleton(new HandledReceptorTypeSnapshot(receptorTypes));
+    services.TryAddWhizbangDefaults();
     services.AddHostedService<OrphanInboxJanitor>();
     return services;
   }
 
   private static HashSet<Type> _snapshotReceptorMessageTypes(IServiceCollection services) {
-    var seen = new HashSet<Type>();
-    foreach (var sd in services) {
-      var st = sd.ServiceType;
-      if (!st.IsGenericType) {
-        continue;
-      }
-      var def = st.GetGenericTypeDefinition();
-      if (def != typeof(IReceptor<>) && def != typeof(IReceptor<,>)) {
-        continue;
-      }
-      var args = st.GetGenericArguments();
-      if (args.Length > 0) {
-        seen.Add(args[0]);
-      }
-    }
-    return seen;
+    return [.. services
+      .Select(sd => sd.ServiceType)
+      .Where(st => st.IsGenericType && st.GetGenericTypeDefinition() is var def && (def == typeof(IReceptor<>) || def == typeof(IReceptor<,>)))
+      .Select(st => st.GetGenericArguments())
+      .Where(args => args.Length > 0)
+      .Select(args => args[0])];
   }
 }

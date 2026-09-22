@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -111,6 +113,7 @@ public class ClaimWorkerGateCadenceTests {
       bool gateAvailable) {
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
@@ -118,11 +121,11 @@ public class ClaimWorkerGateCadenceTests {
     var gate = new FakeGate();
     if (gateAvailable) { gate.Set(true); }
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = pollingIntervalMilliseconds,
         PollingMaxIntervalMilliseconds = pollingMaxIntervalMilliseconds,
         // v0.502 made this default to 30 s, which would block these tests' 5-second
@@ -130,8 +133,16 @@ public class ClaimWorkerGateCadenceTests {
         // baseline; set null explicitly to restore the pre-v0.502 behavior here.
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
     return (worker, coord, gate);
   }
 
@@ -196,39 +207,51 @@ public class ClaimWorkerGateCadenceTests {
     // RIGHT AWAY so any work that accumulated during the unavailable window doesn't wait out the
     // next tick.
     //
-    // The base interval is deliberately LONG here, and that is the whole design of the test. The
+    // The base interval is effectively INFINITE here, and that is the whole design of the test. An
     // earlier version used a 50 ms base and measured wake latency against a 500 ms budget, which
-    // could not fail: an unavailable gate pins the interval at base (see _computeAdaptiveWait's
-    // IsAvailable == false branch), so a poll landed within ~50 ms whether or not the flip woke
-    // anything — and a poll landing between the list Clear() and the timestamp read even produced
-    // a NEGATIVE latency, which also passes "< 500 ms". Deleting the behavior under test left it
-    // green. With a 5 s base, the only way the next claim can arrive promptly is the flip waking
-    // the loop; otherwise the worker sits out the interval and the wait below times out.
+    // could not fail: an unavailable gate pins the interval at base, so a poll landed within ~50 ms
+    // whether or not the flip woke anything. A later version used a 5 s base against a 2 s budget,
+    // which was a timing race instead: after an empty poll with the gate available the worker takes
+    // a spacing NAP, and a wake that only releases the semaphore does not interrupt a nap — so
+    // whether the poll arrived "promptly" depended on which wait the worker happened to be in when
+    // the gate flipped, and under a coverage-instrumented parallel run it sat out the nap.
+    //
+    // With an hour-long base there is no cadence to race against: within the safety-net wait
+    // below, a claim can arrive ONLY because the transition woke the loop — nap or wait, either
+    // direction. The safety net is a hang guard, not a latency budget.
     var (worker, coord, gate) = _newWorker(
-      pollingIntervalMilliseconds: 5_000,
-      pollingMaxIntervalMilliseconds: 5_000,
+      pollingIntervalMilliseconds: 3_600_000,
+      pollingMaxIntervalMilliseconds: 3_600_000,
       gateAvailable: true);
+    var safetyNet = TimeSpan.FromSeconds(30);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coord.FirstCallSignal.Task.WaitAsync(safetyNet);
 
-    // Available → unavailable also wakes the loop; take that poll so the worker then parks on a
-    // full 5 s unavailable-cadence wait, which is the state the flip has to interrupt.
+    // Available → unavailable must also wake the loop. After the first (empty) poll with the gate
+    // available the worker is in its spacing nap, so this is the transition that proves a nap is
+    // interruptible. Arm BEFORE flipping so the signal cannot be missed.
     var afterGoingDown = coord.ArmNextCall();
     gate.Set(false);
-    await afterGoingDown.WaitAsync(TimeSpan.FromSeconds(10));
+    await afterGoingDown.WaitAsync(safetyNet);
 
-    // Now the discriminating step: the worker is parked for ~5 s. Arm BEFORE flipping so the
-    // signal cannot be missed, then require the poll well inside that interval.
+    // Unavailable → available: the worker is parked on the unavailable-cadence wait; the flip must
+    // end it. Same arming discipline.
     var afterComingBack = coord.ArmNextCall();
     gate.Set(true);
 
-    await afterComingBack.WaitAsync(TimeSpan.FromSeconds(2))
-      .ConfigureAwait(false);   // times out at 2 s if the flip did not RequestImmediatePoll
+    await afterComingBack.WaitAsync(safetyNet)
+      .ConfigureAwait(false);   // hangs to the safety net if the flip did not wake the loop
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+
+    // Three polls, one per wake: the startup poll and one for each transition. The hour-long
+    // cadence contributes none, so this also pins the other direction — a flip wakes the loop
+    // ONCE, and a flapping gate cannot multiply into a claim storm.
+    await Assert.That(coord.ClaimCallTimes.Count).IsEqualTo(3)
+      .Because("each gate transition must wake exactly one poll, and the cadence must wake none");
   }
 
   [Test]
@@ -238,20 +261,30 @@ public class ClaimWorkerGateCadenceTests {
     // logic — no clamping based on a gate that isn't there.
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 2_000,
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
     // No signalingGate.
 
     using var cts = new CancellationTokenSource();
@@ -276,6 +309,7 @@ public class ClaimWorkerGateCadenceTests {
     // relieve wh_active_streams unique-index pressure without disabling polling entirely.
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
@@ -283,17 +317,25 @@ public class ClaimWorkerGateCadenceTests {
     var gate = new FakeGate();
     gate.Set(true);
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 5_000,
         NotifyHealthyPollingIntervalMilliseconds = 400,  // 8× the tight base
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -317,6 +359,7 @@ public class ClaimWorkerGateCadenceTests {
     // The behavior must mirror the no-override case: tight base, no backoff stretch.
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
@@ -324,17 +367,25 @@ public class ClaimWorkerGateCadenceTests {
     var gate = new FakeGate();
     gate.Set(false);
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 100,
         PollingMaxIntervalMilliseconds = 5_000,
         NotifyHealthyPollingIntervalMilliseconds = 1_000,  // would be 10× if respected
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -390,6 +441,7 @@ public class ClaimWorkerGateCadenceTests {
     // signals in between, the second should not arrive within the test window.
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
@@ -397,18 +449,26 @@ public class ClaimWorkerGateCadenceTests {
     var gate = new FakeGate();
     gate.Set(true);  // NOTIFY healthy
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 500,
         EnableSafetyNetPoll = false,  // pure NOTIFY-only mode
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -440,6 +500,7 @@ public class ClaimWorkerGateCadenceTests {
     // notice new work until manually restarted.
     var coord = new TickRecordingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
@@ -447,18 +508,26 @@ public class ClaimWorkerGateCadenceTests {
     var gate = new FakeGate();
     gate.Set(false);  // NOTIFY unhealthy from the start
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 100,
         PollingMaxIntervalMilliseconds = 5_000,
         EnableSafetyNetPoll = false,  // disabled — but gate-unavailable should override
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

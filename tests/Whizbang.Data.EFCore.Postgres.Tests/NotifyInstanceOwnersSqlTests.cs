@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard1")]
 public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
 
   [Test]
@@ -87,13 +88,24 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
 
     await Assert.That(received).Count().IsEqualTo(2)
       .Because("3 streams × 2 unique owners must produce exactly 2 NOTIFYs (deduped per owner)");
-    var channels = received.Select(r => r.Channel).OrderBy(c => c).ToList();
-    var expected = new[] { $"wh_work_i_{ownerA}", $"wh_work_i_{ownerB}" }.OrderBy(c => c).ToList();
+    var channels = received.Select(r => r.Channel).Order().ToList();
+    var expected = new[] { $"wh_work_i_{ownerA}", $"wh_work_i_{ownerB}" }.Order().ToList();
     await Assert.That(channels).IsEquivalentTo(expected);
   }
 
+  /// <summary>
+  /// A stream nothing has pinned is routed by the partition assignment, not left to the poll.
+  /// </summary>
+  /// <remarks>
+  /// This asserted zero until the deterministic branch stopped recovering a stream's partition
+  /// number by reading the queue table. Under that shape the branch only fired for a stream that
+  /// already had a row there, so "unknown stream" meant "wake nobody" -- the opposite of what the
+  /// branch is for, which is to wake the instance that would claim a stream nobody has claimed.
+  /// The number is a total function of the stream id, so the target exists whether or not a row
+  /// does.
+  /// </remarks>
   [Test]
-  public async Task NotifyInstanceOwners_UnknownStream_EmitsZeroNotifiesAsync() {
+  public async Task NotifyInstanceOwners_UnknownStream_WakesItsDeterministicOwnerAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -105,12 +117,26 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
       await _callNotifyInstanceOwnersAsync(conn, "inbox", unknownStream));
 
-    await Assert.That(received).Count().IsEqualTo(0)
-      .Because("a stream missing from wh_active_streams has no known owner → no NOTIFY");
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("a stream missing from wh_active_streams is exactly the case the deterministic branch exists "
+        + "for; its partition number follows from its id, so the one live instance is its owner");
+    await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{owner}")
+      .Because("with a single live instance every partition maps to rank 0, which is that instance");
   }
 
+  /// <summary>
+  /// A stream whose owner was reaped keeps the partition number the ledger holds, and that is what
+  /// routes the doorbell.
+  /// </summary>
+  /// <remarks>
+  /// Also asserted zero before the deterministic branch stopped reading the queue table. The ledger
+  /// row is the reason this case is worth keeping separate from the unknown-stream one: the branch
+  /// prefers the stored number over a computed one, because that is the number the claim routes on
+  /// for a row put back by the dead-letter recovery and for any deployment that configures a
+  /// partition count other than the default.
+  /// </remarks>
   [Test]
-  public async Task NotifyInstanceOwners_StreamWithNullOwner_EmitsZeroNotifiesAsync() {
+  public async Task NotifyInstanceOwners_StreamWithNullOwner_WakesItsDeterministicOwnerAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -124,8 +150,12 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
     var received = await _captureNotificationsAsync(conn, [owner], async () =>
       await _callNotifyInstanceOwnersAsync(conn, "outbox", orphanStream));
 
-    await Assert.That(received).Count().IsEqualTo(0)
-      .Because("a stream with NULL owner has no routing target — polling backstop must catch it");
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("a stream whose owner was reaped still has a partition, and waking the instance that partition "
+        + "names is what stops the work waiting out a poll it does not need to");
+    await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{owner}")
+      .Because("the ledger holds partition 0 for this stream and rank 0 is the one live instance, so the "
+        + "stored number is what routed the doorbell");
   }
 
   [Test]
@@ -183,6 +213,12 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a roundtrip — NOTIFY messages buffered after the function's COMMIT are
       // dispatched to the Notification event on the next request/response cycle.
@@ -204,7 +240,7 @@ public class NotifyInstanceOwnersSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, string payload, params Guid[] streamIds) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT notify_instance_owners(@payload, @ids)";
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
       Value = streamIds
     });

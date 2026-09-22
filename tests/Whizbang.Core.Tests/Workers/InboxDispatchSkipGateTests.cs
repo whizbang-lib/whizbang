@@ -1,10 +1,14 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -47,19 +51,20 @@ public class InboxDispatchSkipGateTests {
     var registry = new TestRegistry();  // empty
     var policyLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.A");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
       discardPolicy: policy,
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("11111111-1111-1111-1111-111111111111"));
+    // Passive counter: series report only at collection (the declared gate series at zero).
+    listener.RecordObservableInstruments();
 
     await Assert.That(shouldSkip).IsTrue();
     // RegistryChanged → Information level per policy
@@ -73,19 +78,20 @@ public class InboxDispatchSkipGateTests {
     var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo" } };
     var policyLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.B");
-    var policy = new MessageDiscardPolicy(registry,
-      new TestLogger<MessageDiscardPolicy>(policyLogger), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
     };
-    listener.SetMeasurementEventCallback<long>((_, v, _, _) => { skippedCount += v; });
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => skippedCount += v);
     listener.Start();
 
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
       discardPolicy: policy,
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("22222222-2222-2222-2222-222222222222"));
+    // Passive counter: collect so the zero below is every series' real count, not silence.
+    listener.RecordObservableInstruments();
 
     await Assert.That(shouldSkip).IsFalse();
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(0);
@@ -95,7 +101,7 @@ public class InboxDispatchSkipGateTests {
   [Test]
   public async Task ShouldSkipInbox_NoPolicyWired_ReturnsFalse_PreservesLegacyBehaviorAsync() {
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
-      discardPolicy: null,
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("33333333-3333-3333-3333-333333333333"));
 

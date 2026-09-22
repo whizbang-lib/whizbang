@@ -12,7 +12,7 @@ public class SyncContextAccessorTests {
   /// <summary>
   /// Dummy perspective type for tests.
   /// </summary>
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   /// <summary>
   /// Helper to create a test SyncContext.
@@ -202,9 +202,7 @@ public class SyncContextAccessorTests {
     accessor.Current = context1;
 
     // Act - start new task (different async flow)
-    var task = Task.Run(() => {
-      capturedInTask = accessor.Current;
-    });
+    var task = Task.Run(() => capturedInTask = accessor.Current);
     await task;
 
     // Assert - new task should NOT see the context (different async flow)

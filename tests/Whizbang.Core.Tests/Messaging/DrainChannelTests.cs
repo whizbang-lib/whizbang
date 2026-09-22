@@ -10,12 +10,14 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for <see cref="OutboxDrainChannel"/> and
 /// <see cref="InboxDrainChannel"/> — the per-stream drain channels that carry
 /// stream_ids from <c>ClaimWorker</c> to the drain workers. The two classes
 /// are structural mirrors (same Channel{Guid}, same in-flight set, same five
 /// methods) so the test bodies are shared via a typed harness.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 ///   1. Write paths (async + sync) round-trip the stream_id through the reader.
 ///   2. The in-flight set is empty by default.
@@ -23,6 +25,7 @@ namespace Whizbang.Core.Tests.Messaging;
 ///   4. MarkDrained on an unknown stream_id is a safe no-op (TryRemove pattern).
 ///   5. The default interface methods on the bare interface return false / no-op,
 ///      so custom IOutboxDrainChannel implementations don't have to override them.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public class DrainChannelTests {
@@ -116,7 +119,7 @@ public class DrainChannelTests {
     // A bare implementation that DOESN'T override IsInFlight / MarkDraining /
     // MarkDrained falls through to the interface defaults — false + no-op.
     // Default interface methods can only be reached via the interface reference.
-    IOutboxDrainChannel ch = new _MinimalOutboxChannel();
+    IOutboxDrainChannel ch = new MinimalOutboxChannel();
     var sid = Guid.NewGuid();
 
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
@@ -129,7 +132,7 @@ public class DrainChannelTests {
 
   [Test]
   public async Task IInboxDrainChannel_DefaultMethods_ReturnFalseAndNoOpAsync() {
-    IInboxDrainChannel ch = new _MinimalInboxChannel();
+    IInboxDrainChannel ch = new MinimalInboxChannel();
     var sid = Guid.NewGuid();
 
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
@@ -139,7 +142,7 @@ public class DrainChannelTests {
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
   }
 
-  private sealed class _MinimalOutboxChannel : IOutboxDrainChannel {
+  private sealed class MinimalOutboxChannel : IOutboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default)
@@ -147,7 +150,7 @@ public class DrainChannelTests {
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 
-  private sealed class _MinimalInboxChannel : IInboxDrainChannel {
+  private sealed class MinimalInboxChannel : IInboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default)

@@ -64,8 +64,8 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// parameter dictionary it binds. The fragment is a single
   /// expression intended to substitute the entire <c>SET</c> body —
   /// callers prepend their own <c>UPDATE … SET </c> prefix and append
-  /// any additional column writes (e.g. <c>last_collective_event_id =
-  /// @evt_id</c>) and the <c>WHERE</c> clause.
+  /// any additional column writes (e.g. <code>last_collective_event_id =
+  /// @evt_id</code>) and the <c>WHERE</c> clause.
   /// </summary>
   public sealed record CompiledSetClause(
     string SqlFragment,
@@ -88,7 +88,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(jsonOptions);
     ArgumentException.ThrowIfNullOrWhiteSpace(parameterPrefix);
 
-    var visitor = new _setterVisitor(jsonOptions, parameterPrefix);
+    var visitor = new SetterVisitor(jsonOptions, parameterPrefix);
     visitor.Visit(spec.Setters.Body);
 
     if (visitor.Properties.Count == 0) {
@@ -105,7 +105,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
       }
     }
     var properties = removedFields is { Count: > 0 }
-      ? visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath)).ToList()
+      ? [.. visitor.Properties.Where(p => !removedFields.Contains(p.JsonbPath))]
       : visitor.Properties;
 
     return new CompiledSetClause(
@@ -118,7 +118,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
   /// <c>data</c> column; each successive <c>SetProperty</c> wraps with
   /// another <c>jsonb_set</c>.
   /// </summary>
-  private static string _buildJsonbSetChain(List<_propertyAssignment> assignments) {
+  private static string _buildJsonbSetChain(List<PropertyAssignment> assignments) {
     // jsonb_set(jsonb_set(data, '{A}', @p_A::jsonb), '{B}', to_jsonb((data->'X')::jsonb = @p_B::jsonb))
     var sb = new StringBuilder("data = ");
     foreach (var _ in assignments) {
@@ -137,23 +137,18 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
 
   // ValueSql is the SQL for the new jsonb value: "@p::jsonb" for a constant, or a computed expression like
   // "to_jsonb((data->'X')::jsonb = @p::jsonb)" for a property-vs-constant comparison.
-  private sealed record _propertyAssignment(string JsonbPath, string ValueSql);
+  private sealed record PropertyAssignment(string JsonbPath, string ValueSql);
 
   /// <summary>
   /// Walks the spec's expression body, collecting one
-  /// <see cref="_propertyAssignment"/> per <c>SetProperty</c> call.
+  /// <see cref="PropertyAssignment"/> per <c>SetProperty</c> call.
   /// </summary>
-  private sealed class _setterVisitor : ExpressionVisitor {
-    private readonly JsonSerializerOptions _jsonOptions;
-    private readonly string _parameterPrefix;
+  private sealed class SetterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) : ExpressionVisitor {
+    private readonly JsonSerializerOptions _jsonOptions = jsonOptions;
+    private readonly string _parameterPrefix = parameterPrefix;
     private int _seq;
-    public List<_propertyAssignment> Properties { get; } = new();
+    public List<PropertyAssignment> Properties { get; } = [];
     public Dictionary<string, object?> Parameters { get; } = new(StringComparer.Ordinal);
-
-    public _setterVisitor(JsonSerializerOptions jsonOptions, string parameterPrefix) {
-      _jsonOptions = jsonOptions;
-      _parameterPrefix = parameterPrefix;
-    }
 
     protected override Expression VisitMethodCall(MethodCallExpression node) {
       // Match: ICollectiveSetters<TModel>.SetProperty<TProp>(selector, value)
@@ -169,7 +164,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
         var valueSql = _isLambda(valueExpr)
           ? _compileComputedValue(valueExpr, propertyName)
           : _compileConstantValue(valueExpr, propertyName);
-        Properties.Add(new _propertyAssignment(propertyName, valueSql));
+        Properties.Add(new PropertyAssignment(propertyName, valueSql));
 
         // Continue visiting in case this is part of a chain — the visitor
         // call below recurses into the Object expression of the next
@@ -216,7 +211,7 @@ public static class DapperCollectiveSpecCompiler<TModel> where TModel : class {
     public void AddConstant(string propertyName, object? value) {
       var paramName = _nextParam(propertyName);
       Parameters[paramName] = JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), _jsonOptions);
-      Properties.Add(new _propertyAssignment(propertyName, $"@{paramName}::jsonb"));
+      Properties.Add(new PropertyAssignment(propertyName, $"@{paramName}::jsonb"));
     }
 
     // Constant value source → "@p::jsonb", with the value JSON-serialized into the parameter dictionary.

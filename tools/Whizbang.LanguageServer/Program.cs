@@ -1,12 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Server;
+using Whizbang.LanguageServer;
 using Whizbang.LanguageServer.Debugging;
 using Whizbang.LanguageServer.Handlers;
 using Whizbang.LanguageServer.Services;
 
-var docsBaseUrl = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL")
-    ?? "https://whizbang-lib.github.io";
+var docsBaseUrl = LanguageServerServices.ResolveDocsBaseUrl();
 
 var server = await LanguageServer.From(options => options
     .WithInput(Console.OpenStandardInput())
@@ -14,24 +14,7 @@ var server = await LanguageServer.From(options => options
     .ConfigureLogging(logging => {
       logging.SetMinimumLevel(LogLevel.Information);
     })
-    .WithServices(services => {
-      // Services
-      services.AddSingleton<MermaidGenerator>();
-      services.AddSingleton(new SymbolResolver(docsBaseUrl));
-      services.AddSingleton<SearchService>();
-      services.AddSingleton<TestCoverageService>();
-
-      // Debug
-      services.AddSingleton<DebugSessionManager>();
-
-      // Handlers
-      services.AddSingleton<DebugSessionHandler>();
-      services.AddSingleton<SearchHandler>();
-      services.AddSingleton<SymbolHandler>();
-      services.AddSingleton<TestCoverageHandler>();
-      services.AddSingleton<FlowDiagramHandler>();
-      services.AddSingleton<StatusHandler>();
-    })
+    .WithServices(services => services.AddLanguageServerServices(docsBaseUrl))
     .OnInitialize(async (server, request, ct) => {
       var logger = server.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Whizbang.LSP");
       logger.LogInformation("Whizbang Language Server initializing...");
@@ -47,3 +30,24 @@ var server = await LanguageServer.From(options => options
 ).ConfigureAwait(false);
 
 await server.WaitForExit.ConfigureAwait(false);
+
+/// <summary>
+/// Coverage marker for the language server's top-level entry point.
+/// </summary>
+/// <remarks>
+/// The whole of this file is the process entry point: it binds the LSP server to this process's
+/// standard input and output and then blocks on <c>WaitForExit</c> until the editor closes the
+/// connection. A test cannot run it — doing so would take over the test host's own console
+/// streams and never return.
+///
+/// Nothing testable is hidden behind it. The one decision it makes,
+/// <c>LanguageServerServices.ResolveDocsBaseUrl()</c>, and the registrations in
+/// <c>AddLanguageServerServices</c> are both exercised directly by
+/// <c>tests/Whizbang.LanguageServer.Tests/LanguageServerServicesTests.cs</c>; what remains here is
+/// the wiring that hands those to OmniSharp and the two logging callbacks.
+/// </remarks>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(
+  Justification = "Process entry point: binds the LSP server to this process's stdin/stdout and blocks until exit. "
+                + "Cannot run under a test host without taking over its console streams. The decisions it makes are "
+                + "covered directly in LanguageServerServicesTests.")]
+internal static partial class Program { }

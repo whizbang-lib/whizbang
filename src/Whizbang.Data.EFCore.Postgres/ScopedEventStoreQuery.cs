@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Ensures DbContext isolation and prevents stale data when used from singleton services.
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEventStoreQueryTests.cs</tests>
 public class ScopedEventStoreQuery : IScopedEventStoreQuery {
   private readonly IServiceScopeFactory _scopeFactory;
 

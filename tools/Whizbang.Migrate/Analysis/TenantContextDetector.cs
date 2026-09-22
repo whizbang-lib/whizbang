@@ -130,7 +130,7 @@ public static class TenantContextDetector {
            name.EndsWith("Updated", StringComparison.Ordinal) ||
            name.EndsWith("Deleted", StringComparison.Ordinal) ||
            name.EndsWith("Changed", StringComparison.Ordinal) ||
-           name.EndsWith("Cancelled", StringComparison.Ordinal) ||
+           name.EndsWith("Canceled", StringComparison.Ordinal) ||
            name.EndsWith("Completed", StringComparison.Ordinal) ||
            name.EndsWith("Started", StringComparison.Ordinal) ||
            name.EndsWith("Shipped", StringComparison.Ordinal) ||

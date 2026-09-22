@@ -36,6 +36,7 @@ public record OrderShippedEvent : IEvent {
 /// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard3")]
 public class EFCoreEventStoreTests : EFCoreTestBase {
   [Test]
   public async Task AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync() {
@@ -69,7 +70,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, envelope);
 
     // Assert
-    var events = context.Set<EventStoreRecord>().ToList();
+    var events = await context.Set<EventStoreRecord>().ToListAsync();
     await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].StreamId).IsEqualTo(streamId);
   }
@@ -108,10 +109,10 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     }
 
     // Assert
-    var events = context.Set<EventStoreRecord>()
+    var events = await context.Set<EventStoreRecord>()
       .Where(e => e.StreamId == streamId)
       .OrderBy(e => e.Version)
-      .ToList();
+      .ToListAsync();
 
     await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events[0].Version).IsEqualTo(0);
@@ -878,7 +879,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, message);
 
     // Assert
-    var records = context.Set<EventStoreRecord>().Where(e => e.StreamId == streamId).ToList();
+    var records = await context.Set<EventStoreRecord>().Where(e => e.StreamId == streamId).ToListAsync();
     await Assert.That(records).Count().IsEqualTo(1);
     await Assert.That(records[0].StreamId).IsEqualTo(streamId);
     await Assert.That(records[0].Version).IsEqualTo(0);
@@ -901,8 +902,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
     // Assert - metadata should have at least one hop. Full split (#13b4-2): the metadata lives on
     // the wh_event_body row; the pointer's inline columns are NULL.
-    var pointer = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
-    var body = context.Set<EventBodyRecord>().Single(b => b.EventId == pointer.Id);
+    var pointer = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
+    var body = await context.Set<EventBodyRecord>().SingleAsync(b => b.EventId == pointer.Id);
     await Assert.That(body.Metadata.Hops).Count().IsEqualTo(1);
     await Assert.That(body.Metadata.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");
   }
@@ -930,8 +931,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, envelope);
 
     // Assert — full split (#13b4-2): the metadata lives on the wh_event_body row.
-    var pointer = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
-    var body = context.Set<EventBodyRecord>().Single(b => b.EventId == pointer.Id);
+    var pointer = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
+    var body = await context.Set<EventBodyRecord>().SingleAsync(b => b.EventId == pointer.Id);
     await Assert.That(body.Metadata.Hops).Count().IsEqualTo(0);
   }
 
@@ -1343,7 +1344,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
   [Test]
   [Category("Integration")]
-  public async Task RestoreScopeInHops_WithEmptyHopsList_ReturnsEmptyListAsync() {
+  public async Task RestoreScopeInHops_WithEmptyHopsList_SynthesizesAHopCarryingTheScopeAsync() {
     // Arrange: Insert event with scope column but empty hops list
     await using var context = CreateDbContext();
     var streamId = Guid.NewGuid();
@@ -1385,9 +1386,23 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       envelopes.Add(env);
     }
 
-    // Assert: Empty hops returned (scope column ignored when no hops to attach to)
+    // Assert: the persisted scope is carried on a synthesized hop.
+    //
+    // This assertion was INVERTED deliberately. It previously required empty hops to stay empty,
+    // described as "scope column ignored when no hops to attach to" — a statement of what the code
+    // did, with no reason given for why it should. Production showed the cost: an event read back
+    // from the store has no envelope metadata (the row keeps scope in a column and no hops), so the
+    // scope was read, deserialized and then dropped. GetCurrentScope() walks hops, so it returned
+    // null, and a perspective requiring a security context threw on every replayed event — a retry
+    // that could not succeed, ten times per event, then a permanent park. One deployment parked
+    // thousands of events while its projection silently stopped converging.
+    //
+    // Restoring the scope onto a synthesized hop invents no authority: an event with no stored
+    // scope still yields none, which the sibling test below pins.
     await Assert.That(envelopes).Count().IsEqualTo(1);
-    await Assert.That(envelopes[0].Hops).Count().IsEqualTo(0);
+    await Assert.That(envelopes[0].Hops).Count().IsEqualTo(1);
+    await Assert.That(envelopes[0].GetCurrentScope()).IsNotNull();
+    await Assert.That(envelopes[0].Hops[0].Scope!.ApplyTo(null).Scope.TenantId).IsEqualTo("tenant-abc");
   }
 
   [Test]
@@ -1632,7 +1647,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, envelope);
 
     // Assert - EventType should match TypeNameFormatter format
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var record = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
     var expectedTypeName = TypeNameFormatter.Format(typeof(OrderCreatedEvent));
     await Assert.That(record.EventType).IsEqualTo(expectedTypeName);
   }
@@ -1655,7 +1670,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
     await eventStore.AppendAsync(streamId, envelope);
 
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var record = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
     await Assert.That(record.AggregateType).IsEqualTo(TypeNameFormatter.FormatClrTypeName(typeof(OrderCreatedEvent)));
     await Assert.That(record.AggregateType).IsEqualTo(typeof(OrderCreatedEvent).FullName);
   }
@@ -1681,7 +1696,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, envelope);
 
     // Assert - AggregateId should equal StreamId for backwards compatibility
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var record = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
     await Assert.That(record.AggregateId).IsEqualTo(streamId);
   }
 
@@ -1707,7 +1722,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await eventStore.AppendAsync(streamId, envelope);
 
     // Assert - Record Id should match the envelope's MessageId
-    var record = context.Set<EventStoreRecord>().Single(e => e.StreamId == streamId);
+    var record = await context.Set<EventStoreRecord>().SingleAsync(e => e.StreamId == streamId);
     await Assert.That(record.Id).IsEqualTo(messageId.Value);
   }
 

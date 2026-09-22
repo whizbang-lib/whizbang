@@ -54,9 +54,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   ///             @EventType (string), @EventData (string), @Metadata (string),
   ///             @Scope (string), @CreatedAt (DateTimeOffset)
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   protected abstract string GetAppendSql();
 
@@ -65,9 +65,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Should return: EventData, Metadata, Scope (all as JSONB/string)
   /// Parameters: @StreamId (Guid), @FromSequence (long)
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   protected abstract string GetReadSql();
 
   /// <summary>
@@ -75,16 +75,16 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Should return MAX(version) or -1 if stream doesn't exist.
   /// Parameters: @StreamId (Guid)
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   protected abstract string GetLastSequenceSql();
 
   /// <summary>
   /// AOT-compatible append with explicit stream ID.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
@@ -98,9 +98,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// <summary>
   /// Reads events from a stream starting from a specific sequence number.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
@@ -122,6 +122,22 @@ public abstract class DapperEventStoreBase : IEventStore {
     Guid? fromEventId,
     IReadOnlyList<Type> eventTypes,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Perspective row retention, the resurrection-on-wake history probe. Declared here (virtual,
+  /// interface default) so a derived store's override takes part in the interface mapping: a
+  /// method added on the derived class alone would never be reached through
+  /// <see cref="IEventStore"/>, and the interface default (false) would silently disable
+  /// resurrection.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>The perspective-aware form of the probe (issue #696); see the untyped overload.</summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
 
   /// <summary>
   /// Database-specific SQL for querying events between two checkpoint IDs (exclusive start, inclusive end).
@@ -199,8 +215,8 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// <summary>
   /// Gets the last sequence number for a stream. Returns -1 if stream doesn't exist.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public async Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
@@ -294,7 +310,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// hops must exist, and the first hop must not already have a scope.
   /// </summary>
   private static bool _shouldRestoreScope(string? scopeJson, List<MessageHop> hops) {
-    return !string.IsNullOrEmpty(scopeJson) && hops.Count > 0 && hops[0].Scope == null;
+    // No hop is not a reason to discard a stored scope: an event read back from the store
+    // keeps its scope in a column and carries no envelope metadata to restore into.
+    return !string.IsNullOrEmpty(scopeJson) && (hops.Count == 0 || hops[0].Scope == null);
   }
 
   /// <summary>
@@ -310,9 +328,21 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// </summary>
   private static void _applyScopeToFirstHop(Dictionary<string, JsonElement?> scopeDict, List<MessageHop> hops) {
     var scope = _buildPerspectiveScope(scopeDict);
-    if (scope != null) {
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    if (scope == null) {
+      return;
     }
+
+    // Give the restored scope somewhere to live when the event came back without hops.
+    // GetCurrentScope() walks hops, so a scope with no hop is a scope that does not exist.
+    if (hops.Count == 0) {
+      hops.Add(new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      });
+    }
+
+    hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
   }
 
   /// <summary>

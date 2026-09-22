@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// credentials from every public ConnectionString surface) and fall back to
 /// the resolved connection string otherwise.
 /// </summary>
+[Category("Shard1")]
 public class NotificationConnectionPlanTests {
   private static NotificationConnectionStringResolver.Resolution _stringResolution(string? connectionString) =>
     new(

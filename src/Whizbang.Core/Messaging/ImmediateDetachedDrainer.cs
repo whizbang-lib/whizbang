@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -27,12 +28,12 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// Creates a new ImmediateDetachedDrainer.
 /// </remarks>
-/// <param name="warningThreshold">Chain depth warning threshold. Logs when depth reaches a multiple of this value.</param>
 /// <param name="logger">Optional logger for chain depth warnings.</param>
-public sealed partial class ImmediateDetachedDrainer(int warningThreshold = 10, ILogger? logger = null) {
+/// <param name="warningThreshold">Chain depth warning threshold. Logs when depth reaches a multiple of this value.</param>
+public sealed partial class ImmediateDetachedDrainer(ILogger logger, int warningThreshold = 10) {
   private readonly ConcurrentQueue<(IMessageEnvelope Envelope, ILifecycleContext? Context)> _queue = new();
   private readonly int _warningThreshold = warningThreshold > 0 ? warningThreshold : 10;
-  private readonly ILogger? _logger = logger;
+  private readonly ILogger _logger = logger;
 
   /// <summary>
   /// Gets the number of pending items in the queue.
@@ -71,7 +72,7 @@ public sealed partial class ImmediateDetachedDrainer(int warningThreshold = 10, 
     while (_queue.TryDequeue(out var pending)) {
       cancellationToken.ThrowIfCancellationRequested();
 
-      if (++depth % _warningThreshold == 0 && _logger is not null) {
+      if (++depth % _warningThreshold == 0) {
         Log.ChainDepthExceedsThreshold(_logger, depth, _warningThreshold);
       }
 

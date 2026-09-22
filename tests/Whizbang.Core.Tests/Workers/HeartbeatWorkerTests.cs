@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -66,11 +67,6 @@ public class HeartbeatWorkerTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
 
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
   }
 
   [Test]
@@ -86,11 +82,16 @@ public class HeartbeatWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instProvider,
-      gate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instProvider,
+      schemaReadyGate: gate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -122,11 +123,16 @@ public class HeartbeatWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instProvider,
-      gate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instProvider,
+      schemaReadyGate: gate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -148,11 +154,16 @@ public class HeartbeatWorkerTests {
     var threw = false;
     try {
       _ = new HeartbeatWorker(
-        null!,
-        new StubInstanceProvider(Guid.NewGuid(), "s", "h", 1),
-        new SchemaReadyGate(),
-        Options.Create(new HeartbeatWorkerOptions()),
-        NullLogger<HeartbeatWorker>.Instance);
+        scopeFactory: null!,
+        instanceProvider: new StubInstanceProvider(Guid.NewGuid(), "s", "h", 1),
+        schemaReadyGate: new SchemaReadyGate(),
+        options: Options.Create(new HeartbeatWorkerOptions()),
+        logger: NullLogger<HeartbeatWorker>.Instance,
+        lifecycleState: HeartbeatTestDependencies.LifecycleState,
+        libraryVersion: HeartbeatTestDependencies.Version,
+        pinnedPool: NoOpPinnedConnectionPool.Instance,
+        aliveLockSource: NullInstanceAliveLockSource.Instance,
+        signalBus: NullSignalBus.Instance);
     } catch (ArgumentNullException) {
       threw = true;
     }
@@ -171,17 +182,22 @@ public class HeartbeatWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready but Enabled=false should still skip
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instProvider,
-      gate,
-      Options.Create(new HeartbeatWorkerOptions { Enabled = false, IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instProvider,
+      schemaReadyGate: gate,
+      options: Options.Create(new HeartbeatWorkerOptions { Enabled = false, IntervalSeconds = 1 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
     // Give the worker a moment — if the killswitch leaks, the first heartbeat will fire fast.
-    var raced = await Task.WhenAny(
+    _ = await Task.WhenAny(
         coord.FirstHeartbeat.Task,
         Task.Delay(500, CancellationToken.None));
     await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();
@@ -201,17 +217,22 @@ public class HeartbeatWorkerTests {
 
     var gate = new SchemaReadyGate();  // NOT marked ready
     var worker = new HeartbeatWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instProvider,
-      gate,
-      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instProvider,
+      schemaReadyGate: gate,
+      options: Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
+      logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
     // Confirm no heartbeat while gate is closed.
-    var racedBefore = await Task.WhenAny(
+    _ = await Task.WhenAny(
         coord.FirstHeartbeat.Task,
         Task.Delay(300, CancellationToken.None));
     await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();

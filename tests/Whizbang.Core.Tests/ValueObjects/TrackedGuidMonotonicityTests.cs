@@ -31,7 +31,7 @@ public class TrackedGuidMonotonicityTests {
     for (var i = 1; i < ids.Length; i++) {
       var prev = ids[i - 1].ToString("D");
       var curr = ids[i].ToString("D");
-      if (string.Compare(curr, prev, StringComparison.Ordinal) <= 0) {
+      if (string.CompareOrdinal(curr, prev) <= 0) {
         inversions.Add((i, ids[i - 1], ids[i]));
       }
     }
@@ -81,7 +81,7 @@ public class TrackedGuidMonotonicityTests {
       for (var i = 1; i < perThreadIds[t].Count; i++) {
         var prev = perThreadIds[t][i - 1].ToString("D");
         var curr = perThreadIds[t][i].ToString("D");
-        await Assert.That(string.Compare(curr, prev, StringComparison.Ordinal) > 0).IsTrue()
+        await Assert.That(string.CompareOrdinal(curr, prev) > 0).IsTrue()
           .Because($"Thread {t}: id at index {i} ({curr}) must be lex-greater than id at index {i - 1} ({prev}). The lock guarantees per-thread monotonicity even under cross-thread contention.");
       }
     }
@@ -128,7 +128,7 @@ public class TrackedGuidMonotonicityTests {
     var ordered = queue.ToArray();
     var inversions = 0;
     for (var i = 1; i < ordered.Length; i++) {
-      if (string.Compare(ordered[i].ToString("D"), ordered[i - 1].ToString("D"), StringComparison.Ordinal) <= 0) {
+      if (string.CompareOrdinal(ordered[i].ToString("D"), ordered[i - 1].ToString("D")) <= 0) {
         inversions++;
       }
     }
@@ -165,7 +165,7 @@ public class TrackedGuidMonotonicityTests {
     foreach (var group in groupsWithMultiple) {
       var groupIds = group.Select(x => x.Id).ToArray();
       for (var i = 1; i < groupIds.Length; i++) {
-        if (string.Compare(groupIds[i].ToString("D"), groupIds[i - 1].ToString("D"), StringComparison.Ordinal) <= 0) {
+        if (string.CompareOrdinal(groupIds[i].ToString("D"), groupIds[i - 1].ToString("D")) <= 0) {
           inversions++;
         }
       }

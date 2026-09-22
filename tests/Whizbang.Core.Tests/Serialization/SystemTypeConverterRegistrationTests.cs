@@ -38,7 +38,7 @@ public class SystemTypeConverterRegistrationTests {
     var missing = systemTypeConverters
       .Where(t => !registered.Contains(t))
       .Select(t => t.FullName!)
-      .OrderBy(s => s)
+      .Order()
       .ToList();
 
     await Assert.That(missing)
@@ -57,8 +57,7 @@ public class SystemTypeConverterRegistrationTests {
         var target = baseType.GetGenericArguments()[0];
         var underlying = Nullable.GetUnderlyingType(target) ?? target;
         var targetAssemblyName = underlying.Assembly.GetName().Name;
-        return targetAssemblyName is null
-          || !targetAssemblyName.StartsWith("Whizbang.", StringComparison.Ordinal);
+        return targetAssemblyName?.StartsWith("Whizbang.", StringComparison.Ordinal) != true;
       }
       baseType = baseType.BaseType;
     }

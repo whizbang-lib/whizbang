@@ -123,6 +123,7 @@ public class PerspectiveModelArrayAnalyzerTests {
             public string Title { get; set; }
 
             [VectorField(1536)]
+            [Indexed]
             public float[] Embeddings { get; set; }
           }
         }
@@ -156,6 +157,7 @@ public class PerspectiveModelArrayAnalyzerTests {
             public string[] Tags { get; set; }
 
             [VectorField(1536)]
+            [Indexed]
             public float[] Embeddings { get; set; }
           }
         }

@@ -77,6 +77,57 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Issue #697: the perspective registry key for a NESTED model is the CLR form (Outer+Model),
+  /// from TypeNameUtilities.BuildClrTypeName, which the runtime mirrors with
+  /// TypeNameFormatter.FormatClrTypeName. The display-string form (Outer.Model) matched nothing
+  /// at startup and left row retention silently un-enrolled for every nested model.
+  /// </summary>
+  [Test]
+  public async Task Generator_NestedModel_RegistryKeyIsTheClrFormAsync() {
+    // Arrange
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record OwnedEvent : IEvent;
+
+      public static class Owner {
+        public record Model {
+          public string Id { get; init; } = "";
+        }
+      }
+
+      public class OwnerPerspective : IPerspectiveFor<Owner.Model, OwnedEvent> {
+        public Owner.Model Apply(Owner.Model currentData, OwnedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var registryLine = schemaExtensions!.SourceText.ToString()
+      .Split('\n')
+      .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
+    await Assert.That(registryLine).IsNotNull();
+    await Assert.That(registryLine).Contains("TestApp.Owner+Model")
+      .Because("the registry key is the CLR form, '+' for the nesting, the form the runtime looks up");
+    await Assert.That(registryLine).DoesNotContain("TestApp.Owner.Model")
+      .Because("a display-string key matches nothing at runtime (issue #697)");
+  }
+
+  /// <summary>
   /// Test that a DbContext WITHOUT [WhizbangDbContext] attribute is NOT discovered.
   /// Explicit opt-in is required - no attribute = no participation.
   /// </summary>
@@ -925,7 +976,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = registration!.SourceText.ToString();
 
-    // Should try {Name}-init connection string first (convention-based PgBouncer bypass)
+    // Should try the name-init connection string first, the convention-based PgBouncer bypass —
     await Assert.That(sourceText).Contains("-init");
     await Assert.That(sourceText).Contains("GetConnectionString");
 
@@ -1095,10 +1146,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
         [StreamId]
         public Guid Id { get; init; }
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public Guid? ActivityId { get; init; }
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string? ActivityTreeId { get; init; }
 
         public string Name { get; init; } = "";
@@ -1440,6 +1493,98 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Regression lock: EVERY generated DbContext configuration must carry the full npgsqlOptions, not
+  /// just the ones registered through <c>AddDbContext</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// There are three places a context is configured: the public Add method, the model-registration
+  /// re-add, and the schema initializer's dedicated context built from the initialization connection
+  /// string. The first two share an emission helper and the third did not, so it was missing the EF
+  /// vector mapping, the Whizbang function translators, and retry.
+  /// </para>
+  /// <para>
+  /// The cost of that omission was not a compile error. The dedicated context is only built when an
+  /// initialization connection string exists, so the path lay dormant until one was configured, and
+  /// then EF model validation refused the vector property and no schema could be initialized at all.
+  /// </para>
+  /// <para>
+  /// Asserted by counting rather than by looking at the helper, because the previous lock counted
+  /// <c>services.AddDbContext&lt;</c> and the third path does not use it: a test shaped around one
+  /// registration style cannot see a new one. Every <c>UseNpgsql</c> gets the same configuration or
+  /// this fails.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_EveryDbContextConfiguration_CarriesTheFullNpgsqlOptionsAsync() {
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record EmbeddingModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [VectorField(1536)]
+        [Indexed]
+        public float[]? Embeddings { get; init; }
+
+        public string Name { get; init; } = "";
+      }
+
+      public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, TestEvent> {
+        public EmbeddingModel Apply(EmbeddingModel currentData, TestEvent @event) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var configurations = 0;
+    var functions = 0;
+    var retries = 0;
+    var vectorMappings = 0;
+
+    foreach (var generated in result.GeneratedSources) {
+      foreach (var raw in generated.SourceText.ToString().Split('\n')) {
+        var line = raw.Trim();
+        // Comments mention these by name, and a mention is not a call.
+        if (line.StartsWith("//", StringComparison.Ordinal)) {
+          continue;
+        }
+
+        if (line.Contains(".UseNpgsql(", StringComparison.Ordinal)) { configurations++; }
+        if (line.Contains("npgsqlOptions.UseWhizbangFunctions()", StringComparison.Ordinal)) { functions++; }
+        if (line.Contains("npgsqlOptions.EnableRetryOnFailure(", StringComparison.Ordinal)) { retries++; }
+        if (line.Contains("npgsqlOptions.UseVector()", StringComparison.Ordinal)) { vectorMappings++; }
+      }
+    }
+
+    await Assert.That(configurations).IsGreaterThan(1)
+      .Because("there is more than one place a context is configured, and this only means something "
+        + "if it sees all of them");
+    await Assert.That(functions).IsEqualTo(configurations)
+      .Because("collective-apply ExecuteUpdate cannot translate JsonbSet without the translators");
+    await Assert.That(retries).IsEqualTo(configurations)
+      .Because("a context without retry fails on the first transient error instead of surviving it");
+    await Assert.That(vectorMappings).IsEqualTo(configurations)
+      .Because("the data-source handler is not the EF mapping: without npgsqlOptions.UseVector() the "
+        + "model refuses a vector property and nothing can be initialized");
+  }
+
+  /// <summary>
   /// Test that perspective DDL includes vector fields marked with [VectorField] attribute.
   /// Vector fields should use pgvector's vector type with specified dimensions.
   /// </summary>
@@ -1463,6 +1608,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
         public Guid Id { get; init; }
 
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embeddings { get; init; }
 
         public string Name { get; init; } = "";
@@ -1581,6 +1727,139 @@ public class EFCoreServiceRegistrationGeneratorTests {
     // Count occurrences of " Models " (with spaces to avoid false positives)
     var modelsCount = sourceText.Split("public DbSet").Length - 1;
     await Assert.That(modelsCount).IsEqualTo(2); // Two unique DbSet properties
+  }
+
+  /// <summary>
+  /// A declared column type reaches the DDL.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This generator emits the table; the configuration generator emits the model. They derive the
+  /// column type separately, so both have to honour what the author declared, or the model and the
+  /// table describe different columns.
+  /// </para>
+  /// <para>
+  /// A declared LENGTH is a different matter and is pinned as unhonoured. This generator emits
+  /// CREATE TABLE and additive ADD COLUMN, never ALTER COLUMN TYPE, so honouring a length that has
+  /// been declarable and ignored for a long time would constrain a new database where an existing
+  /// one stays unconstrained. A declared column type does not have that problem: it is new, so
+  /// there is no existing table that declared one and was ignored.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_DeclaredColumnType_ReachesTheTable_WhileLengthStaysUnhonouredAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System;
+
+      namespace TestApp;
+
+      public record LineageEvent : IEvent;
+
+      public class LineageModel {
+        [PhysicalField(ColumnType = "uuid[]")]
+        public Guid[] AncestorIds { get; init; } = [];
+
+        [PhysicalField(MaxLength = 64)]
+        public string Label { get; init; } = "";
+      }
+
+      public class LineagePerspective : IPerspectiveFor<LineageModel, LineageEvent> {
+        public LineageModel Apply(LineageModel currentData, LineageEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("uuid[]", StringComparison.Ordinal)
+      .Because("the derivation's fallback is text, so a declared type that did not win here would "
+             + "create the array column as a delimited string.");
+    // MaxLength is deliberately NOT asserted here. This generator does not honour it, and making
+    // it do so would constrain a new database where an existing one is unconstrained; see the
+    // comment at the construction site.
+    await Assert.That(sourceText).Contains("TEXT", StringComparison.Ordinal)
+      .Because("a declared length is not honoured on this path, so the column stays text -- pinned "
+             + "so that changing it is a decision with a migration behind it rather than a silent "
+             + "divergence between databases of different ages.");
+  }
+
+  /// <summary>
+  /// A declared composite index, and a partial one, reach the DDL.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A composite covers properties filtered together, and its element order is the order declared,
+  /// because that is what a composite index means: PostgreSQL answers a filter on a leading subset
+  /// and cannot use the index for one that skips the leading property.
+  /// </para>
+  /// <para>
+  /// The two elements here are deliberately of different storage. One is promoted to a column and
+  /// one stays in the document, so the index mixes a column reference with an extraction -- which
+  /// is what lets an author name a property without knowing which it is.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_DeclaredCompositeAndPartialIndexes_ReachTheTableAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System;
+
+      namespace TestApp;
+
+      public record DocEvent : IEvent;
+
+      [PerspectiveIndex(nameof(TenantId), nameof(EntityType))]
+      [PerspectiveIndex(nameof(TenantId), Where = "(data ->> 'Status') = 'active'")]
+      public class DocModel {
+        [PhysicalField]
+        public Guid TenantId { get; init; }
+
+        public string EntityType { get; init; } = "";
+        public string Status { get; init; } = "";
+      }
+
+      public class DocPerspective : IPerspectiveFor<DocModel, DocEvent> {
+        public DocModel Apply(DocModel currentData, DocEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // The promoted property by its column, the document one by its extraction, in declared order.
+    await Assert.That(sourceText).Contains("(tenant_id, (data ->> 'EntityType'))", StringComparison.Ordinal)
+      .Because("a composite mixes a column and an extraction, and keeps the declared order, since "
+             + "the order is what decides which filters the index can answer.");
+
+    await Assert.That(sourceText).Contains("WHERE (data ->> 'Status') = 'active'", StringComparison.Ordinal)
+      .Because("the partial predicate is written through verbatim; it has to match the text of the "
+             + "query's own filter or PostgreSQL will not use the index.");
+
+    await Assert.That(sourceText).Contains("CREATE INDEX IF NOT EXISTS", StringComparison.Ordinal)
+      .Because("the schema pass runs on every start, so every statement it emits is idempotent.");
   }
 
   /// <summary>
@@ -2355,7 +2634,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_ModelWithNestedCollections_EmitsRecursiveDataCoalescerRegistrationAsync() {
     // Arrange - a model two complex-collection levels deep, with a nullable collection that must be skipped.
-    var source = """
+    const string source = """
       #nullable enable
       using System;
       using System.Collections.Generic;

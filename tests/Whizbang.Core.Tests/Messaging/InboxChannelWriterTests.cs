@@ -13,10 +13,12 @@ namespace Whizbang.Core.Tests.Messaging;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for <see cref="InboxChannelWriter"/> — the unbounded
 /// channel + in-flight tracker used by <c>WorkChannelWriter</c> to feed
 /// the inbox dispatch worker.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 ///   1. WriteAsync / TryWrite both register the message_id in the
 ///      in-flight set BEFORE pushing onto the channel (no race window).
@@ -26,6 +28,7 @@ namespace Whizbang.Core.Tests.Messaging;
 ///   4. Complete signals the channel reader.
 ///   5. SignalNewInboxWorkAvailable fires the event when subscribers exist;
 ///      no-ops cleanly when there are none.
+/// </para>
 /// </summary>
 /// <docs>messaging/inbox-channel</docs>
 public class InboxChannelWriterTests {

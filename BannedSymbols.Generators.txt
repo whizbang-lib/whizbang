@@ -1,0 +1,8 @@
+# Generator-side type-name sources (issue #698). Every type name a generator writes is a key the
+# runtime looks up (clr_type_name, event_type, registry JSON) or generated source; there is one
+# rendering per form, and it lives in TypeNameUtilities. Nothing else may call the raw display APIs.
+M:Microsoft.CodeAnalysis.ISymbol.ToDisplayString(Microsoft.CodeAnalysis.SymbolDisplayFormat); Render symbols with TypeNameUtilities (FullyQualified, Display, MinimallyQualified, NamespaceName, BuildClrTypeName, FormatTypeNameForRuntime) so the generated key matches the runtime's (issue #698)
+M:Microsoft.CodeAnalysis.ITypeSymbol.ToDisplayString(Microsoft.CodeAnalysis.NullableFlowState,Microsoft.CodeAnalysis.SymbolDisplayFormat); Render symbols with TypeNameUtilities (issue #698)
+M:Microsoft.CodeAnalysis.ISymbol.ToDisplayParts(Microsoft.CodeAnalysis.SymbolDisplayFormat); Render symbols with TypeNameUtilities (issue #698)
+M:Microsoft.CodeAnalysis.ITypeSymbol.ToDisplayParts(Microsoft.CodeAnalysis.NullableFlowState,Microsoft.CodeAnalysis.SymbolDisplayFormat); Render symbols with TypeNameUtilities (issue #698)
+P:Microsoft.CodeAnalysis.ISymbol.MetadataName; Render symbols with TypeNameUtilities (issue #698)

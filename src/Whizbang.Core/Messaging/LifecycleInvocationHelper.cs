@@ -185,6 +185,13 @@ public static class LifecycleInvocationHelper {
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Outbox);
+        // Resolve the invoker before deserializing: a host without one has nothing to invoke, so the
+        // payload round trip (and any failure it could raise) is work with no consumer.
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (receptorInvoker is null) {
+          continue;
+        }
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
         var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
 
@@ -193,11 +200,7 @@ public static class LifecycleInvocationHelper {
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
         var receptorSw = Stopwatch.StartNew();
         try {
-          await using var scope = scopeFactory.CreateAsyncScope();
-          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
-          }
+          await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
         } catch (Exception ex) {
           metrics?.ReceptorErrors.Add(1,
             new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
@@ -232,6 +235,13 @@ public static class LifecycleInvocationHelper {
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Inbox);
+        // Resolve the invoker before deserializing: a host without one has nothing to invoke, so the
+        // payload round trip (and any failure it could raise) is work with no consumer.
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (receptorInvoker is null) {
+          continue;
+        }
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
         var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
 
@@ -240,11 +250,7 @@ public static class LifecycleInvocationHelper {
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
         var receptorSw = Stopwatch.StartNew();
         try {
-          await using var scope = scopeFactory.CreateAsyncScope();
-          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
-          }
+          await receptorInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
         } catch (Exception ex) {
           metrics?.ReceptorErrors.Add(1,
             new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),

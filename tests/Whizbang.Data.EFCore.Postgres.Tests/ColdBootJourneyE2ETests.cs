@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -38,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Startup/StartupPipelineHosting.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class ColdBootJourneyE2ETests {
 
   private string? _databaseName;
@@ -45,11 +47,9 @@ public class ColdBootJourneyE2ETests {
   private DbContextOptions<WorkCoordinationDbContext> _dbOptions = null!;
   private string _connectionString = null!;
 
-  private sealed class ProbeModel {
-    public Guid Id { get; set; }
-  }
+  private sealed class ProbeModel;
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "coldboot-svc";
     public string HostName => "coldboot-host";
@@ -62,7 +62,7 @@ public class ColdBootJourneyE2ETests {
     };
   }
 
-  private sealed class _recordingRunControl : IWhizbangRunControl {
+  private sealed class RecordingRunControl : IWhizbangRunControl {
     private readonly List<LifecyclePhase> _seen = [];
     private readonly Lock _lock = new();
     public string Component => "journey-recorder";
@@ -129,7 +129,7 @@ public class ColdBootJourneyE2ETests {
           WHERE datname = '{_databaseName}' AND pid <> pg_backend_pid()";
         await terminate.ExecuteNonQueryAsync();
         await using var drop = admin.CreateCommand();
-        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName}";
+        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)";
         await drop.ExecuteNonQueryAsync();
       } catch {
         // container teardown reclaims stragglers
@@ -143,8 +143,9 @@ public class ColdBootJourneyE2ETests {
   /// <summary>One booting pod: the REAL generated dispatcher, real coordinator, real gates, real
   /// lens registration, real lifecycle machine with the real instance-state participant.</summary>
   private ServiceProvider _buildPodServices(
-      _pod pod, SchemaReadyGate schemaGate, ReadModelsReadyGate readGate, _recordingRunControl recorder) {
+      Pod pod, SchemaReadyGate schemaGate, ReadModelsReadyGate readGate, RecordingRunControl recorder) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     services.AddSingleton<IServiceInstanceProvider>(pod);
@@ -158,9 +159,12 @@ public class ColdBootJourneyE2ETests {
     services.AddScoped<IWorkCoordinator>(sp => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
     services.AddScoped<IWorkCoordinatorStrategy>(sp => new ScopedWorkCoordinatorStrategy(
-      sp.GetRequiredService<IWorkCoordinator>(), pod, workChannelWriter: null,
-      new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
-      sp.GetService<ILogger<ScopedWorkCoordinatorStrategy>>()));
+      coordinator: sp.GetRequiredService<IWorkCoordinator>(),
+      instanceProvider: pod,
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
+      logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
+      inboxChannelWriter: new InboxChannelWriter()));
 
     // The write seam: the real generated dispatcher resolves this gate lazily.
     services.AddSingleton<ISchemaReadyGate>(schemaGate);
@@ -177,8 +181,10 @@ public class ColdBootJourneyE2ETests {
     services.AddSingleton<IWhizbangLifecycleState>(sp => new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
         [recorder, new InstanceStateRunControl(
-          sp.GetRequiredService<IServiceScopeFactory>(), pod,
-          new LibraryVersionProvider("999.9.9"))],
+          scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+          instanceProvider: pod,
+          versionProvider: new LibraryVersionProvider("999.9.9"),
+          logger: NullLogger<InstanceStateRunControl>.Instance)],
         lifecycleOptions),
       lifecycleOptions));
 
@@ -209,10 +215,10 @@ public class ColdBootJourneyE2ETests {
   [Test]
   [Timeout(120000)]
   public async Task ColdBoot_TheSeamsRefuse_ThenTheLadderOpensInOrderAsync(CancellationToken cancellationToken) {
-    var pod = new _pod();
+    var pod = new Pod();
     var schemaGate = new SchemaReadyGate();
     var readGate = new ReadModelsReadyGate();
-    var recorder = new _recordingRunControl();
+    var recorder = new RecordingRunControl();
     await using var provider = _buildPodServices(pod, schemaGate, readGate, recorder);
 
     var lifecycle = provider.GetRequiredService<IWhizbangLifecycleState>();
@@ -265,7 +271,7 @@ public class ColdBootJourneyE2ETests {
     }
     await Assert.That(lifecycle.Phase).IsEqualTo(LifecyclePhase.AcceptingCommands);
 
-    // (3) The read side releases (the driver's moment — owned by ReadModelsReadyDriverTests);
+    // (3) The read side releases (the driver's moment — owned by ReadModelsReadyDriverTests) —
     // the ladder settles at Running and the lens serves.
     readGate.MarkReady();
     await _awaitPhaseAsync(lifecycle, LifecyclePhase.Running, cancellationToken);
@@ -299,19 +305,21 @@ public class ColdBootJourneyE2ETests {
     // Two pods, each its own pipeline (real Assess over the real ledger, real Migrate over its own
     // gate), racing the REAL generated initializer against one cold database — the in-database
     // advisory lock is the only referee, exactly as in production.
-    var podA = new _pod();
-    var podB = new _pod();
+    var podA = new Pod();
+    var podB = new Pod();
     var gateA = new SchemaReadyGate();
     var gateB = new SchemaReadyGate();
-    await using var providerA = _buildPodServices(podA, gateA, new ReadModelsReadyGate(), new _recordingRunControl());
-    await using var providerB = _buildPodServices(podB, gateB, new ReadModelsReadyGate(), new _recordingRunControl());
+    await using var providerA = _buildPodServices(podA, gateA, new ReadModelsReadyGate(), new RecordingRunControl());
+    await using var providerB = _buildPodServices(podB, gateB, new ReadModelsReadyGate(), new RecordingRunControl());
 
     StartupPipelineRunner _runnerFor(ServiceProvider provider, SchemaReadyGate gate, StartupPipelineState state) {
       var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
       var assessor = new EFCorePostgresStartupAssessor(
         scopeFactory, typeof(WorkCoordinationDbContext), new LibraryVersionProvider("999.9.9"));
       return new StartupPipelineRunner(
-        [new AssessStartupStep(assessor), new MigrateStartupStep(gate)], [state]);
+        steps: [new AssessStartupStep(assessor: assessor, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(gate)],
+        observers: [state],
+        dutyElector: NullDutyElector.Instance);
     }
 
     var stateA = new StartupPipelineState();

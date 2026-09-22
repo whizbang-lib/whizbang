@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core;
@@ -22,7 +23,54 @@ namespace Whizbang.Core;
 /// - Type.FullName (no assembly info, can't deserialize across assemblies)
 /// - Type.AssemblyQualifiedName (includes version info that changes across builds)</para>
 /// </remarks>
+#pragma warning disable RS0030 // the one place the raw type-name sources (Type.FullName, AssemblyQualifiedName, Assembly.FullName) are allowed (issue #698)
 public static class TypeNameFormatter {
+  // ---------------------------------------------------------------------------------------------
+  // The named rendering forms (issue #698). The raw sources of a type name (Type.FullName,
+  // Type.AssemblyQualifiedName, Assembly.FullName) are banned outside this file and
+  // EventTypeMatchingHelper, so every site names which form it wants: a KEY (Format,
+  // FormatClrTypeName), the versioned wire form some envelope paths still carry
+  // (AssemblyQualifiedName), or display text for logs, traces and messages (DisplayName).
+  // ---------------------------------------------------------------------------------------------
+
+  /// <summary>
+  /// Display text for logs, traces, exception messages and metric tags: the full name when the
+  /// type has one, else its simple name. Never a key.
+  /// </summary>
+  /// <param name="type">The type to describe.</param>
+  public static string DisplayName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.FullName ?? type.Name;
+  }
+
+  /// <summary>
+  /// The versioned assembly-qualified form (<code>Ns.Type, Assembly, Version=..., Culture=...,
+  /// PublicKeyToken=...</code>) that the envelope-type wire header and a few storage paths carry.
+  /// Compare it with <see cref="Whizbang.Core.Messaging.EventTypeMatchingHelper"/>, never with
+  /// <c>==</c>: the version decoration changes across builds.
+  /// </summary>
+  /// <param name="type">The type to name.</param>
+  /// <exception cref="InvalidOperationException">The type has no assembly-qualified name (an open generic parameter).</exception>
+  public static string AssemblyQualifiedName(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Type {type.Name} does not have an assembly-qualified name");
+  }
+
+  /// <summary>The versioned assembly-qualified form, or null for a type that has none.</summary>
+  /// <param name="type">The type to name.</param>
+  public static string? AssemblyQualifiedNameOrNull(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return type.AssemblyQualifiedName;
+  }
+
+  /// <summary>Display text for an assembly (its full display name, else its simple name).</summary>
+  /// <param name="assembly">The assembly to describe.</param>
+  public static string AssemblyDisplayName(System.Reflection.Assembly assembly) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    return assembly.FullName ?? assembly.GetName().Name ?? string.Empty;
+  }
+
   /// <summary>
   /// Formats a type to "TypeName, AssemblyName" format for consistent storage and matching.
   /// This is the standard format used across Whizbang for type identification.
@@ -66,6 +114,20 @@ public static class TypeNameFormatter {
     ArgumentNullException.ThrowIfNull(type);
     return type.FullName
       ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
+  }
+
+  /// <summary>
+  /// The non-throwing form of <see cref="FormatClrTypeName"/> for callers that walk a registry
+  /// of types they did not construct: a generic type parameter, an open generic's argument, or an
+  /// array of one has no CLR full name and must be skipped, never forwarded as a null key.
+  /// </summary>
+  /// <param name="type">The type to format.</param>
+  /// <param name="clrTypeName">The CLR full type name when the type has one.</param>
+  /// <returns><c>true</c> when the type has a CLR full name.</returns>
+  public static bool TryFormatClrTypeName(Type type, [NotNullWhen(true)] out string? clrTypeName) {
+    ArgumentNullException.ThrowIfNull(type);
+    clrTypeName = type.FullName;
+    return clrTypeName is not null;
   }
 
   /// <summary>
@@ -264,3 +326,4 @@ public static class TypeNameFormatter {
     return GetFullName(envelopeType);
   }
 }
+#pragma warning restore RS0030

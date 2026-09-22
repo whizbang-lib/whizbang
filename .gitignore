@@ -431,6 +431,12 @@ FodyWeavers.xsd
 # Migrations - commented to allow src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/
 coverage[0-9\-a-zA-Z]*
 coverage
+# The two patterns above are for what the collector writes (coverage.xml, coverage-report). They
+# match on name alone, anywhere in the tree, so they also swallowed ai-docs/coverage-exclusions.md:
+# CLAUDE.md and ai-docs/README.md both linked that file while it could never be committed, and it
+# has no history on any ref because of this line rather than because nobody wrote it. A document
+# about coverage is documentation, not output.
+!ai-docs/coverage-*.md
 
 # Development artifacts
 *.bak
@@ -459,3 +465,7 @@ local-packages/
 
 # Stryker.NET mutation testing output
 **/StrykerOutput/
+Whizbang.Analysis.slnx
+
+# Local git worktrees — checkouts, never content
+.worktrees/

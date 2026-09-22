@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -18,7 +19,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [NotInParallel]
 public sealed class DispatcherPerspectiveSyncCommandTests {
   // Test perspective type
-  public sealed class TestSyncPerspective { }
+  public sealed class TestSyncPerspective;
 
   // Test command (NOT an event) - should NOT wait for perspective sync
   public sealed record TestSyncCommand([property: StreamId] Guid StreamId) : ICommand;
@@ -95,9 +96,7 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var eventMessage = new TestSyncEvent(Guid.NewGuid());
 
     // Act & Assert - SHOULD throw timeout because no perspective processes the event
-    await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () => {
-      await dispatcher.LocalInvokeAsync(eventMessage);
-    }).Because("Event WITH [AwaitPerspectiveSync] should wait and timeout when not processed");
+    await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () => await dispatcher.LocalInvokeAsync(eventMessage)).Because("Event WITH [AwaitPerspectiveSync] should wait and timeout when not processed");
   }
 
   [Test]
@@ -135,7 +134,7 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

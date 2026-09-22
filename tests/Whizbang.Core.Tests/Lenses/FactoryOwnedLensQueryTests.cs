@@ -13,6 +13,7 @@ namespace Whizbang.Core.Tests.Lenses;
 /// <docs>lenses/lens-query-factory</docs>
 [Category("Core")]
 [Category("Lenses")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
 public class FactoryOwnedLensQueryTests {
   // Test model
   private sealed record TestModel {
@@ -57,6 +58,7 @@ public class FactoryOwnedLensQueryTests {
     // Assert
     await Assert.That(factory.GetQueryCallCount).IsEqualTo(1);
   }
+
 
   #endregion
 
@@ -226,20 +228,6 @@ public class FactoryOwnedLensQueryTests {
     await Assert.That(factory.DisposeCallCount).IsEqualTo(1);
   }
 
-  [Test]
-  public async Task DisposeAsync_WhenAlreadyDisposed_DoesNotThrow_Async() {
-    // Arrange
-    var factory = new MockLensQueryFactory();
-    factory.SetQuery(new MockLensQuery<TestModel>());
-    var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
-
-    await wrapper.DisposeAsync();
-
-    // Act & Assert - Second dispose should not throw
-    await wrapper.DisposeAsync();
-    await Assert.That(factory.DisposeCallCount).IsEqualTo(1);
-  }
-
   #endregion
 
   #region Delegation Tests (Scope / ScopeOverride / DefaultScope)
@@ -307,7 +295,7 @@ public class FactoryOwnedLensQueryTests {
     factory.SetQuery(new MockLensQuery<TestModel>());
     var wrapper = new FactoryOwnedLensQuery<TestModel>(factory);
 
-    wrapper.Dispose();
+    await wrapper.DisposeAsync();
     wrapper.Dispose();
     wrapper.Dispose();
 

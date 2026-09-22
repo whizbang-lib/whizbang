@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -23,9 +25,9 @@ namespace Whizbang.Core.Tests.Messaging;
 public class EventStoreDecoratorForwardingTests {
   public static IEnumerable<Func<IEventStore>> Decorators() => [
     () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
-    () => new AppendAndWaitEventStoreDecorator(new ProbeAwareStore(), new NoopSyncAwaiter()),
-    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions())),
-    () => new SyncTrackingEventStoreDecorator(new ProbeAwareStore()),
+    () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance),
+    () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
     () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
   ];
 
@@ -85,6 +87,16 @@ public class EventStoreDecoratorForwardingTests {
       .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (false) — a swallowed probe disables resurrection-on-wake");
   }
 
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTypedHasStreamEventsBefore_ToInnerStoreAsync(IEventStore decorated) {
+    // Issue #696: the generated runner probes with the perspective's handled event types. A
+    // decorator that forwards only the untyped overload leaves the typed one on the interface
+    // default (false), which silently disables resurrection-on-wake through that decoration.
+    await Assert.That(await decorated.HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.NewGuid(), [typeof(string)])).IsTrue()
+      .Because($"{decorated.GetType().Name} must forward the typed probe to the inner store's override");
+  }
+
   /// <summary>
   /// An inner store whose probe methods return sentinel values distinguishable from the
   /// interface defaults (null / false) — forwarding is proven iff the sentinel surfaces
@@ -122,6 +134,9 @@ public class EventStoreDecoratorForwardingTests {
       Task.FromResult<long?>(42L);
 
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(true);
+
+    public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
   }
 

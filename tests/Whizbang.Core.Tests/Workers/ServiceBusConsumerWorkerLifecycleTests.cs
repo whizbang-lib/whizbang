@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -52,7 +53,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: $"test_inbox_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         invoked = true;
         capturedStage = stage;
         return ValueTask.FromResult<object?>(null);
@@ -60,6 +61,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -82,6 +84,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     // Arrange: DI container WITHOUT IReceptorInvoker registered
     // This tests the guard: if (receptorInvoker is not null && ...)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
 
@@ -102,7 +105,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(LifecycleStage.PreInboxDetached, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: "test_context_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         // Access lifecycle context via the accessor (set by ReceptorInvoker)
         var accessor = sp.GetService<ILifecycleContextAccessor>();
         capturedContext = accessor?.Current;
@@ -111,6 +114,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddScoped<ILifecycleContextAccessor, AsyncLocalLifecycleContextAccessor>();
     services.AddSingleton<IReceptorRegistry>(registry);
@@ -150,7 +154,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
       registry.AddReceptor(stage, new ReceptorInfo(
         MessageType: typeof(TestInboxEvent),
         ReceptorId: $"test_dual_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -158,6 +162,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -186,6 +191,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     var registry = new TestLifecycleReceptorRegistry();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp =>
@@ -220,7 +226,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(LifecycleStage.PostInboxInline, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: "test_security_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -228,6 +234,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     ));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
@@ -261,7 +268,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
       registry.AddReceptor(stage, new ReceptorInfo(
         MessageType: typeof(TestInboxEvent),
         ReceptorId: $"test_postlifecycle_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -269,6 +276,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     }
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity();
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -395,8 +403,10 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

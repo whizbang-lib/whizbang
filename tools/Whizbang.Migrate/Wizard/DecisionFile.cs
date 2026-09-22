@@ -109,6 +109,27 @@ public sealed class DecisionFile {
   /// <summary>
   /// Generates JSONC content with helpful comments explaining each setting.
   /// </summary>
+  // The commented document below is hand-built rather than serialized, so every value it does
+  // not interpolate is silently dropped on the next load. These helpers exist so state and
+  // per-file decisions render as real JSON instead of the placeholder literals that used to sit
+  // there. JsonEncodedText keeps the escaping correct without reflection, which the source-
+  // generated context in this file requires.
+  private static string _jsonText(string? value)
+    => value is null ? "null" : $"\"{JsonEncodedText.Encode(value)}\"";
+
+  private static string _jsonDate(DateTimeOffset? value)
+    => value is null ? "null" : $"\"{value.Value:O}\"";
+
+  private static string _jsonList(List<string> items)
+    => items.Count == 0
+      ? "[]"
+      : "[" + string.Join(", ", items.Select(_jsonText)) + "]";
+
+  private static string _jsonOverrides(Dictionary<string, DecisionChoice> overrides)
+    => overrides.Count == 0
+      ? "{}"
+      : "{ " + string.Join(", ", overrides.Select(kv => $"{_jsonText(kv.Key)}: \"{kv.Value}\"")) + " }";
+
   public string ToJsonWithComments() {
     var timestamp = GeneratedAt.ToString("O");
 
@@ -125,14 +146,17 @@ public sealed class DecisionFile {
   // Current migration state (managed by the tool)
   "state": {
     "status": "{{State.Status}}",
-    "started_at": null,
-    "last_updated_at": null,
-    "completed_at": null,
-    "git_commit_before": null,
-    "completed_categories": [],
-    "current_category": null,
-    "current_item": 0
+    "started_at": {{_jsonDate(State.StartedAt)}},
+    "last_updated_at": {{_jsonDate(State.LastUpdatedAt)}},
+    "completed_at": {{_jsonDate(State.CompletedAt)}},
+    "git_commit_before": {{_jsonText(State.GitCommitBefore)}},
+    "completed_categories": {{_jsonList(State.CompletedCategories)}},
+    "current_category": {{_jsonText(State.CurrentCategory)}},
+    "current_item": {{State.CurrentItem}}
   },
+
+  // Files excluded from every category.
+  "exclude_patterns": {{_jsonList(ExcludePatterns)}},
 
   "decisions": {
     // ═══════════════════════════════════════════════════════════════════════════
@@ -149,7 +173,7 @@ public sealed class DecisionFile {
 
       // Per-file overrides (use full or relative paths)
       // Example: "src/Handlers/MyHandler.cs": "Skip"
-      "overrides": {}
+      "overrides": {{_jsonOverrides(Decisions.Handlers.Overrides)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -164,7 +188,7 @@ public sealed class DecisionFile {
       "multi_stream": "{{Decisions.Projections.MultiStream}}",
 
       "default": "{{Decisions.Projections.Default}}",
-      "overrides": {}
+      "overrides": {{_jsonOverrides(Decisions.Projections.Overrides)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -204,7 +228,7 @@ public sealed class DecisionFile {
     // Transforms service registration patterns.
     "di_registration": {
       "default": "{{Decisions.DiRegistration.Default}}",
-      "overrides": {}
+      "overrides": {{_jsonOverrides(Decisions.DiRegistration.Overrides)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════

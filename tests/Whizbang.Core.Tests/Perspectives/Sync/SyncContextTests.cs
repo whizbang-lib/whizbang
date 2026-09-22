@@ -12,7 +12,7 @@ public class SyncContextTests {
   /// <summary>
   /// Dummy perspective type for tests.
   /// </summary>
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // Property storage tests

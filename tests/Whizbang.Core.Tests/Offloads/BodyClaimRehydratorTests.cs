@@ -49,7 +49,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.BodyClaimProviderUnknown)
       .Because("Unknown provider MUST dead-letter with the typed reason — silently dropping would lose the message, processing without the body would skip the payload.");
     await Assert.That(result.FailureDescription).IsNotNull();
-    await Assert.That(result.FailureDescription!).Contains("AddWhizbang");
+    await Assert.That(result.FailureDescription).Contains("AddWhizbang");
   }
 
   [Test]
@@ -109,7 +109,7 @@ public class BodyClaimRehydratorTests {
     // deserialize / unknown-provider — still dead-letter, asserted by the other tests.)
     var services = new ServiceCollection();
     var store = new ThrowingStore("memory");
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => store);
     var sp = services.BuildServiceProvider();
     var claim = new MessageBodyClaim(
       ProviderName: "memory", StorageKey: "test://does-not-exist",
@@ -131,7 +131,7 @@ public class BodyClaimRehydratorTests {
     // A hung body-store download must be aborted at DownloadTimeout and surfaced as a retryable throw —
     // never stall the consumer indefinitely on a blob call that never returns.
     var services = new ServiceCollection();
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => new HangingStore("memory"));
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => new HangingStore("memory"));
     services.AddSingleton<IOptions<MessageBodyOffloadOptions>>(
       Options.Create(new MessageBodyOffloadOptions { DownloadTimeout = TimeSpan.FromMilliseconds(100) }));
     var sp = services.BuildServiceProvider();
@@ -150,7 +150,7 @@ public class BodyClaimRehydratorTests {
 
   [Test]
   public async Task MaybeRehydrateAsync_DownloadCanceled_PropagatesOperationCanceledAsync() {
-    // When the RECEIVER's own CancellationToken is cancelled (host shutdown), the rehydrator must
+    // When the RECEIVER's own CancellationToken is canceled (host shutdown), the rehydrator must
     // propagate the OperationCanceledException untouched so the consumer stops cleanly — it must NOT
     // be masked as a retryable download failure (that path is only for timeouts / store errors).
     var services = new ServiceCollection();
@@ -170,7 +170,7 @@ public class BodyClaimRehydratorTests {
         claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName,
         _buildJsonOptions(), sp, shutdownCts.Token))
       .Throws<OperationCanceledException>()
-      .Because("A cancelled receiver CT (host shutdown) propagates untouched — distinct from the retryable download-failure path.");
+      .Because("A canceled receiver CT (host shutdown) propagates untouched — distinct from the retryable download-failure path.");
   }
 
   [Test]
@@ -187,7 +187,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("Missing JsonTypeInfo is a config gap — dead-letter with a clear message pointing at the registration so ops can diagnose.");
-    await Assert.That(result.FailureDescription!).Contains("Some.Unknown.NotRegisteredType");
+    await Assert.That(result.FailureDescription).Contains("Some.Unknown.NotRegisteredType");
   }
 
   [Test]
@@ -205,7 +205,7 @@ public class BodyClaimRehydratorTests {
     await Assert.That(result.IsDeadLetter).IsTrue();
     await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.SerializationError)
       .Because("Storage corruption / wrong-type claims must dead-letter with SerializationError — the worker must never bubble JsonException to its outer scope.");
-    await Assert.That(result.FailureDescription!).Contains("Failed to deserialize");
+    await Assert.That(result.FailureDescription).Contains("Failed to deserialize");
   }
 
   // Helpers
@@ -246,7 +246,9 @@ public class BodyClaimRehydratorTests {
 
     await Assert.That(result.IsDeadLetter).IsFalse();
 
-    var counts = helper.GetByName("whizbang.transport.body_claim.rehydrated.count");
+    // Passive counter: the untagged series always reports (at zero); the type-tagged series is
+    // the one this rehydration counted.
+    var counts = helper.GetByName("whizbang.transport.body_claim.rehydrated.count").Where(m => m.Value > 0).ToList();
     await Assert.That(counts.Count).IsEqualTo(1);
     await Assert.That(counts[0].Value).IsEqualTo(1d);
 
@@ -263,7 +265,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = activeCleanup);
     // Only register metrics when a test supplies an isolated instance (parallel-safe metric capture).
     if (metrics is not null) {
@@ -282,7 +284,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     _store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     return services.BuildServiceProvider();
   }
 
@@ -316,12 +318,10 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Minimal store impl that captures bytes by claim's StorageKey so tests can introspect.</summary>
-  internal sealed class InMemoryStoreImpl : IMessageBodyStore {
+  internal sealed class InMemoryStoreImpl(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
-    public InMemoryStoreImpl(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+
+    public string ProviderName { get; } = providerName;
     public Task<MessageBodyClaim> UploadAsync(
         ReadOnlyMemory<byte> body, string contentType,
         MessageBodyUploadOptions? options = null,
@@ -344,10 +344,8 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Store whose DownloadAsync always throws a non-CT exception — exercises the rehydrator's TransportException dead-letter path.</summary>
-  private sealed class ThrowingStore : IMessageBodyStore {
-    public ThrowingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  private sealed class ThrowingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
       => throw new InvalidOperationException("simulated provider failure");
@@ -356,10 +354,8 @@ public class BodyClaimRehydratorTests {
   }
 
   /// <summary>Store whose DownloadAsync throws OperationCanceledException — exercises the rehydrator's cancellation-propagation behavior.</summary>
-  private sealed class CancelingStore : IMessageBodyStore {
-    public CancelingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  private sealed class CancelingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default)
       => throw new OperationCanceledException();
@@ -367,11 +363,9 @@ public class BodyClaimRehydratorTests {
       => Task.CompletedTask;
   }
 
-  /// <summary>Store whose DownloadAsync never completes until cancelled — exercises the rehydrator's bounded download timeout.</summary>
-  private sealed class HangingStore : IMessageBodyStore {
-    public HangingStore(string providerName) { ProviderName = providerName; }
-    public string ProviderName { get; }
-    public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
+  /// <summary>Store whose DownloadAsync never completes until canceled — exercises the rehydrator's bounded download timeout.</summary>
+  private sealed class HangingStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName; public Task<MessageBodyClaim> UploadAsync(ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null, CancellationToken cancellationToken = default)
       => Task.FromResult(new MessageBodyClaim(ProviderName, "k", body.Length, "sha256-X", contentType, DateTimeOffset.UtcNow));
     public async Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default) {
       await Task.Delay(Timeout.Infinite, cancellationToken);  // returns only when the (linked timeout) token cancels

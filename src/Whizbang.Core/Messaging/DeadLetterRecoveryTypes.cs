@@ -92,7 +92,8 @@ public sealed record DeadLetterEntry(
   DateTimeOffset DeadLetteredAt,
   DeadLetterRecoveryStatus RecoveryStatus,
   int RecoveryAttempts,
-  string Generation);
+  string Generation,
+  string? ErrorFingerprint = null);
 
 /// <summary>
 /// Decides whether and how to recover a dead-lettered row. Default implementation reads
@@ -120,6 +121,17 @@ public interface IDeadLetterRecoveryPolicy {
   bool ShouldRecover(DeadLetterEntry entry);
 }
 
+/// <summary>Startup posture toward HELD dead-letter rows.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public enum RetryHeldOnStartupMode {
+  /// <summary>Held rows stay held (default).</summary>
+  Off = 0,
+  /// <summary>Probe each cohort; release only cohorts whose probes all recover.</summary>
+  Canary = 1,
+  /// <summary>Release every held cohort, staggered, without probing.</summary>
+  Full = 2,
+}
+
 /// <summary>
 /// Configuration for the DLQ recovery subsystem.
 /// </summary>
@@ -139,10 +151,61 @@ public sealed class DeadLetterRecoveryOptions {
   public int ScanIntervalMinutes { get; set; } = 10;
 
   /// <summary>
-  /// Maximum DLQ rows fetched per scan cycle. Bounds how many rows a single cycle
-  /// processes — subsequent scans pick up where prior ones stopped. Default <c>200</c>.
+  /// Maximum DLQ rows fetched per scan cycle — the CEILING the adaptive controller ramps
+  /// toward (see <see cref="AdaptiveScanBatchEnabled"/>). With adaptivity on (the default) a
+  /// scan never bursts to this size cold; it climbs additively from
+  /// <see cref="MinScanBatchSize"/> only while drain stays clean, so a high ceiling is safe.
+  /// With adaptivity off this is the fixed per-scan batch. Default <c>2000</c>.
   /// </summary>
-  public int ScanBatchSize { get; set; } = 200;
+  public int ScanBatchSize { get; set; } = 2000;
+
+  /// <summary>
+  /// When <c>true</c> (default), the settled-path scan batch is sized by an AIMD controller
+  /// (the same <see cref="Whizbang.Core.Workers.AdaptiveStreamBatch"/> the claim path uses):
+  /// it starts at <see cref="MinScanBatchSize"/>, grows by <see cref="ScanBatchIncreaseStep"/>
+  /// on each clean, saturated scan up to <see cref="ScanBatchSize"/>, and halves when a pass is
+  /// forced through under pressure. This lets a large backlog drain fast on an idle service
+  /// without a fixed high batch bursting into a busy one. When <c>false</c>, the fixed
+  /// <see cref="ScanBatchSize"/> is used every settled scan (legacy behavior).
+  /// </summary>
+  public bool AdaptiveScanBatchEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Floor and starting point for the adaptive scan batch — the batch a freshly started worker
+  /// uses before any drain feedback, and the size it backs off toward under pressure. Must still
+  /// make forward progress. Default <c>50</c>. Ignored when <see cref="AdaptiveScanBatchEnabled"/>
+  /// is <c>false</c>.
+  /// </summary>
+  public int MinScanBatchSize { get; set; } = 50;
+
+  /// <summary>
+  /// Rows added to the adaptive scan batch per clean, saturated scan (additive increase).
+  /// Default <c>200</c>. Ignored when <see cref="AdaptiveScanBatchEnabled"/> is <c>false</c>.
+  /// </summary>
+  public int ScanBatchIncreaseStep { get; set; } = 200;
+
+  /// <summary>
+  /// Re-claim/pressure ratio above which the adaptive scan batch halves (multiplicative
+  /// decrease). A pass forced through the settledness gate counts as full churn, so sustained
+  /// pressure walks the batch back to <see cref="MinScanBatchSize"/>. Default <c>0.5</c>.
+  /// Ignored when <see cref="AdaptiveScanBatchEnabled"/> is <c>false</c>.
+  /// </summary>
+  public double ScanBatchChurnThreshold { get; set; } = 0.5;
+
+  /// <summary>
+  /// Scan batch when recovery was FORCED through the settledness gate by the bounded-deferral
+  /// escape (#669): the service is visibly busy, so the pass runs narrow — a trickle under
+  /// load, never a flood into the very queues that are draining. Default 20.
+  /// </summary>
+  public int PressuredScanBatchSize { get; set; } = 20;
+
+  /// <summary>
+  /// Window, in minutes, over which a new build's generation replay spreads its re-offers
+  /// (#669): next_recovery_at is staggered randomly across the window instead of falling due
+  /// all at once, so a deploy's replay drains as a paced stream alongside live traffic
+  /// instead of competing with it as one mass. Default 30; 0 restores schedule-all-now.
+  /// </summary>
+  public int GenerationReplayStaggerMinutes { get; set; } = 30;
 
   /// <summary>
   /// When <c>true</c> (default), the worker runs one extra scan on startup that auto-
@@ -150,6 +213,116 @@ public sealed class DeadLetterRecoveryOptions {
   /// is not in <c>retried_on_generations</c>. Implements the "we shipped a fix" auto-replay.
   /// </summary>
   public bool EnableGenerationReplay { get; set; } = true;
+
+  /// <summary>
+  /// Whether recovery stops itself when it detects that it is generating the dead letters it is
+  /// recovering. Default <c>true</c>.
+  /// </summary>
+  /// <remarks>
+  /// Turn this off only when something else bounds the cycle. Recovery republishes a failed message,
+  /// and a message that fails again is recorded as a NEW row, so the per-row
+  /// <see cref="RecoveryPolicy.MaxRecoveryAttempts"/> check never sees the same message twice and
+  /// cannot end the cycle.
+  /// </remarks>
+  public bool LoopBreakerEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether recovery waits for the service to be idle before re-driving dead letters.
+  /// Default <c>true</c>.
+  /// </summary>
+  /// <remarks>
+  /// Re-driving puts work back onto the very queues it failed on, so recovery mid-drain is how a
+  /// backlog becomes a second storm. When true, each scan asks the housekeeping arbiter for the
+  /// slot: recovery holds the HIGHEST rank (the dead-letter table frequently contains exactly what
+  /// integrity would otherwise detect as a gap and re-request over the wire), but it still yields
+  /// to a service with unprocessed backlog and resumes on its own once the queues clear. Set false
+  /// to re-drive on the scan cadence regardless of load — appropriate only where recovery latency
+  /// matters more than interactive throughput.
+  /// </remarks>
+  public bool WaitForIdle { get; set; } = true;
+
+  /// <summary>
+  /// Startup campaign over HELD rows. <see cref="RetryHeldOnStartupMode.Off"/> (default)
+  /// leaves held rows alone. <see cref="RetryHeldOnStartupMode.Canary"/> probes
+  /// <see cref="CanaryProbeSize"/> rows per fingerprint cohort and releases a cohort only
+  /// when every probe recovers. <see cref="RetryHeldOnStartupMode.Full"/> releases every
+  /// held cohort without probing — a trust shortcut, never a pacing shortcut: release is
+  /// always staggered eligibility drained by the normal paced scans. An operator sets
+  /// this and restarts; it binds turnkey from Whizbang:DeadLetterRecovery.
+  /// </summary>
+  public RetryHeldOnStartupMode RetryHeldOnStartup { get; set; } = RetryHeldOnStartupMode.Off;
+
+  /// <summary>Probe rows per cohort in Canary mode. Default 10.</summary>
+  public int CanaryProbeSize { get; set; } = 10;
+
+  /// <summary>
+  /// Distinct build generations a cohort's campaigns may FAIL before the cohort becomes
+  /// permanently pending an operator decision. Attempt counts are evidence about a build;
+  /// this bounds how many builds get to re-test the hypothesis. Default 3.
+  /// </summary>
+  public int GenerationBudget { get; set; } = 3;
+
+  /// <summary>
+  /// When a NEW build generation is detected at startup (generation replay found rows from
+  /// an older build), run the canary campaign automatically even with
+  /// <see cref="RetryHeldOnStartup"/> Off: held rows are evidence about an old build, and
+  /// a deploy that fixed the bug should self-heal its cohorts at probe cost. An explicit
+  /// operator mode always wins over this default. Default <c>true</c>.
+  /// </summary>
+  public bool AutoCanaryOnNewGeneration { get; set; } = true;
+
+  /// <summary>
+  /// Window the release of a cohort is staggered across, so the paced scans drain it
+  /// instead of one giant due-set arriving at once. Default 30 minutes.
+  /// </summary>
+  public int ReleaseStaggerMinutes { get; set; } = 30;
+
+  /// <summary>
+  /// Dead letters normalized into the relational stack layer per scan (the async half of
+  /// the two-layer stack contract; the inline metric is the real-time half). Bounded so a
+  /// storm's backlog normalizes across ticks instead of one giant pass. Default 500;
+  /// 0 disables backfill.
+  /// </summary>
+  public int StackBackfillBatchSize { get; set; } = 500;
+
+  /// <summary>
+  /// Rolling retention, in days, for the stack-history log (<c>wh_stack_daily</c>): the
+  /// recovery worker prunes daily rows older than this so the history survives dead-letter
+  /// purging without growing without bound. Default 90. A non-positive value disables the
+  /// rolling cleanup — the log is then kept forever.
+  /// </summary>
+  public int StackHistoryRetentionDays { get; set; } = 90;
+
+  /// <summary>
+  /// Share of a scan batch that must postdate the previous scan before that cycle counts as
+  /// self-inflicted. Default <c>0.5</c>.
+  /// </summary>
+  /// <remarks>
+  /// At half, recovery is already only breaking even: it is replacing dead letters as fast as it
+  /// clears them. New failures arriving while a real backlog drains stay well under this.
+  /// </remarks>
+  public double LoopBreakerFreshFraction { get; set; } = 0.5;
+
+  /// <summary>
+  /// Consecutive self-inflicted cycles required before recovery suspends itself. Default <c>3</c>.
+  /// </summary>
+  /// <remarks>
+  /// One cycle proves nothing: an unrelated burst of failures arriving mid-scan looks identical for
+  /// a single tick. Requiring persistence keeps a spike from disabling recovery.
+  /// </remarks>
+  public int LoopBreakerConsecutiveCycles { get; set; } = 3;
+
+  /// <summary>
+  /// Minutes recovery stays suspended after the breaker trips, before it retries. Default <c>60</c>.
+  /// </summary>
+  /// <remarks>
+  /// The breaker closes again on its own so a transient condition does not need an operator, but the
+  /// window is long enough that a genuinely stuck deployment is not re-storming every few minutes.
+  /// Set to 0 to keep it open until the process restarts.
+  /// </remarks>
+  public int LoopBreakerCooldownMinutes { get; set; } = 60;
+
+  private const string HOLD_FOR_REVIEW = "HoldForReview";
 
   /// <summary>
   /// Per-<see cref="MessageFailureReason"/> recovery rules. Defaults follow the
@@ -160,15 +333,20 @@ public sealed class DeadLetterRecoveryOptions {
     [MessageFailureReason.TransportException] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.LeaseExpired] = new("AggressiveRetry", 5, TimeSpan.FromSeconds(0), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.MaxAttemptsExceeded] = new("ConservativeRetry", 1, TimeSpan.FromHours(6), HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.EventStorageFailure] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.ValidationError] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
-    [MessageFailureReason.SerializationError] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.EventStorageFailure] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.ValidationError] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    [MessageFailureReason.SerializationError] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     [MessageFailureReason.TransportNotReady] = new("MediumRetry", 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.Unknown] = new("OneShotThenHold", 1, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
     // A broker dead-letter usually means "this build could not process the message" — retry on a
     // sane cadence (generation replay additionally re-offers after every deploy), don't park on
     // arrival, and hold for review once the budget is spent so poison stays visible.
     [MessageFailureReason.BrokerDeadLetter] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
+    // The observation counter proved redelivery is NOT making progress for this message —
+    // re-driving it mints a fresh dead letter and recovery ping-pongs with the quarantine
+    // (measured in production at ~190 rows/minute, throttled only by the loop breaker).
+    // Hold it where an operator can see it; auto-re-drive is the one certainly-wrong answer.
+    [MessageFailureReason.PoisonRedeliveryLoop] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 

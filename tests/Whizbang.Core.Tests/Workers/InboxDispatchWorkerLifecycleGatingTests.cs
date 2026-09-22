@@ -7,13 +7,16 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -57,7 +60,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -65,7 +68,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default)
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 
@@ -94,9 +97,9 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       Interlocked.Increment(ref CallCount);
       return envelope.Payload;
     }
-    public object DeserializeFromBytes(byte[] payload, string messageType) {
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) {
       Interlocked.Increment(ref CallCount);
-      return JsonDocument.Parse(payload).RootElement;
+      return JsonDocument.Parse(jsonBytes).RootElement;
     }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
       Interlocked.Increment(ref CallCount);
@@ -181,7 +184,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       try {
         await Worker.StopAsync(CancellationToken.None);
       } catch {
-        // best-effort; tests already cancelled the stoppingToken before disposal
+        // best-effort; tests already canceled the stoppingToken before disposal
       }
       await sp.DisposeAsync();
     }
@@ -198,18 +201,29 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     var deserializer = new CountingLifecycleDeserializer();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registry,
-      runtimeReceptorRegistry: runtimeRegistry);
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, deserializer);
   }
@@ -380,17 +394,29 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     var deserializer = new CountingLifecycleDeserializer();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions()),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registry,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
       deserializeCache: cache);
 
     return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, deserializer);

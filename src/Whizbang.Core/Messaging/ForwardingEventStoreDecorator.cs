@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/EventStoreDecoratorForwardingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreDecoratorForwardingTests.cs</tests>
 /// <param name="inner">The wrapped event store.</param>
 public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventStore {
   /// <summary>The wrapped store every non-intercepted member forwards to.</summary>
@@ -76,4 +76,8 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
   /// <inheritdoc />
   public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
     Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
+
+  /// <inheritdoc />
+  public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, eventTypes, cancellationToken);
 }

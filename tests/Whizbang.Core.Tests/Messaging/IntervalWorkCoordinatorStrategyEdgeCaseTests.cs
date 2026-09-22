@@ -3,15 +3,20 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -80,7 +85,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -103,7 +108,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
@@ -134,7 +139,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(coalesceMs: 50); // 50ms coalesce window
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -159,12 +164,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(coalesceMs: 5000); // Long coalesce window
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel(); // Cancel immediately
+    await cts.CancelAsync(); // Cancel immediately
 
     try {
       // Act & Assert
@@ -188,6 +193,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   public async Task Constructor_WithNullCoordinatorAndScopeFactory_DoesNotThrowAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator, TrackingWorkCoordinator>();
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -199,7 +205,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     // Assert - should construct successfully
@@ -208,20 +219,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await sut.DisposeAsync();
   }
 
-  [Test]
-  public async Task Constructor_WithNullCoordinatorAndNullScopeFactory_ThrowsArgumentNullExceptionAsync() {
-    // Arrange
-    var instanceProvider = new TestInstanceProvider();
-    var options = _createOptions();
-
-    // Act & Assert
-    await Assert.That(() => new IntervalWorkCoordinatorStrategy(
-      coordinator: null,
-      instanceProvider: instanceProvider,
-      options: options,
-      scopeFactory: null
-    )).Throws<ArgumentNullException>();
-  }
 
   // ============================================================
   // Constructor: null instanceProvider
@@ -237,7 +234,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
       coordinator: coordinator,
       instanceProvider: null!,
-      options: options
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -255,7 +258,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
       coordinator: coordinator,
       instanceProvider: instanceProvider,
-      options: null!
+      options: null!,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     )).Throws<ArgumentNullException>();
   }
 
@@ -269,7 +278,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -292,7 +301,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act - flush with nothing queued via IWorkFlusher
@@ -316,7 +325,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act & Assert - StreamId = Guid.Empty (non-null) should fail validation
@@ -333,7 +342,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     try {
       // Act & Assert
@@ -345,12 +354,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   }
 
   [Test]
-  public async Task QueueOutboxMessage_WithNullStreamId_DoesNotThrowAsync() {
+  public async Task QueueOutboxMessage_WithNullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new OutboxMessage {
@@ -365,20 +374,29 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     };
 
     try {
-      // Act & Assert - null StreamId should not throw
+      // Act
       sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - the guard admits a null StreamId, and the message survives the flush with the
+      // null intact. Only rejecting null would be a regression; so would quietly substituting
+      // Guid.Empty, which the guard itself rejects on the next hop.
+      await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1)
+        .Because("a stream-less outbox message must still be stored, not dropped by the guard");
+      await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(id);
+      await Assert.That(coordinator.LastNewOutboxMessages[0].StreamId).IsNull();
     } finally {
       await sut.DisposeAsync();
     }
   }
 
   [Test]
-  public async Task QueueInboxMessage_WithNullStreamId_DoesNotThrowAsync() {
+  public async Task QueueInboxMessage_WithNullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new InboxMessage {
@@ -392,8 +410,15 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     };
 
     try {
-      // Act & Assert
+      // Act
       sut.QueueInboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - same contract on the inbox side: null is admitted and preserved to the store.
+      await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1)
+        .Because("a stream-less inbox message must still be stored, not dropped by the guard");
+      await Assert.That(coordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(id);
+      await Assert.That(coordinator.LastNewInboxMessages[0].StreamId).IsNull();
     } finally {
       await sut.DisposeAsync();
     }
@@ -411,7 +436,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var options = _createOptions();
 
     // Act - no logger parameter
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Assert
     await Assert.That(sut).IsNotNull();
@@ -419,17 +444,29 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await sut.DisposeAsync();
   }
 
+  // Each of these drives the "logger is null, skip the log line" branch of a Queue* method. The
+  // branch is one `if` around a log call, and the thing that must survive it is the enqueue: a
+  // regression that moved the enqueue inside the logger guard would lose every message in a host
+  // that never configured logging, silently. So each test flushes and looks for the queued item at
+  // the far end rather than stopping at "the call returned".
+
   [Test]
   public async Task QueueOutboxMessage_WithoutLogger_DoesNotThrowAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var message = _createOutboxMessage();
 
     try {
       // Act - no logger, should skip logging
-      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - the enqueue happened, not just the logging skip
+      await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1);
+      await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(message.MessageId);
     } finally {
       await sut.DisposeAsync();
     }
@@ -441,10 +478,15 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var message = _createInboxMessage();
 
     try {
-      sut.QueueInboxMessage(_createInboxMessage());
+      sut.QueueInboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1);
+      await Assert.That(coordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(message.MessageId);
     } finally {
       await sut.DisposeAsync();
     }
@@ -452,14 +494,30 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueOutboxCompletion_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    // Completions reach IOutboxCompletionChannel only down the scoped-provider path, so the scope
+    // constructor is what makes the queued completion observable at all.
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
+      sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.CompletionChannel.EnqueuedIds).Contains(messageId)
+        .Because("the completion is what marks the outbox row done — losing it in the null-logger "
+               + "branch would leave the message to be republished on the next claim");
     } finally {
       await sut.DisposeAsync();
     }
@@ -467,14 +525,31 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueInboxCompletion_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    // Unlike the outbox side, WorkCoordinatorFlushHelper has no sink for inbox completions — it
+    // consumes them only in the empty-queue check. So the observable here is one step earlier:
+    // whether the queued completion made the flush non-empty. An empty flush short-circuits before
+    // a scope is ever created, so a coordinator resolution is proof the item was really queued.
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
 
     try {
       sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.CoordinatorResolutions).IsEqualTo(1)
+        .Because("a flush whose queues were all empty returns before creating a scope; resolving "
+               + "the coordinator proves the completion survived the null-logger branch");
     } finally {
       await sut.DisposeAsync();
     }
@@ -482,14 +557,28 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueOutboxFailure_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "error");
+      sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "error");
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.FailureChannel.Enqueued).Contains((WorkCategory.Outbox, messageId))
+        .Because("a failure that never reaches the failure channel is a message that retries "
+               + "forever without its attempt count ever moving");
     } finally {
       await sut.DisposeAsync();
     }
@@ -497,14 +586,28 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueInboxFailure_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter());
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "error");
+      sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "error");
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.FailureChannel.Enqueued).Contains((WorkCategory.Inbox, messageId))
+        .Because("the inbox category is what routes the failure to the inbox row; a miscategorized "
+               + "or dropped failure leaves the handler's message stuck in-flight");
     } finally {
       await sut.DisposeAsync();
     }
@@ -520,7 +623,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -531,7 +634,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — outbox + inbox each trigger their own store call; completions/failures
       // route via channels (helper-level coverage in WorkCoordinatorFlushHelperTests).
@@ -550,13 +653,22 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_WithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -574,14 +686,23 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_EmptyQueuesWithMetrics_RecordsEmptyFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var logger = new RecordingLogger<IntervalWorkCoordinatorStrategy>();
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act - flush with nothing queued
@@ -598,13 +719,22 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   [Test]
   public async Task FlushAsync_BestEffortWithMetrics_RecordsFlushCallsAsync() {
     // Arrange
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -622,18 +752,28 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_WithoutLogger_DoesNotThrowAsync() {
+  public async Task DisposeAsync_WithoutLogger_DrainsTheQueueAndMarksDisposedAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Queue something so disposal flush has work
-    sut.QueueOutboxMessage(_createOutboxMessage());
+    var messageId = Guid.CreateVersion7();
+    sut.QueueOutboxMessage(_createOutboxMessage(messageId));
 
-    // Act & Assert - no exception
+    // Act
     await sut.DisposeAsync();
+
+    // Assert - the shutdown drain is the last chance queued work has to be persisted; a
+    // null-logger host must not skip it. And disposal must actually complete: a strategy that
+    // drained but never flipped to disposed would keep accepting work nothing will ever flush.
+    await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1)
+      .Because("disposal must drain queued work even with no logger configured");
+    await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(() => sut.QueueOutboxMessage(_createOutboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   [Test]
@@ -642,7 +782,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -663,17 +803,25 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_WhenFlushThrows_WithoutLogger_DoesNotThrowAsync() {
+  public async Task DisposeAsync_WhenFlushThrows_WithoutLogger_SwallowsAndStillDisposesAsync() {
     // Arrange
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
-    // Act & Assert - should swallow exception gracefully
+    // Act - should swallow the failing drain rather than throwing out of DisposeAsync
     await sut.DisposeAsync();
+
+    // Assert - the call count proves the drain really reached the failing coordinator, so the
+    // swallow is exercised rather than skipped; and a failed drain must still leave the strategy
+    // disposed, otherwise a shutdown that hits a broken store leaves a live timer behind.
+    await Assert.That(throwingCoordinator.StoreOutboxCallCount).IsEqualTo(1)
+      .Because("without a call there is no exception, and the swallow branch is never reached");
+    await Assert.That(() => sut.QueueOutboxMessage(_createOutboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   // ============================================================
@@ -686,7 +834,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(intervalMs: 50); // Short interval
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Dispose immediately, then wait for timer to have fired (if it were active)
     await sut.DisposeAsync();
@@ -717,7 +865,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -745,7 +893,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var slowCoordinator = new SlowWorkCoordinator(500);
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(slowCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: slowCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -783,7 +931,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     await sut.DisposeAsync();
 
@@ -802,7 +950,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -816,7 +964,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -830,7 +978,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -844,7 +992,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -858,7 +1006,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -872,7 +1020,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -885,16 +1033,27 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_CalledTwice_DoesNotThrowAsync() {
+  public async Task DisposeAsync_CalledTwice_DoesNotDrainTwiceAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
-    // Act & Assert
+    // Queue work so the first disposal has something to drain — with empty queues both
+    // disposals are indistinguishable and the second one proves nothing.
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act
     await sut.DisposeAsync();
+    var afterFirstDispose = coordinator.ProcessWorkBatchCallCount;
     await sut.DisposeAsync();
+
+    // Assert - the second disposal returns at the _disposed guard. Re-running the drain would
+    // re-store whatever the first one already stored, which is a duplicate insert, not a no-op.
+    await Assert.That(afterFirstDispose).IsEqualTo(1);
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(afterFirstDispose)
+      .Because("disposal is idempotent — a second call must not re-run the drain");
   }
 
   // ============================================================
@@ -906,6 +1065,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     // Arrange
     var scopedCoordinator = new TrackingWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => scopedCoordinator);
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -916,7 +1076,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -937,20 +1102,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // BestEffort mode with metrics: records flush call
   // ============================================================
 
-  [Test]
-  public async Task FlushAsync_BestEffortMode_WithDisposedState_ThrowsObjectDisposedExceptionAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
-    var instanceProvider = new TestInstanceProvider();
-    var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
-    await sut.DisposeAsync();
-
-    // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
-      .ThrowsExactly<ObjectDisposedException>();
-  }
-
   // ============================================================
   // All queue types combined then flush via IWorkFlusher
   // ============================================================
@@ -961,7 +1112,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -978,6 +1129,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       // Assert — outbox + inbox each trigger their own store call; completions/failures
       // route via channels (covered in WorkCoordinatorFlushHelperTests).
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+      await Assert.That(coordinator.HandlerCommits.Count).IsEqualTo(1)
+        .Because("the queued inbox completion reaches the coordinator as a handler commit (#734); it used to be counted and dropped");
       await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1);
       await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1);
     } finally {
@@ -990,25 +1143,31 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task TimerCallback_WhenFlushThrows_WithoutLogger_SwallowsExceptionAsync() {
+  public async Task TimerCallback_WhenFlushThrows_WithoutLogger_KeepsTickingAsync() {
     // Arrange
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(intervalMs: 50); // Short interval for timer to fire quickly
-    var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
-    sut.QueueOutboxMessage(_createOutboxMessage());
+    try {
+      // Act - the coordinator signals each call, so this waits on the flush itself rather than
+      // on a delay that has to be guessed.
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await throwingCoordinator.FirstStoreOutboxCall.WaitAsync(TimeSpan.FromSeconds(30));
 
-    // Wait enough time for timer to fire and hit the catch branch
-    var tcs = new TaskCompletionSource();
-    _ = Task.Run(async () => {
-      await Task.Delay(200);
-      tcs.SetResult();
-    });
-    await tcs.Task;
+      // The first tick threw. Queue again: if the exception had escaped the callback the timer
+      // would be dead and this second flush would never happen.
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await throwingCoordinator.SecondStoreOutboxCall.WaitAsync(TimeSpan.FromSeconds(30));
 
-    // Act & Assert - should not propagate exception from timer callback
-    await sut.DisposeAsync();
+      // Assert - swallowing is only correct if the timer survives it; a strategy that stops
+      // flushing after one bad batch strands every message queued afterwards.
+      await Assert.That(throwingCoordinator.StoreOutboxCallCount).IsGreaterThanOrEqualTo(2)
+        .Because("a failed interval flush must not stop the timer");
+    } finally {
+      await sut.DisposeAsync();
+    }
   }
 
   // ============================================================
@@ -1029,18 +1188,75 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     };
   }
 
+  /// <summary>
+  /// A scoped host for the strategy's <c>scopeFactory</c> constructor. Completions and failures
+  /// only route to their channels when the flush resolves them from a scope, so a direct
+  /// coordinator leaves them unobservable.
+  /// </summary>
+  private sealed class ChannelScopeHost {
+    private int _coordinatorResolutions;
+
+    public ChannelScopeHost() {
+      Coordinator = new TrackingWorkCoordinator();
+      CompletionChannel = new CountingOutboxCompletionChannel();
+      FailureChannel = new CountingFailureChannel();
+
+      var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
+      services.AddScoped<IWorkCoordinator>(_ => {
+        Interlocked.Increment(ref _coordinatorResolutions);
+        return Coordinator;
+      });
+      services.AddSingleton<IOutboxCompletionChannel>(CompletionChannel);
+      services.AddSingleton<IFailureChannel>(FailureChannel);
+      var provider = services.BuildServiceProvider();
+      ScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+    }
+
+    public TrackingWorkCoordinator Coordinator { get; }
+    public CountingOutboxCompletionChannel CompletionChannel { get; }
+    public CountingFailureChannel FailureChannel { get; }
+    public IServiceScopeFactory ScopeFactory { get; }
+
+    /// <summary>Non-zero only when the flush got far enough to open a scope — an all-empty flush
+    /// short-circuits before that.</summary>
+    public int CoordinatorResolutions => Volatile.Read(ref _coordinatorResolutions);
+  }
+
+  private sealed class CountingOutboxCompletionChannel : IOutboxCompletionChannel {
+    private readonly ConcurrentQueue<Guid> _ids = new();
+
+    public IReadOnlyCollection<Guid> EnqueuedIds => _ids;
+
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      _ids.Enqueue(outboxMessageId);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class CountingFailureChannel : IFailureChannel {
+    private readonly ConcurrentQueue<(WorkCategory Category, Guid MessageId)> _enqueued = new();
+
+    public IReadOnlyCollection<(WorkCategory Category, Guid MessageId)> Enqueued => _enqueued;
+
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
+      _enqueued.Enqueue((category, failure.MessageId));
+      return ValueTask.CompletedTask;
+    }
+  }
+
   private sealed class TrackingWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
-    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
-    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
-    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
-    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; } = [];
+    public MessageFailure[] LastOutboxFailures { get; } = [];
+    public MessageFailure[] LastInboxFailures { get; } = [];
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -1055,7 +1271,17 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    /// <summary>Handler commits the flush helper makes for queued inbox completions (#734).</summary>
+    public List<HandlerCommitRequest> HandlerCommits { get; } = [];
+
+    public Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+      lock (HandlerCommits) {
+        HandlerCommits.Add(request);
+      }
+      return Task.CompletedTask;
+    }
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -1072,12 +1298,38 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
+  /// <summary>
+  /// Fails every store. Counts and signals the calls so a test can prove the flush actually
+  /// reached the failing seam — a swallowed exception leaves no other trace, and without the
+  /// count a test that never flushed at all is indistinguishable from one that flushed and
+  /// recovered.
+  /// </summary>
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
+    private readonly TaskCompletionSource _firstCall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondCall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _storeOutboxCalls;
+
+    /// <summary>How many flushes reached <see cref="StoreOutboxMessagesAsync"/> before throwing.</summary>
+    public int StoreOutboxCallCount => Volatile.Read(ref _storeOutboxCalls);
+
+    /// <summary>Completes when the first store call arrives — a signal to wait on instead of a delay.</summary>
+    public Task FirstStoreOutboxCall => _firstCall.Task;
+
+    /// <summary>Completes when the second store call arrives, i.e. the timer survived the first failure.</summary>
+    public Task SecondStoreOutboxCall => _secondCall.Task;
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      int partitionCount,
+      CancellationToken cancellationToken = default) {
+      var call = Interlocked.Increment(ref _storeOutboxCalls);
+      if (call == 1) {
+        _firstCall.TrySetResult();
+      } else if (call == 2) {
+        _secondCall.TrySetResult();
+      }
       throw new InvalidOperationException("Simulated coordinator failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
@@ -1087,7 +1339,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated coordinator failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -1106,7 +1358,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       await Task.Delay(_delayMs, cancellationToken);
     }
@@ -1119,7 +1371,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       await Task.Delay(_delayMs, cancellationToken);
     }
 
@@ -1136,8 +1388,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   private sealed class RecordingLogger<T> : ILogger<T>, IDisposable {
     private readonly ConcurrentBag<string> _messages = [];
-
-    public IReadOnlyCollection<string> Messages => _messages;
 
     public void Dispose() { }
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

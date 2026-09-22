@@ -54,7 +54,7 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
           FROM pg_stat_activity
           WHERE pg_stat_activity.datname = '{_testDatabaseName}'
           AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* ignore */ }
       _testDatabaseName = null;
       _connectionString = null;
@@ -255,9 +255,9 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
 
     var summary = logger.Messages.FirstOrDefault(m => m.Contains("Message type registry populated", StringComparison.Ordinal));
     await Assert.That(summary).IsNotNull();
-    await Assert.That(summary!).Contains("3 entries");
-    await Assert.That(summary!).Contains("2 pinned");
-    await Assert.That(summary!).Contains("1 unpinned");
+    await Assert.That(summary).Contains("3 entries");
+    await Assert.That(summary).Contains("2 pinned");
+    await Assert.That(summary).Contains("1 unpinned");
   }
 
   [Test]
@@ -290,10 +290,11 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Messages.Add(formatter(state, exception));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   private sealed record SamplePinned;

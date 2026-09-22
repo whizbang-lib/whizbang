@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Linq;
 
 namespace Whizbang.Core.Routing;
 
@@ -31,7 +32,21 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs</tests>
-public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
+/// <remarks>
+/// Creates the strategy bound to its service's <see cref="RoutingOptions"/> (topology arc
+/// phase 7): <see cref="RoutingOptions.SharedInboxRetired"/> is consulted LIVE on every
+/// subscription computation — a configuration-bound retirement (applied on options
+/// resolution) needs no strategy re-registration, mirroring the outbox flip set.
+/// </remarks>
+/// <param name="routingOptions">The service's routing options; null behaves like the
+/// unbound overload (retirement can never engage).</param>
+/// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
+/// <param name="controlClass">The control-class options (topology arc phase 9); null keeps the
+/// pre-phase-9 single-broadcast-entity shape. Consulted LIVE, like the retirement flag.</param>
+public sealed class NamespaceInboxStrategy(
+    RoutingOptions? routingOptions,
+    string sharedInboxTopic = "inbox",
+    ControlClassOptions? controlClass = null) : IInboxRoutingStrategy {
   /// <summary>Backing constant for <see cref="OwnedCommandInboxMetadataKey"/>.</summary>
   private const string OWNED_COMMAND_INBOX_METADATA_KEY = "OwnedCommandInbox";
 
@@ -59,9 +74,9 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   /// </summary>
   public static string ControlClassMetadataKey => CONTROL_CLASS_METADATA_KEY;
 
-  private readonly SharedTopicInboxStrategy _transitionalShared;
-  private readonly RoutingOptions? _routingOptions;
-  private readonly ControlClassOptions? _controlClass;
+  private readonly SharedTopicInboxStrategy _transitionalShared = new(sharedInboxTopic);
+  private readonly RoutingOptions? _routingOptions = routingOptions;
+  private readonly ControlClassOptions? _controlClass = controlClass;
 
   /// <summary>
   /// True when <paramref name="subscription"/> carries the control-class marker — the single
@@ -84,26 +99,6 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   /// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
   public NamespaceInboxStrategy(string sharedInboxTopic = "inbox")
       : this(null, sharedInboxTopic) { }
-
-  /// <summary>
-  /// Creates the strategy bound to its service's <see cref="RoutingOptions"/> (topology arc
-  /// phase 7): <see cref="RoutingOptions.SharedInboxRetired"/> is consulted LIVE on every
-  /// subscription computation — a configuration-bound retirement (applied on options
-  /// resolution) needs no strategy re-registration, mirroring the outbox flip set.
-  /// </summary>
-  /// <param name="routingOptions">The service's routing options; null behaves like the
-  /// unbound overload (retirement can never engage).</param>
-  /// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
-  /// <param name="controlClass">The control-class options (topology arc phase 9); null keeps the
-  /// pre-phase-9 single-broadcast-entity shape. Consulted LIVE, like the retirement flag.</param>
-  public NamespaceInboxStrategy(
-      RoutingOptions? routingOptions,
-      string sharedInboxTopic = "inbox",
-      ControlClassOptions? controlClass = null) {
-    _transitionalShared = new SharedTopicInboxStrategy(sharedInboxTopic);
-    _routingOptions = routingOptions;
-    _controlClass = controlClass;
-  }
 
   /// <summary>
   /// Legacy singular surface — returns today's shared-inbox subscription (the transitional
@@ -160,16 +155,10 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
     // Part 1 (permanent) — one inbox per DISTINCT handled COMMAND contract namespace.
     // Sorted for deterministic manifests; framework-reserved namespaces ride part 2 instead.
     var commandNamespaces = new SortedSet<string>(StringComparer.Ordinal);
-    foreach (var handled in context.HandledMessages) {
-      if (handled.Kind != MessageKind.Command || string.IsNullOrWhiteSpace(handled.ContractNamespace)) {
-        continue;
-      }
-      var contractNamespace = handled.ContractNamespace.ToLowerInvariant();
-      if (CommandInboxNaming.IsFrameworkReserved(contractNamespace)) {
-        continue;
-      }
-      commandNamespaces.Add(contractNamespace);
-    }
+    commandNamespaces.UnionWith(context.HandledMessages
+      .Where(handled => handled.Kind == MessageKind.Command && !string.IsNullOrWhiteSpace(handled.ContractNamespace))
+      .Select(handled => handled.ContractNamespace.ToLowerInvariant())
+      .Where(contractNamespace => !CommandInboxNaming.IsFrameworkReserved(contractNamespace)));
 
     foreach (var contractNamespace in commandNamespaces) {
       subscriptions.Add(new InboxSubscription(
@@ -247,16 +236,13 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
     ArgumentNullException.ThrowIfNull(context);
 
     var namespaces = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var handled in context.HandledMessages) {
-      if (!string.IsNullOrWhiteSpace(handled.ContractNamespace)) {
-        namespaces.Add(handled.ContractNamespace.ToLowerInvariant());
-      }
-    }
-    foreach (var consumed in context.ConsumedEventNamespaces) {
-      if (!string.IsNullOrWhiteSpace(consumed)) {
-        namespaces.Add(consumed.ToLowerInvariant());
-      }
-    }
+    namespaces.UnionWith(context.HandledMessages
+      .Select(handled => handled.ContractNamespace)
+      .Where(contractNamespace => !string.IsNullOrWhiteSpace(contractNamespace))
+      .Select(contractNamespace => contractNamespace.ToLowerInvariant()));
+    namespaces.UnionWith(context.ConsumedEventNamespaces
+      .Where(consumed => !string.IsNullOrWhiteSpace(consumed))
+      .Select(consumed => consumed.ToLowerInvariant()));
     return namespaces;
   }
 

@@ -69,9 +69,15 @@ public class AsbControlClassTtlTests {
       ControlMessageTtl.Stamp(_destination(), TimeSpan.FromSeconds(90)));
 
     await Assert.That(results.Count).IsEqualTo(2);
-    var batch = client.LastSender!.BatchStores[0];
-    await Assert.That(batch.Count).IsEqualTo(2);
-    foreach (var message in batch) {
+
+    // Assert over ALL batches rather than assuming both items share one. Streamless messages are
+    // spread across bounded synthetic sessions (AsbSessionKey), and a ServiceBusMessageBatch must
+    // carry a uniform session id — so two streamless items may legitimately be sent as two batches.
+    // This test is about the TTL reaching every message; how they are grouped is not its subject,
+    // and coupling it to a single batch made it fail for a reason it does not name.
+    var messages = client.LastSender!.BatchStores.SelectMany(b => b).ToList();
+    await Assert.That(messages.Count).IsEqualTo(2);
+    foreach (var message in messages) {
       await Assert.That(message.TimeToLive).IsEqualTo(TimeSpan.FromSeconds(90));
     }
   }
@@ -92,9 +98,17 @@ public class AsbControlClassTtlTests {
       ],
       ControlMessageTtl.Stamp(_destination(), TimeSpan.FromSeconds(90)));
 
-    var batch = client.LastSender!.BatchStores[0];
-    await Assert.That(batch[0].TimeToLive).IsEqualTo(TimeSpan.FromSeconds(90));
-    await Assert.That(batch[1].TimeToLive).IsEqualTo(TimeSpan.FromSeconds(5));
+    // Located by message id across ALL batches, not by index into one. Streamless items spread
+    // across bounded synthetic sessions (AsbSessionKey) and a batch must carry a uniform session id,
+    // so these two may be sent as two batches. Indexing into BatchStores[0] asserted an incidental
+    // grouping this test does not care about — its subject is the per-item TTL override.
+    var all = client.LastSender!.BatchStores.SelectMany(b => b).ToList();
+    var sharedMessage = all.Single(m => m.MessageId == shared.MessageId.Value.ToString());
+    var overriddenMessage = all.Single(m => m.MessageId == overridden.MessageId.Value.ToString());
+    await Assert.That(sharedMessage.TimeToLive).IsEqualTo(TimeSpan.FromSeconds(90));
+    await Assert.That(overriddenMessage.TimeToLive).IsEqualTo(TimeSpan.FromSeconds(5))
+      .Because("per-item metadata must override the shared destination TTL regardless of how the "
+             + "items happen to be grouped into batches");
   }
 
   private static (AzureServiceBusTransport Transport, RaisableServiceBusClient Client) _createTransport() {

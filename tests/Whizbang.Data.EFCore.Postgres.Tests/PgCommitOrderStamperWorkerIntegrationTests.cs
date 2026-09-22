@@ -31,13 +31,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard3")]
 public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
   private PgCommitOrderStamperWorker _newWorker(
       string connectionString,
       TimeSpan? pollingInterval = null,
       TimeSpan? leaderElectionRetry = null,
-      bool disable = false) {
+      bool disable = false,
+      INotifySignalingGate? gate = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -65,7 +67,30 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       Options.Create(stamperOptions),
       config,
       shared,
-      NullLogger<PgCommitOrderStamperWorker>.Instance);
+      NullLogger<PgCommitOrderStamperWorker>.Instance,
+      notifySignalingGate: gate);
+  }
+
+  /// <summary>
+  /// A gate whose availability a test flips by hand, counting the worker's subscription so the
+  /// test can prove the stamper listens while it runs and lets go when it stops.
+  /// </summary>
+  private sealed class FakeSignalingGate : INotifySignalingGate {
+    private Action<bool>? _handlers;
+    public bool IsAvailable { get; private set; } = true;
+    public int Subscribers { get; private set; }
+    public DateTimeOffset? LastVerifiedAt => null;
+    public DateTimeOffset? LastFailureAt => null;
+    public string? LastFailureReason => null;
+    public event Action<bool>? OnAvailabilityChanged {
+      add { _handlers += value; Subscribers++; }
+      remove { _handlers -= value; Subscribers--; }
+    }
+    public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsAvailable);
+    public void Set(bool available) {
+      IsAvailable = available;
+      _handlers?.Invoke(available);
+    }
   }
 
   private static Task<TaskCompletionSource> _whenBecomesLeaderAsync(PgCommitOrderStamperWorker worker) {
@@ -110,6 +135,37 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// With nothing unstamped, the polling tick does not run the stamp.
+  /// </summary>
+  /// <remarks>
+  /// The stamp's eligibility query sorts every unstamped row by transaction id before taking a
+  /// batch, and it ran on every tick whether or not anything was unstamped: measured at about half
+  /// a core per busy database under a bulk load. The partial-index existence probe costs nothing,
+  /// so it decides whether the stamp runs at all.
+  /// </remarks>
+  [Test]
+  public async Task Worker_NothingUnstamped_SkipsTheStampOnPollingTicksAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromMilliseconds(50));
+    var skips = 0;
+    var stamps = 0;
+    var skippedThrice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStampSkipped += () => {
+      if (Interlocked.Increment(ref skips) >= 3) {
+        skippedThrice.TrySetResult();
+      }
+    };
+    worker.OnStampCompleted += _ => Interlocked.Increment(ref stamps);
+    await worker.StartAsync(cts.Token);
+
+    await skippedThrice.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(stamps).IsEqualTo(0)
+      .Because("the eligibility query sorts every unstamped row; with none it has nothing to do and must not run per tick");
+  }
+
   [Test]
   public async Task Worker_DisableStamper_ExitsImmediatelyAndDoesNotAcquireLockAsync() {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -138,7 +194,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await workerB.StartAsync(cts.Token);
 
     // Wait until at least one has fired OnBecameLeader.
-    var firstLeader = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
+    _ = await Task.WhenAny(leaderA.Task, leaderB.Task).WaitAsync(TimeSpan.FromSeconds(10));
 
     // Give the other a window to attempt lock acquisition and fail. With retry interval
     // 100ms, 500ms is well more than one attempt.
@@ -301,6 +357,41 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
              + "drains — pending work must not wait for the next external tick");
 
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// A NOTIFY-availability flip must wake the leader at once. When the gate turns off, the relaxed
+  /// cadence is no longer safe (a NOTIFY may never arrive), so the next iteration has to recompute
+  /// its interval now rather than at the end of a long sleep; when it turns back on, the same wake
+  /// lets the loop pick up the relaxed cadence right away. A stopped stamper must no longer listen.
+  /// </summary>
+  [Test]
+  public async Task Worker_GateAvailabilityFlip_WakesTheLeaderWithoutWaitingForThePollAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var gate = new FakeSignalingGate();
+    // A 60 s floor silences the self-poll: after the initial permit, only the gate flip can wake the loop.
+    var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromSeconds(60), gate: gate);
+    var leaderTcs = await _whenBecomesLeaderAsync(worker);
+    var stampPulse = new SemaphoreSlim(0);
+    // A wake with nothing unstamped is skipped rather than stamped; either is the wake this test
+    // counts.
+    worker.OnStampCompleted += _ => stampPulse.Release();
+    worker.OnStampSkipped += () => stampPulse.Release();
+    await worker.StartAsync(cts.Token);
+    await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(await stampPulse.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue()
+      .Because("the initial wake permit produces exactly one wake of the loop");
+    await Assert.That(gate.Subscribers).IsEqualTo(1)
+      .Because("the running stamper listens for availability changes");
+
+    gate.Set(false);
+
+    await Assert.That(await stampPulse.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue()
+      .Because("the flip is the only wake source inside the 60 s floor, so a second stamp attempt proves it woke the leader");
+
+    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(gate.Subscribers).IsEqualTo(0)
+      .Because("a stopped stamper unsubscribes, so a live gate cannot wake a worker that no longer runs");
   }
 
   // ============================================================================

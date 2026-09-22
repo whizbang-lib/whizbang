@@ -30,9 +30,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/089_TableRewriteRequests.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class TableRewriteJourneyE2ETests : EFCoreTestBase {
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "rewrite-svc";
     public string HostName => "rewrite-host";
@@ -53,13 +54,13 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     return services.BuildServiceProvider();
   }
 
-  private PgDutyElector _electorFor(_pod pod) => new(
+  private PgDutyElector _electorFor(Pod pod) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgDutyElector>.Instance);
 
-  private async Task _joinFleetAsync(_pod pod, CancellationToken ct) {
+  private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, JsonContextRegistry.CreateCombinedOptions());
@@ -72,6 +73,15 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
   private async Task _manufactureBloatAsync(CancellationToken ct) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(ct);
+    // Issue #671: the carve deletes the heap TAIL, and plain autovacuum can truncate that tail
+    // between the request-time measure and the winner's re-measure, collapsing the before-ratio so
+    // even a perfect VACUUM FULL cannot beat it and the step reports "ineffective". The product is
+    // right to say so; the test must own the heap it measures, so autovacuum is switched off for
+    // this table for the test's lifetime (the database is per test).
+    await using (var pin = conn.CreateCommand()) {
+      pin.CommandText = "ALTER TABLE wh_settings SET (autovacuum_enabled = false)";
+      await pin.ExecuteNonQueryAsync(ct);
+    }
     await using (var fill = conn.CreateCommand()) {
       fill.CommandText = @"
         INSERT INTO wh_settings (setting_key, setting_value, value_type)
@@ -84,17 +94,70 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
         WHERE setting_key LIKE 'bloat\_%' AND substring(setting_key FROM 7)::INT > 1500";
       await carve.ExecuteNonQueryAsync(ct);
     }
-    await using (var analyze = conn.CreateCommand()) {
-      analyze.CommandText = "ANALYZE wh_settings";
-      await analyze.ExecuteNonQueryAsync(ct);
+    await _waitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
+    await using var analyze = conn.CreateCommand();
+    analyze.CommandText = "ANALYZE wh_settings";
+    await analyze.ExecuteNonQueryAsync(ct);
+  }
+
+  /// <summary>
+  /// Blocks until PostgreSQL will actually let the carved rows go.
+  /// </summary>
+  /// <remarks>
+  /// <para>Deleting rows does not make them removable. A dead tuple survives until no snapshot
+  /// anywhere in the cluster could still see it, and that horizon is held by the oldest running
+  /// transaction on the whole server -- including transactions in OTHER databases. Until it
+  /// advances past this DELETE, <c>VACUUM FULL</c> copies the dead rows into the new heap and the
+  /// table comes out exactly the size it went in.</para>
+  ///
+  /// <para>That is what made this test flaky on a shared container: with another suite running
+  /// against its own database on the same server, the rewrite reclaimed nothing and the step
+  /// correctly reported it as ineffective. PostgreSQL says as much when asked --
+  /// <c>VACUUM (FULL, VERBOSE)</c> reported "0 removable, 20022 nonremovable row versions" -- and a
+  /// second rewrite did no better, because the horizon, not the rewrite, was the problem. Nothing
+  /// was wrong with the product: a rewrite that cannot reclaim SHOULD stay queued for the next
+  /// boot, which is exactly what it did.</para>
+  ///
+  /// <para>The snapshot's own xmax after the DELETE is a transaction id no older than it, so once
+  /// the cluster's oldest running transaction reaches that mark, every transaction that could
+  /// still have seen those rows has finished and they are removable by definition. This polls
+  /// because a cleanup horizon is external state with nothing to subscribe to; it is a wait on a
+  /// real condition rather than a sleep chosen by feel.</para>
+  /// </remarks>
+  private static async Task _waitUntilTheDeletedRowsAreRemovableAsync(
+      NpgsqlConnection conn, CancellationToken ct) {
+    long deletedThrough;
+    await using (var mark = conn.CreateCommand()) {
+      mark.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::TEXT::BIGINT";
+      deletedThrough = (long)(await mark.ExecuteScalarAsync(ct))!;
+    }
+
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
+    while (true) {
+      long horizon;
+      await using (var probe = conn.CreateCommand()) {
+        probe.CommandText = "SELECT pg_snapshot_xmin(pg_current_snapshot())::TEXT::BIGINT";
+        horizon = (long)(await probe.ExecuteScalarAsync(ct))!;
+      }
+      if (horizon >= deletedThrough) {
+        return;
+      }
+      if (DateTimeOffset.UtcNow > deadline) {
+        throw new InvalidOperationException(
+          $"The cluster's cleanup horizon never advanced past the carve (xmin {horizon} still "
+          + $"below {deletedThrough}) after 60s, so VACUUM FULL cannot reclaim the deleted rows "
+          + "and this test cannot demonstrate a rewrite. A long-running transaction on this "
+          + "server -- in any database -- is holding the horizon open.");
+      }
+      await Task.Delay(TimeSpan.FromMilliseconds(50), ct);
     }
   }
 
   [Test]
   [Timeout(120000)]
   public async Task RequestedRewrite_TwoPodsRaceTheMaintainerDuty_OneExecutes_TheOtherSkipsAsync(CancellationToken cancellationToken) {
-    var podA = new _pod();
-    var podB = new _pod();
+    var podA = new Pod();
+    var podB = new Pod();
     await _joinFleetAsync(podA, cancellationToken);
     await _joinFleetAsync(podB, cancellationToken);
 
@@ -117,17 +180,25 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await using var providerA = _servicesForPod();
     await using var providerB = _servicesForPod();
     var stepA = new TableRewriteStartupStep(
-      providerA.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerA.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     var stepB = new TableRewriteStartupStep(
-      providerB.GetRequiredService<IServiceScopeFactory>(), allow);
+      scopeFactory: providerB.GetRequiredService<IServiceScopeFactory>(),
+      options: allow,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
     // Post-ready means AFTER Migrate: each pod carries the full declared chain, its schema gate
     // already open — exactly the state a running instance is in when the rewrite band begins.
     var openGate = new SchemaReadyGate();
     openGate.MarkReady();
     var runnerA = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepA], dutyElector: _electorFor(podA));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepA],
+      observers: [],
+      dutyElector: _electorFor(podA));
     var runnerB = new StartupPipelineRunner(
-      [new AssessStartupStep(), new MigrateStartupStep(openGate), stepB], dutyElector: _electorFor(podB));
+      steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepB],
+      observers: [],
+      dutyElector: _electorFor(podB));
 
     var results = await Task.WhenAll(
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));
@@ -141,7 +212,18 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await Assert.That(executed[0].Reason).Contains("rewrote 1 table")
       .Because("the winner did the real rewrite, not a no-op");
     await Assert.That(skipped).Count().IsEqualTo(1);
-    await Assert.That(skipped[0].Reason).IsEqualTo("capability not held")
+    // The non-holder skips for one of two reasons, and which one it gets is a matter of how the
+    // two pipelines happen to overlap: denied the duty while the winner still holds it, or granted
+    // it afterwards and finding the table already rewritten. Both say the same thing about the
+    // product -- it did not perform a second rewrite and it did not block waiting for one -- so
+    // pinning the test to whichever the machine produced makes it a timing assertion. Exclusivity
+    // itself is not left unguarded: DutyElectionE2ETests covers it directly, twice.
+    var nonHolder = skipped[0].Reason switch {
+      "capability not held" => "skipped without rewriting",
+      "no rewrites owed" => "skipped without rewriting",
+      var other => other,
+    };
+    await Assert.That(nonHolder).IsEqualTo("skipped without rewriting")
       .Because("nobody blocks on a rewrite — the non-holder skips and carries on");
 
     // Requested → rewritten → CLEARED: re-measuring offers nothing, and the pending request is gone.

@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
+/// <para>
 /// v0.685 lock-in — <c>notify_instance_owners</c> must deliver a NOTIFY to
 /// the deterministic owner (partition-modulo on live instances) when the
 /// stream is NOT in <c>wh_active_streams</c>. Without this, first-event-on-
@@ -16,15 +17,18 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// before <c>claim_orphaned_*</c> discovers the row — observed in production
 /// during a large import as a 30 s+ dispatch-to-processing delay on cold
 /// start.
-///
+/// </para>
+/// <para>
 /// The deterministic target must match the partition-modulo formula that
 /// <c>claim_orphaned_*</c> uses: the instance whose
 /// <c>ROW_NUMBER() OVER (ORDER BY instance_id) - 1 = partition_number % active_count</c>.
 /// So the same instance that WOULD claim the row when its ClaimWorker next
 /// ticks is the one that gets the notify — preserving the algorithmic
 /// assignment design (no race, no broadcast).
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notify-instance-owners</docs>
+[Category("Shard1")]
 public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
 
   [Test]
@@ -49,11 +53,19 @@ public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
     const int partitionNumber = 7;
     await _insertOutboxRowAsync(conn, streamId: streamId, partitionNumber: partitionNumber);
 
-    // Ensure the stream is NOT in wh_active_streams (i.e. cold-start case).
-    await using (var clear = conn.CreateCommand()) {
-      clear.CommandText = "DELETE FROM wh_active_streams WHERE stream_id = @sid";
-      clear.Parameters.AddWithValue("sid", streamId);
-      await clear.ExecuteNonQueryAsync();
+    // Unclaimed: the ledger knows the stream's partition but no instance owns it. The number is
+    // pinned here rather than left to be recovered from the outbox row, because recovering it from
+    // the queue table is what made every doorbell read the whole table; the ledger carries the
+    // stream-to-partition mapping and is what the branch reads now.
+    await using (var pin = conn.CreateCommand()) {
+      pin.CommandText = @"
+        INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+        VALUES (@sid, @part, NULL, NOW())
+        ON CONFLICT (stream_id) DO UPDATE
+          SET partition_number = EXCLUDED.partition_number, assigned_instance_id = NULL";
+      pin.Parameters.AddWithValue("sid", streamId);
+      pin.Parameters.AddWithValue("part", partitionNumber);
+      await pin.ExecuteNonQueryAsync();
     }
 
     var received = await _captureNotificationsAsync(
@@ -119,6 +131,12 @@ public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a round-trip so NOTIFY messages buffered after the emit are dispatched.
       await using var ping = conn.CreateCommand();

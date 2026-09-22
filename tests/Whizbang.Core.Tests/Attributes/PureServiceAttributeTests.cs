@@ -126,9 +126,7 @@ public class PureServiceAttributeTests {
 
   // Test types
   [PureService]
-  private sealed class TestPureService {
-    public decimal Calculate(decimal value) => value * 2;
-  }
+  private static class TestPureService;
 
   [PureService(Reason = "Read-only lookup service")]
   private interface ITestPureService {
@@ -139,7 +137,5 @@ public class PureServiceAttributeTests {
     public decimal GetRate(string currency, DateTimeOffset date) => 1.0m;
   }
 
-  private sealed class TestNonPureService {
-    public Task SaveAsync() => Task.CompletedTask;
-  }
+  private sealed class TestNonPureService;
 }

@@ -30,7 +30,6 @@ namespace Whizbang.Core.Security;
 /// any type with sensible equality semantics.
 /// </typeparam>
 /// <docs>fundamentals/security/effective-permissions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/IEffectivePermissionsStoreTests.cs</tests>
 public interface IEffectivePermissionsStore<TUserId> {
   /// <summary>
   /// Reads the user's current materialized effective permissions snapshot, or <c>null</c>

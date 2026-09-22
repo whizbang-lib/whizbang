@@ -21,10 +21,10 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
   /// <summary>Create a bus over the given push transports and pull sources.</summary>
   public SignalBus(
     IEnumerable<ISignalTransport> transports,
-    IEnumerable<ISignalSource>? pullSources = null) {
+    IEnumerable<ISignalSource> pullSources) {
     ArgumentNullException.ThrowIfNull(transports);
-    _transports = transports.ToArray();
-    _pullSources = pullSources?.ToArray() ?? [];
+    _transports = [.. transports];
+    _pullSources = [.. pullSources];
   }
 
   /// <summary>
@@ -61,7 +61,7 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
     };
     if (mismatched) {
       throw new ArgumentException(
-        $"Signal type '{typeof(TSignal).FullName}' declares Targeting={targeting} but the publish call used SignalTarget.Kind={kind}. " +
+        $"Signal type '{TypeNameFormatter.DisplayName(typeof(TSignal))}' declares Targeting={targeting} but the publish call used SignalTarget.Kind={kind}. " +
         "Broadcast signals require SignalTarget.Broadcast (default); Targeted signals require SignalTarget.Streams(...) or SignalTarget.Instance(...).",
         nameof(target));
     }

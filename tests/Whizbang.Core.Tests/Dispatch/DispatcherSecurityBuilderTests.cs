@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -801,7 +802,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -915,7 +916,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -975,7 +976,7 @@ public class DispatcherSecurityBuilderTests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -1044,8 +1045,8 @@ public class DispatcherSecurityBuilderTests {
     var traceStore = new InMemoryTraceStore();
     var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
 
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     var command = new DispatcherSecurityBuilderTestCommand("test-data");
 
@@ -1171,11 +1172,11 @@ public class DispatcherSecurityBuilderTests {
   /// <summary>
   /// The <see cref="DispatcherSecurityBuilder.SendAsync{TMessage}(TMessage, DispatchOptions)"/>
   /// overload (an uncovered dispatch arm) must set the explicit context and forward to the
-  /// dispatcher when the token is not cancelled — the success counterpart to the
+  /// dispatcher when the token is not canceled — the success counterpart to the
   /// already-covered cancellation throw.
   /// </summary>
   [Test]
-  public async Task SendAsync_WithDispatchOptions_UncancelledToken_SetsContextAndDispatchesAsync() {
+  public async Task SendAsync_WithDispatchOptions_UncanceledToken_SetsContextAndDispatchesAsync() {
     // Arrange
     DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
     var scopeContextAccessor = new ScopeContextAccessor();
@@ -1184,7 +1185,7 @@ public class DispatcherSecurityBuilderTests {
 
     var command = new DispatcherSecurityBuilderTestCommand("options-data");
 
-    // Act - a live (non-cancelled) token flows through the success path of the overload
+    // Act - a live (non-canceled) token flows through the success path of the overload
     using var cts = new CancellationTokenSource();
     await dispatcher.AsSystem().ForAllTenants()
       .SendAsync(command, new DispatchOptions { CancellationToken = cts.Token });
@@ -1219,7 +1220,7 @@ public class DispatcherSecurityBuilderTests {
     var services = new ServiceCollection();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddSingleton(scopeContextAccessor);
     services.AddSingleton(traceStore);

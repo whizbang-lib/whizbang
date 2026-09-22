@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -34,27 +35,27 @@ namespace Whizbang.Core.Integration.Tests;
 [Category("Integration")]
 public class CompositeFanoutPersistenceIntegrationTests {
 
-  // A command + receptor whose RESPONSE type is E2eInnerProduced. Its existence puts E2eInnerProduced in the
+  // A command + receptor whose RESPONSE type is EndToEndInnerProduced. Its existence puts EndToEndInnerProduced in the
   // generator's event-type set, so the generated dispatcher emits an event-store cascade arm for it.
-  public sealed record E2eProducerCommand(string Note);
+  public sealed record EndToEndProducerCommand(string Note);
 
-  public sealed record E2eInnerProduced : IEvent {
+  public sealed record EndToEndInnerProduced : IEvent {
     [StreamId] public Guid StreamId { get; init; }
     public string? Note { get; init; }
   }
 
-  public sealed class E2eProducerReceptor : IReceptor<E2eProducerCommand, E2eInnerProduced> {
-    public ValueTask<E2eInnerProduced> HandleAsync(E2eProducerCommand message, CancellationToken cancellationToken = default)
-      => ValueTask.FromResult(new E2eInnerProduced { Note = message.Note });
+  public sealed class EndToEndProducerReceptor : IReceptor<EndToEndProducerCommand, EndToEndInnerProduced> {
+    public ValueTask<EndToEndInnerProduced> HandleAsync(EndToEndProducerCommand message, CancellationToken cancellationToken = default)
+      => ValueTask.FromResult(new EndToEndInnerProduced { Note = message.Note });
   }
 
   // An inner event type NO receptor returns — so the generator emits no event-store cascade arm for it.
-  public sealed record E2eInnerOrphan : IEvent {
+  public sealed record EndToEndInnerOrphan : IEvent {
     [StreamId] public Guid StreamId { get; init; }
     public string? Note { get; init; }
   }
 
-  public sealed class E2eOwnedComposite : CompositeEventBase;
+  public sealed class EndToEndOwnedComposite : CompositeEventBase;
 
   // Spy strategy: captures every outbox row the dispatcher queues. Destination==null rows are event-store-only
   // (inner-event persistence); a non-null Destination is a transported row (the composite for subscribers).
@@ -94,24 +95,24 @@ public class CompositeFanoutPersistenceIntegrationTests {
   private static (IDispatcher dispatcher, SpyWorkCoordinatorStrategy strategy) _createOwnedCompositeDispatcher() {
     var strategy = new SpyWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IEnvelopeSerializer, StubEnvelopeSerializer>();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<ITopicRoutingStrategy>(new NamespaceRoutingStrategy());
     // Own the composite's namespace so it fans out LOCALLY at publish (owned-domain composites materialize their
     // own children immediately; a non-owned composite would fan out only at the receive side).
-    services.Configure<RoutingOptions>(o => o.OwnDomains(typeof(E2eOwnedComposite).Namespace!));
+    services.Configure<RoutingOptions>(o => o.OwnDomains(typeof(EndToEndOwnedComposite).Namespace!));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
     return (provider.GetRequiredService<IDispatcher>(), strategy);
   }
 
-  private static E2eOwnedComposite _newComposite(Guid streamId) => new() {
+  private static EndToEndOwnedComposite _newComposite(Guid streamId) => new() {
     StreamId = streamId,
     Inner = [
-      new E2eInnerProduced { StreamId = streamId, Note = "produced" },
-      new E2eInnerOrphan { StreamId = streamId, Note = "orphan" },
+      new EndToEndInnerProduced { StreamId = streamId, Note = "produced" },
+      new EndToEndInnerOrphan { StreamId = streamId, Note = "orphan" },
     ],
   };
 
@@ -124,7 +125,7 @@ public class CompositeFanoutPersistenceIntegrationTests {
 
     // The composite itself is published to the outbox for other subscribers (a transported row, tagged Composite).
     var compositeRows = strategy.QueuedOutboxMessages
-      .Where(m => m.EnvelopeType.Contains("E2eOwnedComposite", StringComparison.Ordinal)).ToList();
+      .Where(m => m.EnvelopeType.Contains("EndToEndOwnedComposite", StringComparison.Ordinal)).ToList();
     await Assert.That(compositeRows.Count).IsEqualTo(1)
       .Because("an owned composite still goes over transport (step 1.2) so other subscribers can fan it out.");
     await Assert.That(compositeRows[0].Flags.HasFlag(EventFlags.Composite)).IsTrue()
@@ -136,14 +137,14 @@ public class CompositeFanoutPersistenceIntegrationTests {
     // deserialize each queued row via GetTypeInfoByName. The crux is composite==event PARITY: before the fix a
     // regular event resolved but a composite returned null → the "Failed to resolve message type" storm.
     var options = JsonContextRegistry.CreateCombinedOptions();
-    await Assert.That(JsonContextRegistry.GetTypeInfoByName(typeof(E2eInnerProduced).AssemblyQualifiedName!, options)).IsNotNull()
+    await Assert.That(JsonContextRegistry.GetTypeInfoByName(typeof(EndToEndInnerProduced).AssemblyQualifiedName!, options)).IsNotNull()
       .Because("control: a regular event is name-resolvable via RegisterTypeName.");
-    await Assert.That(JsonContextRegistry.GetTypeInfoByName(typeof(E2eOwnedComposite).AssemblyQualifiedName!, options)).IsNotNull()
+    await Assert.That(JsonContextRegistry.GetTypeInfoByName(typeof(EndToEndOwnedComposite).AssemblyQualifiedName!, options)).IsNotNull()
       .Because("the fix registers composites (RegisterTypeName), so the outbox-flush / inbox lifecycle resolves the composite by name instead of throwing 'Failed to resolve message type'.");
 
     // The produced inner event fans out to the event-store seam (Destination == null = persist, no transport).
     var producedRows = strategy.QueuedOutboxMessages
-      .Where(m => m.Destination is null && m.EnvelopeType.Contains("E2eInnerProduced", StringComparison.Ordinal)).ToList();
+      .Where(m => m.Destination is null && m.EnvelopeType.Contains("EndToEndInnerProduced", StringComparison.Ordinal)).ToList();
     await Assert.That(producedRows.Count).IsEqualTo(1)
       .Because("an inner event whose type a receptor produces has a generated event-store cascade arm and persists at publish.");
     await Assert.That(producedRows[0].IsEvent).IsTrue()
@@ -164,7 +165,7 @@ public class CompositeFanoutPersistenceIntegrationTests {
     await dispatcher.PublishAsync(_newComposite(streamId));
 
     var orphanRows = strategy.QueuedOutboxMessages
-      .Where(m => m.Destination is null && m.EnvelopeType.Contains("E2eInnerOrphan", StringComparison.Ordinal)).ToList();
+      .Where(m => m.Destination is null && m.EnvelopeType.Contains("EndToEndInnerOrphan", StringComparison.Ordinal)).ToList();
     await Assert.That(orphanRows.Count).IsEqualTo(1)
       .Because("the cascade IEvent fallback persists EVERY inner event of an owned composite, even one whose type no standalone receptor produces.");
     await Assert.That(orphanRows[0].IsEvent).IsTrue()

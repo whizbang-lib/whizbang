@@ -44,6 +44,16 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <c>IQueryable</c> lens results (consumers materialize themselves) are not coalesced — a null collection
 /// there surfaces as JSON null in read-only projections, not a crash.
 /// </para>
+/// <para>
+/// <strong>Upstream fix status.</strong> The fix is proposed in
+/// <see href="https://github.com/dotnet/efcore/pull/39014">dotnet/efcore#39014</see>, which targets <c>main</c>
+/// (EF Core 12); backports to <c>release/11.0</c> and <c>release/10.0</c> are requested there and can only be opened
+/// by the EF team. A fixed release will carry the opt-out switch <c>Microsoft.EntityFrameworkCore.Issue38625</c>.
+/// <em>Removal checklist:</em> (1) bump <c>Microsoft.EntityFrameworkCore</c> to a release that contains the fix;
+/// (2) run <c>OrderSchemaEvolutionComplexTypeTests</c>: the raw-EF characterization tests (Tests 4 and 5) assert the
+/// defect and go red once EF Core is fixed; (3) delete this class, the generator region, and every call site
+/// (grep <c>WORKAROUND(dotnet/efcore#38625)</c>); (4) flip Tests 4 and 5 to assert the fixed behavior.
+/// </para>
 /// </remarks>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderSchemaEvolutionComplexTypeTests.cs</tests>
 public static class PerspectiveDataCoalescer {

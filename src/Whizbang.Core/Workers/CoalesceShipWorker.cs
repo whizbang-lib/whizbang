@@ -1,10 +1,14 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
 
@@ -45,31 +49,29 @@ namespace Whizbang.Core.Workers;
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
+  IServiceInstanceProvider instanceProvider,
+  ILogger<CoalesceShipWorker> logger,
+  ICompositeFactory compositeFactory,
   CoalesceGroupResolver? coalesceResolver = null,
-  ILogger<CoalesceShipWorker>? logger = null,
-  TimeProvider? timeProvider = null,
-  IServiceInstanceProvider? instanceProvider = null,
-  ICompositeFactory? compositeFactory = null) : BackgroundService {
+  TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
-  private readonly ILogger<CoalesceShipWorker>? _logger = logger;
+  private readonly ILogger<CoalesceShipWorker> _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
-  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
+  private readonly ICompositeFactory _compositeFactory = compositeFactory;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    if (_coalesceResolver is null || !_coalesceResolver.HasEnabledBindings) {
+    if (_coalesceResolver?.HasEnabledBindings != true) {
       // No enabled coalesce binding — the feature is unused in this host. Park (keep
       // ExecuteTask alive, the MaintenanceWorker killswitch idiom) rather than exit, so a
       // health probe never mistakes "unused" for "crashed".
-      if (_logger is not null) {
-        LogParkedNoBindings(_logger);
-      }
+      LogParkedNoBindings(_logger);
       try {
         await Task.Delay(Timeout.InfiniteTimeSpan, _timeProvider, stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) { }
+      } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 
@@ -79,10 +81,8 @@ public sealed partial class CoalesceShipWorker(
       return;
     }
 
-    if (_logger is not null) {
-      var groups = string.Join(", ", _enabledGroups());
-      LogStarted(_logger, groups);
-    }
+    var groups = string.Join(", ", _enabledGroups());
+    LogStarted(_logger, groups);
 
     // Startup recovery: rows whose floor matured while no shipper ran degrade to individual
     // shipping NOW rather than waiting out a tick.
@@ -91,9 +91,7 @@ public sealed partial class CoalesceShipWorker(
     } catch (OperationCanceledException) {
       return;
     } catch (Exception ex) {
-      if (_logger is not null) {
-        LogRecoveryFailed(_logger, ex);
-      }
+      LogRecoveryFailed(_logger, ex);
     }
 
     // First tick runs immediately after recovery: a restart with an already-quiet backlog
@@ -105,9 +103,7 @@ public sealed partial class CoalesceShipWorker(
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
-        if (_logger is not null) {
-          LogTickFailed(_logger, ex);
-        }
+        LogTickFailed(_logger, ex);
       }
 
       try {
@@ -126,7 +122,7 @@ public sealed partial class CoalesceShipWorker(
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     foreach (var group in _enabledGroups()) {
       var released = await coordinator.ReleaseMaturedCoalesceAsync(group, cancellationToken).ConfigureAwait(false);
-      if (released > 0 && _logger is not null) {
+      if (released > 0) {
         LogReleasedMatured(_logger, released, group);
       }
     }
@@ -148,25 +144,41 @@ public sealed partial class CoalesceShipWorker(
     var now = _timeProvider.GetUtcNow();
 
     // Fold pass FIRST: matured rows prefer folding — batching them is the whole feature.
-    foreach (var groupStats in stats) {
-      var binding = _coalesceResolver!.GetBinding(groupStats.Group);
-      if (binding is null || groupStats.PendingCount <= 0) {
-        continue;  // unbound/disabled strays surface via the release backstop below
-      }
-
-      var quiet = now - groupStats.NewestCreatedAt >= TimeSpan.FromSeconds(binding.SlideSeconds);
+    // Unbound/disabled strays and empty groups are skipped here; they surface via the release backstop below.
+    foreach (var (groupStats, binding) in stats
+        .Select(g => (Stats: g, Binding: _coalesceResolver!.GetBinding(g.Group)))
+        .Where(pair => pair.Binding is not null && pair.Stats.PendingCount > 0)) {
+      var quiet = now - groupStats.NewestCreatedAt >= TimeSpan.FromSeconds(binding!.SlideSeconds);
       var overdue = now - groupStats.OldestCreatedAt >= TimeSpan.FromSeconds(binding.MaxDelaySeconds);
-      if (quiet || overdue) {
-        await _foldGroupAsync(coordinator, serializer, groupStats.Group, binding, partitionCount, cancellationToken).ConfigureAwait(false);
+      // #668: under sustained arrivals the slide never goes quiet, so the deadline was the
+      // ONLY trigger — steady-state pending grew to arrival_rate x MaxDelaySeconds (a bulk
+      // ingest accumulated 15.5k rows). A group holding a full chunk is due NOW: waiting
+      // gains nothing and loses a window of backlog. The deadline remains the floor for
+      // small groups; this makes folding CONTINUOUS under exactly the load composites
+      // exist for.
+      var full = groupStats.PendingCount >= binding.MaxBatchCount;
+      if (quiet || overdue || full) {
+        try {
+          await _foldGroupAsync(coordinator, serializer, groupStats.Group, binding, partitionCount, cancellationToken).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          throw;
+        } catch (Exception ex) {
+          // #668: per-group isolation. Claims exclude coalesce-pending rows by design — this
+          // worker is their ONLY exit — so one group's deterministic failure (a missing
+          // composite JsonTypeInfo, a transient store error) must never abort the other
+          // groups' folds or the release backstop below. Logged with the group named; the
+          // rows stay claim-invisible until the fold heals or the release floor frees them.
+          LogFoldFailed(_logger, groupStats.Group, ex);
+        }
       }
     }
 
     // Release backstop AFTER the fold: whatever a fold could not claim (or belongs to a group
     // nobody binds anymore) and has blown its floor ships individually — degraded, never lost.
-    foreach (var groupStats in stats) {
-      var released = await coordinator.ReleaseMaturedCoalesceAsync(groupStats.Group, cancellationToken).ConfigureAwait(false);
-      if (released > 0 && _logger is not null) {
-        LogReleasedMatured(_logger, released, groupStats.Group);
+    foreach (var group in stats.Select(groupStats => groupStats.Group)) {
+      var released = await coordinator.ReleaseMaturedCoalesceAsync(group, cancellationToken).ConfigureAwait(false);
+      if (released > 0) {
+        LogReleasedMatured(_logger, released, group);
       }
     }
   }
@@ -191,7 +203,11 @@ public sealed partial class CoalesceShipWorker(
       // documents the bound at the splitter.
       var plans = _compositeFactory.Create(new CompositeMintRequest<OutboxMessage> {
         Constituents = singles,
-        GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => m.Destination),
+        // Destination AND scope. A composite carries ONE hop scope, so folding two scopes into one
+        // bundle could only stamp it with one of them -- shipping one tenant's event under another
+        // tenant's authority. Note the destination is now read from the constituents rather than
+        // from GroupKey, which this split would otherwise corrupt.
+        GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => $"{m.Destination}|{_scopeKey(m)}"),
         MaxConstituentsPerComposite = binding.MaxBatchCount,
         BuildComposite = batch => (binding.CompositeFactory ?? BuildDefaultComposite)(new CoalesceFoldBatch {
           Group = group,
@@ -201,7 +217,17 @@ public sealed partial class CoalesceShipWorker(
       });
 
       foreach (var plan in plans) {
-        var compositeMessage = _buildCompositeOutboxMessage(serializer, plan.Composite, plan.GroupKey);
+        // Scope-uniform and destination-uniform by construction (see GroupKey), so any constituent
+        // answers for the bundle.
+        var first = plan.Constituents[0];
+        // Priority step 1: the composite carries a number folded from its members, per the binding's rule.
+        var priority = FoldPriority(binding, new CoalesceFoldBatch {
+          Group = group,
+          Singles = plan.Constituents,
+          Atomicity = binding.Atomicity
+        });
+        var compositeMessage = _buildCompositeOutboxMessage(
+          serializer, plan.Composite, first.Destination, _scopeOf(first), priority);
 
         await coordinator.CompleteCoalesceFoldAsync(
           [.. plan.Constituents.Select(m => m.MessageId)],
@@ -209,9 +235,7 @@ public sealed partial class CoalesceShipWorker(
           partitionCount,
           cancellationToken).ConfigureAwait(false);
 
-        if (_logger is not null) {
-          LogFolded(_logger, plan.Constituents.Count, group, compositeMessage.MessageId);
-        }
+        LogFolded(_logger, plan.Constituents.Count, group, compositeMessage.MessageId);
       }
 
       if (singles.Count < binding.MaxBatchCount) {
@@ -233,22 +257,54 @@ public sealed partial class CoalesceShipWorker(
       Atomicity = batch.Atomicity,
       InnerPayloads = [.. batch.Singles.Select(m => m.Envelope.Payload)],
       InnerTypeNames = [.. batch.Singles.Select(m => m.MessageType)],
-      InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)]
+      InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)],
+      // #596: each single's OWN stream rides the wire, so the receiver's expansion restores
+      // per-stream identity instead of collapsing every child onto the composite's stream.
+      InnerStreamIds = [.. batch.Singles.Select(m => m.StreamId ?? Guid.Empty)]
+    };
+  }
+
+  /// <summary>
+  /// The number a minted composite carries, folded from its members by the binding's
+  /// <see cref="CoalescePolicyOptions.PriorityFold"/>: the most urgent member by default (the rule the claim
+  /// folds a stream with), the least urgent, or the binding's own <see cref="CoalescePolicyOptions.PriorityFor"/>
+  /// callback. A Manual binding without a callback leaves the composite undeclared, so the consumer's rules
+  /// classify it; the worker never invents a band. The members were declared through the producer hooks when
+  /// they were produced, so the fold is a function of their numbers and consults no hook of its own.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#composites</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync</tests>
+  internal static int FoldPriority(CoalescePolicyOptions binding, CoalesceFoldBatch batch) {
+    ArgumentNullException.ThrowIfNull(binding);
+    ArgumentNullException.ThrowIfNull(batch);
+    return binding.PriorityFold switch {
+      CompositePriorityFold.LeastUrgent => WorkPriority.LeastUrgent(batch.Singles),
+      CompositePriorityFold.Manual => binding.PriorityFor?.Invoke(batch) ?? WorkPriority.UNDECLARED,
+      _ => WorkPriority.MostUrgent(batch.Singles),
     };
   }
 
   private OutboxMessage _buildCompositeOutboxMessage(
       IEnvelopeSerializer serializer,
       CompositeEventBase composite,
-      string? destination) {
+      string? destination,
+      ScopeDelta? scope,
+      int priority) {
     var envelope = new MessageEnvelope<CompositeEventBase> {
+      Priority = priority,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = composite,
       Hops = [
         new MessageHop {
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = _timeProvider.GetUtcNow()
+          Timestamp = _timeProvider.GetUtcNow(),
+          // The folded singles' scope, carried forward. The consumer's fan-out derives every
+          // child's scope from this hop and PERSISTS it, so an unscoped bundle leaves behind
+          // children that no later read can repair.
+          Scope = scope
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -273,7 +329,8 @@ public sealed partial class CoalesceShipWorker(
       // composite must not re-enter the event store. CoalesceGroup stays null BY DESIGN —
       // the composite ships immediately, never back into the pool it just drained.
       IsEvent = false,
-      MessageType = serialized.MessageType
+      MessageType = serialized.MessageType,
+      Priority = priority
     };
   }
 
@@ -304,11 +361,16 @@ public sealed partial class CoalesceShipWorker(
     Message = "CoalesceShipWorker parked: no enabled coalesce bindings in this host")]
   static partial void LogParkedNoBindings(ILogger logger);
 
+  [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+    Message = "CoalesceShipWorker fold failed for group '{Group}' — other groups and the release backstop still ran; "
+            + "the group's rows remain claim-invisible until the fold heals or the release floor frees them")]
+  static partial void LogFoldFailed(ILogger logger, string group, Exception ex);
+
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
     Message = "Released {Count} matured coalesce-pending singles for group '{Group}' to individual shipping (deadline degrade — the fold did not get to them in time)")]
   static partial void LogReleasedMatured(ILogger logger, int count, string group);
 
-  [LoggerMessage(EventId = 4, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Folded {Count} pending singles of group '{Group}' into composite {CompositeMessageId}")]
   static partial void LogFolded(ILogger logger, int count, string group, Guid compositeMessageId);
 
@@ -319,4 +381,22 @@ public sealed partial class CoalesceShipWorker(
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
     Message = "CoalesceShipWorker startup recovery release failed; per-tick backstop will retry")]
   static partial void LogRecoveryFailed(ILogger logger, Exception ex);
+  /// <summary>The scope carried by a pending single, or null when it had none.</summary>
+  private static ScopeDelta? _scopeOf(OutboxMessage message) =>
+    message.Metadata.Hops.Count > 0 ? message.Metadata.Hops[0].Scope : null;
+
+  /// <summary>
+  /// Stable grouping key for a single's scope, so a fold never spans two of them.
+  /// </summary>
+  /// <remarks>
+  /// Compares the RESOLVED scope values rather than the delta itself: two deltas can be structurally
+  /// different and still resolve to the same authority, and splitting those apart would fragment
+  /// folds for no benefit.
+  /// </remarks>
+  private static string _scopeKey(OutboxMessage message) {
+    var scope = _scopeOf(message)?.ApplyTo(null).Scope;
+    return scope is null
+      ? string.Empty
+      : $"{scope.TenantId}|{scope.UserId}|{scope.CustomerId}|{scope.OrganizationId}";
+  }
 }

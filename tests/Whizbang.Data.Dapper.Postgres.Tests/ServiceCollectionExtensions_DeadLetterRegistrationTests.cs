@@ -2,12 +2,12 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Locks the Dapper turnkey path's DLQ wiring. v0.502 added
@@ -25,11 +25,12 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
     // fast unit test (no Postgres / Docker required) — the DapperDeadLetterStore
     // constructor only stashes the connection string; no I/O at registration.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceCollectionExtensions._addDeadLetterStore(
       services,
       "Host=localhost;Database=test;Username=u;Password=p");
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var store = sp.GetService<IDeadLetterStore>();
 
     await Assert.That(store).IsNotNull()
@@ -41,11 +42,12 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
   [Test]
   public async Task AddDeadLetterStore_RegistersAsDapperDeadLetterStoreAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceCollectionExtensions._addDeadLetterStore(
       services,
       "Host=localhost;Database=test;Username=u;Password=p");
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var store = sp.GetService<IDeadLetterStore>();
 
     await Assert.That(store).IsTypeOf<DapperDeadLetterStore>();

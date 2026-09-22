@@ -303,6 +303,7 @@ public class PooledValueTaskSourceTests {
   }
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S5034:ValueTask should be consumed correctly", Justification = "Awaiting the pooled source twice after completion is the behavior this test pins.")]
   public async Task PooledValueTaskSource_MultipleAwaitsAfterCompletion_WorksAsync() {
     // Arrange
     var source = new PooledValueTaskSource<int>();

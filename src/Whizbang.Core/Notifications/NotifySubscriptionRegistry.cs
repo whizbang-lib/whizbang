@@ -53,7 +53,7 @@ public sealed class NotifySubscriptionRegistry {
   /// </summary>
   public bool Remove(INotifySubscription subscription) {
     ArgumentNullException.ThrowIfNull(subscription);
-    var wasLast = false;
+    const bool wasLast = false;
     while (_byChannel.TryGetValue(subscription.ChannelName, out var existing)) {
       var idx = existing.IndexOf(subscription);
       if (idx < 0) {
@@ -65,8 +65,7 @@ public sealed class NotifySubscriptionRegistry {
         // "first subscribe" against a stale empty array.
         if (((ICollection<KeyValuePair<string, ImmutableArray<INotifySubscription>>>)_byChannel)
             .Remove(new KeyValuePair<string, ImmutableArray<INotifySubscription>>(subscription.ChannelName, existing))) {
-          wasLast = true;
-          return wasLast;
+          return true;
         }
         // Lost the race against a concurrent mutation — retry.
         continue;

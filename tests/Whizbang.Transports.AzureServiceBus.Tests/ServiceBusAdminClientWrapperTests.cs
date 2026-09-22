@@ -271,7 +271,7 @@ public class ServiceBusAdminClientWrapperTests {
 
   [Test]
   public async Task GetRulesAsync_NoRules_YieldsNothingAsync() {
-    var (wrapper, fake) = _createWrapper();
+    var (wrapper, _) = _createWrapper();
 
     var count = 0;
     await foreach (var _ in wrapper.GetRulesAsync("orders-topic", "billing-sub")) {
@@ -464,8 +464,8 @@ public class ServiceBusAdminClientWrapperTests {
       LastCancellationToken = cancellationToken;
       // One rule per page so callers exercise multi-page enumeration.
       var pages = Rules
-        .Select(rule => Page<RuleProperties>.FromValues([rule], null, _rawResponse))
-        .ToList();
+        .ConvertAll(rule => Page<RuleProperties>.FromValues([rule], null, _rawResponse))
+;
       return AsyncPageable<RuleProperties>.FromPages(pages);
     }
 

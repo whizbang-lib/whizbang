@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -14,7 +15,7 @@ namespace Whizbang.Core.Tests.Observability;
 public class MaintenanceMetricsTests {
   [Test]
   public async Task Instruments_HaveStableNamesAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.RowsAffected.Name).IsEqualTo("whizbang.maintenance.rows_affected");
     await Assert.That(metrics.TaskDuration.Name).IsEqualTo("whizbang.maintenance.task_duration");
@@ -23,25 +24,28 @@ public class MaintenanceMetricsTests {
 
   [Test]
   public async Task Record_EmitsDurationAlways_RowsOnlyWhenPositiveAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var rowMeasurements = new List<long>();
     var durationMeasurements = new List<double>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == MaintenanceMetrics.METER_NAME) {
+      if (instrument.Meter == metrics.RowsAffected.Meter) {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<long>((_, value, _, _) => rowMeasurements.Add(value));
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      if (instrument.Name == "whizbang.maintenance.rows_affected") { rowMeasurements.Add(value); }
+    });
     listener.SetMeasurementEventCallback<double>((_, value, _, _) => durationMeasurements.Add(value));
     listener.Start();
 
     metrics.Record("reap_expired_perspective_rows", rowsAffected: 0, durationMs: 12.5);
     metrics.Record("reap_expired_perspective_rows", rowsAffected: 42, durationMs: 8.0);
+    listener.RecordObservableInstruments();
 
     await Assert.That(durationMeasurements.Count).IsEqualTo(2)
       .Because("duration records every cycle — the liveness half of the signal");
-    await Assert.That(rowMeasurements).IsEquivalentTo(new long[] { 42 })
-      .Because("zero-row cycles add nothing to the counter (no-op sweep is not signal)");
+    await Assert.That(rowMeasurements.Where(v => v != 0).ToList()).IsEquivalentTo(new long[] { 42 })
+      .Because("zero-row cycles add nothing to the counter (no-op sweep is not signal), so the task's series reads the one positive cycle");
   }
 }

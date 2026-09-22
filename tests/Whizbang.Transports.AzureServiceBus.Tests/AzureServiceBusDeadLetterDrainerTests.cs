@@ -80,13 +80,13 @@ public class AzureServiceBusDeadLetterDrainerTests {
       body: BinaryData.FromString("""{"v":1,"p":{"x":1}}"""),
       messageId: _id1,
       sessionId: _id2,
-      deliveryCount: 10,
-      enqueuedTime: enqueued,
       properties: new Dictionary<string, object> {
         ["EnvelopeType"] = "Whizbang.Test.Envelope",
         ["DeadLetterReason"] = "MaxDeliveryAttemptsExceeded",
         ["DeadLetterErrorDescription"] = "JsonTypeInfo metadata for type X was not provided",
-      });
+      },
+      deliveryCount: 10,
+      enqueuedTime: enqueued);
 
     var ok = AzureServiceBusDeadLetterDrainer.TryBuildImport(msg, "orders", "billing", out var import);
 
@@ -180,7 +180,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
   public async Task DrainDeadLetterQueueAsync_MessagesAvailable_ImportsAndCompletesEachAsync() {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1, body: "payload-1"), _dlqMessage(_id2, body: "payload-2") });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1, body: "payload-1"), _dlqMessage(_id2, body: "payload-2")]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -201,7 +201,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
     importer.PlannedOutcomes.Enqueue(false);   // duplicate — custody already exists
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -217,11 +217,11 @@ public class AzureServiceBusDeadLetterDrainerTests {
   public async Task DrainDeadLetterQueueAsync_NonWhizbangMessage_AbandonsAndDoesNotImportAsync() {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
-    client.Receiver.Batches.Enqueue(new[] {
+    client.Receiver.Batches.Enqueue([
       ServiceBusModelFactory.ServiceBusReceivedMessage(
         body: BinaryData.FromString("foreign"), messageId: "not-a-guid"),
       _dlqMessage(_id1),
-    });
+    ]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -256,7 +256,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
   public async Task DrainDeadLetterQueueAsync_MaxCountReached_StopsWithoutFurtherReceivesAsync() {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1), _dlqMessage(_id2) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1), _dlqMessage(_id2)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 2);
@@ -272,7 +272,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var importer = new FakeImporter();
     importer.PlannedOutcomes.Enqueue(new InvalidOperationException("import failed"));
     importer.PlannedOutcomes.Enqueue(true);
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1), _dlqMessage(_id2) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1), _dlqMessage(_id2)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -290,7 +290,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
     client.Receiver.CompleteException = new ServiceBusException("lock lost", ServiceBusFailureReason.MessageLockLost);
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -308,7 +308,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var importer = new FakeImporter();
     importer.PlannedOutcomes.Enqueue(new InvalidOperationException("import failed"));
     client.Receiver.AbandonException = new ServiceBusException("lock lost", ServiceBusFailureReason.MessageLockLost);
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -324,7 +324,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var importer = new FakeImporter();
     importer.PlannedOutcomes.Enqueue(new InvalidOperationException("import failed"));
     client.Receiver.AbandonException = new ObjectDisposedException("receiver");
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10);
@@ -339,7 +339,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     var importer = new FakeImporter();
     importer.PlannedOutcomes.Enqueue(new InvalidOperationException("import failed"));
     client.Receiver.AbandonException = new InvalidOperationException("abandon exploded");
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     await Assert.That(async () => await drainer.DrainDeadLetterQueueAsync(maxCount: 10))
@@ -347,12 +347,12 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
-  public async Task DrainDeadLetterQueueAsync_CancelledDuringReceive_ThrowsBeforeProcessingBatchAsync() {
+  public async Task DrainDeadLetterQueueAsync_CanceledDuringReceive_ThrowsBeforeProcessingBatchAsync() {
     using var cts = new CancellationTokenSource();
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
     client.Receiver.OnReceive = cts.Cancel;
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
     await using var drainer = _drainerFor(client, importer);
 
     await Assert.That(async () => await drainer.DrainDeadLetterQueueAsync(maxCount: 10, cts.Token))
@@ -363,20 +363,69 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
-  public async Task DrainDeadLetterQueueAsync_CancelledAfterFirstMessage_ReturnsPartialCountAsync() {
+  public async Task DrainDeadLetterQueueAsync_CanceledAfterFirstMessage_ReturnsPartialCountAsync() {
     using var cts = new CancellationTokenSource();
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
     client.Receiver.OnComplete = cts.Cancel;
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id2) });
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id2)]);
     await using var drainer = _drainerFor(client, importer);
 
     var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 10, cts.Token);
 
     await Assert.That(drained).IsEqualTo(1);
     await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(1)
-      .Because("the cancelled token must stop the loop before a second receive");
+      .Because("the canceled token must stop the loop before a second receive");
+  }
+
+  [Test]
+  [Timeout(15_000)]
+  public async Task DrainDeadLetterQueueAsync_WholeBatchAbandoned_StopsInsteadOfReOfferingItForeverAsync(
+      CancellationToken cancellationToken) {
+    // Every import fails — the shape a host with no coordinator (or a database that cannot take
+    // custody) produces. The broker re-offers each abandoned message immediately, so the loop's
+    // "empty DLQ" exit never arrives: without a no-progress guard this pass runs until
+    // cancellation, hammering the broker with receives it will never settle.
+    var client = new FakeDrainClient();
+    var importer = new FakeImporter();
+    client.Receiver.RedeliverAbandoned = true;
+    client.Receiver.Batches.Enqueue([_dlqMessage(_id1)]);
+    for (var i = 0; i < 50; i++) {
+      importer.PlannedOutcomes.Enqueue(new InvalidOperationException("no custody available"));
+    }
+    await using var drainer = _drainerFor(client, importer);
+
+    var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 100, cancellationToken);
+
+    await Assert.That(drained).IsEqualTo(0);
+    await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(1)
+      .Because("a pass that settles nothing must stop after one receive — re-receiving hands "
+             + "back the same abandoned messages, and nothing that failed resolves mid-pass");
+    await Assert.That(client.Receiver.Abandoned).Count().IsEqualTo(1)
+      .Because("the message is abandoned exactly once, not once per spin");
+  }
+
+  [Test]
+  [Timeout(15_000)]
+  public async Task DrainDeadLetterQueueAsync_PartialProgress_KeepsDrainingUntilNothingSettlesAsync(
+      CancellationToken cancellationToken) {
+    // A mixed DLQ: one message this host can custody, one foreign message it may never settle.
+    // The pass that drains the Whizbang message made progress, so the loop continues; the pass
+    // that only re-abandons the foreign one is where it stops.
+    var client = new FakeDrainClient();
+    var importer = new FakeImporter();
+    client.Receiver.RedeliverAbandoned = true;
+    client.Receiver.Batches.Enqueue([_dlqMessage("not-a-guid"), _dlqMessage(_id1)]);
+    await using var drainer = _drainerFor(client, importer);
+
+    var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 100, cancellationToken);
+
+    await Assert.That(drained).IsEqualTo(1)
+      .Because("the foreign message is not ours to settle, so only the Whizbang one drains");
+    await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(2)
+      .Because("the first pass made progress and earns another receive; the second settles "
+             + "nothing and ends the pass");
   }
 
   [Test]
@@ -435,6 +484,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     public List<BrokerDeadLetterImport> Received { get; } = [];
     public Queue<object> PlannedOutcomes { get; } = new();
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The method is handed to the drainer as its importer delegate, whose shape includes the token.")]
     public Task<bool> ImportAsync(BrokerDeadLetterImport import, CancellationToken ct) {
       Received.Add(import);
       if (PlannedOutcomes.Count == 0) {
@@ -484,6 +534,12 @@ public class AzureServiceBusDeadLetterDrainerTests {
     public List<string> Abandoned { get; } = [];
     public Exception? CompleteException { get; set; }
     public Exception? AbandonException { get; set; }
+    /// <summary>
+    /// Models the broker faithfully for the drain loop's termination: abandoning returns a
+    /// message to the queue IMMEDIATELY, so the next receive offers it again. Off by default so
+    /// the settlement tests stay one-shot.
+    /// </summary>
+    public bool RedeliverAbandoned { get; set; }
     public Action? OnReceive { get; set; }
     public Action? OnComplete { get; set; }
     public int DisposeCount { get; private set; }
@@ -512,6 +568,9 @@ public class AzureServiceBusDeadLetterDrainerTests {
       IDictionary<string, object>? propertiesToModify = null,
       CancellationToken cancellationToken = default) {
       Abandoned.Add(message.MessageId);
+      if (RedeliverAbandoned) {
+        Batches.Enqueue([message]);
+      }
       return AbandonException is null ? Task.CompletedTask : Task.FromException(AbandonException);
     }
 

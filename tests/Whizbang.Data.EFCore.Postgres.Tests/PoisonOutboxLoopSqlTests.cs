@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
 
   private const string PERMANENT_ERROR =
@@ -69,11 +70,10 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
       });
       await fail.ExecuteNonQueryAsync(ct);
     }
-    await using (var rewind = conn.CreateCommand()) {
-      rewind.CommandText = "UPDATE wh_outbox SET scheduled_for = NOW() - INTERVAL '1 second' WHERE message_id = @msg";
-      rewind.Parameters.AddWithValue("msg", messageId);
-      await rewind.ExecuteNonQueryAsync(ct);
-    }
+    await using var rewind = conn.CreateCommand();
+    rewind.CommandText = "UPDATE wh_outbox SET scheduled_for = NOW() - INTERVAL '1 second' WHERE message_id = @msg";
+    rewind.Parameters.AddWithValue("msg", messageId);
+    await rewind.ExecuteNonQueryAsync(ct);
     return true;
   }
 
@@ -83,7 +83,7 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
     read.Parameters.AddWithValue("msg", messageId);
     await using var reader = await read.ExecuteReaderAsync(ct);
     await reader.ReadAsync(ct);
-    return (reader.GetInt32(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    return (reader.GetInt32(0), await reader.IsDBNullAsync(1, ct) ? null : reader.GetString(1));
   }
 
   [Test]
@@ -144,15 +144,14 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
     await Assert.That(await _oneLoopCycleAsync(conn, instanceId, messageId, cancellationToken)).IsFalse()
       .Because("no further claim cycle can ever pick the message up again");
 
-    await using (var dlq = conn.CreateCommand()) {
-      dlq.CommandText = "SELECT attempts_when_dlq, error_text FROM wh_dead_letters WHERE dead_letter_id = @dlq";
-      dlq.Parameters.AddWithValue("dlq", dlqId);
-      await using var reader = await dlq.ExecuteReaderAsync(cancellationToken);
-      await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
-      await Assert.That(reader.GetInt32(0)).IsEqualTo(attempts)
-        .Because("the DLQ row records how long the loop ran before the gate ended it");
-      await Assert.That(reader.GetString(1)).IsEqualTo(PERMANENT_ERROR)
-        .Because("operators diagnose from the DLQ row alone — the real root-cause text must survive the move");
-    }
+    await using var dlq = conn.CreateCommand();
+    dlq.CommandText = "SELECT attempts_when_dlq, error_text FROM wh_dead_letters WHERE dead_letter_id = @dlq";
+    dlq.Parameters.AddWithValue("dlq", dlqId);
+    await using var reader = await dlq.ExecuteReaderAsync(cancellationToken);
+    await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
+    await Assert.That(reader.GetInt32(0)).IsEqualTo(attempts)
+      .Because("the DLQ row records how long the loop ran before the gate ended it");
+    await Assert.That(reader.GetString(1)).IsEqualTo(PERMANENT_ERROR)
+      .Because("operators diagnose from the DLQ row alone — the real root-cause text must survive the move");
   }
 }

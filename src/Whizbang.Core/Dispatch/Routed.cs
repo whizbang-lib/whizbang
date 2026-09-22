@@ -22,7 +22,6 @@ namespace Whizbang.Core.Dispatch;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/rpc-extraction#discriminated-unions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:None_*</tests>
 public readonly struct RoutedNone : IRouted {
   /// <summary>
   /// Gets the wrapped value, which is always null for RoutedNone.
@@ -148,6 +147,5 @@ public readonly struct Routed<T>(T value, DispatchModes mode) : IRouted {
   /// }
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:AsValueTask_*</tests>
   public ValueTask<Routed<T>> AsValueTask() => new(this);
 }

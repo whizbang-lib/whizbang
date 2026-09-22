@@ -15,6 +15,7 @@ namespace Whizbang.Core.Offloads;
 /// <param name="ContentHash">SHA-256 (or provider-equivalent) of the body. Receiver MUST verify after download; mismatch → dead-letter with integrity-failure code.</param>
 /// <param name="ContentType">MIME type of the original body so the receiver can deserialize into the correct payload type.</param>
 /// <param name="UploadedAt">Wall-clock timestamp of upload. Useful for diagnostics and provider-side TTL bookkeeping; not part of the integrity check.</param>
+/// <param name="Cipher">How the stored bytes were sealed, when a body cipher was configured (issue #704); null means the store holds the body as serialized. <see cref="ContentHash"/> covers the stored bytes either way, so the receiver verifies before it opens.</param>
 /// <docs>fundamentals/offloads/message-body-store</docs>
 public sealed record MessageBodyClaim(
   string ProviderName,
@@ -22,5 +23,6 @@ public sealed record MessageBodyClaim(
   long Size,
   string ContentHash,
   string ContentType,
-  DateTimeOffset UploadedAt
+  DateTimeOffset UploadedAt,
+  MessageBodyCipherDescriptor? Cipher = null
 );

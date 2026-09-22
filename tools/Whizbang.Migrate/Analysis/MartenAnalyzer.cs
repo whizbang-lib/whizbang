@@ -70,7 +70,14 @@ public sealed class MartenAnalyzer : ICodeAnalyzer {
     var allDIRegistrations = new List<DIRegistrationInfo>();
     var allWarnings = new List<MigrationWarning>();
 
-    var projectDir = Path.GetDirectoryName(projectPath) ?? ".";
+    // projectPath may be a directory or a .sln/.csproj file. Stripping unconditionally with
+    // GetDirectoryName was correct only for the file form: given a directory it returns the
+    // PARENT, so `analyze -p /path/to/project` scanned /path/to -- reporting handlers from
+    // sibling projects, and crashing outright with UnauthorizedAccessException if any sibling
+    // happened to be unreadable.
+    var projectDir = Directory.Exists(projectPath)
+      ? projectPath
+      : Path.GetDirectoryName(projectPath) ?? ".";
     var csFiles = Directory.GetFiles(projectDir, "*.cs", SearchOption.AllDirectories);
 
     foreach (var file in csFiles) {

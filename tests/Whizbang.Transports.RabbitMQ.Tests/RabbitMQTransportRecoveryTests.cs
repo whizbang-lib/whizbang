@@ -46,7 +46,7 @@ public class RabbitMQTransportRecoveryTests {
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -93,7 +93,7 @@ public class RabbitMQTransportRecoveryTests {
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -135,7 +135,7 @@ public class RabbitMQTransportRecoveryTests {
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -177,7 +177,7 @@ public class RabbitMQTransportRecoveryTests {
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
@@ -217,7 +217,7 @@ public class RabbitMQTransportRecoveryTests {
     );
 
     var recoveryHandlerCalled = false;
-    transport.SetRecoveryHandler(async ct => {
+    transport.SetRecoveryHandler(async _ => {
       recoveryHandlerCalled = true;
       await Task.CompletedTask;
     });
@@ -250,7 +250,7 @@ public class RabbitMQTransportRecoveryTests {
       logger: null
     );
 
-    transport.SetRecoveryHandler(async ct => {
+    transport.SetRecoveryHandler(async _ => {
       await Task.CompletedTask;
       throw new InvalidOperationException("Recovery handler failed");
     });
@@ -281,7 +281,7 @@ public class RabbitMQTransportRecoveryTests {
     );
 
     var callCount = 0;
-    transport.SetRecoveryHandler(async ct => {
+    transport.SetRecoveryHandler(async _ => {
       callCount++;
       await Task.CompletedTask;
     });
@@ -334,7 +334,7 @@ public class RabbitMQTransportRecoveryTests {
 
     // Act & Assert - Should wrap TaskCanceledException in InvalidOperationException
     await Assert.That(async () => await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     )).Throws<InvalidOperationException>();
   }
@@ -351,7 +351,7 @@ public class RabbitMQTransportRecoveryTests {
 /// Fake channel that throws TaskCanceledException on QueueBindAsync.
 /// </summary>
 internal sealed class FakeChannelThatThrowsOnBind : FakeChannel {
-  public override Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+  public override Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) {
     throw new TaskCanceledException("A task was canceled.");
   }
 }

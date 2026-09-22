@@ -29,6 +29,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithValidServices_ReturnsWhizbangBuilderAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     var builder = services.AddWhizbang();
@@ -42,6 +43,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_ReturnedBuilder_HasSameServicesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     var builder = services.AddWhizbang();
@@ -54,6 +56,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersCoreServices_SuccessfullyAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -72,6 +75,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersLifecycleCoordinator_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -87,6 +91,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_LifecycleCoordinator_IsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
 
@@ -106,6 +111,7 @@ public class ServiceCollectionExtensionsTests {
   [Test]
   public async Task AddWhizbang_RegistersDefaultRecurrenceRuleFactoryAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
@@ -118,6 +124,7 @@ public class ServiceCollectionExtensionsTests {
   [Test]
   public async Task AddWhizbang_DeveloperRecurrenceFactory_WinsViaTryAddAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // The override hook: a developer registers their own factory BEFORE AddWhizbang; TryAdd must defer.
     services.AddSingleton<IRecurrenceRuleFactory, CustomRecurrenceRuleFactory>();
 
@@ -141,6 +148,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersDebuggerAwareClock_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -159,6 +167,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersScopedEventTracker_AsScopedAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -182,6 +191,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersPerspectiveSyncSignaler_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -200,6 +210,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersPerspectiveSyncAwaiter_AsScopedAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     // PerspectiveSyncAwaiter requires IWorkCoordinator (provided by data layer)
     services.AddSingleton<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
@@ -226,6 +237,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_SyncServices_AllowOverridesWithTryAddAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Pre-register custom implementations before AddWhizbang()
     services.AddSingleton<IDebuggerAwareClock, DebuggerAwareClock>();
@@ -249,6 +261,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersSyncEventTracker_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -267,6 +280,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersTrackedEventTypeRegistry_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -288,6 +302,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_SyncEventTracker_AllowsOverrideAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var customTracker = new SyncEventTracker();
 
     // Pre-register custom implementation before AddWhizbang()
@@ -306,6 +321,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_TrackedEventTypeRegistry_AllowsOverrideAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var customRegistry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
       { typeof(string), ["TestPerspective"] }
     });
@@ -331,6 +347,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithOptionsLambda_ReturnsWhizbangBuilderAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     var builder = services.AddWhizbang(options => { });
@@ -344,11 +361,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithOptionsLambda_RegistersTagOptions_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -361,6 +377,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithOptionsLambda_RegistersWhizbangCoreOptions_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang(options => {
@@ -380,6 +397,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithHooks_RegistersHookTypesAsScoped_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang(options => {
@@ -405,11 +423,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithHooks_RegistersMessageTagProcessor_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -424,6 +441,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithNullConfigure_UsesDefaults_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang(configure: null);
@@ -440,6 +458,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_ParameterlessOverload_StillWorks_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - use parameterless overload
     var builder = services.AddWhizbang();
@@ -458,6 +477,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithMultipleHooks_RegistersAllHookTypes_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang(options => {
@@ -486,13 +506,12 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithHooksTryAddScoped_DoesNotOverrideExisting_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var existingHook = new TestNotificationHook();
     services.AddScoped(_ => existingHook); // Pre-register
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
     var provider = services.BuildServiceProvider();
 
     // Assert - TryAddScoped should not override existing registration
@@ -505,6 +524,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - First call registers hooks
     _ = services.AddWhizbang(options => {
@@ -534,16 +554,13 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - First call registers notification hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call registers telemetry hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>());
 
     var provider = services.BuildServiceProvider();
 
@@ -564,15 +581,12 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CalledMultipleTimes_DoesNotDuplicateHooks_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - Both calls register the same hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     var provider = services.BuildServiceProvider();
 
@@ -589,11 +603,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CalledMultipleTimes_ProcessorUsesFirstTagOptions_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - First call registers hooks
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    _ = services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call without hooks
     _ = services.AddWhizbang();
@@ -614,11 +627,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Assert - Verify ImplementationInstance is set correctly
     // This is critical for the multiple-call merge logic to work
@@ -635,11 +647,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CalledMultipleTimes_ImplementationInstancePreserved_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - First call with hooks
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
+    services.AddWhizbang(options => options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>());
 
     // Second call without hooks (should find existing via ImplementationInstance)
     services.AddWhizbang();
@@ -662,6 +673,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersTracingOptions_AsIOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -677,6 +689,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersTracingOptions_AsIOptionsMonitorAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang();
@@ -692,6 +705,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithTracingConfig_ConfiguresTracingOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
     _ = services.AddWhizbang(options => {
@@ -712,6 +726,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_TracingOptions_ConfiguredFromWhizbangCoreOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act - Configure via WhizbangCoreOptions
     _ = services.AddWhizbang(options => {
@@ -741,6 +756,7 @@ public class ServiceCollectionExtensionsTests {
       .Build();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act
@@ -765,12 +781,11 @@ public class ServiceCollectionExtensionsTests {
       .Build();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act - Programmatic defaults get set, then IConfiguration overrides
-    _ = services.AddWhizbang(options => {
-      options.Tracing.Verbosity = TraceVerbosity.Normal;
-    });
+    _ = services.AddWhizbang(options => options.Tracing.Verbosity = TraceVerbosity.Normal);
     var provider = services.BuildServiceProvider();
 
     // Assert - IConfiguration should win
@@ -790,6 +805,7 @@ public class ServiceCollectionExtensionsTests {
       .Build();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act
@@ -816,6 +832,7 @@ public class ServiceCollectionExtensionsTests {
       .Build();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act
@@ -840,11 +857,12 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_InvokesLensServicesCallback_WhenRegisteredAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var callbackInvoked = false;
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+    ServiceRegistrationCallbacks.LensServices = (_, options) => {
       callbackInvoked = true;
       receivedOptions = options;
     };
@@ -867,12 +885,11 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_InvokesPerspectiveServicesCallback_WhenRegisteredAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.PerspectiveServices = (s, options) => {
-      callbackInvoked = true;
-    };
+    ServiceRegistrationCallbacks.PerspectiveServices = (_, _) => callbackInvoked = true;
 
     try {
       // Act
@@ -890,12 +907,11 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_InvokesDispatcherCallback_WhenRegisteredAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.Dispatcher = s => {
-      callbackInvoked = true;
-    };
+    ServiceRegistrationCallbacks.Dispatcher = _ => callbackInvoked = true;
 
     try {
       // Act
@@ -913,18 +929,15 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_PassesServiceOptionsToCallbacks_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
-      receivedOptions = options;
-    };
+    ServiceRegistrationCallbacks.LensServices = (_, options) => receivedOptions = options;
 
     try {
       // Act
-      _ = services.AddWhizbang(options => {
-        options.Services.IncludeSelfRegistration = false;
-      });
+      _ = services.AddWhizbang(options => options.Services.IncludeSelfRegistration = false);
 
       // Assert
       await Assert.That(receivedOptions).IsNotNull();
@@ -939,6 +952,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithNoCallbacks_DoesNotThrowAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceRegistrationCallbacks.Reset();
 
     try {
@@ -955,6 +969,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_CallsAllCallbacksInOrder_Async() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var callOrder = new List<string>();
 
     ServiceRegistrationCallbacks.Reset();
@@ -1008,11 +1023,10 @@ public class ServiceCollectionExtensionsTests {
   public async Task WhizbangCoreOptions_Services_CanBeConfiguredAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     // Act
-    _ = services.AddWhizbang(options => {
-      options.Services.IncludeSelfRegistration = false;
-    });
+    _ = services.AddWhizbang(options => options.Services.IncludeSelfRegistration = false);
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -1028,7 +1042,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1036,7 +1050,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestTelemetryHook : IMessageTagHook<TelemetryTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1044,7 +1058,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestMetricHook : IMessageTagHook<MetricTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1052,7 +1066,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestUniversalHook : IMessageTagHook<MessageTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1065,6 +1079,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task DecorateEventStore_WithNoEventStoreRegistered_ReturnsServicesUnchangedAsync() {
     // Arrange - no IEventStore registered
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     var countBefore = services.Count;
 
@@ -1082,6 +1097,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task DecorateEventStore_WithScopedFactoryRegistration_WrapsWithDecoratorsAsync() {
     // Arrange - register IEventStore using a factory (scoped)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
@@ -1105,6 +1121,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task DecorateEventStore_WithScopedTypeRegistration_WrapsWithDecoratorsAsync() {
     // Arrange - register IEventStore using an implementation type (scoped)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
@@ -1112,22 +1129,22 @@ public class ServiceCollectionExtensionsTests {
     // Register as scoped type
     services.AddScoped<IEventStore, StubEventStore>();
 
-    // Act
-    services.DecorateEventStoreWithSyncTracking();
+    // Act & Assert - a type-based registration cannot be decorated without reflection,
+    // which Core does not permit. The error has to name the fix, or a consumer hitting
+    // it only learns that something is unsupported.
+    var ex = Assert.Throws<InvalidOperationException>(
+      () => services.DecorateEventStoreWithSyncTracking());
 
-    // Assert - IEventStore should still be resolvable
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-
-    await Assert.That(eventStore).IsNotNull()
-      .Because("IEventStore should be resolvable after decoration with type registration");
+    await Assert.That(ex!.Message).Contains("factory")
+      .Because("decoration has to rebuild the inner store in order to wrap it, and a "
+               + "type-based registration leaves no reflection-free way to do that; the error names the fix");
   }
 
   [Test]
   public async Task DecorateEventStore_WithSingletonInstanceRegistration_WrapsWithDecoratorsAsync() {
     // Arrange - register IEventStore as singleton instance
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
@@ -1151,6 +1168,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task DecorateEventStore_WithSingletonFactoryRegistration_WrapsWithDecoratorsAsync() {
     // Arrange - register IEventStore as singleton via factory
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
@@ -1173,22 +1191,22 @@ public class ServiceCollectionExtensionsTests {
   public async Task DecorateEventStore_WithSingletonTypeRegistration_WrapsWithDecoratorsAsync() {
     // Arrange - register IEventStore as singleton via implementation type
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinator, StubWorkCoordinator>();
     services.AddLogging();
 
     services.AddSingleton<IEventStore, StubEventStore>();
 
-    // Act
-    services.DecorateEventStoreWithSyncTracking();
+    // Act & Assert - a type-based registration cannot be decorated without reflection,
+    // which Core does not permit. The error has to name the fix, or a consumer hitting
+    // it only learns that something is unsupported.
+    var ex = Assert.Throws<InvalidOperationException>(
+      () => services.DecorateEventStoreWithSyncTracking());
 
-    // Assert
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-
-    await Assert.That(eventStore).IsNotNull()
-      .Because("IEventStore should be resolvable after decoration with singleton type");
+    await Assert.That(ex!.Message).Contains("factory")
+      .Because("decoration has to rebuild the inner store in order to wrap it, and a "
+               + "type-based registration leaves no reflection-free way to do that; the error names the fix");
   }
 
   // ==========================================================================
@@ -1199,6 +1217,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithNullConfiguration_DoesNotThrowAsync() {
     // Arrange - no IConfiguration registered (config is optional)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
 
@@ -1212,6 +1231,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithMissingSection_UsesDefaultsAsync() {
     // Arrange - IConfiguration registered but no Whizbang:Tracing section
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1232,6 +1252,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithInvalidEnumValues_IgnoresInvalidAsync() {
     // Arrange - config has invalid enum values
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1255,6 +1276,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithInvalidBoolValues_IgnoresInvalidAsync() {
     // Arrange - config has invalid boolean values
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1278,6 +1300,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithTracedHandlersSection_BindsHandlerVerbosityAsync() {
     // Arrange - TracedHandlers section with valid values
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1301,6 +1324,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithTracedHandlers_InvalidVerbosity_IgnoresEntryAsync() {
     // Arrange - TracedHandlers section with an invalid verbosity value
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1323,6 +1347,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithTracedMessages_InvalidVerbosity_IgnoresEntryAsync() {
     // Arrange - TracedMessages section with an invalid verbosity value
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1345,6 +1370,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithEmptyTracedHandlersSection_DoesNotPopulateAsync() {
     // Arrange - no TracedHandlers section present
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1368,6 +1394,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task TracingOptions_WithEmptyTracedMessagesSection_DoesNotPopulateAsync() {
     // Arrange - no TracedMessages section present
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
 
     var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
@@ -1441,7 +1468,7 @@ public class ServiceCollectionExtensionsTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1466,6 +1493,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WorkFlusher_ResolvesToSameInstanceAsWorkCoordinatorStrategyAsync() {
     // Arrange - IWorkCoordinatorStrategy is normally registered by the storage driver
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     services.AddScoped<IWorkCoordinatorStrategy, StubWorkCoordinatorStrategy>();
     var provider = services.BuildServiceProvider();
@@ -1488,6 +1516,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersLifecycleMessageDeserializer_AsJsonSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
 
@@ -1510,6 +1539,7 @@ public class ServiceCollectionExtensionsTests {
       })
       .Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
@@ -1527,6 +1557,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_ServiceInstanceProvider_WithoutConfiguration_IsSingletonWithFallbackNameAsync() {
     // Arrange - no IConfiguration registered; factory passes null through
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _ = services.AddWhizbang();
     var provider = services.BuildServiceProvider();
 
@@ -1555,6 +1586,7 @@ public class ServiceCollectionExtensionsTests {
       .Build();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
 
     // Act
@@ -1590,6 +1622,11 @@ public class ServiceCollectionExtensionsTests {
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
 
+    public Task FlushAsync(CancellationToken ct = default) {
+      ManualFlushCount++;
+      return Task.CompletedTask;
+    }
+
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
       Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -1597,9 +1634,5 @@ public class ServiceCollectionExtensionsTests {
         PerspectiveWork = []
       });
 
-    public Task FlushAsync(CancellationToken ct = default) {
-      ManualFlushCount++;
-      return Task.CompletedTask;
-    }
   }
 }

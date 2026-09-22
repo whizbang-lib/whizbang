@@ -48,12 +48,6 @@ namespace Whizbang.Core.Tests.Perspectives;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class PerspectiveRewindCompletionGapTests {
 
-  /// <summary>Mirrors a consumer's bulk-import CompletedItems counter.</summary>
-  private sealed class CountModel {
-    public Guid Id { get; init; }
-    public int CompletedItems { get; set; }
-  }
-
   /// <summary>
   /// Stand-in for the event store. The producer can <see cref="Append"/>
   /// events any time; a consumer snapshots the current event list via
@@ -95,11 +89,12 @@ public class PerspectiveRewindCompletionGapTests {
   }
 
   /// <summary>
+  /// <para>
   /// Simulates the existing (broken) rewind path: materialise events ONCE
   /// at rewind-start, apply them all in memory, persist. New appends during
   /// the in-memory apply are dropped on the floor.
-  ///
-  /// This mirrors lines 918-1017 of <c>PerspectiveRunnerTemplate.cs</c>.
+  /// </para>
+  /// <para>This mirrors lines 918-1017 of <c>PerspectiveRunnerTemplate.cs</c>.</para>
   /// </summary>
   private static async Task<int> SimulateBrokenRewindAsync(
       GatedEventStore store,

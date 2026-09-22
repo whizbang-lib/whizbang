@@ -18,7 +18,7 @@ public class SignalHandlerListTests {
 
   [Test]
   public async Task Dispose_TwiceIsIdempotentAsync() {
-    var bus = new SignalBus([]);
+    var bus = new SignalBus(transports: [], pullSources: []);
     var count = 0;
     var sub = bus.Subscribe<HL>(_ => { Interlocked.Increment(ref count); return ValueTask.CompletedTask; });
 
@@ -31,8 +31,8 @@ public class SignalHandlerListTests {
   }
 
   [Test]
-  public async Task InvokeAsync_CancelledBetweenHandlers_ThrowsAsync() {
-    var bus = new SignalBus([]);
+  public async Task InvokeAsync_CanceledBetweenHandlers_ThrowsAsync() {
+    var bus = new SignalBus(transports: [], pullSources: []);
     using var cts = new CancellationTokenSource();
     var firstInvoked = false;
     var secondInvoked = false;

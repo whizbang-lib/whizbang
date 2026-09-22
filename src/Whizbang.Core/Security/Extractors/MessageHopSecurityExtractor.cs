@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Security.Extractors;
@@ -25,8 +26,8 @@ namespace Whizbang.Core.Security.Extractors;
 /// Creates a new instance of MessageHopSecurityExtractor.
 /// </remarks>
 /// <param name="logger">Optional logger for diagnostics.</param>
-public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) : ISecurityContextExtractor {
-  private readonly ILogger<MessageHopSecurityExtractor>? _logger = logger;
+public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor> logger) : ISecurityContextExtractor {
+  private readonly ILogger<MessageHopSecurityExtractor> _logger = logger ?? NullLogger<MessageHopSecurityExtractor>.Instance;
 
   /// <summary>
   /// Default priority for MessageHopSecurityExtractor.

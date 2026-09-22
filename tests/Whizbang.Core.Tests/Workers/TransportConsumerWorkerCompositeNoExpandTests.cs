@@ -1,14 +1,18 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -28,27 +32,37 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
 
   private sealed class CapturingBatchTransport : ITransport {
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    private readonly TaskCompletionSource _firstBatchSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first batch subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// Tests await this instead of sleeping. <c>StartAsync</c> returning only proves
+    /// <c>ExecuteAsync</c> was queued -- .NET 10 dispatches it via <c>Task.Run</c> -- so a fixed
+    /// delay bets the thread pool's progress against a stopwatch rather than proving the batch
+    /// handler has been captured.
+    /// </remarks>
+    public Task FirstBatchSubscribe => _firstBatchSubscribe.Task;
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      _firstBatchSubscribe.TrySetResult();
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
-    public void Dispose() { }
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
       if (_batchHandler is null) {
@@ -57,7 +71,7 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       await _batchHandler(batch, CancellationToken.None);
     }
 
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -91,52 +105,67 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       throw new NotSupportedException();
   }
 
-  private sealed record _innerEvent(string Id) : IEvent;
+  private sealed record InnerEvent(string Id) : IEvent;
 
-  private sealed class _composite(params _innerEvent[] inner) : ICompositeEvent {
+  private sealed class Composite(params InnerEvent[] inner) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
   private static readonly string _compositeEnvelopeType =
-    $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeof(_composite).AssemblyQualifiedName}]], Whizbang.Core";
+    $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeof(Composite).AssemblyQualifiedName}]], Whizbang.Core";
 
   [Test]
   public async Task CompositeFromTransport_StoredAsSingleInboxRow_NotExpandedAsync() {
     var transport = new CapturingBatchTransport();
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     var sp = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new AlwaysConsumedRegistry());
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new AlwaysConsumedRegistry(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
-      var compositeEnvelope = new MessageEnvelope<_composite> {
+      var compositeEnvelope = new MessageEnvelope<Composite> {
         MessageId = MessageId.New(),
-        Payload = new _composite(new _innerEvent("J-1"), new _innerEvent("J-2"), new _innerEvent("J-3")),
+        Payload = new Composite(new InnerEvent("J-1"), new InnerEvent("J-2"), new InnerEvent("J-3")),
         Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       };
       await transport.SimulateBatchReceivedAsync([new TransportMessage(compositeEnvelope, _compositeEnvelopeType)]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1);
       await Assert.That(coordinator.StoreInboxBatchSizes).IsEquivalentTo([1])

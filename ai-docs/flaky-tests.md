@@ -274,6 +274,71 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
 ---
 
+## Pattern 7: A Worker Test That Never Ran the Worker
+
+### Symptoms
+- Test passes in isolation, fails intermittently on CI (and only on CI)
+- Failure appears in **milliseconds**, not at a timeout
+- `AssertionException` on a state the worker should have changed, or `IsCompletedSuccessfully` false
+- Coverage shows the worker's constructor fully hit but `ExecuteAsync`'s `MoveNext` at 0 lines
+
+### Root Cause
+.NET 10 changed `BackgroundService.StartAsync` to
+`_executeTask = Task.Run(() => ExecuteAsync(_stoppingCts.Token), _stoppingCts.Token)`.
+
+Two consequences:
+- `ExecuteAsync` no longer runs synchronously up to its first `await`. `StartAsync` returning means
+  the worker was *scheduled*, nothing more.
+- `Task.Run(action, token)` **never invokes the delegate** if the token is already canceled when the
+  work item is dequeued. The task settles `Canceled`, which satisfies both `IsCompleted == true`
+  and `IsFaulted == false` — so a "did it stop cleanly?" assertion passes having run no code.
+
+The task returned by `StartAsync` is `Task.CompletedTask`, so awaiting **it** as a shutdown barrier
+is a no-op and any assertion after it reads state that has not necessarily settled.
+
+### Example - WRONG
+```csharp
+var workerTask = worker.StartAsync(cts.Token);   // NOT the worker body
+cts.Cancel();
+try { await workerTask; } catch (OperationCanceledException) { }   // a no-op
+await Assert.That(fake.CallCount).IsEqualTo(0);  // true even if the body never ran
+```
+
+### Fix - CORRECT
+```csharp
+await worker.StartAsync(cts.Token);                        // await, so ExecuteTask is populated
+await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));    // a signal the BODY emits
+await cts.CancelAsync();
+await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+  .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+await Assert.That(fake.CallCount).IsEqualTo(0)
+  .Because("the worker provably reached the gate and still claimed nothing");
+```
+
+`SuppressThrowing` is deliberate: a task exiting through a cancellation catch settles
+`RanToCompletion` **or** `Canceled` by thread-pool timing, and either is a clean stop.
+
+### Rule
+Never treat `StartAsync` returning — or awaiting what it returned — as evidence the worker did
+anything. Wait on a signal the worker body itself emits (a `TaskCompletionSource` a fake gate,
+logger or collaborator completes when the loop actually reaches it), then assert. If a worker
+exposes no such signal, an `internal` test seam on the production type is acceptable; there is
+precedent in `PerStreamSerializer.RunIdleSweepNowAsync`.
+
+### Also check the fixtures
+This shape hides one level down, in a fixture's own `StopAsync` helper, where a scan over test
+method bodies will not see it. One such fixture caused a CI-only failure that reproduced on no
+local run.
+
+### Why it matters beyond flakiness
+These tests execute the lines, so they **count as covered** while guaranteeing nothing. Making one
+wait properly is what exposed a production hang: a worker's readiness signal was never settled on
+its schema-gate cancellation path, so any caller awaiting it parked forever. See
+`contributors/ai-agent-guide` in the docs site for the full taxonomy (four shapes, 314 sites) and
+the verification discipline that goes with it.
+
+---
+
 ## Files Modified in Flaky Test Fixes (January 2025)
 
 | File | Fix Applied |

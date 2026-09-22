@@ -1,12 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -45,7 +48,7 @@ public class ClaimWorkerTests {
       PerspectiveWork = []
     };
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         CallCount++;
         if (FirstClaimOrder == 0) { FirstClaimOrder = ++_orderCounter; }
@@ -83,8 +86,6 @@ public class ClaimWorkerTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   [Test]
@@ -98,18 +99,28 @@ public class ClaimWorkerTests {
     // race as repeated "ClaimWorker tick failed; will back off and retry" warnings.
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -127,18 +138,28 @@ public class ClaimWorkerTests {
   public async Task ExecuteAsync_PollsAtLeastOnceAsync() {
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -154,21 +175,31 @@ public class ClaimWorkerTests {
   public async Task RequestImmediatePoll_BypassesWaitAsync() {
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 10_000,            // very long
         PollingMaxIntervalMilliseconds = 60_000           // very long
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -193,28 +224,47 @@ public class ClaimWorkerTests {
   public async Task ExecuteAsync_DisabledOptions_NoClaimFiresAsync() {
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready but Enabled=false should still suppress the claim loop
+    var disabledLogged = new EventIdSignalLogger(CLAIM_WORKER_DISABLED_EVENT_ID);
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         Enabled = false,
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200
       }),
-      NullLogger<ClaimWorker>.Instance);
+      logger: disabledLogged,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    var raced = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(500, CancellationToken.None));
-    await Assert.That(coord.CallCount).IsEqualTo(0);
+    // Wait for the killswitch log, not for a delay to elapse. StartAsync only queues ExecuteAsync
+    // to the thread pool, so "no claim happened after 500 ms" was equally true of a worker that
+    // correctly skipped the loop and one whose body never ran at all. LogDisabled is emitted from
+    // inside the branch under test, so observing it is what makes CallCount == 0 mean something.
+    await disabledLogged.Seen.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(coord.CallCount).IsEqualTo(0)
+      .Because("the killswitch must suppress the claim loop, not merely delay it");
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled worker parks until shutdown rather than exiting — an exit would free "
+             + "the host to treat the service as finished");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -224,24 +274,38 @@ public class ClaimWorkerTests {
   public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
     var coord = new FakeCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();  // not marked ready
+    var gate = new SignallingSchemaGate();  // not marked ready
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // No claim while gate is closed.
-    var racedBefore = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(300, CancellationToken.None));
-    await Assert.That(coord.CallCount).IsEqualTo(0);
+    // Wait until the worker is provably parked ON the gate before judging it. A bare 300 ms
+    // delay could not tell "held by the closed gate" from "not dequeued by the thread pool yet",
+    // so the assertion below was equally true of a worker whose body had never run.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(coord.CallCount).IsEqualTo(0)
+      .Because("a closed schema gate must hold the claim loop, and the worker is now provably "
+             + "parked on that gate rather than merely slow to start");
 
     // Open gate — claim fires.
     gate.MarkReady();
@@ -259,12 +323,12 @@ public class ClaimWorkerTests {
     public List<Guid> Written { get; } = [];
     public TaskCompletionSource SecondWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
       if (Written.Count >= 2) {
         SecondWritten.TrySetResult();
       }
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -281,10 +345,10 @@ public class ClaimWorkerTests {
     public List<Guid> Written { get; } = [];
     public TaskCompletionSource WriteCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
       WriteCalled.TrySetResult();
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -302,9 +366,9 @@ public class ClaimWorkerTests {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
     public List<Guid> Written { get; } = [];
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -321,9 +385,9 @@ public class ClaimWorkerTests {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
     public List<Guid> Written { get; } = [];
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -362,18 +426,27 @@ public class ClaimWorkerTests {
     perspectiveDrain.MarkDraining(streamA);  // simulate stuck flag from a hung prior drain
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance,
-      perspectiveDrainChannel: perspectiveDrain);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: perspectiveDrain,
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -407,18 +480,27 @@ public class ClaimWorkerTests {
     drain.MarkDraining(streamA);  // stuck flag from a hypothetical hung prior drain
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance,
-      outboxDrainChannel: drain);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: drain,
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -453,18 +535,27 @@ public class ClaimWorkerTests {
     drain.MarkDraining(streamA);  // stuck flag from a hypothetical hung prior drain
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance,
-      inboxDrainChannel: drain);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: drain,
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -495,19 +586,28 @@ public class ClaimWorkerTests {
 
     var drain = new CapturingDrainChannel();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
-      NullLogger<ClaimWorker>.Instance,
-      outboxDrainChannel: drain);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: drain,
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -522,4 +622,50 @@ public class ClaimWorkerTests {
     await Assert.That(drain.Written).Contains(streamB);
   }
 
+  /// <summary>EventId of <c>LogDisabled</c> on <see cref="ClaimWorker"/> — the killswitch trace.</summary>
+  private const int CLAIM_WORKER_DISABLED_EVENT_ID = 4;
+
+  /// <summary>
+  /// A schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Lets a test distinguish "the worker is parked on the closed gate" from "the worker has not
+  /// been dequeued yet" — the two are indistinguishable from a timed delay, and only the first
+  /// makes a "nothing was claimed" assertion mean anything.
+  /// </remarks>
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Completes when a chosen <c>EventId</c> is logged.
+  /// </summary>
+  /// <remarks>
+  /// A deterministic "ExecuteAsync reached this branch" signal for a branch whose only observable
+  /// effect is a log line. Mirrors <c>EventIdSignalLogger</c> in DeadLetterRecoveryWorkerTests.
+  /// </remarks>
+  private sealed class EventIdSignalLogger(int expectedEventId) : ILogger<ClaimWorker> {
+    private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Seen => _seen.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == expectedEventId) { _seen.TrySetResult(); }
+    }
+  }
 }

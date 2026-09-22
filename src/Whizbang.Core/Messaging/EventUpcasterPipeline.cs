@@ -42,15 +42,14 @@ public sealed class EventUpcasterPipeline {
   /// <param name="upcasters">The upcasters in registration order (oldest-shape first).</param>
   public EventUpcasterPipeline(IEnumerable<IEventUpcaster> upcasters) {
     ArgumentNullException.ThrowIfNull(upcasters);
-    _upcasters = upcasters.ToArray();
-    _typeChanges = _upcasters
+    _upcasters = [.. upcasters];
+    _typeChanges = [.. _upcasters
       .Where(u => u.SourceTypes.Count > 0 && u.TargetTypes.Count > 0)
       .Select(u => new TypeChangeContribution(
-        SourceTypes: u.SourceTypes.ToArray(),
-        SourceTypeNames: u.SourceTypes.Select(TypeNameFormatter.Format).ToArray(),
-        TargetTypes: u.TargetTypes.ToArray(),
-        TargetTypeNames: new HashSet<string>(u.TargetTypes.Select(TypeNameFormatter.Format), StringComparer.Ordinal)))
-      .ToArray();
+        SourceTypes: [.. u.SourceTypes],
+        SourceTypeNames: [.. u.SourceTypes.Select(TypeNameFormatter.Format)],
+        TargetTypes: [.. u.TargetTypes],
+        TargetTypeNames: new HashSet<string>(u.TargetTypes.Select(TypeNameFormatter.Format), StringComparer.Ordinal)))];
   }
 
   /// <summary>
@@ -74,7 +73,7 @@ public sealed class EventUpcasterPipeline {
   /// </summary>
   public IReadOnlyList<Type> ExtraInputTypesFor(IReadOnlyList<Type> requestedTypes) {
     if (_typeChanges.Length == 0) {
-      return Array.Empty<Type>();
+      return [];
     }
     var requested = new HashSet<Type>(requestedTypes);
     List<Type>? extra = null;
@@ -84,11 +83,12 @@ public sealed class EventUpcasterPipeline {
       }
       foreach (var s in c.SourceTypes) {
         if (!requested.Contains(s)) {
-          (extra ??= new List<Type>()).Add(s);
+          extra ??= [];
+          extra.Add(s);
         }
       }
     }
-    return extra is null ? Array.Empty<Type>() : extra.Distinct().ToArray();
+    return extra is null ? Array.Empty<Type>() : [.. extra.Distinct()];
   }
 
   /// <summary>
@@ -99,7 +99,7 @@ public sealed class EventUpcasterPipeline {
   /// </summary>
   public IReadOnlyList<string> ExtraInputTypeNamesFor(IReadOnlyList<string> requestedTypeNames) {
     if (_typeChanges.Length == 0) {
-      return Array.Empty<string>();
+      return [];
     }
     var requested = new HashSet<string>(requestedTypeNames, StringComparer.Ordinal);
     List<string>? extra = null;
@@ -109,11 +109,12 @@ public sealed class EventUpcasterPipeline {
       }
       foreach (var s in c.SourceTypeNames) {
         if (!requested.Contains(s)) {
-          (extra ??= new List<string>()).Add(s);
+          extra ??= [];
+          extra.Add(s);
         }
       }
     }
-    return extra is null ? Array.Empty<string>() : extra.Distinct().ToArray();
+    return extra is null ? Array.Empty<string>() : [.. extra.Distinct()];
   }
 
   /// <summary>
@@ -127,11 +128,10 @@ public sealed class EventUpcasterPipeline {
     ArgumentNullException.ThrowIfNull(@event);
 
     var current = @event;
-    foreach (var upcaster in _upcasters) {
-      if (upcaster.CanUpcast(current)) {
-        current = upcaster.Upcast(current);
-        ArgumentNullException.ThrowIfNull(current, nameof(current));
-      }
+    // Where is lazy, so each upcaster is asked about the event as it stands after the ones before it.
+    foreach (var upcaster in _upcasters.Where(u => u.CanUpcast(current))) {
+      current = upcaster.Upcast(current);
+      ArgumentNullException.ThrowIfNull(current);
     }
     return current;
   }

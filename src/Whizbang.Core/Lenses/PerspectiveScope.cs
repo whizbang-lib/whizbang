@@ -44,7 +44,7 @@ public class ScopeExtension {
 /// Stored as JSONB/JSON in scope column using EF Core ComplexProperty().ToJson().
 /// </summary>
 /// <docs>fundamentals/security/scoping#perspective-scope</docs>
-/// <tests>Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
 /// <example>
 /// var scope = new PerspectiveScope {
 ///   TenantId = "tenant-123",
@@ -128,6 +128,50 @@ public class PerspectiveScope {
   /// </remarks>
   [JsonPropertyName("ap")]
   public List<string> AllowedPrincipals { get; set; } = [];
+
+  /// <summary>
+  /// Marks a scope as SYSTEM-originated: published by the framework or a background worker with no
+  /// ambient user, by design.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This states INTENT, never permission. A system scope grants no tenant, no user and no
+  /// principal — treating it as authority would turn a diagnostic marker into privilege escalation.
+  /// </para>
+  /// <para>
+  /// It exists so that an ABSENT scope means exactly one thing. Control-plane traffic legitimately
+  /// carries no user, and previously stored a null scope — identical in storage to a business event
+  /// that had lost its scope. With the two indistinguishable, "scope is null" could not be asserted
+  /// as a fault, and an audit of stored scope reported healthy data while a large population of
+  /// events had silently lost theirs.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/security/message-security#scope-markers</docs>
+  [JsonPropertyName("sys")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool IsSystem { get; set; }
+
+  /// <summary>
+  /// Marks a scope the APPLICATION AUTHOR declared absent: a pre-authentication event, a health
+  /// check, an anonymous or public action.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Distinct from <see cref="IsSystem"/> on purpose. That one means framework infrastructure and
+  /// is stamped by the framework; this one records that a human asserted the event needs no scope.
+  /// The two warrant different scrutiny in a security review, and if application code could claim
+  /// the system marker it would become a blanket way to silence the missing-scope invariant.
+  /// </para>
+  /// <para>
+  /// Like the system marker it states intent, never permission: it resolves to no tenant and no
+  /// user, which matters most here — a login attempt is exactly where a fabricated authority would
+  /// do the most damage.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/security/message-security#declaring-unscoped</docs>
+  [JsonPropertyName("dec")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool IsDeclaredUnscoped { get; set; }
 
   /// <summary>
   /// Additional scope values as key-value pairs.

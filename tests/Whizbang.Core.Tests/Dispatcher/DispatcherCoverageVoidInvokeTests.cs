@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -44,14 +45,14 @@ public class DispatcherCoverageVoidInvokeTests {
     lock (_lock) { return [.. _invocations]; }
   }
 
-  private sealed class VoidAsyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+  private sealed class VoidAsyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidAsyncCommand)) {
-        return msg => {
+        return _ => {
           _track("async-void");
           return ValueTask.CompletedTask;
         };
@@ -60,7 +61,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
@@ -73,14 +74,14 @@ public class DispatcherCoverageVoidInvokeTests {
 
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidSyncCommand)) {
-        return msg => _track("sync-void");
+        return _ => _track("sync-void");
       }
       return null;
     }
 
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
       if (messageType == typeof(VoidAnyCommand)) {
-        return msg => {
+        return _ => {
           _track("any-invoker");
           return ValueTask.FromResult<object?>(new VoidAnyResult("result"));
         };
@@ -93,14 +94,14 @@ public class DispatcherCoverageVoidInvokeTests {
     }
   }
 
-  private sealed class VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null), traceStore: traceStore) {
+  private sealed class VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: traceStore) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(VoidAsyncCommand)) {
-        return msg => {
+        return _ => {
           _track("async-void-traced");
           return ValueTask.CompletedTask;
         };
@@ -109,7 +110,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
-      return evt => Task.CompletedTask;
+      return _ => Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {

@@ -146,12 +146,12 @@ public class CompositeFactoryTests {
     // destinations split — same key ⇔ same destination, delegated to phase 3's
     // IOutboxRoutingStrategy.GetCompositeGroupKey.
     var factory = new CompositeFactory();
-    IOutboxRoutingStrategy strategy = new _typeNameOutboxStrategy();
+    IOutboxRoutingStrategy strategy = new TypeNameOutboxStrategy();
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var constituents = new List<(Type Type, string Name)> {
-      (typeof(_alphaEvent), "alpha-1"),
-      (typeof(_alphaEvent), "alpha-2"),
-      (typeof(_betaEvent), "beta-1"),
+      (typeof(AlphaEvent), "alpha-1"),
+      (typeof(AlphaEvent), "alpha-2"),
+      (typeof(BetaEvent), "beta-1"),
     };
     var request = new CompositeMintRequest<(Type Type, string Name)> {
       Constituents = constituents,
@@ -164,7 +164,7 @@ public class CompositeFactoryTests {
 
     await Assert.That(plans.Count).IsEqualTo(2);
     await Assert.That(plans[0].GroupKey).IsEqualTo(
-        strategy.GetCompositeGroupKey(typeof(_alphaEvent), ownedDomains, MessageKind.Event))
+        strategy.GetCompositeGroupKey(typeof(AlphaEvent), ownedDomains, MessageKind.Event))
       .Because("the plan's key IS the strategy's composite group key — route, split, subscribe "
              + "and provision stay projections of GetDestination");
     await Assert.That(plans[0].Constituents.Select(c => c.Name).ToList()).IsEquivalentTo(["alpha-1", "alpha-2"]);
@@ -201,13 +201,13 @@ public class CompositeFactoryTests {
 
   // ── fakes ─────────────────────────────────────────────────────────────────
 
-  private sealed record _alphaEvent : IEvent;
+  private sealed record AlphaEvent : IEvent;
 
-  private sealed record _betaEvent : IEvent;
+  private sealed record BetaEvent : IEvent;
 
   /// <summary>Routes each type to a destination named after the type — distinct types, distinct
   /// destinations — so the default GetCompositeGroupKey projection is observable.</summary>
-  private sealed class _typeNameOutboxStrategy : IOutboxRoutingStrategy {
+  private sealed class TypeNameOutboxStrategy : IOutboxRoutingStrategy {
     public TransportDestination GetDestination(Type messageType, IReadOnlySet<string> ownedDomains, MessageKind kind)
       => new($"topic-{messageType.Name.ToLowerInvariant()}");
   }
