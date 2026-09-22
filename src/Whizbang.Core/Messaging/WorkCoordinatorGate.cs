@@ -205,8 +205,8 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     var derived = Math.Max(1, maxPoolSize - reserve);
     return new WorkCoordinatorGate(
       maxConcurrent: derived,
-      acquireTimeoutMilliseconds: acquireTimeoutMilliseconds,
       logger: logger,
+      acquireTimeoutMilliseconds: acquireTimeoutMilliseconds,
       metrics: metrics);
   }
 

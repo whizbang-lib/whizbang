@@ -4100,7 +4100,7 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
-  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext, IReadOnlySet<Type>? declaredUnscopedTypes = null) {
+  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
     var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrNull(eventType) ?? TypeNameFormatter.DisplayName(eventType);
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)

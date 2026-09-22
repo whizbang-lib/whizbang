@@ -21,7 +21,11 @@ namespace Whizbang.Generators.Tests;
 /// <c>StructDeclarationSyntax</c> node in a compiling program; this is a defensive Roslyn-contract
 /// guard with no reachable path.
 /// </remarks>
-public class MessageTypeCatalogGeneratorCoverageTests {
+public partial class MessageTypeCatalogGeneratorCoverageTests {
+
+  [System.Text.RegularExpressions.GeneratedRegex("SchemaHash = \"([0-9a-f]*)\"")]
+  private static partial System.Text.RegularExpressions.Regex SchemaHashPattern();
+
   private static async Task<string> _generateAsync(string source) {
     var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
@@ -34,7 +38,7 @@ public class MessageTypeCatalogGeneratorCoverageTests {
   // Pulls the hex value of SchemaHash off the generated entry line for a given type.
   private static string _extractSchemaHash(string code, string typeName) {
     var line = code.Split('\n').FirstOrDefault(l => l.Contains($"typeof(global::{typeName})")) ?? "";
-    var m = Regex.Match(line, "SchemaHash = \"([0-9a-f]*)\"");
+    var m = SchemaHashPattern().Match(line);
     return m.Success ? m.Groups[1].Value : "";
   }
 
