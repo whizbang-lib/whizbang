@@ -231,6 +231,21 @@ public static class PostgresDriverExtensions {
         });
         selector.Services.TryAddSingleton<TableStatisticsMetrics>();
 
+        // Durable suppression for the findings that cycle raises. Without it the advisory remembers
+        // in process memory, so every replica reports the same table independently and every
+        // restart starts the count again -- advice on a cadence, which is how advice stops being
+        // read. Schema-qualified for the same reason as the provider above.
+        selector.Services.TryAddSingleton<IAdvisoryLedger>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          // The logger is asked for directly rather than built from a factory: AddLogging registers
+          // the open generic, so this resolves when logging is configured and is null when it is
+          // not, which is the same answer with no conditional to leave half-tested.
+          return new PostgresAdvisoryLedger(ds, schema, sp.GetService<ILogger<PostgresAdvisoryLedger>>());
+        });
+
         // Durable stream-integrity convergence state. The in-memory ledger is per-process and
         // dies on restart, which is sound only while restarts are rare — but a report storm is
         // what causes the restarts, so every boot cleared the state that would have suppressed

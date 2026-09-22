@@ -107,6 +107,12 @@ public class PostgresDriverRegistrationTests {
     // the turnkey services the driver exists to provide, and each is built by its own factory.
     await Assert.That(scope.ServiceProvider.GetService<IMessageTypeRegistryPopulator>()).IsNotNull();
     await Assert.That(scope.ServiceProvider.GetService<IPerspectiveSnapshotStore>()).IsNotNull();
+    await Assert.That(scope.ServiceProvider.GetService<Whizbang.Core.Observability.IAdvisoryLedger>())
+      .IsNotNull()
+      .Because("without it the advisory keeps its findings in process memory, so every replica "
+             + "reports the same table and every restart starts the count again -- which looks "
+             + "exactly like a deployment that chose that, and is the one failure this registration "
+             + "exists to prevent");
 
     await Assert.That(registered).IsNotEmpty()
       .Because("the assertion below is vacuous if the driver registered nothing");
