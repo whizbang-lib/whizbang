@@ -43,6 +43,7 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   /// anything.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// These tests assert a PLAN property: that a poll reaches its rows through an index and stops at
   /// its batch. A planner only chooses that plan while it is the cheaper one, and cheaper is decided
   /// by the size of the alternative. Outbox and inbox rows carry 1500 bytes of padding, so a full
@@ -50,12 +51,14 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   /// 20,000 rows the whole table is about 330 blocks, a full scan of it costs less than a hundred
   /// primary-key probes, and the planner correctly takes the scan. The assertion then fails against
   /// SQL that is doing nothing wrong.
-  ///
+  /// </para>
+  /// <para>
   /// So the fixture has to be past the size where the index wins, or the test measures the fixture
   /// instead of the query. Verified by measurement, not chosen: at 20,000 rows the lease statement
   /// and the per-stream ordering guard are both sequential scans and the poll reads 40,001 tuples; at
   /// this size both are index scans, looping once per row of the batch, and the poll reads almost
   /// none.
+  /// </para>
   /// </remarks>
   private const int PERSPECTIVE_ROWS = 200_000;
   private const int BATCH = 100;
