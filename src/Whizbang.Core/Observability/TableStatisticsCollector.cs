@@ -74,30 +74,8 @@ public sealed partial class TableStatisticsCollector(
         _exposureAdvisory ??= new QueryExposureAdvisory(
           scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger<QueryExposureAdvisory>()
           ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<QueryExposureAdvisory>.Instance);
-        var findings = _exposureAdvisory.Report(
+        _exposureAdvisory.Report(
           sizes, scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.ICollectiveSiblingTableSource>());
-
-        // Emitted here rather than inside the advisory because emitting is asynchronous and the
-        // advisory is not; awaiting it at this seam keeps the finding off a synchronous bridge.
-        //
-        // Optional, and degrading to the log line alone when absent. That is the opposite of the
-        // advisory's own logger, which is required: without a logger the finding is lost, while
-        // without an emitter it is still reported -- just not routable.
-        if (findings.Count > 0
-            && scope.ServiceProvider.GetService<Whizbang.Core.SystemEvents.ISystemEventEmitter>() is { } emitter) {
-          foreach (var finding in findings) {
-            // One failed emission must not cost the rest of the statistics cycle: the queue depths
-            // and the bloat ratio below are unrelated to it, and an advisory is the least important
-            // thing this loop does.
-            try {
-              await emitter.EmitAsync(finding, stoppingToken);
-            } catch (OperationCanceledException) {
-              throw;
-            } catch (Exception ex) {
-              LogAdvisoryEmitFailed(_logger, ex);
-            }
-          }
-        }
 
         var depths = await provider.GetQueueDepthsAsync(stoppingToken);
         metrics.UpdateQueueDepths(depths);
@@ -129,8 +107,4 @@ public sealed partial class TableStatisticsCollector(
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Error collecting table statistics — will retry")]
   static partial void LogCollectionError(ILogger logger, Exception exception);
-
-  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
-    Message = "Could not emit a perspective index advisory — the finding is in the log above, but nothing downstream was told")]
-  static partial void LogAdvisoryEmitFailed(ILogger logger, Exception exception);
 }
