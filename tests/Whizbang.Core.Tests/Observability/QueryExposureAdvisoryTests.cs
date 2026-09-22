@@ -42,12 +42,22 @@ public class QueryExposureAdvisoryTests {
         : throw new InvalidOperationException($"no table for {modelType.Name}");
   }
 
+  /// <summary>
+  /// A fresh advisory with a ledger of its own.
+  /// </summary>
+  /// <remarks>
+  /// Per test, not shared: the suppression is now the ledger's, so a ledger shared between tests
+  /// would let whichever ran first silence the rest, and the registry these read is static.
+  /// </remarks>
+  private static QueryExposureAdvisory _advisory(IAdvisoryLedger? ledger = null) =>
+    new(NullLogger<QueryExposureAdvisory>.Instance, ledger ?? new AdvisoryLedger());
+
   /// <summary>An exposed perspective over a large table is the reported case.</summary>
   [Test]
   public async Task ALargeOrderablePerspectiveIsReportedAsync() {
     QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposures.Ordering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["ordered_table"] = BIG },
       new FakeTables(new() { [typeof(AdvisoryOrderedModel)] = "ordered_table" }));
 
@@ -63,7 +73,7 @@ public class QueryExposureAdvisoryTests {
   public async Task ASmallPerspectiveIsNotReportedAsync() {
     QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposures.Ordering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["small_table"] = BIG - 1 },
       new FakeTables(new() { [typeof(AdvisorySmallModel)] = "small_table" }));
 
@@ -75,7 +85,7 @@ public class QueryExposureAdvisoryTests {
   public async Task AFilterOnlyExposureIsNotReportedAsync() {
     QueryExposureRegistry.Register<AdvisoryFilteredModel>(QueryExposures.Filtering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["filtered_table"] = BIG * 10 },
       new FakeTables(new() { [typeof(AdvisoryFilteredModel)] = "filtered_table" }));
 
@@ -96,8 +106,8 @@ public class QueryExposureAdvisoryTests {
   public async Task AModelWithNoKnownTableIsSkippedAsync() {
     QueryExposureRegistry.Register<AdvisoryUntabledModel>(QueryExposures.Ordering, "JobName");
 
-    var advisory = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance);
-    var reported = advisory.Report(
+    var advisory = _advisory();
+    var reported = await advisory.ReportAsync(
       new Dictionary<string, long> { ["some_table"] = BIG },
       new FakeTables([]));
 
@@ -109,7 +119,7 @@ public class QueryExposureAdvisoryTests {
   public async Task AModelWithNoSizeReportedIsSkippedAsync() {
     QueryExposureRegistry.Register<AdvisoryMissingSizeModel>(QueryExposures.Ordering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long>(),
       new FakeTables(new() { [typeof(AdvisoryMissingSizeModel)] = "absent_table" }));
 
@@ -121,13 +131,13 @@ public class QueryExposureAdvisoryTests {
   public async Task AFindingIsReportedOnceAsync() {
     QueryExposureRegistry.Register<AdvisoryRepeatModel>(QueryExposures.Ordering, "JobName");
 
-    var advisory = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance);
+    var advisory = _advisory();
     var sizes = new Dictionary<string, long> { ["repeat_table"] = BIG };
     var tables = new FakeTables(new() { [typeof(AdvisoryRepeatModel)] = "repeat_table" });
 
-    var first = advisory.Report(sizes, tables);
-    var second = advisory.Report(sizes, tables);
-    var third = advisory.Report(sizes, tables);
+    var first = await advisory.ReportAsync(sizes, tables);
+    var second = await advisory.ReportAsync(sizes, tables);
+    var third = await advisory.ReportAsync(sizes, tables);
 
     await Assert.That(first.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(second.Count).IsEqualTo(0)
@@ -141,7 +151,7 @@ public class QueryExposureAdvisoryTests {
   public async Task NoTableSourceReportsNothingAsync() {
     QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposures.Ordering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["ordered_table"] = BIG }, tables: null);
 
     await Assert.That(reported.Count).IsEqualTo(0)
@@ -151,7 +161,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>A missing statistics dictionary is a programming error.</summary>
   [Test]
   public async Task NullSizesAreRejectedAsync() {
-    await Assert.That(() => new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(null!, new FakeTables([])))
+    await Assert.That(async () => await _advisory().ReportAsync(null!, new FakeTables([])))
       .Throws<ArgumentNullException>();
   }
 
@@ -168,7 +178,7 @@ public class QueryExposureAdvisoryTests {
   public async Task AnAccountedForModelIsNotReportedAsync() {
     QueryExposureRegistry.Register<AdvisoryAnsweredModel>(QueryExposures.Ordering);
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["answered_table"] = BIG * 100 },
       new FakeTables(new() { [typeof(AdvisoryAnsweredModel)] = "answered_table" }));
 
@@ -194,7 +204,7 @@ public class QueryExposureAdvisoryTests {
   public async Task TheThresholdIsConfigurableAsync() {
     QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposures.Ordering, "JobName");
 
-    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+    var reported = await _advisory().ReportAsync(
       new Dictionary<string, long> { ["small_table"] = 4096 },
       new FakeTables(new() { [typeof(AdvisorySmallModel)] = "small_table" }),
       thresholdBytes: 1024);

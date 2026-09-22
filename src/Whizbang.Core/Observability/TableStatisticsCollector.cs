@@ -23,7 +23,8 @@ public sealed partial class TableStatisticsCollector(
     logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TableStatisticsCollector>.Instance;
 
   /// <summary>
-  /// Holds the advisory across cycles, which is what makes its once-per-process promise hold.
+  /// Holds the advisory across cycles. With the per-process ledger that is what makes "once" hold at
+  /// all; with a durable one it saves rebuilding a type whose state now lives in the database.
   /// </summary>
   /// <remarks>
   /// Created on the first cycle from the scope's logger factory rather than injected, so the advisory
@@ -71,15 +72,24 @@ public sealed partial class TableStatisticsCollector(
         // an exposed perspective of a few hundred rows is fine, and the same exposure over several
         // gigabytes is the most expensive query shape there is. Reported here rather than from its own
         // cycle so it costs one dictionary walk instead of a second round trip.
+        // The ledger decides how long "already said this" lasts. Falling back to the per-process one
+        // HERE rather than defaulting it inside the advisory, because that choice is a property of
+        // how the host is wired and belongs where the wiring is visible: a driver that registers a
+        // durable ledger gets advice once per finding across the fleet, and a host with no store
+        // gets it once per process, which is all it can offer.
         _exposureAdvisory ??= new QueryExposureAdvisory(
           scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger<QueryExposureAdvisory>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<QueryExposureAdvisory>.Instance);
-        var findings = _exposureAdvisory.Report(
-          sizes, scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.ICollectiveSiblingTableSource>());
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<QueryExposureAdvisory>.Instance,
+          scope.ServiceProvider.GetService<IAdvisoryLedger>() ?? new AdvisoryLedger());
+        var findings = await _exposureAdvisory.ReportAsync(
+          sizes,
+          scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.ICollectiveSiblingTableSource>(),
+          cancellationToken: stoppingToken);
 
-        // Emitted in its own method rather than inline: emitting is asynchronous and the advisory
-        // is not, so the findings come back and are awaited here at the cycle's own seam, and
-        // keeping the loop and its error handling out of this method keeps this one readable.
+        // Emitted in its own method rather than inline: keeping the loop and its error handling out
+        // of this method keeps this one readable, and the findings are already suppressed by the
+        // time they arrive, so the log line and the emitted record cannot disagree about what was
+        // reported.
         await EmitFindingsAsync(
           findings,
           scope.ServiceProvider.GetService<Whizbang.Core.SystemEvents.ISystemEventEmitter>(),
