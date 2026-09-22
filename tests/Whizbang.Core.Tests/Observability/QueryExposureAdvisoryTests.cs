@@ -158,6 +158,20 @@ public class QueryExposureAdvisoryTests {
       .Because("the exposure is known but the table it lands on is not, so there is no size to judge");
   }
 
+  /// <summary>
+  /// A missing ledger is a programming error, and a loud one.
+  /// </summary>
+  /// <remarks>
+  /// Required for the same reason as the logger, and with more at stake: defaulting it would give
+  /// the per-process ledger, so a deployment would silently get per-replica advice on every restart
+  /// and be indistinguishable from one that had chosen that.
+  /// </remarks>
+  [Test]
+  public async Task ANullLedgerIsRejectedAsync() {
+    await Assert.That(() => new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance, null!))
+      .Throws<ArgumentNullException>();
+  }
+
   /// <summary>A missing statistics dictionary is a programming error.</summary>
   [Test]
   public async Task NullSizesAreRejectedAsync() {

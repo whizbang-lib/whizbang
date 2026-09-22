@@ -240,8 +240,10 @@ public static class PostgresDriverExtensions {
           using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
           var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
           var schema = dbContext.Model.GetDefaultSchema() ?? "public";
-          return new PostgresAdvisoryLedger(
-            ds, schema, sp.GetService<ILoggerFactory>()?.CreateLogger<PostgresAdvisoryLedger>());
+          // The logger is asked for directly rather than built from a factory: AddLogging registers
+          // the open generic, so this resolves when logging is configured and is null when it is
+          // not, which is the same answer with no conditional to leave half-tested.
+          return new PostgresAdvisoryLedger(ds, schema, sp.GetService<ILogger<PostgresAdvisoryLedger>>());
         });
 
         // Durable stream-integrity convergence state. The in-memory ledger is per-process and

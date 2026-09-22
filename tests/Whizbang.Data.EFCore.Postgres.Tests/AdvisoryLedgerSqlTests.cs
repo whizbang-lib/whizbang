@@ -232,6 +232,51 @@ public class AdvisoryLedgerSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A schema whose function answers something other than yes or no degrades, rather than reading
+  /// the non-answer as "already reported".
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Unreachable against the shipped schema, where the function is declared RETURNS BOOLEAN over a
+  /// body that always returns. Reachable against a schema carrying something else under that name,
+  /// which is what this builds: the ledger is schema-qualified so that co-located services consult
+  /// their own, and that qualification is exactly what could land it somewhere unexpected.
+  /// </para>
+  /// <para>
+  /// The direction matters more than the likelihood. Reading a non-answer as a refusal would
+  /// suppress a real finding for a whole cooldown on the strength of an answer nobody gave, and it
+  /// would look identical to the suppression working.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ASchemaThatAnswersNeitherYesNorNoDegradesRatherThanSuppressingAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    await using (var shadow = connection.CreateCommand()) {
+      shadow.CommandText = @"
+        CREATE SCHEMA IF NOT EXISTS probe_nonanswer;
+        CREATE OR REPLACE FUNCTION probe_nonanswer.wh_advisory_try_begin_report(
+          p_finding_key TEXT, p_signature TEXT, p_now TIMESTAMPTZ, p_cooldown INTERVAL)
+        RETURNS BOOLEAN LANGUAGE sql AS 'SELECT NULL::BOOLEAN';";
+      await shadow.ExecuteNonQueryAsync();
+    }
+
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var ledger = new PostgresAdvisoryLedger(dataSource, "probe_nonanswer");
+    var key = _key();
+    var t0 = DateTimeOffset.UtcNow;
+
+    var first = await ledger.TryBeginReportAsync(key, "JobName", t0, _week);
+    var repeat = await ledger.TryBeginReportAsync(key, "JobName", t0.AddDays(1), _week);
+
+    await Assert.That(first).IsTrue()
+      .Because("a ledger that cannot answer must not silence a real finding.");
+    await Assert.That(repeat).IsFalse()
+      .Because("and it must not report it every cycle either: the non-answer degrades to the "
+             + "process-local ledger, exactly as an unreachable database does.");
+  }
+
+  /// <summary>
   /// Cancellation is passed through, not swallowed into a decision.
   /// </summary>
   /// <remarks>

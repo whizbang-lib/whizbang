@@ -58,9 +58,21 @@ public sealed partial class PostgresAdvisoryLedger(
       cmd.Parameters.AddWithValue("now", now);
       cmd.Parameters.AddWithValue("cooldown", cooldown);
 
-      var granted = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      var answer = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
 
-      return granted is true;
+      if (answer is bool granted) {
+        return granted;
+      }
+
+      // The shipped function is declared RETURNS BOOLEAN over a body that always returns, so this
+      // cannot happen against the schema this ships with. It can against a schema carrying
+      // something else under that name, and the safe reading of a non-answer is trouble rather than
+      // "already reported": answering false here would suppress the finding for a whole cooldown on
+      // the strength of an answer nobody gave.
+      LogLedgerAnsweredNothing(_log, schema);
+
+      return await _fallback.TryBeginReportAsync(findingKey, signature, now, cooldown, cancellationToken)
+        .ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) when (ex is NpgsqlException or System.Data.Common.DbException or InvalidOperationException) {
@@ -73,6 +85,14 @@ public sealed partial class PostgresAdvisoryLedger(
         .ConfigureAwait(false);
     }
   }
+
+  [LoggerMessage(
+    EventId = 72,
+    Level = LogLevel.Warning,
+    Message = "The advisory ledger in schema '{Schema}' answered something other than yes or no, so "
+        + "advice is being suppressed per process instead. Whatever carries that name there is not "
+        + "the function this expects.")]
+  static partial void LogLedgerAnsweredNothing(ILogger logger, string Schema);
 
   [LoggerMessage(
     EventId = 71,
