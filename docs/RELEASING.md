@@ -225,7 +225,7 @@ packages, same attestation.
 It works by choosing the environment rather than by skipping the wait, because the wait belongs to
 the environment and a job cannot ask to be reviewed conditionally:
 
-| `PUBLISH_WITHOUT_APPROVAL` | environment | behaviour |
+| `PUBLISH_WITHOUT_APPROVAL` | environment | behavior |
 |---|---|---|
 | unset, or anything but `true` | `nuget-publish` | waits for a required reviewer |
 | `true` | `nuget-publish-auto` | publishes unattended |

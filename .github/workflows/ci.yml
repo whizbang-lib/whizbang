@@ -2,7 +2,7 @@ name: CI
 
 # Without this, a run is titled after its commit, and a post-merge run on develop is therefore
 # titled "Merge pull request #NNN from ..." -- which reads as though the run IS the merge. It is
-# not: it starts seconds AFTER the merge has already landed, and cancelling it cannot undo
+# not: it starts seconds AFTER the merge has already landed, and canceling it cannot undo
 # anything, it only abandons whatever the run had left to do (for develop, that is the prerelease
 # publish). Saying which event this is, up front, is the difference.
 run-name: >-
@@ -37,7 +37,7 @@ concurrency:
   #
   # PUSH runs are keyed by SHA, so every pushed commit gets its OWN group and can never be
   # displaced by a later push. cancel-in-progress: false is NOT sufficient on its own — it
-  # prevents cancelling a RUNNING run, but GitHub keeps at most ONE pending run per group, so
+  # prevents canceling a RUNNING run, but GitHub keeps at most ONE pending run per group, so
   # a third push arriving while one run is executing and another is queued EVICTS the queued
   # one. That run is cancelled before it starts (tell-tale: total_jobs = 0), and because
   # Detect Changes scopes publish to the pushed commit, the evicted commit's packages are
