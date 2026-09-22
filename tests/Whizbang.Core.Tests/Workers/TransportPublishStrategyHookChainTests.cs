@@ -35,11 +35,11 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: null,
       // no chain
-      jsonOptions: null,
-      loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      jsonOptions: null);
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -55,11 +55,11 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       postSerializeHookChain: new PostSerializeHookChain([]),
       // empty
-      jsonOptions: _buildJsonOptions(),
-      loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -75,10 +75,10 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -100,10 +100,10 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -128,10 +128,10 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
 
     var work1 = _buildWork();
     var work2 = _buildWork();
@@ -156,10 +156,10 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: new PostSerializeHookChain([]),
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: new PostSerializeHookChain([]),
+      jsonOptions: _buildJsonOptions());
 
     var works = new[] { _buildWork(), _buildWork() };
     var results = await strategy.PublishBatchAsync(works, CancellationToken.None);
@@ -181,10 +181,10 @@ public class TransportPublishStrategyHookChainTests {
       transport: transport,
       readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: chain,
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: chain,
+      jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
@@ -222,13 +222,10 @@ public class TransportPublishStrategyHookChainTests {
     };
   }
 
-  private sealed class CaptureTransport : ITransport {
-    public CaptureTransport(long? maxMessageSizeBytes) {
-      MaxMessageSizeBytes = maxMessageSizeBytes;
-    }
+  private sealed class CaptureTransport(long? maxMessageSizeBytes) : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.BulkPublish;
-    public long? MaxMessageSizeBytes { get; }
+    public long? MaxMessageSizeBytes { get; } = maxMessageSizeBytes;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public int PublishCallCount { get; private set; }
@@ -276,13 +273,10 @@ public class TransportPublishStrategyHookChainTests {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class SubstituteHook : IPostSerializeHook {
-    private readonly byte[] _replacement;
-    public SubstituteHook(int order, byte[] replacement) {
-      Order = order;
-      _replacement = replacement;
-    }
-    public int Order { get; }
+  private sealed class SubstituteHook(int order, byte[] replacement) : IPostSerializeHook {
+    private readonly byte[] _replacement = replacement;
+
+    public int Order { get; } = order;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) {
       return Task.FromResult(new PostSerializeResult {
         NewSerializedBytes = _replacement,

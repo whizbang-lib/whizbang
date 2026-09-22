@@ -46,10 +46,10 @@ public class PerspectiveWorkerStartupGateTests {
 
   /// <summary>Counts scope creations — the first thing every piece of the worker's startup work
   /// does is create a scope, so a zero count means none of it has begun.</summary>
-  private sealed class CountingScopeFactory : IServiceScopeFactory {
-    private readonly IServiceScopeFactory _inner;
+  private sealed class CountingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
+    private readonly IServiceScopeFactory _inner = inner;
     private int _count;
-    public CountingScopeFactory(IServiceScopeFactory inner) { _inner = inner; }
+
     public int Count => Volatile.Read(ref _count);
     public IServiceScope CreateScope() {
       Interlocked.Increment(ref _count);

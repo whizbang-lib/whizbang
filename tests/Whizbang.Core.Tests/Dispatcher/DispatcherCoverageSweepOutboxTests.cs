@@ -962,7 +962,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);
@@ -996,7 +996,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     List<Activity> outboxActivities;
     lock (stopped) {
-      outboxActivities = stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)").ToList();
+      outboxActivities = [.. stopped.Where(a => a.OperationName == "Dispatch SweepManyCommand (Outbox)")];
     }
     await Assert.That(outboxActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(outboxActivities[0].GetTagItem("whizbang.dispatch.destination")).IsEqualTo(strategy.Queued[0].Destination);

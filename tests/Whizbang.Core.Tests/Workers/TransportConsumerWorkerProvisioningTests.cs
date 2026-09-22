@@ -232,8 +232,8 @@ public class TransportConsumerWorkerProvisioningTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(
-        parallelizeStreams: false,
-        logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
+        logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>(),
+        parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>(),

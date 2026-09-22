@@ -466,8 +466,8 @@ public class TransportSubscriptionBuilderTests {
         routingOptions: Options.Create(routingOptions),
         discovery: discovery,
         serviceName: "OrderService",
-        receptorRegistry: registryQuery,
-        inboxStrategy: routingOptions.InboxStrategy);
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: registryQuery);
 
     _ = builder.BuildInboxDestinations();
 

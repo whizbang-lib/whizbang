@@ -44,7 +44,7 @@ public class BacklogAgeMetricsTests {
     listener.Start();
     collectTrigger();
     listener.RecordObservableInstruments();
-    return recorded.Where(r => r.Tags.ContainsValue(key)).ToList();
+    return [.. recorded.Where(r => r.Tags.ContainsValue(key))];
   }
 
   private static Dictionary<string, string?> _toDict(ReadOnlySpan<KeyValuePair<string, object?>> tags) {

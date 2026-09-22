@@ -78,8 +78,8 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
   /// </summary>
   private sealed class CascadeTrackingTestDispatcher(
     IServiceProvider serviceProvider,
-    IScopedEventTracker? tracker = null,
-    IStreamIdExtractor? streamIdExtractor = null) : Core.Dispatcher(
+    IScopedEventTracker? tracker,
+    IStreamIdExtractor? streamIdExtractor) : Core.Dispatcher(
         serviceProvider,
         new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
         streamIdExtractor: streamIdExtractor,
@@ -272,7 +272,7 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
     var provider = services.BuildServiceProvider();
-    var dispatcher = new CascadeTrackingTestDispatcher(provider, tracker: null);
+    var dispatcher = new CascadeTrackingTestDispatcher(provider, tracker: null, streamIdExtractor: null);
     var command = new CascadeTrackingCommand(Guid.NewGuid());
 
     // Act & Assert - Should not throw

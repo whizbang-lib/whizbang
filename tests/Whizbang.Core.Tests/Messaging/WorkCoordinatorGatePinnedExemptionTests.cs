@@ -37,7 +37,7 @@ public class WorkCoordinatorGatePinnedExemptionTests {
   [Test]
   public async Task PinnedBorrow_PassesASaturatedGateWithoutWaitingOrTakingASlotAsync() {
     var logger = new CapturingLogger<WorkCoordinatorGate>();
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 100, logger: logger);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, logger: logger, acquireTimeoutMilliseconds: 100);
     var held = await gate.AcquireAsync(CancellationToken.None);
     try {
       WorkCoordinatorGate.Releaser pinnedPass;
@@ -64,7 +64,7 @@ public class WorkCoordinatorGatePinnedExemptionTests {
   [Test]
   public async Task NoPinnedBorrow_StillWaitsForASlotAsync() {
     var logger = new CapturingLogger<WorkCoordinatorGate>();
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, acquireTimeoutMilliseconds: 100, logger: logger);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, logger: logger, acquireTimeoutMilliseconds: 100);
     var held = await gate.AcquireAsync(CancellationToken.None);
     try {
       var deadlined = await gate.AcquireAsync(CancellationToken.None);

@@ -198,14 +198,14 @@ public class InboxDispatchWorkerCompositeCommitTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      discardPolicy: discardPolicy ?? new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      compositeMetrics: metrics,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: discardPolicy ?? new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      compositeMetrics: metrics);
     return new Harness(worker, inbox, commitChannel, failures, coordinator, metrics, factory);
   }
 

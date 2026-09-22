@@ -13,5 +13,4 @@ namespace Whizbang.Core;
 /// the outcome no longer depends on whether the subsystem was registered before or after the core.
 /// </remarks>
 /// <docs>extending/extensibility/replaceable-services</docs>
-public interface INullDefault {
-}
+public interface INullDefault;

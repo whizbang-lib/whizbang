@@ -134,13 +134,13 @@ public class ClaimWorkerGateCadenceTests {
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
     return (worker, coord, gate);
@@ -327,13 +327,13 @@ public class ClaimWorkerGateCadenceTests {
         NotifyHealthyPollingIntervalMilliseconds = 400,  // 8× the tight base
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -377,13 +377,13 @@ public class ClaimWorkerGateCadenceTests {
         NotifyHealthyPollingIntervalMilliseconds = 1_000,  // would be 10× if respected
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -460,13 +460,13 @@ public class ClaimWorkerGateCadenceTests {
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -519,13 +519,13 @@ public class ClaimWorkerGateCadenceTests {
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: gate,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: gate,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 

@@ -96,7 +96,7 @@ public class StartupPipelineResilienceTests {
   public async Task DutyAcquisition_ThatFailsTransiently_IsRetriedRatherThanUnwindingTheRunAsync() {
     var elector = new ThrowsThenGrantsElector(throwCount: 2);
     var step = new Step("Migrate", "migrator");
-    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
+    var runner = new StartupPipelineRunner(steps: [step], observers: [], dutyElector: elector) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
 
@@ -117,7 +117,7 @@ public class StartupPipelineResilienceTests {
       CancellationToken cancellationToken) {
     var elector = new AlwaysThrowsElector();
     var step = new Step("Migrate", "migrator");
-    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
+    var runner = new StartupPipelineRunner(steps: [step], observers: [], dutyElector: elector) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(5),
     };
 
@@ -139,7 +139,7 @@ public class StartupPipelineResilienceTests {
   public async Task DutyAcquisition_ThatFailsTransientlyUnderSkip_DoesNotBlockAsync() {
     var elector = new AlwaysThrowsElector();
     var step = new Step("Rewrite", "maintainer", NonHolderBehavior.Skip);
-    var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
+    var runner = new StartupPipelineRunner(steps: [step], observers: [], dutyElector: elector) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
 

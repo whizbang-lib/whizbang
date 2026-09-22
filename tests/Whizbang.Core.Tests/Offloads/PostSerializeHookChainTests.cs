@@ -256,13 +256,10 @@ public class PostSerializeHookChainTests {
 
   private sealed record TestPayload(string Content);
 
-  private sealed class TestHook : IPostSerializeHook {
-    private readonly Func<PostSerializeContext, PostSerializeResult> _onRun;
-    public TestHook(int order, Func<PostSerializeContext, PostSerializeResult> onRun) {
-      Order = order;
-      _onRun = onRun;
-    }
-    public int Order { get; }
+  private sealed class TestHook(int order, Func<PostSerializeContext, PostSerializeResult> onRun) : IPostSerializeHook {
+    private readonly Func<PostSerializeContext, PostSerializeResult> _onRun = onRun;
+
+    public int Order { get; } = order;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) {
       return Task.FromResult(_onRun(context));
     }

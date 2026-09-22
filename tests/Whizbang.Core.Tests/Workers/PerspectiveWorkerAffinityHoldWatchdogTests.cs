@@ -223,23 +223,21 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
-        logger: f.Logger,
-        streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
-        timeProvider: timeProvider,
-        perspectiveChannelWriter: f.Harness.ChannelWriter,
-        perspectiveCompletionChannel: f.Harness.CompletionCapture,
-        failureChannel: f.Harness.FailureCapture,
-        perspectiveDrainChannel: f.Harness.DrainChannel,
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent, logger: NullLogger<WorkCoordinatorGate>.Instance) : null,
         syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
         syncEventTracker: new SyncEventTracker(),
+        logger: f.Logger,
         snapshotStore: NullPerspectiveSnapshotStore.Instance,
         streamLocker: NullPerspectiveStreamLocker.Instance,
         streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+        streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
         processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
         workChannelWriter: new WorkChannelWriter(),
         rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+        perspectiveChannelWriter: f.Harness.ChannelWriter,
+        perspectiveCompletionChannel: f.Harness.CompletionCapture,
+        failureChannel: f.Harness.FailureCapture,
         leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+        perspectiveDrainChannel: f.Harness.DrainChannel,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
         deadLetterStore: NullDeadLetterStore.Instance,
@@ -251,7 +249,9 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
             SlidingWindow = TimeSpan.Zero,
             MaxWait = TimeSpan.Zero
           }
-        })).Value));
+        })).Value),
+        timeProvider: timeProvider,
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent, logger: NullLogger<WorkCoordinatorGate>.Instance) : null);
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
       // ExecuteAsync is queued to the thread pool.

@@ -718,11 +718,8 @@ public class CompositeInboxFanoutTests {
     }
   }
 
-  private sealed class TestComposite : ICompositeEvent {
-    public TestComposite(params IEvent[] inner) {
-      _inner = inner;
-    }
-    private readonly IEvent[] _inner;
+  private sealed class TestComposite(params IEvent[] inner) : ICompositeEvent {
+    private readonly IEvent[] _inner = inner;
     public int? MaxInnerEventsAllowedOverride { get; init; }
     public int MaxInnerEventsAllowed => MaxInnerEventsAllowedOverride ?? 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
@@ -813,13 +810,9 @@ public class CompositeInboxFanoutTests {
   // would silently re-mint the unpaired children under fresh ids and duplicate them downstream.
   // ---------------------------------------------------------------------------------------------
 
-  private sealed class IdentityComposite : IIdentityPreservingComposite {
-    public IdentityComposite(IReadOnlyList<Guid> ids, params IMessage?[] inner) {
-      InnerEventIds = ids;
-      _inner = inner;
-    }
-    private readonly IMessage?[] _inner;
-    public IReadOnlyList<Guid> InnerEventIds { get; }
+  private sealed class IdentityComposite(IReadOnlyList<Guid> ids, params IMessage?[] inner) : IIdentityPreservingComposite {
+    private readonly IMessage?[] _inner = inner;
+    public IReadOnlyList<Guid> InnerEventIds { get; } = ids;
     public IReadOnlyList<long?>? InnerCommitSequencesOverride { get; init; }
     public IReadOnlyList<long?>? InnerCommitSequences => InnerCommitSequencesOverride;
     public int MaxInnerEventsAllowed => 10_000;

@@ -225,7 +225,7 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is InvalidOperationException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is InvalidOperationException)];
     }
     await Assert.That(failures).IsNotEmpty();
   }
@@ -254,7 +254,7 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is InvalidOperationException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is InvalidOperationException)];
     }
 
     await Assert.That(failures).IsNotEmpty();
@@ -305,7 +305,7 @@ public class MaintenanceWorkerOffloadSweepTests {
              + "the record a later cycle needs to finish the job");
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is OperationCanceledException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is OperationCanceledException)];
     }
     await Assert.That(failures).IsEmpty()
       .Because("a shutdown logged as a sweep failure is noise on every deploy");

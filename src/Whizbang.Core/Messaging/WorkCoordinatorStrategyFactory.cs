@@ -125,10 +125,10 @@ public static class WorkCoordinatorStrategyFactory {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
-      metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
       workChannelWriter: channelWriter,
-      inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>()
+      inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+      metrics: sp.GetService<WorkCoordinatorMetrics>(),
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
   }
 

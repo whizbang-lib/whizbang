@@ -230,7 +230,7 @@ public class PassiveCounterDriftLockTests {
     public List<string> CountersWithoutAMeasurement() {
       Collect();
       lock (_counters) {
-        return _counters.Where(c => !_measured.Contains(c)).Select(c => c.Name).Distinct(StringComparer.Ordinal).ToList();
+        return [.. _counters.Where(c => !_measured.Contains(c)).Select(c => c.Name).Distinct(StringComparer.Ordinal)];
       }
     }
 

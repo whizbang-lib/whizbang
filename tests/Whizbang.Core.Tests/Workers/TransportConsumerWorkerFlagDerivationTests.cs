@@ -136,19 +136,19 @@ public class TransportConsumerWorkerFlagDerivationTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
       controlClass: Options.Create(new ControlClassOptions()));
   }
 

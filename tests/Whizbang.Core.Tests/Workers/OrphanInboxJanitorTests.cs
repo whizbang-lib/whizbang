@@ -42,7 +42,7 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task Constructor_NullServices_ThrowsAsync() {
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
+    var snapshot = new HandledReceptorTypeSnapshot([]);
     await Assert.That(() => new OrphanInboxJanitor(
   services: null!,
   receptorSnapshot: snapshot,
@@ -98,7 +98,7 @@ public class OrphanInboxJanitorTests {
   public async Task StartAsync_NoHandledTypes_SkipsPurgeAsync() {
     var coordinator = new RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
+    var snapshot = new HandledReceptorTypeSnapshot([]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,

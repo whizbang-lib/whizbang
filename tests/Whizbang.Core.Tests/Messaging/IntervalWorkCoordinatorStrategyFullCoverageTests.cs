@@ -148,12 +148,12 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -187,12 +187,12 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -322,12 +322,12 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 

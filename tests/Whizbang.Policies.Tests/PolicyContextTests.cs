@@ -100,7 +100,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message: message, services: services, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: services);
 
     // Assert
     await Assert.That(context.Services).IsEqualTo(services);
@@ -112,7 +112,7 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
 
     // Act
-    var context = new PolicyContext(message: message, environment: "production", envelope: null, services: null);
+    var context = new PolicyContext(message: message, envelope: null, services: null, environment: "production");
 
     // Assert
     await Assert.That(context.Environment).IsEqualTo("production");
@@ -140,7 +140,7 @@ public class PolicyContextTests {
         .AddSingleton<ITestService, TestService>()
         .BuildServiceProvider();
     var message = new TestMessage("test");
-    var context = new PolicyContext(message: message, services: services, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: services);
 
     // Act
     var service = context.GetService<ITestService>();
@@ -166,7 +166,7 @@ public class PolicyContextTests {
     // Arrange
     var message = new TestMessage("test");
     var services = new TestServiceProvider(); // Empty provider
-    var context = new PolicyContext(message: message, services: services, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: services);
 
     // Act & Assert - Service not registered
     await Assert.That(() => context.GetService<ITestService>())
@@ -400,7 +400,7 @@ public class PolicyContextTests {
     services.AddSingleton<IStreamIdExtractor>(StreamIdExtractorRegistry.GetComposite());
     var serviceProvider = services.BuildServiceProvider();
     var message = new MessageWithoutAttributeMarker("test");
-    var context = new PolicyContext(message: message, services: serviceProvider, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: serviceProvider);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -417,7 +417,7 @@ public class PolicyContextTests {
         .Services
         .BuildServiceProvider();
     var message = new TestMessage("test");
-    var context = new PolicyContext(message: message, services: services, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: services);
 
     // Act & Assert
     await Assert.That(() => context.GetAggregateId())
@@ -487,7 +487,7 @@ public class PolicyContextTests {
     // Covers the "extractor not registered" throw branch.
     var services = new ServiceCollection().BuildServiceProvider();
     var message = new CreateOrder(Guid.NewGuid(), "Widget");
-    var context = new PolicyContext(message: message, services: services, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: services);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -508,7 +508,7 @@ public class PolicyContextTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var message = new CreateProduct(expectedId, "Gadget");
-    var context = new PolicyContext(message: message, services: serviceProvider, envelope: null);
+    var context = new PolicyContext(message: message, envelope: null, services: serviceProvider);
 
     // Act
     var aggregateId = context.GetAggregateId();

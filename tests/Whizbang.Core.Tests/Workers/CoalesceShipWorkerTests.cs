@@ -388,10 +388,10 @@ public class CoalesceShipWorkerTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       schemaReadyGate: gate,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: resolver,
       logger: NullLogger<CoalesceShipWorker>.Instance,
-      timeProvider: time,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
+      timeProvider: time);
   }
 
   private static CoalesceGroupStats _stats(string group, long count, int oldestAge, int newestAge) => new() {
@@ -760,10 +760,10 @@ public class CoalesceShipWorkerTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       schemaReadyGate: gate,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: _oneGroupResolver(time),
       logger: NullLogger<CoalesceShipWorker>.Instance,
-      timeProvider: time,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: _oneGroupResolver(time),
+      timeProvider: time);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

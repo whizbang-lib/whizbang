@@ -945,9 +945,9 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxBulkFlushCallback>(_buildOutboxFlushCallback);
     services.TryAddSingleton<SlidingWindowOutboxBatchStrategy>(sp => new SlidingWindowOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowOutboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>(),
-      logger: sp.GetRequiredService<ILogger<SlidingWindowOutboxBatchStrategy>>()));
+      timeProvider: sp.GetService<TimeProvider>()));
     services.TryAddSingleton<ImmediateOutboxBatchStrategy>(sp => new ImmediateOutboxBatchStrategy(
       flush: sp.GetRequiredService<OutboxBulkFlushCallback>()));
     services.TryAddSingleton<IOutboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowOutboxBatchStrategy>());
@@ -960,9 +960,9 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);
     services.TryAddSingleton<SlidingWindowInboxBatchStrategy>(sp => new SlidingWindowInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>(),
+      logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>(),
       options: sp.GetRequiredService<IOptions<SlidingWindowInboxOptions>>().Value,
-      timeProvider: sp.GetService<TimeProvider>(),
-      logger: sp.GetRequiredService<ILogger<SlidingWindowInboxBatchStrategy>>()));
+      timeProvider: sp.GetService<TimeProvider>()));
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
@@ -1127,8 +1127,8 @@ public static class WorkerPipelineExtensions {
       var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
       return new WorkCoordinatorGate(
         maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
-        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
         logger: sp.GetRequiredService<ILogger<WorkCoordinatorGate>>(),
+        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
         metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         interactiveReserve: gateOptions.InteractiveReserve);
     });

@@ -101,8 +101,8 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
   }
 
   private static OutboxWork _commandWork<TPayload>(TPayload payload, Guid? streamId = null)
@@ -478,8 +478,8 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
         transport: transport,
         readinessCheck: new DefaultTransportReadinessCheck(),
         inboxTopic: "inbox",
-        namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-        loggerFactory: NullLoggerFactory.Instance);
+        loggerFactory: NullLoggerFactory.Instance,
+        namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
       var commandResult = await publish.PublishAsync(commandWork, ct);
       var systemResult = await publish.PublishAsync(systemWork, ct);
       await Assert.That(commandResult.Success).IsTrue();

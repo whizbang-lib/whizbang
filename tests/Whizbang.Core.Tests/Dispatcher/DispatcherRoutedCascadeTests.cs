@@ -757,7 +757,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
   /// Registers a trace store or receptor registry to trigger the tracing code path.
   /// </summary>
-  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: null, receptorRegistry: receptorRegistry) {
+  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), traceStore: null, receptorRegistry: receptorRegistry) {
     private readonly List<object> _invokedMessages = [];
     private readonly Lock _lock = new();
 

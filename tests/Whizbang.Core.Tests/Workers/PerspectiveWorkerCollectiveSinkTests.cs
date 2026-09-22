@@ -135,8 +135,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
       logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry: leaseRegistry,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
@@ -198,8 +198,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
       logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<LeaseRenewalWorker>.Instance,
-      leaseRegistry: leaseRegistry,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      leaseRegistry: leaseRegistry);
     await renewalWorker.StartAsync(CancellationToken.None);
 
     using var cts = new CancellationTokenSource();
@@ -811,16 +811,6 @@ public class PerspectiveWorkerCollectiveSinkTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
-      processedEventCacheObserver: processedEventCacheObserver ?? NullProcessedEventCacheObserver.Instance,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: harness.FailureCapture,
-      leaseRenewalChannel: leaseRenewalChannel ?? new CapturingLeaseRenewalChannel(),
-      perspectiveDrainChannel: harness.DrainChannel,
-      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
-      generationProvider: (deadLetterStore is null ? null : new DefaultGenerationProvider()) ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider(),
-      leaseRegistry: leaseRegistry,
-      compositeMetrics: compositeMetrics,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
@@ -828,15 +818,25 @@ public class PerspectiveWorkerCollectiveSinkTests {
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
       streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: processedEventCacheObserver ?? NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: leaseRenewalChannel ?? new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: (deadLetterStore is null ? null : new DefaultGenerationProvider()) ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider() ?? new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
-      })).Value));
+      })).Value),
+      leaseRegistry: leaseRegistry,
+      compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
   }
 

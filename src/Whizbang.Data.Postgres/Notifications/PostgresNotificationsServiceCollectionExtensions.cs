@@ -291,7 +291,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   private static string? _findFirstCredentialBearingConnectionString(IConfiguration configuration) {
     return configuration.GetSection("ConnectionStrings").GetChildren()
       .Select(child => child.Value)
-      .FirstOrDefault(value => !string.IsNullOrEmpty(value) && ConnectionStringCredentialMarkerSummary.Summarize(value).Item2);
+      .FirstOrDefault(value => !string.IsNullOrEmpty(value) && ConnectionStringCredentialMarkerSummary.Summarize(value).HasSecret);
   }
 
   /// <summary>

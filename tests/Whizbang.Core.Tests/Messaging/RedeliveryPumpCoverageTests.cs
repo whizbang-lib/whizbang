@@ -107,7 +107,7 @@ public class RedeliveryPumpCoverageTests {
   [Timeout(30000)]
   public async Task PublishAsync_TransientFailureWithConfiguredBackoff_ActuallyDelaysBeforeRetryingAsync(CancellationToken testToken) {
     var transport = new FlakyTransport { FailFirst = 1 };
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions { PublishRetryAttempts = 3, PublishRetryBaseDelayMs = 5 }, compositeFactory: new CompositeFactory());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { PublishRetryAttempts = 3, PublishRetryBaseDelayMs = 5 });
 
     var published = await pump.PublishAsync(
       [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],

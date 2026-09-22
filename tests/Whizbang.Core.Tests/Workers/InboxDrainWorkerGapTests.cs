@@ -116,7 +116,7 @@ public class InboxDrainWorkerGapTests {
 
     public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
       IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
-      FetchCalls.Enqueue(streamIds.ToArray());
+      FetchCalls.Enqueue([.. streamIds]);
       OnFetch?.Invoke();
       if (ThrowOnFetch is not null) {
         throw ThrowOnFetch;
@@ -151,11 +151,9 @@ public class InboxDrainWorkerGapTests {
   /// <c>_logPerfIfInteresting</c> is reachable. Optionally signals a TCS when a specific
   /// EventId is logged (used to synchronize on the disabled-path log without polling).
   /// </summary>
-  private sealed class RecordingLogger : ILogger<InboxDrainWorker> {
-    private readonly LogLevel _minLevel;
-    public RecordingLogger(LogLevel minLevel) {
-      _minLevel = minLevel;
-    }
+  private sealed class RecordingLogger(LogLevel minLevel) : ILogger<InboxDrainWorker> {
+    private readonly LogLevel _minLevel = minLevel;
+
     public int? SignalOnEventId { get; init; }
     public TaskCompletionSource<bool> EventSignaled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentQueue<(int EventId, LogLevel Level, string Message)> Entries { get; } = new();

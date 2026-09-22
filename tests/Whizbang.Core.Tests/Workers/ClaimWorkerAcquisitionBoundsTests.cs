@@ -341,17 +341,17 @@ public class ClaimWorkerAcquisitionBoundsTests {
       schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<ClaimWorker>.Instance,
-      perspectiveDrainChannel: perspectiveDrainChannel ?? new PerspectiveDrainChannel(),
-      inboxDrainChannel: inboxDrainChannel ?? new InboxDrainChannel(),
-      completionMeter: completionMeter,
-      timeProvider: timeProvider,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: perspectiveDrainChannel ?? new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: inboxDrainChannel ?? new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      completionMeter: completionMeter,
+      timeProvider: timeProvider);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);

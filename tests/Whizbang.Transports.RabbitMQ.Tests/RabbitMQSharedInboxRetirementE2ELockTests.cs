@@ -121,8 +121,8 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
       transport: publisherTransport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: SHARED_INBOX,
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
     var domainResult = await publishStrategy.PublishAsync(
       _commandWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp", "domain-command"),

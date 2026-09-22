@@ -122,12 +122,9 @@ public class AddWhizbangMessageBodyStoreTests {
   /// .NET keyed services pass the key as [FromKeyedServices] constructor
   /// param via Microsoft.Extensions.DI infrastructure.
   /// </summary>
-  private sealed class FakeStore : IMessageBodyStore {
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1144:Unused private types or members should be removed", Justification = "The container constructs it, passing the registration's service key.")]
-    public FakeStore([Microsoft.Extensions.DependencyInjection.ServiceKey] string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+  [method: System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1144:Unused private types or members should be removed", Justification = "The container constructs it, passing the registration's service key.")]
+  private sealed class FakeStore([Microsoft.Extensions.DependencyInjection.ServiceKey] string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName;
     public Task<MessageBodyClaim> UploadAsync(
       ReadOnlyMemory<byte> body, string contentType,
       MessageBodyUploadOptions? options = null,

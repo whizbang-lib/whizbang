@@ -113,9 +113,9 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       versionProvider: versionProvider,
       assessor: assessor,
+      logger: NullLogger<StandbyWatcher>.Instance,
       pipelineRunner: new StartupPipelineRunner(steps: [reviveProbe], observers: [], dutyElector: NullDutyElector.Instance),
-      options: _fastOptions(),
-      logger: NullLogger<StandbyWatcher>.Instance);
+      options: _fastOptions());
     return new PodRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
   }
 

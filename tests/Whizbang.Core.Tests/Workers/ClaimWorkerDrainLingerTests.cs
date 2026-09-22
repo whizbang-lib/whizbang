@@ -101,16 +101,16 @@ public class ClaimWorkerDrainLingerTests {
       schemaReadyGate: schemaGate,
       options: Options.Create(options),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
-      busLiveness: liveness,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      busLiveness: liveness);
   }
 
   [Test]

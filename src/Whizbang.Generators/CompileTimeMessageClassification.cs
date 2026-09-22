@@ -31,6 +31,7 @@ public static class CompileTimeMessageClassification {
     return TypeNameUtilities.NamespaceName(messageType.ContainingNamespace).ToLowerInvariant();
   }
 
+#pragma warning disable S3776 // the classification is one decision table over the type's markers and base types; a split would hide the table
   /// <summary>
   /// Compile-time mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s priority
   /// rules: [MessageKind] attribute, framework system namespace, marker interface,
@@ -105,6 +106,7 @@ public static class CompileTimeMessageClassification {
 
     return "Unknown";
   }
+#pragma warning restore S3776
 
   /// <summary>
   /// Extracts the [FireAt] lifecycle stage NAMES declared on a receptor class (one entry per

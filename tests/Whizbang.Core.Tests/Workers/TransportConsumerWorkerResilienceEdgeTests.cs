@@ -187,7 +187,7 @@ public class TransportConsumerWorkerResilienceEdgeTests {
       resilienceOptions: resilience,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

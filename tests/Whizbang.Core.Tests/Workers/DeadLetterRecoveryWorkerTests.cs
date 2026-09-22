@@ -365,8 +365,8 @@ public class DeadLetterRecoveryWorkerTests {
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
       logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
-      metrics: null,
-      notificationListener: new NoOpWorkNotificationListener());
+      notificationListener: new NoOpWorkNotificationListener(),
+      metrics: null);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -424,8 +424,8 @@ public class DeadLetterRecoveryWorkerTests {
       integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(generation),
       logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
-      metrics: null,
       notificationListener: (IWorkNotificationListener?)listener ?? new NoOpWorkNotificationListener(),
+      metrics: null,
       timeProvider: timeProvider);
     return (worker, svc);
   }

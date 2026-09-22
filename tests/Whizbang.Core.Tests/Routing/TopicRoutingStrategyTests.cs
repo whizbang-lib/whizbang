@@ -127,7 +127,8 @@ public class TopicRoutingStrategyTests {
   public async Task CompositeTopicRoutingStrategy_WithEmptyStrategies_ThrowsAsync() {
     // Assert
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      _ = new CompositeTopicRoutingStrategy(Array.Empty<ITopicRoutingStrategy>());
+      IReadOnlyList<ITopicRoutingStrategy> noStrategies = [];
+      _ = new CompositeTopicRoutingStrategy(noStrategies);
       await Task.CompletedTask;
     });
   }

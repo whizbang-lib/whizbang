@@ -565,12 +565,12 @@ public class ImmediateWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: instanceProvider,
       options: options,
-      systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions),
       logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions),
       workChannelWriter: new WorkChannelWriter()
     );
 
@@ -623,13 +623,13 @@ public class ImmediateWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: instanceProvider,
       options: options,
-      workChannelWriter: channelWriter,
       logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: new DeferredOutboxChannel(),
-      systemEventOptions: Options.Create(new SystemEventOptions())
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: channelWriter
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());

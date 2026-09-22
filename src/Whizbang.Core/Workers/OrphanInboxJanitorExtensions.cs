@@ -36,12 +36,11 @@ public static class OrphanInboxJanitorExtensions {
   }
 
   private static HashSet<Type> _snapshotReceptorMessageTypes(IServiceCollection services) {
-    return services
+    return [.. services
       .Select(sd => sd.ServiceType)
       .Where(st => st.IsGenericType && st.GetGenericTypeDefinition() is var def && (def == typeof(IReceptor<>) || def == typeof(IReceptor<,>)))
       .Select(st => st.GetGenericArguments())
       .Where(args => args.Length > 0)
-      .Select(args => args[0])
-      .ToHashSet();
+      .Select(args => args[0])];
   }
 }

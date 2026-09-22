@@ -69,8 +69,7 @@ public class CollectiveEventApplierCoverageTests {
 
   private sealed record Evt(CollectiveScope Scope) : ICollectiveEvent;
 
-  private sealed class Handler {
-  }
+  private sealed class Handler;
 
   private sealed class StubResolver(string kind) : ICollectiveScopeResolver {
     public string ScopeKind => kind;

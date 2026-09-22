@@ -157,7 +157,7 @@ public sealed class NamespaceInboxStrategy(
     var commandNamespaces = new SortedSet<string>(StringComparer.Ordinal);
     commandNamespaces.UnionWith(context.HandledMessages
       .Where(handled => handled.Kind == MessageKind.Command && !string.IsNullOrWhiteSpace(handled.ContractNamespace))
-      .Select(handled => handled.ContractNamespace!.ToLowerInvariant())
+      .Select(handled => handled.ContractNamespace.ToLowerInvariant())
       .Where(contractNamespace => !CommandInboxNaming.IsFrameworkReserved(contractNamespace)));
 
     foreach (var contractNamespace in commandNamespaces) {
@@ -239,7 +239,7 @@ public sealed class NamespaceInboxStrategy(
     namespaces.UnionWith(context.HandledMessages
       .Select(handled => handled.ContractNamespace)
       .Where(contractNamespace => !string.IsNullOrWhiteSpace(contractNamespace))
-      .Select(contractNamespace => contractNamespace!.ToLowerInvariant()));
+      .Select(contractNamespace => contractNamespace.ToLowerInvariant()));
     namespaces.UnionWith(context.ConsumedEventNamespaces
       .Where(consumed => !string.IsNullOrWhiteSpace(consumed))
       .Select(consumed => consumed.ToLowerInvariant()));

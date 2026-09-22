@@ -51,8 +51,8 @@ public class SlidingWindowApplyFailurePathTests {
         }
         throw new InvalidOperationException("perspective store unavailable");
       },
-      options: _fastWindow(),
-      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
+      options: _fastWindow());
 
     await sut.AppendAsync(Guid.CreateVersion7());
     await sut.AppendAsync(Guid.CreateVersion7());
@@ -74,8 +74,8 @@ public class SlidingWindowApplyFailurePathTests {
     var logger = new RecordingLogger();
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
-      options: _fastWindow(),
-      logger: logger);
+      logger: logger,
+      options: _fastWindow());
 
     var streamId = Guid.CreateVersion7();
     await sut.AppendAsync(streamId);
@@ -99,9 +99,9 @@ public class SlidingWindowApplyFailurePathTests {
     var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: _fastWindow(idleWindow: TimeSpan.FromSeconds(1)),
-      timeProvider: time,
-      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
+      timeProvider: time);
 
     await sut.AppendAsync(Guid.CreateVersion7());
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

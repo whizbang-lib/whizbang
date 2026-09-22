@@ -205,8 +205,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
@@ -503,8 +503,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
@@ -536,8 +536,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
@@ -564,8 +564,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
@@ -593,8 +593,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: host.ScopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: host.ScopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
@@ -662,13 +662,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: coordinator,
       instanceProvider: instanceProvider,
       options: options,
-      metrics: metrics,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -697,12 +697,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act - flush with nothing queued
@@ -728,13 +728,13 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: coordinator,
       instanceProvider: instanceProvider,
       options: options,
-      metrics: metrics,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -1076,8 +1076,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       coordinator: null,
       instanceProvider: instanceProvider,
       options: options,
-      scopeFactory: scopeFactory,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),

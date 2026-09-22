@@ -466,9 +466,9 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     await Assert.That(result).IsNotNull();
     List<Activity> dispatchActivities;
     lock (stopped) {
-      dispatchActivities = stopped.Where(a =>
+      dispatchActivities = [.. stopped.Where(a =>
         a.OperationName == "Dispatch SweepRoutedCommand" &&
-        Equals(a.GetTagItem("whizbang.message.type"), typeof(SweepRoutedCommand).FullName)).ToList();
+        Equals(a.GetTagItem("whizbang.message.type"), typeof(SweepRoutedCommand).FullName))];
     }
     await Assert.That(dispatchActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(dispatchActivities[0].GetTagItem("whizbang.debug.parent.id")).IsNotNull();

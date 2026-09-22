@@ -45,12 +45,12 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         // canceled -- there is no competing "normal" completion path, so there is no race.
         await Task.Delay(Timeout.Infinite, ct);
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
     await flushEntered.Task.WaitAsync(cancellationToken);
@@ -81,6 +81,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     var clock = new FakeTimeProvider();
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
@@ -89,8 +90,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromSeconds(30),
       },
-      timeProvider: clock,
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      timeProvider: clock);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

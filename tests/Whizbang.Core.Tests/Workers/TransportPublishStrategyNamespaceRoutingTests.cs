@@ -221,11 +221,11 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       throttleRetryOptions: new ThrottleRetryOptions { MaxAttempts = 2, BaseDelay = TimeSpan.FromMilliseconds(1) },
       metrics: metrics,
       postSerializeHookChain: null,
       jsonOptions: null,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance,
       transportNamespaces: transportNamespaces);
   }
 

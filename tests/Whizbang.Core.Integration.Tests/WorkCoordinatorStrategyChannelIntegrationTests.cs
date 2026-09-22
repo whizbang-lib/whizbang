@@ -148,14 +148,14 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         coordinator: null,
         instanceProvider: instanceProvider,
         options: opts,
+        logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
         scopeFactory: scopeFactory,
-        metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
-        logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
-        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()));
+        metrics: sp.GetService<WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -165,13 +165,13 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         coordinator: null,
         instanceProvider: instanceProvider,
         options: opts,
-        scopeFactory: scopeFactory,
-        metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+        scopeFactory: scopeFactory,
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()));
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        metrics: sp.GetService<WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {

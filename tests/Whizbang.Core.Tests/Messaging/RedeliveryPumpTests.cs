@@ -75,7 +75,7 @@ public class RedeliveryPumpTests {
     var ids = Enumerable.Range(0, 5).Select(_ => TrackedGuid.NewMedo().Value).ToArray();
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 }, compositeFactory: new CompositeFactory());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
 
     var published = await pump.PublishAsync(
       [.. ids.Select((id, i) => _evt(stream, id, i + 1))],
@@ -104,7 +104,7 @@ public class RedeliveryPumpTests {
     // Each event carries ~102 raw bytes (100-byte body + "{}" metadata); a 100-byte budget is
     // crossed by every single event, so each flushes alone — a count-only bound would build one
     // 3-event composite here.
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 }, compositeFactory: new CompositeFactory());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
     var bigBody = "{\"pad\":\"" + new string('x', 90) + "\"}";
 
     var published = await pump.PublishAsync(
@@ -125,7 +125,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new CaptureTransport();
     var serializer = new CaptureSerializer();
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 }, compositeFactory: new CompositeFactory());
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
 
     var published = await pump.PublishAsync(
       [_evt(stream, TrackedGuid.NewMedo().Value, 1) with { EventData = "{\"pad\":\"oversized-body\"}" }],
@@ -297,10 +297,10 @@ public class RedeliveryPumpTests {
     var streamA = TrackedGuid.NewMedo().Value;
     var streamB = TrackedGuid.NewMedo().Value;
     var transport = new FlakyTransport { FailFirst = 2 };
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
-    }, compositeFactory: new CompositeFactory());
+    });
 
     var published = await pump.PublishAsync(
       [_evt(streamA, TrackedGuid.NewMedo().Value, 1), _evt(streamB, TrackedGuid.NewMedo().Value, 1)],
@@ -317,10 +317,10 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_ExhaustedRetries_RethrowsAfterTheConfiguredAttemptsAsync() {
     var transport = new FlakyTransport { FailFirst = int.MaxValue };
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 3,
       PublishRetryBaseDelayMs = 0,
-    }, compositeFactory: new CompositeFactory());
+    });
 
     await Assert.That(async () => await pump.PublishAsync(
         [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],
@@ -334,10 +334,10 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_Cancellation_PropagatesWithoutRetryAsync() {
     var transport = new FlakyTransport { FailFirst = int.MaxValue, ThrowCancellation = true };
-    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new CaptureSerializer(), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
-    }, compositeFactory: new CompositeFactory());
+    });
 
     await Assert.That(async () => await pump.PublishAsync(
         [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1)],

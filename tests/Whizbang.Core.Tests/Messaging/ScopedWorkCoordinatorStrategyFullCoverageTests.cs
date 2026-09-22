@@ -113,11 +113,11 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       workChannelWriter: null,
       options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      },
-      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      }
     );
 
     // Queue an event (generates audit message internally)
@@ -150,11 +150,11 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       workChannelWriter: null,
       options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      },
-      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      }
     );
 
     // Queue a NON-event outbox message (IsEvent = false)
@@ -224,8 +224,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      metrics: metrics,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics
     );
 
     // Act
@@ -288,8 +288,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      metrics: metrics,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics
     );
 
     _queueOutboxMessage(sut);
@@ -407,11 +407,11 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       workChannelWriter: null,
       options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = scopeFactory
-      },
-      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      }
     );
 
     _queueOutboxMessage(sut);

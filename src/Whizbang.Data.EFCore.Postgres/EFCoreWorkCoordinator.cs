@@ -1263,10 +1263,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return new StandbyRequest(
       reader.GetGuid(0),
       reader.GetString(1),
-      await reader.GetFieldValueAsync<DateTime>(2) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
+      await reader.GetFieldValueAsync<DateTime>(2, cancellationToken) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
       await reader.IsDBNullAsync(3, cancellationToken)
         ? null
-        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3), DateTimeKind.Utc)));
+        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3, cancellationToken), DateTimeKind.Utc)));
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
@@ -2136,7 +2136,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
           // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
           Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
-          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15)
+          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
         });
       }
       if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
@@ -2204,6 +2204,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
 
+#pragma warning disable S3776 // one commit path per outcome; splitting it would separate the rows from the failure that explains them
   /// <inheritdoc />
   public async Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
     IReadOnlyList<HandlerCommitRequest> requests,
@@ -2265,6 +2266,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     return results;
   }
+#pragma warning restore S3776
 
   private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
     // Build JSONB that commit_handler_result expects:
@@ -3488,7 +3490,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DigestLo = reader.GetInt64(idx),
         DigestHi = reader.GetInt64(idx + 1),
         EventCount = reader.GetInt32(idx + 2),
-        UpdatedAt = hasUpdatedAt ? await reader.GetFieldValueAsync<DateTimeOffset>(idx + 3) : null,
+        UpdatedAt = hasUpdatedAt ? await reader.GetFieldValueAsync<DateTimeOffset>(idx + 3, cancellationToken) : null,
       });
     }
     return results;
@@ -3745,7 +3747,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
         if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
             && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-          projection = await reader.IsDBNullAsync(0) ? null : reader.GetString(0);
+          projection = await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0);
         }
       }
       // #720: ring the doorbells the store queued, after its commit.
@@ -3864,8 +3866,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new Whizbang.Core.Messaging.CoalesceGroupStats {
         Group = reader.GetString(0),
         PendingCount = reader.GetInt64(1),
-        OldestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(2),
-        NewestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(3),
+        OldestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(2, cancellationToken),
+        NewestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(3, cancellationToken),
       });
     }
     return results;
@@ -3935,7 +3937,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         IsEvent = reader.GetBoolean(7),
         ScheduledFor = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
           ? null
-          : await reader.GetFieldValueAsync<DateTimeOffset>(8),
+          : await reader.GetFieldValueAsync<DateTimeOffset>(8, cancellationToken),
         Priority = reader.GetInt32(9),   // priority step 1: the ship worker folds the singles' numbers into the composite
         CoalesceGroup = group,
       });

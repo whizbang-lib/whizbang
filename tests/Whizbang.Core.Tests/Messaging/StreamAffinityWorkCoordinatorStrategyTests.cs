@@ -36,12 +36,12 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     var inner = new RecordingInnerStrategy();
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
@@ -76,17 +76,17 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, systemEventOptions: options, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options);
 
     var msg = _eventOutboxMessage(_idProvider.NewGuid());
     await sut.QueueOutboxMessageAsync(msg);
@@ -119,12 +119,12 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     var inner = new RecordingInnerStrategy();
     // No SystemEventOptions at all — the pre-audit wiring shape. Nothing extra may be batched.
@@ -150,17 +150,17 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, systemEventOptions: options, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options);
 
     // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
     await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));
@@ -224,12 +224,12 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
+      });
 
     var inner = new RecordingInnerStrategy();
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);

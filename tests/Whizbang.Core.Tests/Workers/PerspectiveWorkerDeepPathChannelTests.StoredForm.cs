@@ -86,14 +86,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
-        logger: logger,
-        perspectiveChannelWriter: harness.ChannelWriter,
-        perspectiveCompletionChannel: harness.CompletionCapture,
-        failureChannel: harness.FailureCapture,
-        perspectiveDrainChannel: harness.DrainChannel,
-        storedFormFailures: failures,
         syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
         syncEventTracker: new SyncEventTracker(),
+        logger: logger,
         snapshotStore: NullPerspectiveSnapshotStore.Instance,
         streamLocker: NullPerspectiveStreamLocker.Instance,
         streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -101,13 +96,18 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
         workChannelWriter: new WorkChannelWriter(),
         rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+        perspectiveChannelWriter: harness.ChannelWriter,
+        perspectiveCompletionChannel: harness.CompletionCapture,
+        failureChannel: harness.FailureCapture,
         leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+        perspectiveDrainChannel: harness.DrainChannel,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
         deadLetterStore: NullDeadLetterStore.Instance,
         generationProvider: new DefaultGenerationProvider(),
         perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-        governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
+        governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value),
+        storedFormFailures: failures);
 
       using var cts = new CancellationTokenSource();
       await worker.StartAsync(cts.Token);

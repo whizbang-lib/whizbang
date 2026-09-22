@@ -680,16 +680,6 @@ public class PerspectiveDedupIntegrationTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider ?? NullEventTypeProvider.Instance,
-      processedEventCacheObserver: observer ?? NullProcessedEventCacheObserver.Instance,
-      timeProvider: timeProvider,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
-      // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      completionMeter: completionMeter,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
@@ -697,15 +687,25 @@ public class PerspectiveDedupIntegrationTests {
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
       streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: observer ?? NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value),
+      timeProvider: timeProvider,
+      // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
+      // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      completionMeter: completionMeter);
     return (worker, harness);
   }
 

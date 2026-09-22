@@ -68,9 +68,9 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      jsonOptions: null,
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-      loggerFactory: NullLoggerFactory.Instance);
+      jsonOptions: null);
   }
 
   /// <summary>Builds the outbox-shaped work item for a command payload (envelope stored as
@@ -471,9 +471,9 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      jsonOptions: null,
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-      loggerFactory: NullLoggerFactory.Instance);
+      jsonOptions: null);
 
     var commandWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"retire-{Guid.CreateVersion7():N}"));
     var systemWork = _commandWork(new Whizbang.Core.Commands.System.RebuildPerspectiveCommand(

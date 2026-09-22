@@ -24,7 +24,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var eventId = Guid.CreateVersion7();
 
     // Act
@@ -39,7 +39,7 @@ public class ProcessedEventCacheTests {
   public async Task InFlight_NeverExpires_UntilActivatedAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 
@@ -58,7 +58,7 @@ public class ProcessedEventCacheTests {
   public async Task ActivateRetention_StartsCountdownAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 
@@ -76,7 +76,7 @@ public class ProcessedEventCacheTests {
   public async Task Retained_BeforeTtlExpires_ContainsReturnsTrueAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 
@@ -93,7 +93,7 @@ public class ProcessedEventCacheTests {
   public async Task Retained_AfterTtlExpires_ContainsReturnsFalseAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 
@@ -110,7 +110,7 @@ public class ProcessedEventCacheTests {
   public async Task ActivateRetention_OnlyAffectsInFlightAsync() {
     // Arrange — one InFlight, one already Retained
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var earlyId = Guid.CreateVersion7();
     cache.AddRange([earlyId]);
     cache.ActivateRetention(); // earlyId is now Retained
@@ -140,7 +140,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var expiredId = Guid.CreateVersion7();
     var freshId = Guid.CreateVersion7();
 
@@ -166,7 +166,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var id1 = Guid.CreateVersion7();
     var id2 = Guid.CreateVersion7();
     cache.AddRange([id1, id2]);
@@ -188,7 +188,7 @@ public class ProcessedEventCacheTests {
   public async Task AddRange_DuplicateId_DoesNotThrowAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var eventId = Guid.CreateVersion7();
 
     // Act — add same ID twice
@@ -204,7 +204,7 @@ public class ProcessedEventCacheTests {
   public async Task Contains_EmptyCache_ReturnsFalseAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
 
     // Act & Assert
     await Assert.That(cache.Contains(Guid.CreateVersion7())).IsFalse();
@@ -215,7 +215,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 
@@ -232,7 +232,7 @@ public class ProcessedEventCacheTests {
   public async Task Count_ExcludesExpiredEntriesAsync() {
     // Arrange
     var time = new FakeTimeProvider();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: NullProcessedEventCacheObserver.Instance);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: NullProcessedEventCacheObserver.Instance, timeProvider: time);
     var id1 = Guid.CreateVersion7();
     var id2 = Guid.CreateVersion7();
     cache.AddRange([id1, id2]);
@@ -258,7 +258,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var id1 = Guid.CreateVersion7();
     var id2 = Guid.CreateVersion7();
 
@@ -276,7 +276,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     cache.AddRange([Guid.CreateVersion7(), Guid.CreateVersion7()]);
 
     // Act
@@ -292,7 +292,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     cache.AddRange([Guid.CreateVersion7()]);
     cache.ActivateRetention();
     time.Advance(_retentionPeriod + TimeSpan.FromSeconds(1));
@@ -310,7 +310,7 @@ public class ProcessedEventCacheTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var eventId = Guid.CreateVersion7();
     cache.AddRange([eventId]);
 

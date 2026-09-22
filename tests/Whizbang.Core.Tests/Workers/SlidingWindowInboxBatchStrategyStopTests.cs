@@ -28,12 +28,12 @@ public class SlidingWindowInboxBatchStrategyStopTests {
         flushEntered.TrySetResult();
         await releaseFlush.Task;
       },
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      },
-      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
+      });
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), testToken);

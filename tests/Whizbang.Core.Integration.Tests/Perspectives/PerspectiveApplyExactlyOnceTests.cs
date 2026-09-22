@@ -626,16 +626,6 @@ public class PerspectiveApplyExactlyOnceTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
-      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
-      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
-      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
-      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
@@ -646,13 +636,23 @@ public class PerspectiveApplyExactlyOnceTests {
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value));
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })).Value),
+      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
+      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
+      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
+      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
+      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 
@@ -998,16 +998,6 @@ public class PerspectiveApplyExactlyOnceTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
-      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
-      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
-      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
-      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
       logger: NullLogger<PerspectiveWorker>.Instance,
@@ -1018,13 +1008,23 @@ public class PerspectiveApplyExactlyOnceTests {
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value));
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      // Production ALWAYS wires the cooldown cache (WorkerPipelineExtensions). Omitting it here left
+      // the drain refetch loop (slice 30, DrainLoopMaxIterations>1) with no dedup: GetStreamEventsAsync
+      // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
+      // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
+      // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
   }
 

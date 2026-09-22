@@ -100,8 +100,8 @@ public class CoalesceMintStampingTests {
     var sut = new StreamAffinityWorkCoordinatorStrategy(
       inner: new RecordingInner(),
       outboxBatch: batch,
-      systemEventOptions: null,
       logger: NullLogger.Instance,
+      systemEventOptions: null,
       coalesceResolver: _resolver(time, out _));
 
     await sut.QueueOutboxMessageAsync(_taggedMessage());
@@ -138,14 +138,14 @@ public class CoalesceMintStampingTests {
       coordinator: coordinator,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       options: new WorkCoordinatorOptions(),
-      deferredChannel: deferredChannel,
-      coalesceResolver: _resolver(time, out _),
       logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: deferredChannel,
       systemEventOptions: Options.Create(new SystemEventOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(),
+      coalesceResolver: _resolver(time, out _));
 
     await strategy.FlushAsync(WorkBatchOptions.None);
 

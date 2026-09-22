@@ -148,7 +148,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

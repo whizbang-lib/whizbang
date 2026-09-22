@@ -203,11 +203,11 @@ public class PerStreamSerializerTests {
           seen.Add(item.MessageId);
         }
       },
+      logger: NullLogger.Instance,
+      sortComparer: Comparer<StreamItem>.Create((a, b) => a.MessageId.CompareTo(b.MessageId)),
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromMilliseconds(100),
-      },
-      sortComparer: Comparer<StreamItem>.Create((a, b) => a.MessageId.CompareTo(b.MessageId)),
-      logger: NullLogger.Instance);
+      });
 
     // Enqueue out of order — within the drain window the items get batched, then sorted.
     await sut.EnqueueAsync(i3);
@@ -253,12 +253,12 @@ public class PerStreamSerializerTests {
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
       processor: async (_, _) => await Task.Yield(),
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         IdleEvictionWindow = TimeSpan.FromSeconds(5),
         IdleSweepInterval = TimeSpan.FromSeconds(1),
       },
-      timeProvider: fakeTime,
-      logger: NullLogger.Instance);
+      timeProvider: fakeTime);
 
     await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
     await sut.WaitForIdleAsync(TimeSpan.FromSeconds(2));
@@ -429,12 +429,12 @@ public class PerStreamSerializerTests {
     var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
       processor: (_, _) => Task.CompletedTask,
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         IdleEvictionWindow = TimeSpan.FromSeconds(1),
         IdleSweepInterval = TimeSpan.FromSeconds(1),
       },
-      timeProvider: fakeTime,
-      logger: NullLogger.Instance);
+      timeProvider: fakeTime);
 
     await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
     await sut.DisposeAsync();
@@ -458,12 +458,12 @@ public class PerStreamSerializerTests {
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
       processor: async (_, _) => await Task.Yield(),
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         IdleEvictionWindow = TimeSpan.FromSeconds(5),
         IdleSweepInterval = TimeSpan.FromSeconds(1),
       },
-      timeProvider: fakeTime,
-      logger: NullLogger.Instance);
+      timeProvider: fakeTime);
 
     await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
     await sut.WaitForIdleAsync(TimeSpan.FromSeconds(2));
@@ -502,15 +502,15 @@ public class PerStreamSerializerTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger.Instance,
+      sortComparer: throwingComparer,
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromSeconds(30),
         StreamChannelCapacity = 2,
         IdleEvictionWindow = TimeSpan.FromSeconds(5),
         IdleSweepInterval = TimeSpan.FromSeconds(1),
       },
-      sortComparer: throwingComparer,
-      timeProvider: fakeTime,
-      logger: NullLogger.Instance);
+      timeProvider: fakeTime);
 
     // Two same-stream items so batch.Count > 1 and Sort actually runs (and throws).
     await sut.EnqueueAsync(new StreamItem(throwingStreamId, _idProvider.NewGuid()));
@@ -551,10 +551,10 @@ public class PerStreamSerializerTests {
         }
         processedOrder.Add(item.MessageId);
       },
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.Zero,
-      },
-      logger: NullLogger.Instance);
+      });
 
     var i1 = new StreamItem(streamId, _idProvider.NewGuid());
     var i2 = new StreamItem(streamId, _idProvider.NewGuid());
@@ -590,12 +590,12 @@ public class PerStreamSerializerTests {
         lock (lockObj) { seen.Add(item.MessageId); }
         return Task.CompletedTask;
       },
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromSeconds(30),   // the fake clock never advances this far
         StreamChannelCapacity = 2,
       },
-      timeProvider: fakeTime,
-      logger: NullLogger.Instance);
+      timeProvider: fakeTime);
 
     var i1 = new StreamItem(streamId, _idProvider.NewGuid());
     var i2 = new StreamItem(streamId, _idProvider.NewGuid());
@@ -680,10 +680,10 @@ public class PerStreamSerializerTests {
         }
         secondItemRan = true;
       },
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         StreamChannelCapacity = 2,
-      },
-      logger: NullLogger.Instance);
+      });
 
     await sut.EnqueueAsync(i1);
     await sut.EnqueueAsync(i2);   // batched with i1 — capacity 2 ends the drain window immediately

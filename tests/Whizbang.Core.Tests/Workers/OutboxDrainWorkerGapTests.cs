@@ -462,8 +462,8 @@ public class OutboxDrainWorkerGapTests {
       runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
       generationProvider: generationProvider ?? new DefaultGenerationProvider(),
-      dlqMetrics: dlqMetrics,
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options)).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      dlqMetrics: dlqMetrics);
   }
 
   private static ServiceProvider _sp(GapWorkCoordinator coord, IReceptorInvoker? invoker = null) {
@@ -1352,32 +1352,32 @@ public class OutboxDrainWorkerGapTests {
     var logger = NullLogger<OutboxDrainWorker>.Instance;
 
     var ex1 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: null!, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: null!, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex1!.ParamName).IsEqualTo("scopeFactory");
 
     var ex2 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: null!, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: null!, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex2!.ParamName).IsEqualTo("instanceProvider");
 
     var ex3 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: null!, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: null!, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex3!.ParamName).IsEqualTo("drainChannel");
 
     var ex4 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: null!, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: null!, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex4!.ParamName).IsEqualTo("completionChannel");
 
     var ex5 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: null!, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: null!, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex5!.ParamName).IsEqualTo("failureChannel");
 
     var ex6 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: null!, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: null!, options: options, jsonOptions: _jsonOpts, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex6!.ParamName).IsEqualTo("schemaReadyGate");
 
@@ -1387,12 +1387,12 @@ public class OutboxDrainWorkerGapTests {
     await Assert.That(ex7!.ParamName).IsEqualTo("options");
 
     var ex8 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: null!, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: null!, logger: logger, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex8!.ParamName).IsEqualTo("jsonOptions");
 
     var ex9 = await Assert.That(() =>
-      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: null!, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor((options).Value)))
+      new OutboxDrainWorker(scopeFactory: scopeFactory, instanceProvider: instance, drainChannel: drainChannel, completionChannel: completion, failureChannel: failure, schemaReadyGate: gate, options: options, jsonOptions: _jsonOpts, logger: null!, publishStrategy: NullMessagePublishStrategy.Instance, lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), receptorRegistry: new PermissiveReceptorRegistryQuery(), runtimeReceptorRegistry: NullReceptorRegistry.Instance, deadLetterStore: NullDeadLetterStore.Instance, generationProvider: new DefaultGenerationProvider(), governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value)))
       .Throws<ArgumentNullException>();
     await Assert.That(ex9!.ParamName).IsEqualTo("logger");
   }

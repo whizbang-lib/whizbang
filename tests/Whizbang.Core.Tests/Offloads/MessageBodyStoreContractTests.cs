@@ -170,12 +170,10 @@ public class MessageBodyStoreContractTests {
   /// dispatches. Not exported — provider projects (Slice 4) ship the real
   /// in-memory + Azure Blob impls.
   /// </summary>
-  private sealed class NoOpStore : IMessageBodyStore {
+  private sealed class NoOpStore(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
-    public NoOpStore(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+
+    public string ProviderName { get; } = providerName;
 
     public Task<MessageBodyClaim> UploadAsync(
       ReadOnlyMemory<byte> body,

@@ -169,9 +169,9 @@ public class StandbyWatcherTests {
       schemaReadyGate: gate,
       versionProvider: new StubVersionProvider(ourVersion),
       assessor: assessor ?? NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance,
       pipelineRunner: null,
-      options: options ?? new StandbyWatcherOptions(),
-      logger: NullLogger<StandbyWatcher>.Instance);
+      options: options ?? new StandbyWatcherOptions());
 
     return new Harness(watcher, lifecycle, host, coordinator, sp);
   }
@@ -510,9 +510,9 @@ public class StandbyWatcherTests {
       instanceProvider: new StubInstanceProvider(),
       schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) },
       assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance);
+      logger: NullLogger<StandbyWatcher>.Instance,
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -587,9 +587,9 @@ public class StandbyWatcherTests {
       instanceProvider: new StubInstanceProvider(),
       schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) },
       assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance);
+      logger: NullLogger<StandbyWatcher>.Instance,
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);

@@ -144,14 +144,14 @@ public class InboxPrePublishGateForensicPreservationTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      deadLetterStore: store,
-      generationProvider: gen,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: gen);
   }
 
   // --- tests ---

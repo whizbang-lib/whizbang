@@ -22,7 +22,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_NonInteractiveCallers_NeverTakeTheReservedSliceAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 50, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 50, interactiveReserve: 1);
     using var first = await gate.AcquireAsync(CancellationToken.None);
     using var second = await gate.AcquireAsync(CancellationToken.None);
 
@@ -34,7 +34,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCaller_TakesTheReserveWhenTheSharedPermitsAreGoneAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 50, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 50, interactiveReserve: 1);
     using var first = await gate.AcquireAsync(CancellationToken.None);
     using var second = await gate.AcquireAsync(CancellationToken.None);
 
@@ -57,7 +57,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCaller_UsesTheSharedPermitsFirstAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 50, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 50, interactiveReserve: 1);
     WorkCoordinatorGate.Releaser interactive;
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
       interactive = await gate.AcquireAsync(CancellationToken.None);
@@ -105,7 +105,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCallerWaits_AndTakesTheSharedPermitThatFreesFirstAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
     await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3);
 
@@ -127,7 +127,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCallerWaits_AndTakesTheReserveWhenItFreesFirstAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
     var waiting = _startInteractive(gate);
     await Assert.That(waiting.IsCompleted).IsFalse();
@@ -146,7 +146,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_WithoutADeadline_AnInteractiveCallerWaitsUntilAPermitFreesAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 0, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 0, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
     var waiting = _startInteractive(gate);
     await Assert.That(waiting.IsCompleted).IsFalse();
@@ -165,7 +165,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
   [Test]
   public async Task Acquire_AnInteractiveCallerPastTheDeadline_ProceedsWithoutASlot_AndTheWarningNamesTheHoldersAsync() {
     var logger = new CapturingLogger();
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 100, logger: logger, interactiveReserve: 1);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: logger, acquireTimeoutMilliseconds: 100, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
 
     using var deadlined = await _startInteractive(gate);
@@ -182,7 +182,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCallerPastTheDeadline_WithoutALogger_StillProceedsAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 100, interactiveReserve: 1, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 100, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
 
     using var deadlined = await _startInteractive(gate);

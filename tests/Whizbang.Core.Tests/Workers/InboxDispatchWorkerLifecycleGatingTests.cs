@@ -217,11 +217,11 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
-      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider());
 
@@ -410,14 +410,14 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
-      deserializeCache: cache,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      deserializeCache: cache);
 
     return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, deserializer);
   }

@@ -192,11 +192,6 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new EventTypeProvider(),
-        perspectiveChannelWriter: harness.ChannelWriter,
-        perspectiveCompletionChannel: harness.CompletionCapture,
-        failureChannel: harness.FailureCapture,
-        perspectiveDrainChannel: harness.DrainChannel,
-        recentlyProcessedEventCache: cache,
         syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
         syncEventTracker: new SyncEventTracker(),
         logger: NullLogger<PerspectiveWorker>.Instance,
@@ -207,7 +202,11 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
         processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
         workChannelWriter: new WorkChannelWriter(),
         rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+        perspectiveChannelWriter: harness.ChannelWriter,
+        perspectiveCompletionChannel: harness.CompletionCapture,
+        failureChannel: harness.FailureCapture,
         leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+        perspectiveDrainChannel: harness.DrainChannel,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
         deadLetterStore: NullDeadLetterStore.Instance,
@@ -217,7 +216,8 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           PollingIntervalMilliseconds = 50,
           DrainLoopMaxIterations = 1,
           MaxConcurrentDrainConsumers = 1
-        })).Value));
+        })).Value),
+        recentlyProcessedEventCache: cache);
 
       return new FakeFixture { Worker = worker, Harness = harness, Registry = registry };
     }
@@ -276,7 +276,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       var wanted = streamEvents.Select(r => r.EventId).ToHashSet();
-      return DrainEnvelopes.Where(e => wanted.Contains(e.MessageId.Value)).ToList();
+      return [.. DrainEnvelopes.Where(e => wanted.Contains(e.MessageId.Value))];
     }
 
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {

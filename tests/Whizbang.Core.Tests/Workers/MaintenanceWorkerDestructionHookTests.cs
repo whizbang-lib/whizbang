@@ -23,19 +23,15 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public class MaintenanceWorkerDestructionHookTests {
-  private sealed class RecordingHook : IDestructionHook {
-    private readonly List<string> _log;
-    private readonly bool _throwOnBefore;
-    private readonly Exception? _beforeThrows;
-    private readonly Exception? _afterThrows;
-    private readonly DestructionResult _result;
+  private sealed class RecordingHook(List<string> log, DestructionResult? result = null, bool throwOnBefore = false,
+      Exception? beforeThrows = null, Exception? afterThrows = null) : IDestructionHook {
+    private readonly List<string> _log = log;
+    private readonly bool _throwOnBefore = throwOnBefore;
+    private readonly Exception? _beforeThrows = beforeThrows;
+    private readonly Exception? _afterThrows = afterThrows;
+    private readonly DestructionResult _result = result ?? DestructionResult.Proceed();
     public int BeforeCalls { get; private set; }
     public int LastBatchSize { get; private set; }
-    public RecordingHook(List<string> log, DestructionResult? result = null, bool throwOnBefore = false,
-        Exception? beforeThrows = null, Exception? afterThrows = null) {
-      _log = log; _throwOnBefore = throwOnBefore; _result = result ?? DestructionResult.Proceed();
-      _beforeThrows = beforeThrows; _afterThrows = afterThrows;
-    }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       BeforeCalls++;
@@ -56,11 +52,10 @@ public class MaintenanceWorkerDestructionHookTests {
     }
   }
 
-  private sealed class FakeCoordinator : IWorkCoordinator {
-    private readonly List<string> _log;
+  private sealed class FakeCoordinator(List<string> log) : IWorkCoordinator {
+    private readonly List<string> _log = log;
     public List<EphemeralDestructionTarget> Targets { get; init; } = [];
     public int GetTargetsCallCount { get; private set; }
-    public FakeCoordinator(List<string> log) { _log = log; }
 
     public List<(IReadOnlyList<Guid> Ids, DateTimeOffset Until)> Holds { get; } = [];
 

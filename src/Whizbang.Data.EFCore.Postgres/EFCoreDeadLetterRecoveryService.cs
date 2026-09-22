@@ -51,7 +51,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
         MessageType: reader.GetString(4),
         FailureReason: (MessageFailureReason)reader.GetInt32(5),
         AttemptsWhenDlq: reader.GetInt32(6),
-        DeadLetteredAt: await reader.GetFieldValueAsync<DateTimeOffset>(7),
+        DeadLetteredAt: await reader.GetFieldValueAsync<DateTimeOffset>(7, ct),
         RecoveryStatus: (DeadLetterRecoveryStatus)reader.GetInt32(8),
         RecoveryAttempts: reader.GetInt32(9),
         Generation: reader.GetString(10),

@@ -42,7 +42,7 @@ public class ImmediateDetachedDrainerTests {
   [Test]
   public async Task Constructor_CustomThreshold_AcceptsValueAsync() {
     // Arrange & Act
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 5, logger: NullLogger.Instance);
+    var drainer = new ImmediateDetachedDrainer(logger: NullLogger.Instance, warningThreshold: 5);
 
     // Assert
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -51,7 +51,7 @@ public class ImmediateDetachedDrainerTests {
   [Test]
   public async Task Constructor_ZeroThreshold_DefaultsToTenAsync() {
     // Arrange & Act - zero threshold should default to 10
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 0, logger: NullLogger.Instance);
+    var drainer = new ImmediateDetachedDrainer(logger: NullLogger.Instance, warningThreshold: 0);
 
     // Assert - no exception
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -60,7 +60,7 @@ public class ImmediateDetachedDrainerTests {
   [Test]
   public async Task Constructor_NegativeThreshold_DefaultsToTenAsync() {
     // Arrange & Act - negative threshold should default to 10
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: -5, logger: NullLogger.Instance);
+    var drainer = new ImmediateDetachedDrainer(logger: NullLogger.Instance, warningThreshold: -5);
 
     // Assert - no exception
     await Assert.That(drainer.PendingCount).IsEqualTo(0);
@@ -258,7 +258,7 @@ public class ImmediateDetachedDrainerTests {
   [Test]
   public async Task DrainAsync_DeepChaining_ProcessesAllLevelsAsync() {
     // Arrange - Create a chain of depth 5
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 100, logger: NullLogger.Instance);
+    var drainer = new ImmediateDetachedDrainer(logger: NullLogger.Instance, warningThreshold: 100);
     var chainDepth = 0;
     const int maxDepth = 5;
 
@@ -287,7 +287,7 @@ public class ImmediateDetachedDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 3, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(logger: logger, warningThreshold: 3);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue 6 items (exceeds threshold of 3 twice: at 3 and 6)
@@ -307,7 +307,7 @@ public class ImmediateDetachedDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 10, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(logger: logger, warningThreshold: 10);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue 5 items (below threshold of 10)
@@ -327,7 +327,7 @@ public class ImmediateDetachedDrainerTests {
     // Arrange
     var logMessages = new ConcurrentBag<string>();
     var logger = new TestLogger(logMessages);
-    var drainer = new ImmediateDetachedDrainer(warningThreshold: 5, logger: logger);
+    var drainer = new ImmediateDetachedDrainer(logger: logger, warningThreshold: 5);
     var invoker = new TrackingReceptorInvoker();
 
     // Enqueue exactly 5 items (threshold is 5, warning at depth 5)

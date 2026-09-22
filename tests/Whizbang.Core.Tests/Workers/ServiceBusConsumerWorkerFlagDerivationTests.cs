@@ -111,17 +111,17 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
       transport: transport,
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions {
-        Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
-      },
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
+      options: new ServiceBusConsumerOptions {
+        Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
+      });
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));

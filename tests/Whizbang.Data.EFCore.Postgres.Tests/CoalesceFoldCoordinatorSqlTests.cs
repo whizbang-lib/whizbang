@@ -208,10 +208,10 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       schemaReadyGate: gate,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: resolver,
       logger: NullLogger<CoalesceShipWorker>.Instance,
-      timeProvider: time,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
+      timeProvider: time);
   }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {

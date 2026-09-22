@@ -74,8 +74,8 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      state => _ = _runIdleSweepAsync(),
-      state: null,
+      static state => ((PerStreamSerializer<T>)state!)._fireAndForgetIdleSweep(),
+      state: this,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
   }
@@ -222,6 +222,11 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       // shutdown
     }
   }
+
+  // The timer callback is static so the timer does not root a closure; the sweep runs fire-and-forget.
+
+  private void _fireAndForgetIdleSweep() => _ = _runIdleSweepAsync();
+
 
   private async Task _runIdleSweepAsync() {
     if (Volatile.Read(ref _disposed) != 0) {

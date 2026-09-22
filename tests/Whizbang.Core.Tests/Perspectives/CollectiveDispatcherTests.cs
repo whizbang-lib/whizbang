@@ -302,10 +302,8 @@ public class CollectiveDispatcherTests {
   private sealed record Archive(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
   private sealed record OtherEvent(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
-  private sealed class JobHandler {
-  }
-  private sealed class ProfileHandler {
-  }
+  private sealed class JobHandler;
+  private sealed class ProfileHandler;
 
   private sealed class StubResolver(string kind) : ICollectiveScopeResolver {
     public string ScopeKind => kind;

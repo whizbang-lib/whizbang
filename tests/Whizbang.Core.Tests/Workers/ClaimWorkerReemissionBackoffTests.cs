@@ -140,13 +140,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -206,13 +206,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -268,13 +268,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -338,13 +338,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -405,13 +405,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
@@ -460,13 +460,13 @@ public class ClaimWorkerReemissionBackoffTests {
         NotifyHealthyPollingIntervalMilliseconds = 3_000,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalingGate: new AvailableGate(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: new AvailableGate(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 

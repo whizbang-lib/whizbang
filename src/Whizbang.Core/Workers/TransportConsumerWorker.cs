@@ -162,7 +162,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Control class (topology arc phase 9). Both optional: absent ⇒ every message takes the
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
     Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions> controlClass,
-    MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     Tags.ControlClassResolver? controlClassResolver = null
   ) {

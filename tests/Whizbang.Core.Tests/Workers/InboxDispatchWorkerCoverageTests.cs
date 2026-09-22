@@ -333,7 +333,6 @@ public class InboxDispatchWorkerCoverageTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      timeProvider: fakeTime,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
@@ -341,7 +340,8 @@ public class InboxDispatchWorkerCoverageTests {
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      timeProvider: fakeTime);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -410,13 +410,13 @@ public class InboxDispatchWorkerCoverageTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new SelectiveDeserializer(compositeType, composite),
-      deadLetterStore: store,
-      generationProvider: new FakeGenerationProvider(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -480,13 +480,13 @@ public class InboxDispatchWorkerCoverageTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new SelectiveDeserializer(compositeType, composite),
-      deadLetterStore: store,
-      generationProvider: new FakeGenerationProvider(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -585,9 +585,9 @@ public class InboxDispatchWorkerCoverageTests {
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      receptorRegistry: registry,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: registry,
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,

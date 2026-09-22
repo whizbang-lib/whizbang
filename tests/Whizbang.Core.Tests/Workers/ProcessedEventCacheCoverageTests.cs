@@ -31,7 +31,7 @@ public class ProcessedEventCacheCoverageTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var idA = Guid.CreateVersion7();
     var idB = Guid.CreateVersion7();
     var idC = Guid.CreateVersion7();
@@ -61,7 +61,7 @@ public class ProcessedEventCacheCoverageTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var present1 = Guid.CreateVersion7();
     var present2 = Guid.CreateVersion7();
     var neverAdded = Guid.CreateVersion7();
@@ -88,7 +88,7 @@ public class ProcessedEventCacheCoverageTests {
     // Arrange
     var time = new FakeTimeProvider();
     var observer = new SpyObserver();
-    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, timeProvider: time, observer: observer);
+    var cache = new ProcessedEventCache(retentionPeriod: _retentionPeriod, observer: observer, timeProvider: time);
     var neverAdded1 = Guid.CreateVersion7();
     var neverAdded2 = Guid.CreateVersion7();
 

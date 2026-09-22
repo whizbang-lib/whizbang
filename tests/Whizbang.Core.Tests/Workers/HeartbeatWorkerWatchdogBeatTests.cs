@@ -68,10 +68,10 @@ public class HeartbeatWorkerWatchdogBeatTests {
       logger: logger,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
-      timeProvider: clock,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      timeProvider: clock);
     return (worker, logger, coordinator);
   }
 

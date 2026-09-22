@@ -54,8 +54,8 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
       workChannelWriter: null,
       // IWorkChannelWriter — not needed for this test
       options: options,
-      inboxChannelWriter: inboxChannelWriter,
-      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance);
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: inboxChannelWriter);
 
     sut.QueueInboxMessage(_inboxMessage());
 

@@ -61,8 +61,8 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
       schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
-      metrics: metrics,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      metrics: metrics);
 
     await worker.EnqueueAsync(_request());
     await worker.EnqueueAsync(_request());

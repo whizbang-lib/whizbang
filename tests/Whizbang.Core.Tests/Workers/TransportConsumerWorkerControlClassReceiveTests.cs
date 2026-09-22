@@ -246,21 +246,21 @@ public class TransportConsumerWorkerControlClassReceiveTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      receptorRegistry: new AlwaysConsumedRegistry(),
-      controlClass: Options.Create(new ControlClassOptions { NonDurableReceive = nonDurableReceive }),
-      controlClassResolver: _resolver(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new AlwaysConsumedRegistry(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
-      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions { NonDurableReceive = nonDurableReceive }),
+      controlClassResolver: _resolver());
 
     return (worker, transport, sp);
   }

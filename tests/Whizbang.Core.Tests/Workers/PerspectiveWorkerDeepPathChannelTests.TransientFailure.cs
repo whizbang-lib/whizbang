@@ -40,9 +40,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     var nextStreamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.DeadlockedPerspective";
 
-    var coordinator = new RecordingWorkCoordinator {
-
-    };
+    var coordinator = new RecordingWorkCoordinator();
     coordinator.SetNextCursorException(FakeDbException.WithSqlState("40P01", message: "deadlock detected"));
     var instanceProvider = new FakeInstanceProvider();
     var runner = new RecordingRunner();
@@ -74,14 +72,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
-      logger: logger,
-      timeProvider: time,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
+      logger: logger,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -89,7 +82,11 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
@@ -99,7 +96,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 50,
         // One consumer loop so the batch that fails and the batch that follows are the same loop's.
         MaxConcurrentDrainConsumers = 1
-      })).Value));
+      })).Value),
+      timeProvider: time);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

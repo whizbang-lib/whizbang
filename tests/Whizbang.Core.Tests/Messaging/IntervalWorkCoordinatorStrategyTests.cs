@@ -743,11 +743,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: instanceProvider,
       options: options,
-      workChannelWriter: channelWriter,
       logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: channelWriter,
       inboxChannelWriter: new InboxChannelWriter()
     );
 

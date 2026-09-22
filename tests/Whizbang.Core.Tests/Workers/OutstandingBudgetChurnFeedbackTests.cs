@@ -154,7 +154,6 @@ public class OutstandingBudgetChurnFeedbackTests {
         MaxOutstandingInboxRows = BUDGET_CEILING,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      completionMeter: meter,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
@@ -163,7 +162,8 @@ public class OutstandingBudgetChurnFeedbackTests {
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      completionMeter: meter);
   }
 
   private static async Task _driveAsync(ReportingCoordinator coord, WorkCompletionMeter? meter, int cycles) {
@@ -252,7 +252,6 @@ public class OutstandingBudgetChurnFeedbackTests {
         AdaptiveOutstandingBudget = false,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      completionMeter: new WorkCompletionMeter(),
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
@@ -261,7 +260,8 @@ public class OutstandingBudgetChurnFeedbackTests {
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      completionMeter: new WorkCompletionMeter());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

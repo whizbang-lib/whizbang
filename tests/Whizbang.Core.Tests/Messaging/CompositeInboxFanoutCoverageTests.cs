@@ -111,11 +111,8 @@ public class CompositeInboxFanoutCoverageTests {
 
   private sealed record InnerEvent(string Id) : IEvent;
 
-  private sealed class TestComposite : ICompositeEvent {
-    public TestComposite(params IEvent[] inner) {
-      _inner = inner;
-    }
-    private readonly IEvent[] _inner;
+  private sealed class TestComposite(params IEvent[] inner) : ICompositeEvent {
+    private readonly IEvent[] _inner = inner;
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => _inner;
   }

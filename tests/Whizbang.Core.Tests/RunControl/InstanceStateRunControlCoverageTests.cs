@@ -58,8 +58,8 @@ public class InstanceStateRunControlCoverageTests {
     var control = new InstanceStateRunControl(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: null!,
-      logger: logger,
-      versionProvider: new LibraryVersionProvider("0.0.0-test"));
+      versionProvider: new LibraryVersionProvider("0.0.0-test"),
+      logger: logger);
 
     await control.OnPhaseAsync(LifecyclePhase.Running, CancellationToken.None);
 

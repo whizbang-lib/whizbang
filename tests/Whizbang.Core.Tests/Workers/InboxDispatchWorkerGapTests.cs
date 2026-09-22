@@ -464,7 +464,6 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      gate: coordinatorGate,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
@@ -472,7 +471,8 @@ public class InboxDispatchWorkerGapTests {
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      gate: coordinatorGate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -521,14 +521,14 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      deadLetterStore: new ThrowingDeadLetterStore(),
-      generationProvider: new FakeGenerationProvider(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: new ThrowingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider());
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -591,15 +591,15 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      deadLetterStore: store,
-      generationProvider: new FakeGenerationProvider(),
-      dlqMetrics: metrics,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -645,14 +645,14 @@ public class InboxDispatchWorkerGapTests {
       logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
-      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
-      generationProvider: generationProvider ?? new DefaultGenerationProvider(),
-      dlqMetrics: dlqMetrics,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
+      generationProvider: generationProvider ?? new DefaultGenerationProvider(),
+      dlqMetrics: dlqMetrics);
   }
 
   /// <summary>
@@ -846,11 +846,11 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      discardPolicy: policy,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: policy,
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider());
@@ -1035,7 +1035,6 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      inboxMetrics: metrics,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
@@ -1043,7 +1042,8 @@ public class InboxDispatchWorkerGapTests {
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      inboxMetrics: metrics);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1335,14 +1335,14 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: new RecordingLogger<InboxDispatchWorker>(),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      deadLetterStore: new CapturingDeadLetterStore(),
-      generationProvider: new FakeGenerationProvider(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider());
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
@@ -1386,15 +1386,15 @@ public class InboxDispatchWorkerGapTests {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      deadLetterStore: store,
-      generationProvider: new FakeGenerationProvider(),
-      dlqMetrics: metrics,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance);
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics);
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);

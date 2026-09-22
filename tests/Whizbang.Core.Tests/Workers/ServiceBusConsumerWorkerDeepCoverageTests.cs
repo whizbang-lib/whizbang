@@ -66,7 +66,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         transport: null!,
         scopeFactory: _buildScopeFactory(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         envelopeSerializer: new EnvelopeSerializer(),
@@ -85,7 +85,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         transport: new DeepCoverageTransport(),
         scopeFactory: null!,
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         envelopeSerializer: new EnvelopeSerializer(),
@@ -104,7 +104,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         transport: new DeepCoverageTransport(),
         scopeFactory: _buildScopeFactory(),
         logger: null!,
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+        orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         envelopeSerializer: new EnvelopeSerializer(),
@@ -143,15 +143,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       transport: transport,
       scopeFactory: _buildScopeFactory(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: null,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: null);
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
@@ -1282,15 +1282,15 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       transport: transport,
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
       receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {

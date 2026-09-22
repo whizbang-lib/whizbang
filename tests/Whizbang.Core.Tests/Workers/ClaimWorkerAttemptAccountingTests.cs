@@ -486,16 +486,16 @@ public class ClaimWorkerAttemptAccountingTests {
       schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<ClaimWorker>.Instance,
-      inboxChannel: inboxChannel ?? new InboxChannelWriter(),
-      completionMeter: completionMeter,
       outboxChannel: new WorkChannelWriter(),
+      inboxChannel: inboxChannel ?? new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      completionMeter: completionMeter);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);

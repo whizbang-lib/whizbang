@@ -879,19 +879,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
             maxTimeout: TimeSpan.FromSeconds(options.RetryOptions.MaxBackoffSeconds))
         : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
-      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
-      metrics: metrics,
-      timeProvider: timeProvider,
-      perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
-      failureChannel: failureChannelOverride ?? harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      recentlyProcessedEventCache: cooldownCache,
-      leaseHandleOptions: leaseHandleOptions ?? Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: leaseRenewalOptions ?? Options.Create(new LeaseRenewalWorkerOptions()),
-      storedFormFailures: storedFormFailures,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: new SyncEventTracker(),
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -899,11 +889,21 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: failureChannelOverride ?? harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: leaseHandleOptions ?? Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: leaseRenewalOptions ?? Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value));
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(options)).Value),
+      metrics: metrics,
+      timeProvider: timeProvider,
+      recentlyProcessedEventCache: cooldownCache,
+      storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }
 

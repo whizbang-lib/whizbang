@@ -94,7 +94,7 @@ public class NotifyDebounceMetricsTests {
     listener.Start();
     listener.RecordObservableInstruments();
     GC.KeepAlive(metrics);
-    return recorded.Where(r => kinds.Contains(r.PayloadKind)).ToList();
+    return [.. recorded.Where(r => kinds.Contains(r.PayloadKind))];
   }
 
   private static string _payloadKind(ReadOnlySpan<KeyValuePair<string, object?>> tags) {

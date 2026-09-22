@@ -48,7 +48,7 @@ public class ApplyHookRegistryTests {
 
   private static List<ApplyHookOp> _run(MarkerHookRegistryBase registry, Type model, DateTimeOffset? ts = null) {
     var ctx = _ctx(model, ts);
-    return registry.ResolveFor(model).SelectMany(p => p(ctx)).ToList();
+    return [.. registry.ResolveFor(model).SelectMany(p => p(ctx))];
   }
 
   // Pipe-joined SetColumn values, preserving order — lets a single IsEqualTo assert both the set AND its order

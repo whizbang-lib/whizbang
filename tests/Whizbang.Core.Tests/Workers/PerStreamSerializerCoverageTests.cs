@@ -50,10 +50,10 @@ public class PerStreamSerializerCoverageTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromMilliseconds(500),
-      },
-      logger: NullLogger.Instance);
+      });
 
     await sut.EnqueueAsync(item1, cancellationToken);
     // Real, short delay so the drain worker has certainly consumed item1 and entered its

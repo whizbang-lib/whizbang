@@ -336,7 +336,7 @@ public class OutboxPublishWorkerErrorPathTests {
   private sealed class RecordingReceptorInvoker : IReceptorInvoker {
     private readonly object _gate = new();
     private readonly List<LifecycleStage> _stages = [];
-    public List<LifecycleStage> Stages() { lock (_gate) { return _stages.ToList(); } }
+    public List<LifecycleStage> Stages() { lock (_gate) { return [.. _stages]; } }
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope, LifecycleStage stage,
         ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
@@ -467,13 +467,13 @@ public class OutboxPublishWorkerErrorPathTests {
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
       lifecycleMessageDeserializer: lifecycleDeserializer ?? new JsonLifecycleMessageDeserializer(),
-      occurrenceGate: occurrenceGate ?? new NoOpOccurrencePublishGate(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: occurrenceGate ?? new NoOpOccurrencePublishGate());
     return new Fixture(worker, channel, completion, failure, renewal, options, gate);
   }
 

@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PhysicalFieldHydratorRegistryCoverageTests {
 
-  private sealed class HydratorCoverageModel { }
+  private sealed class HydratorCoverageModel;
 
   [Before(Test)]
   public void ClearBefore() => PhysicalFieldHydratorRegistry.Clear();

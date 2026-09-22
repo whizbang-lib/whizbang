@@ -314,11 +314,8 @@ public class BodyOffloadPostSerializeHookTests {
   /// <summary>
   /// Capture-only store: records uploads so tests can introspect.
   /// </summary>
-  private sealed class CaptureStore : IMessageBodyStore {
-    public CaptureStore(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+  private sealed class CaptureStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName;
     public int UploadCount { get; private set; }
     public byte[] LastUploadedBody { get; private set; } = [];
 

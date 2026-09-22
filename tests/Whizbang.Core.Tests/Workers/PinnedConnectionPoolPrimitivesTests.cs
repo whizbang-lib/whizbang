@@ -260,11 +260,8 @@ public class PinnedConnectionPoolPrimitivesTests {
   /// Minimal <see cref="DbConnection"/> subclass used by AsyncLocal tests. Only
   /// constructed — never opened — so the abstract members can throw.
   /// </summary>
-  private sealed class StubDbConnection : DbConnection {
-    public StubDbConnection(string id) {
-      _id = id;
-    }
-    private readonly string _id;
+  private sealed class StubDbConnection(string id) : DbConnection {
+    private readonly string _id = id;
 #pragma warning disable CS8765
     public override string ConnectionString { get; set; } = "";
 #pragma warning restore CS8765

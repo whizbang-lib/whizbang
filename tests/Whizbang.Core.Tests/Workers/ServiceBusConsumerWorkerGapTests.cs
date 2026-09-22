@@ -72,8 +72,7 @@ public class ServiceBusConsumerWorkerGapTests {
     var transport = new GapTransport();
     var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     var worker = _createWorker(
-      transport, strategy,
-      messageProcessingOptions: new MessageProcessingOptions { MaxConcurrentMessages = 0 });
+      transport, strategy);
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
@@ -561,7 +560,6 @@ public class ServiceBusConsumerWorkerGapTests {
     GapStrategy strategy,
     ServiceCollection? services = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    MessageProcessingOptions? messageProcessingOptions = null,
     IReceptorRegistryQuery? receptorRegistry = null) {
     if (services is null) {
       services = new ServiceCollection();
@@ -575,18 +573,17 @@ public class ServiceBusConsumerWorkerGapTests {
       transport: transport,
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions {
-        Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
-      },
       lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
-      messageProcessingOptions: messageProcessingOptions,
       receptorRegistry: receptorRegistry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions {
+        Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
+      });
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(

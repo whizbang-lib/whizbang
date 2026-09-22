@@ -18,10 +18,11 @@ namespace Whizbang.Core.Tests.Documentation;
 /// repository is checked out beside this one, because the pages live in a separate repository;
 /// it reports rather than fails when that checkout is absent, so CI still enforces the first half.
 /// </remarks>
-public class InjectedExtensibilityPointsAreDocumentedTests {
-  private static readonly Regex _serviceType = new(
-    @"(?:Try)?Add(?:Keyed)?(?:Singleton|Scoped|Transient)<(?:[A-Za-z_][\w.]*\.)?(I[A-Z]\w*)[,>]", RegexOptions.Compiled);
-  private static readonly Regex _docsTag = new(@"<docs>([^<]+)</docs>", RegexOptions.Compiled);
+public partial class InjectedExtensibilityPointsAreDocumentedTests {
+  [GeneratedRegex(@"(?:Try)?Add(?:Keyed)?(?:Singleton|Scoped|Transient)<(?:[A-Za-z_][\w.]*\.)?(I[A-Z]\w*)[,>]", RegexOptions.Compiled)]
+  private static partial Regex ServiceType();
+  [GeneratedRegex("<docs>([^<]+)</docs>", RegexOptions.Compiled)]
+  private static partial Regex DocsTag();
 
   private static string _repoRoot() {
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -40,7 +41,7 @@ public class InjectedExtensibilityPointsAreDocumentedTests {
                && !f.Contains(".whizbang")).ToList();
     var registered = new HashSet<string>(StringComparer.Ordinal);
     foreach (var f in files) {
-      foreach (Match m in _serviceType.Matches(File.ReadAllText(f))) {
+      foreach (Match m in ServiceType().Matches(File.ReadAllText(f))) {
         registered.Add(m.Groups[1].Value);
       }
     }
@@ -62,7 +63,7 @@ public class InjectedExtensibilityPointsAreDocumentedTests {
     if (!decl.Success) {
       return null;
     }
-    var tag = _docsTag.Match(decl.Groups[1].Value);
+    var tag = DocsTag().Match(decl.Groups[1].Value);
     return tag.Success ? tag.Groups[1].Value.Trim() : null;
   }
 

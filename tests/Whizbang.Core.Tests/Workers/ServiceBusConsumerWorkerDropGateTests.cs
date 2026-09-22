@@ -158,15 +158,15 @@ public class ServiceBusConsumerWorkerDropGateTests {
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions {
-        Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
-      },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
       receptorRegistry: registry ?? new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
       eventMarkerResolver: eventMarkerResolver ?? new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions {
+        Subscriptions = [new TopicSubscription("test-topic", "test-sub")],
+      });
 
     return (worker, transport, strategy, sp);
   }

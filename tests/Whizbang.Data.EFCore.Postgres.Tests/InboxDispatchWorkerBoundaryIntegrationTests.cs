@@ -193,12 +193,12 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
-      leaseRegistry: new LeaseRegistry(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
     try {
@@ -302,12 +302,12 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
-      leaseRegistry: new LeaseRegistry(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
     try {
@@ -410,12 +410,12 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
-      leaseRegistry: new LeaseRegistry(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
+      generationProvider: new DefaultGenerationProvider(),
+      leaseRegistry: new LeaseRegistry());
 
     using var cts = new CancellationTokenSource();
     try {

@@ -179,14 +179,9 @@ public sealed class DispatcherSyncModeBehaviorTests {
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
 
-  private sealed class RecordingEventCompletionAwaiter : IEventCompletionAwaiter {
-    private readonly bool _completesImmediately;
-    private readonly bool _throwOnWait;
-
-    public RecordingEventCompletionAwaiter(bool completesImmediately = true, bool throwOnWait = false) {
-      _completesImmediately = completesImmediately;
-      _throwOnWait = throwOnWait;
-    }
+  private sealed class RecordingEventCompletionAwaiter(bool completesImmediately = true, bool throwOnWait = false) : IEventCompletionAwaiter {
+    private readonly bool _completesImmediately = completesImmediately;
+    private readonly bool _throwOnWait = throwOnWait;
 
     public Guid AwaiterId { get; } = Guid.NewGuid();
     public bool WaitForEventsWasCalled { get; private set; }

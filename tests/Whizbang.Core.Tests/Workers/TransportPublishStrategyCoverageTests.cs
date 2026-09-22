@@ -69,8 +69,8 @@ public class TransportPublishStrategyCoverageTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: new LoggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -92,8 +92,8 @@ public class TransportPublishStrategyCoverageTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: new LoggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -114,8 +114,8 @@ public class TransportPublishStrategyCoverageTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: new LoggerFactoryReturning(logger),
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -150,8 +150,8 @@ public class TransportPublishStrategyCoverageTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -195,10 +195,10 @@ public class TransportPublishStrategyCoverageTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "test-inbox",
-      postSerializeHookChain: chain,
-      jsonOptions: _buildJsonOptions(),
       loggerFactory: NullLoggerFactory.Instance,
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      postSerializeHookChain: chain,
+      jsonOptions: _buildJsonOptions());
 
     var result = await strategy.PublishAsync(_hookWork(), CancellationToken.None);
 

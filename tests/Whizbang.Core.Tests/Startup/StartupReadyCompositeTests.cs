@@ -286,7 +286,7 @@ public class StartupReadyCompositeTests {
       resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
@@ -327,13 +327,13 @@ public class StartupReadyCompositeTests {
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("servicebus-consumer");

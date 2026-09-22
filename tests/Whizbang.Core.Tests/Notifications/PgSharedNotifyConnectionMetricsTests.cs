@@ -127,7 +127,7 @@ public class PgSharedNotifyConnectionMetricsTests {
   /// reports its untagged series and the constructor's closed-domain seeds, all at zero.
   /// </summary>
   private static List<Measurement> _counted(IReadOnlyCollection<Measurement> readings, string name) =>
-    readings.Where(m => m.Name == name && m.Value != 0).ToList();
+    [.. readings.Where(m => m.Name == name && m.Value != 0)];
 
   /// <summary>The cumulative connection-state reading: an untagged up-down counter with a single series.</summary>
   private static long _connectionState(IReadOnlyCollection<Measurement> readings) =>

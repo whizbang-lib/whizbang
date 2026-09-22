@@ -46,7 +46,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     // Act
     _ = new TransportConsumerWorker(
@@ -93,7 +93,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -155,7 +155,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -195,7 +195,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -257,7 +257,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     // Act
     var worker = new TransportConsumerWorker(
@@ -303,7 +303,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -367,7 +367,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
@@ -405,7 +405,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

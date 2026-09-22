@@ -101,16 +101,16 @@ public class ClaimWorkerPriorityBatchHookTests {
       schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 50, PollingMaxIntervalMilliseconds = 200 }),
       logger: NullLogger<ClaimWorker>.Instance,
-      inboxDrainChannel: drain,
-      priorityHooks: chain,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: drain,
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      priorityHooks: chain);
     return (worker, drain, coordinator);
   }
 

@@ -226,11 +226,11 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -263,11 +263,11 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -300,11 +300,11 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      metrics: metrics,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());

@@ -129,9 +129,9 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
-      signalBus: bus,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      aliveLockSource: NullInstanceAliveLockSource.Instance);
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: bus);
   }
 
   [Test]
@@ -223,9 +223,9 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
-      signalBus: bus,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      aliveLockSource: NullInstanceAliveLockSource.Instance);
+      aliveLockSource: NullInstanceAliveLockSource.Instance,
+      signalBus: bus);
     return (worker, coord, bus);
   }
 

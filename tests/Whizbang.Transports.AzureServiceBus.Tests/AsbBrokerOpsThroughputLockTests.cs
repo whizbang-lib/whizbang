@@ -86,8 +86,8 @@ public class AsbBrokerOpsThroughputLockTests {
       transport: publisherTransport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(routingOptions),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
     for (var i = 0; i < N; i++) {
       var envelope = _outboxEnvelope($"burst-{i}");

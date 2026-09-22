@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class WorkCoordinatorGateHolderDiagnosticsTests {
   [Test]
   public async Task SnapshotHolders_NamesEveryCurrentHolder_AndForgetsReleasedOnesAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 1000, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 1000);
     var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     var b = await gate.AcquireAsync(CancellationToken.None, caller: "ReportPerspectiveCompletionAsync");
 
@@ -37,7 +37,7 @@ public class WorkCoordinatorGateHolderDiagnosticsTests {
   [Test]
   public async Task Deadline_NamesTheHoldersInTheWarningAsync() {
     var logger = new CapturingLogger<WorkCoordinatorGate>();
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, acquireTimeoutMilliseconds: 100, logger: logger);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: logger, acquireTimeoutMilliseconds: 100);
     var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     var b = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     try {

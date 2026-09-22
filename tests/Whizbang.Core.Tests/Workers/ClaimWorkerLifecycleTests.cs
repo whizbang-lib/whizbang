@@ -170,7 +170,6 @@ public class ClaimWorkerLifecycleTests {
         PerspectiveOnly = perspectiveOnly,
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalBus: bus ?? NullSignalBus.Instance,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
@@ -178,7 +177,8 @@ public class ClaimWorkerLifecycleTests {
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: bus ?? NullSignalBus.Instance);
   }
 
   [Test]

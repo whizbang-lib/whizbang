@@ -54,10 +54,7 @@ public class DispatcherNoRebroadcastGuardTests {
   }
 
   // Minimal concrete Dispatcher exposing the protected dynamic outbox publish.
-  private sealed class GuardDispatcher : Core.Dispatcher {
-    public GuardDispatcher(IServiceProvider sp)
-      : base(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) { }
-
+  private sealed class GuardDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     public Task PublishDynamicAsync(IMessage evt, IMessageEnvelope? source) =>
       PublishToOutboxDynamicAsync(evt, evt.GetType(), MessageId.New(), source);
 

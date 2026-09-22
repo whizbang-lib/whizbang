@@ -77,13 +77,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     // Drain existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
@@ -145,13 +145,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: new TestConsumerLogger(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] },
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] });
 
     // The pipeline itself is drained (no blocking steps) — readiness now hangs ONLY on the broker.
     var state = new Whizbang.Core.Startup.StartupPipelineState();
@@ -213,13 +213,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -279,13 +279,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -342,13 +342,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     // Act: Start creates subscriptions, stop disposes them
     await worker.StartAsync(CancellationToken.None);
@@ -390,13 +390,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -442,13 +442,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     // Act: Start should handle filter metadata without errors
     await worker.StartAsync(CancellationToken.None);
@@ -495,13 +495,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -564,13 +564,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(jsonOptions),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
 
     await _drainMessagesAsync("topic-00", "sub-00-a");
     await worker.StartAsync(CancellationToken.None);

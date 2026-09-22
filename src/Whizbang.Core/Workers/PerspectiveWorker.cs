@@ -2552,9 +2552,9 @@ public partial class PerspectiveWorker(
     Guid? earliest = null;
     foreach (var envelope in events) {
       var msgId = envelope.MessageId.Value;
-      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) < 0
+      if (string.CompareOrdinal(msgId.ToString("D"), cursorStr) < 0
           && (earliest is null
-              || string.Compare(msgId.ToString("D"), earliest.Value.ToString("D"), StringComparison.Ordinal) < 0)) {
+              || string.CompareOrdinal(msgId.ToString("D"), earliest.Value.ToString("D")) < 0)) {
         earliest = msgId;
       }
     }

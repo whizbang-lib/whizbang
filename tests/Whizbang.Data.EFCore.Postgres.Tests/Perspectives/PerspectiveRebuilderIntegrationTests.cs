@@ -82,6 +82,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
         inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
 
+#pragma warning disable RCS1227 // not argument validation: the simulated read failure must surface during enumeration, where a real store's read fails
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
         Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
@@ -92,6 +93,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         yield return env;
       }
     }
+#pragma warning restore RCS1227
 
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
         inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);

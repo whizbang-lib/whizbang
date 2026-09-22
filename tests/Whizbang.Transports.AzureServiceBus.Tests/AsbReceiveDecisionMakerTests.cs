@@ -412,8 +412,7 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   /// <summary>A loadable type deliberately absent from every registered JSON context.</summary>
-  private sealed class UnresolvableProbe {
-  }
+  private sealed class UnresolvableProbe;
 
   private sealed class BindsToUnresolvableType : Whizbang.Core.Messaging.IMessageTypeBinder {
     public Type? Bind(string assemblyQualifiedName) => typeof(UnresolvableProbe);

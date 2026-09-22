@@ -86,8 +86,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -105,8 +105,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5));
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -124,8 +124,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5));
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -149,8 +149,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5));
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -175,8 +175,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5));
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -203,8 +203,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -222,8 +222,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 3),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 3));
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
 
@@ -241,8 +241,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
     sw.Stop();
@@ -302,8 +302,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
 
     var streamId = Guid.CreateVersion7();
     var works = Enumerable.Range(0, 5).Select(_ => _work() with { StreamId = streamId }).ToList();
@@ -324,8 +324,8 @@ public class TransportPublishStrategyThrottleRetryTests {
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
       loggerFactory: NullLoggerFactory.Instance,
-      throttleRetryOptions: _fastOpts(maxAttempts: 5),
-      namespaceRouting: NullCommandInboxAddressResolver.Instance);
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts(maxAttempts: 5));
 
     var streamId = Guid.CreateVersion7();
     var works = Enumerable.Range(0, 3).Select(_ => _work() with { StreamId = streamId }).ToList();

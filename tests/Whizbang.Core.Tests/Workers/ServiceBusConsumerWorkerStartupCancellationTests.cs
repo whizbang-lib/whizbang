@@ -90,17 +90,17 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       transport: transport,
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: gate,
-      options: new ServiceBusConsumerOptions {
-        Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
-      },
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions {
+        Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
+      });
   }
 
   /// <summary>

@@ -80,7 +80,7 @@ public class TransportConsumerWorkerDiWiringTests {
       services.AddSingleton(options);
       services.AddSingleton(new SubscriptionResilienceOptions());
       services.AddSingleton(new JsonSerializerOptions());
-      services.AddSingleton(new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance));
+      services.AddSingleton(new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false));
       // The worker requires an instance identity, as it does in production composition.
       services.AddWhizbangInstanceIdentity();
       // The worker waits on schema readiness. This fixture has no schema step, so it registers a

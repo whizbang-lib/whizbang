@@ -186,13 +186,13 @@ public class PriorityOnTheWireEndToEndTests {
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription(TOPIC, "wire-priority-sub")] },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: serializer,
       receptorRegistry: new SubscribedRegistry(),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription(TOPIC, "wire-priority-sub")] });
     await consumer.StartAsync(cts.Token);
     await consumer.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 

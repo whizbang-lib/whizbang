@@ -104,11 +104,8 @@ public class CompositeEventContractTests {
   }
 
   /// <summary>Composite that yield-returns inner events lazily without materializing them upfront.</summary>
-  private sealed class LazyComposite : ICompositeEvent {
-    public LazyComposite(int count) {
-      _count = count;
-    }
-    private readonly int _count;
+  private sealed class LazyComposite(int count) : ICompositeEvent {
+    private readonly int _count = count;
     public int MaterializeCalls { get; }
     public IEnumerable<IMessage> InnerEvents {
       get {

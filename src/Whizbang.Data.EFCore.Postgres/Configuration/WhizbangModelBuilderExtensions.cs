@@ -40,7 +40,7 @@ public static class WhizbangModelBuilderExtensions {
 }
 
 /// <summary>The entity configuration for each Whizbang infrastructure table.</summary>
-file static class WhizbangInfrastructureModel {
+static file class WhizbangInfrastructureModel {
   private const string COLUMN_TYPE_JSONB = "jsonb";
   private const string COLUMN_NAME_METADATA = "metadata";
   private const string COLUMN_NAME_STREAM_ID = "stream_id";

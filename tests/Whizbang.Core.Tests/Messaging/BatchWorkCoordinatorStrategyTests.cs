@@ -1358,8 +1358,8 @@ public class BatchWorkCoordinatorStrategyTests {
       coordinator: null,
       instanceProvider: new BatchFakeInstanceProvider(),
       options: _createOptions(batchSize: 100, debounceMs: 5000),
-      scopeFactory: scopeFactory,
       logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: scopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter()
@@ -1623,12 +1623,12 @@ public class BatchWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: new BatchFakeInstanceProvider(),
       options: _createOptions(batchSize: 100, debounceMs: 5000),
-      metrics: metrics,
       logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics
     );
 
     try {
@@ -1653,12 +1653,12 @@ public class BatchWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: new BatchFakeInstanceProvider(),
       options: _createOptions(),
-      metrics: metrics,
       logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics
     );
 
     try {
@@ -1682,12 +1682,12 @@ public class BatchWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: new BatchFakeInstanceProvider(),
       options: _createOptions(),
-      metrics: metrics,
       logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics
     );
 
     try {
@@ -1821,11 +1821,11 @@ public class BatchWorkCoordinatorStrategyTests {
       coordinator: fakeCoordinator,
       instanceProvider: instanceProvider,
       options: options,
-      workChannelWriter: channelWriter,
       logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions())
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: channelWriter
     );
 
     try {

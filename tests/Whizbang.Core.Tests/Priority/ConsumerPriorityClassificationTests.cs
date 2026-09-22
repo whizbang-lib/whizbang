@@ -118,13 +118,13 @@ public class ConsumerPriorityClassificationTests {
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("test-topic", "test-sub")] },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new StubEnvelopeSerializer(),
       receptorRegistry: new SubscribedRegistry(),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("test-topic", "test-sub")] });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -187,12 +187,12 @@ public class OutboxPublishWorkerDlqPromotionTests {
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: wireDeadLetterStore ? new FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
-      deadLetterStore: wireDeadLetterStore ? dlq : null ?? NullDeadLetterStore.Instance,
-      generationProvider: wireDeadLetterStore ? new FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: wireDeadLetterStore ? dlq : null ?? NullDeadLetterStore.Instance,
+      generationProvider: wireDeadLetterStore ? new FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       occurrenceGate: new NoOpOccurrencePublishGate());
     return (worker, channel, failure, dlq);
@@ -379,12 +379,12 @@ public class OutboxPublishWorkerDlqPromotionTests {
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      deadLetterStore: dlq,
-      generationProvider: new FakeGenerationProvider("test-gen"),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: dlq,
+      generationProvider: new FakeGenerationProvider("test-gen"),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       occurrenceGate: new NoOpOccurrencePublishGate());
 
@@ -435,12 +435,12 @@ public class OutboxPublishWorkerDlqPromotionTests {
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      deadLetterStore: throwingDlq,
-      generationProvider: new FakeGenerationProvider("test-gen"),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: throwingDlq,
+      generationProvider: new FakeGenerationProvider("test-gen"),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       occurrenceGate: new NoOpOccurrencePublishGate());
 

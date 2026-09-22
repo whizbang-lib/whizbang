@@ -170,15 +170,15 @@ public class ClaimWorkerCoverageTests {
       options: Options.Create(options),
       logger: logger ?? NullLogger<ClaimWorker>.Instance,
       outboxChannel: outboxChannel ?? new WorkChannelWriter(),
-      perspectiveChannel: perspectiveChannel ?? new PerspectiveChannelWriter(),
-      churnFeedback: churnFeedback,
       inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: perspectiveChannel ?? new PerspectiveChannelWriter(),
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+      churnFeedback: churnFeedback);
     return (worker, coord);
   }
 
@@ -374,14 +374,14 @@ public class ClaimWorkerCoverageTests {
     var ids = new[] { TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value };
     var coord = new RecordingCoordinator {
       BatchToReturn = new WorkBatch {
-        OutboxWork = ids.Select(id => new OutboxWork {
+        OutboxWork = [.. ids.Select(id => new OutboxWork {
           MessageId = id,
           Envelope = null!,
           EnvelopeType = "TestEvent",
           MessageType = "TestEvent",
           Attempts = 1,
           Destination = "test",
-        }).ToList(),
+        })],
         InboxWork = [],
         PerspectiveWork = [],
       }
@@ -419,13 +419,13 @@ public class ClaimWorkerCoverageTests {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
-        PerspectiveWork = streamIds.Select(sid => new PerspectiveWork {
+        PerspectiveWork = [.. streamIds.Select(sid => new PerspectiveWork {
           WorkId = TrackedGuid.NewMedo().Value,
           StreamId = sid,
           PerspectiveName = "Test.Perspective",
           LastProcessedEventId = null,
           PartitionNumber = 1,
-        }).ToList(),
+        })],
         // A real store populates the stream-id list alongside the rows, and it has to be set here
         // too: ClaimWorker's "did this claim find anything" test reads PerspectiveStreamIds, not
         // PerspectiveWork. A batch carrying rows but no stream ids reads as an empty poll and is
@@ -518,7 +518,7 @@ public class ClaimWorkerCoverageTests {
       // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
       // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
       // narrowing this test exists to prove could never be observed.
-      InboxStreamIds = Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value).ToList(),
+      InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value)],
     };
 
     // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering

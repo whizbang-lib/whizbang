@@ -369,7 +369,7 @@ public class InboxDrainWorkerTests {
     public ConcurrentBag<Guid[]> FetchedStreamIdArrays { get; } = [];
     public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
       IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
-      FetchedStreamIdArrays.Add(streamIds.ToArray());
+      FetchedStreamIdArrays.Add([.. streamIds]);
       var result = new List<InboxBatchRow>();
       foreach (var sid in streamIds) {
         if (RowsByStream.TryGetValue(sid, out var rows)) {

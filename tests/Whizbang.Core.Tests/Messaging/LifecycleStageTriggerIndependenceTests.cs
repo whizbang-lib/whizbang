@@ -126,9 +126,9 @@ public class LifecycleStageTriggerIndependenceTests {
         LeaseSeconds = 300,
         AbandonStaleInstanceThresholdSeconds = 300,
       },
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
-      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter());
     return (strategy, invoker);

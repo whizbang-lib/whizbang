@@ -212,13 +212,13 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
         lifecycleMessageDeserializer: deserializer,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
-        leaseRegistry: registry,
-        timeProvider: fakeTime,
         receptorRegistry: new PermissiveReceptorRegistryQuery(),
         discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
         runtimeReceptorRegistry: NullReceptorRegistry.Instance,
         deadLetterStore: NullDeadLetterStore.Instance,
-        generationProvider: new DefaultGenerationProvider());
+        generationProvider: new DefaultGenerationProvider(),
+        leaseRegistry: registry,
+        timeProvider: fakeTime);
 
       using var workerCts = new CancellationTokenSource();
       await worker.StartAsync(workerCts.Token);

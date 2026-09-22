@@ -59,12 +59,12 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         // FlushAndStopAsync's hard-shutdown branch — never completes on its own.
         await Task.Delay(Timeout.Infinite, ct);
       },
+      logger: logger,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-      },
-      logger: logger);
+      });
 
     await sut.AppendAsync(Guid.CreateVersion7(), testToken);
     await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -99,14 +99,14 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
 
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
         IdleSweepInterval = TimeSpan.FromMilliseconds(50),
         IdleEvictionWindow = TimeSpan.FromMilliseconds(300),
-      },
-      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
+      });
 
     await sut.AppendAsync(staleStream, testToken);
     // Let the stale stream age well past the eviction window before the active one even exists.
@@ -141,6 +141,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
     var clock = new FakeTimeProvider();
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -149,8 +150,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
         IdleSweepInterval = TimeSpan.FromMinutes(5),
         IdleEvictionWindow = TimeSpan.FromSeconds(30),
       },
-      timeProvider: clock,
-      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance);
+      timeProvider: clock);
 
     await sut.AppendAsync(Guid.CreateVersion7(), testToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

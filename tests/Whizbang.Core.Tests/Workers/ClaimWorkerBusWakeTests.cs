@@ -81,7 +81,6 @@ public class ClaimWorkerBusWakeTests {
         PollingMaxIntervalMilliseconds = 300_000
       }),
       logger: NullLogger<ClaimWorker>.Instance,
-      signalBus: bus,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
       perspectiveChannel: new PerspectiveChannelWriter(),
@@ -89,7 +88,8 @@ public class ClaimWorkerBusWakeTests {
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: bus);
     return (worker, coord, bus, new CancellationTokenSource(TimeSpan.FromSeconds(15)));
   }
 

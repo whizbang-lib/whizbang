@@ -126,8 +126,7 @@ public class PureServiceAttributeTests {
 
   // Test types
   [PureService]
-  private static class TestPureService {
-  }
+  private static class TestPureService;
 
   [PureService(Reason = "Read-only lookup service")]
   private interface ITestPureService {

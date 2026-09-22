@@ -49,9 +49,7 @@ public class SlidingWindowBatcherTests {
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => {
-      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
-    });
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
 
     await ch.Writer.WriteAsync(1);
     await Task.Delay(20);
@@ -83,9 +81,7 @@ public class SlidingWindowBatcherTests {
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => {
-      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
-    });
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
 
     for (var i = 0; i < 5; i++) {
       await ch.Writer.WriteAsync(i);
@@ -120,9 +116,7 @@ public class SlidingWindowBatcherTests {
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => {
-      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
-    });
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
 
     // Fast steady arrivals — the sliding window keeps resetting so the debounce never expires —
     // MaxWait is the hard cap that forces the flush.

@@ -193,12 +193,12 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     openGate.MarkReady();
     var runnerA = new StartupPipelineRunner(
       steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepA],
-      dutyElector: _electorFor(podA),
-      observers: []);
+      observers: [],
+      dutyElector: _electorFor(podA));
     var runnerB = new StartupPipelineRunner(
       steps: [new AssessStartupStep(assessor: NullStartupAssessor.Instance, logger: NullLogger<AssessStartupStep>.Instance), new MigrateStartupStep(openGate), stepB],
-      dutyElector: _electorFor(podB),
-      observers: []);
+      observers: [],
+      dutyElector: _electorFor(podB));
 
     var results = await Task.WhenAll(
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));

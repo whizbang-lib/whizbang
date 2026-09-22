@@ -145,9 +145,9 @@ public class SchemaGateShutdownCoverageTests {
       scopeFactory: scopeFactory,
       schemaReadyGate: gate,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: resolver,
       logger: NullLogger<CoalesceShipWorker>.Instance,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver);
 
     await worker.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);
@@ -184,9 +184,9 @@ public class SchemaGateShutdownCoverageTests {
       scopeFactory: scopeFactory,
       schemaReadyGate: gate,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: null,
       logger: logger,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: null);
 
     await worker.StartAsync(CancellationToken.None);
     await logger.Logged.WaitAsync(_wait);
@@ -287,7 +287,7 @@ public class SchemaGateShutdownCoverageTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

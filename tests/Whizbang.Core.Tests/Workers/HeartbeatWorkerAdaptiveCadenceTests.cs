@@ -139,11 +139,8 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       signalBus: NullSignalBus.Instance);
   }
 
-  private sealed class ToggleableLockSource : IInstanceAliveLockSource {
-    public ToggleableLockSource(bool initialHeld) {
-      IsAliveLockHeld = initialHeld;
-    }
-    public bool IsAliveLockHeld { get; set; }
+  private sealed class ToggleableLockSource(bool initialHeld) : IInstanceAliveLockSource {
+    public bool IsAliveLockHeld { get; set; } = initialHeld;
   }
 
   private sealed class StubSchemaReadyGate : ISchemaReadyGate {

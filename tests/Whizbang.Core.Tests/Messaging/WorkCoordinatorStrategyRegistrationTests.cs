@@ -487,14 +487,14 @@ public class WorkCoordinatorStrategyRegistrationTests {
         coordinator: null,
         instanceProvider: instanceProvider,
         options: options,
-        scopeFactory: scopeFactory,
-        metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+        scopeFactory: scopeFactory,
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-        inboxChannelWriter: new InboxChannelWriter()
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        inboxChannelWriter: new InboxChannelWriter(),
+        metrics: sp.GetService<WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
@@ -505,13 +505,13 @@ public class WorkCoordinatorStrategyRegistrationTests {
         coordinator: null,
         instanceProvider: instanceProvider,
         options: options,
-        scopeFactory: scopeFactory,
-        metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+        scopeFactory: scopeFactory,
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions())
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        metrics: sp.GetService<WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
     });
 

@@ -419,6 +419,10 @@ dotnet_diagnostic.S1133.severity = none
 # by Npgsql's own contract (NpgsqlDbType.Array | NpgsqlDbType.Text is how an array parameter is
 # typed); the enum is Npgsql's to annotate, and every site here is that idiom.
 dotnet_diagnostic.S3265.severity = none
+# IDE0031 rewrites a guarded assignment (`if (x is not null) { x.P = v; }`) into the null-conditional
+# assignment `x?.P = v`, which Sonar's S1121 then rejects as an assignment inside an expression. The
+# guarded form is the one both accept.
+dotnet_diagnostic.IDE0031.severity = none
 
 [src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs]
 # S3459 sees the row classes Dapper materializes as never assigned: Dapper sets them by column name
@@ -441,4 +445,8 @@ dotnet_diagnostic.S1215.severity = none
 dotnet_diagnostic.S1075.severity = none
 # S3877: a fake whose Dispose throws is how the dispose-failure paths are exercised.
 dotnet_diagnostic.S3877.severity = none
+# RCS1163 / IDE0060: a test double's parameters are the interface's; the Sonar twin (S1172) is justified
+#        at each site, and these two would otherwise report the same members a second and third time.
+dotnet_diagnostic.RCS1163.severity = none
+dotnet_diagnostic.IDE0060.severity = none
 

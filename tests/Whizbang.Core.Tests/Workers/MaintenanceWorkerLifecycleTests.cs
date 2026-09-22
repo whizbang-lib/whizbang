@@ -187,7 +187,7 @@ public class MaintenanceWorkerLifecycleTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is not null).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is not null)];
     }
 
     // Warning, not Error: a failed tick is retryable and the loop says so on the next interval.

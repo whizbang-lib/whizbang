@@ -419,7 +419,7 @@ public class TransportConsumerWorkerResilienceTests {
   ) {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     return new TransportConsumerWorker(
       transport: transport,

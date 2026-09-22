@@ -91,12 +91,12 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
         // FlushAndStopAsync's hard-shutdown branch — never completes on its own.
         await Task.Delay(Timeout.Infinite, ct);
       },
+      logger: logger,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-      },
-      logger: logger);
+      });
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -142,6 +142,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     var timeProvider = new ParkingSweepTimerProvider();
     var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(60),
@@ -149,8 +150,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
         IdleEvictionWindow = TimeSpan.Zero,
         IdleSweepInterval = TimeSpan.FromSeconds(10),
       },
-      timeProvider: timeProvider,
-      logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance);
+      timeProvider: timeProvider);
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)

@@ -1064,7 +1064,7 @@ public class LifecycleCoordinatorTests {
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);
     var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
-    var coordinator = new LifecycleCoordinator(metrics: coordinatorMetrics, logger: NullLogger<LifecycleCoordinator>.Instance);
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance, metrics: coordinatorMetrics);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     var eventId = Guid.NewGuid();
@@ -1184,7 +1184,7 @@ public class LifecycleCoordinatorTests {
     using var factory = new TestMeterFactory();
     var whizbangMetrics = new WhizbangMetrics(factory);
     var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
-    var coordinator = new LifecycleCoordinator(metrics: coordinatorMetrics, logger: NullLogger<LifecycleCoordinator>.Instance);
+    var coordinator = new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance, metrics: coordinatorMetrics);
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     var eventId = Guid.NewGuid();

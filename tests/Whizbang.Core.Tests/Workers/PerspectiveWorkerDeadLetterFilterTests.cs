@@ -84,9 +84,6 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      deadLetterStore: store ?? NullDeadLetterStore.Instance,
-      generationProvider: gen ?? new DefaultGenerationProvider(),
-      deadLetterMetrics: metrics,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),
@@ -107,8 +104,11 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: store ?? NullDeadLetterStore.Instance,
+      generationProvider: gen ?? new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value));
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts })).Value),
+      deadLetterMetrics: metrics);
   }
 
   private static StreamEventData _row(int attempts, int failures = 0) {

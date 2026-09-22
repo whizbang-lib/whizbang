@@ -1355,8 +1355,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     var result = await strategy.PublishAsync(work, CancellationToken.None);
@@ -1376,8 +1376,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     await strategy.PublishAsync(work, CancellationToken.None);
@@ -1395,8 +1395,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
 
     var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
     // _createCommandOutboxWork sets a StreamId, so _addStreamIdToMetadata runs.
@@ -1420,8 +1420,8 @@ public class TransportPublishStrategyTests {
       transport: flipAware,
       readinessCheck: readiness,
       inboxTopic: "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Billing.Commands"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: _namespaceRouting("MyApp.Billing.Commands"));
     var legacyStrategy = new TransportPublishStrategy(transport: legacy, readinessCheck: readiness, inboxTopic: "inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
@@ -1450,8 +1450,8 @@ public class TransportPublishStrategyTests {
       transport: viaSeam,
       readinessCheck: readiness,
       inboxTopic: "inbox",
-      namespaceRouting: new Whizbang.Core.Routing.SharedTopicOutboxStrategy("inbox"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new Whizbang.Core.Routing.SharedTopicOutboxStrategy("inbox"));
     var noSeamStrategy = new TransportPublishStrategy(transport: noSeam, readinessCheck: readiness, inboxTopic: "inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
     var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
@@ -1486,8 +1486,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(options),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(options));
 
     // Framework system commands ride the Command kind at every production call site,
     // the strategy-internal classification must send them to the broadcast inbox — a
@@ -1507,8 +1507,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: new NamespaceOutboxStrategy(options),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: new NamespaceOutboxStrategy(options));
 
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
@@ -1538,8 +1538,8 @@ public class TransportPublishStrategyTests {
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"),
-      loggerFactory: NullLoggerFactory.Instance);
+      loggerFactory: NullLoggerFactory.Instance,
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
 
     var streamId = Guid.CreateVersion7();
     var flippedWork = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp") with { StreamId = streamId };

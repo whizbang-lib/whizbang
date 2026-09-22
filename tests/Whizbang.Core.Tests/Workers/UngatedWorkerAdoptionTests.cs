@@ -59,11 +59,11 @@ public class UngatedWorkerAdoptionTests {
     public void MarkReady() => _ready.TrySetResult();
   }
 
-  private sealed class CountingScopeFactory : IServiceScopeFactory {
-    private readonly IServiceScopeFactory _inner;
+  private sealed class CountingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
+    private readonly IServiceScopeFactory _inner = inner;
     private readonly TaskCompletionSource _firstUse = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _count;
-    public CountingScopeFactory(IServiceScopeFactory inner) { _inner = inner; }
+
     public int Count => Volatile.Read(ref _count);
     public Task FirstUse => _firstUse.Task;
     public IServiceScope CreateScope() {
@@ -182,13 +182,13 @@ public class UngatedWorkerAdoptionTests {
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: gate,
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -219,7 +219,7 @@ public class UngatedWorkerAdoptionTests {
       resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

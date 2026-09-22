@@ -51,13 +51,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: workerOptions,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: workerOptions);
 
     // Act & Assert — subscribing happens in the background now (behind the schema gate), so the
     // failure surfaces through SubscriptionsReady rather than StartAsync. A waiter must fault,
@@ -93,13 +93,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: workerOptions,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: workerOptions);
 
     // Act - Start then stop (triggers OperationCanceledException in ExecuteAsync)
     using var cts = new CancellationTokenSource();
@@ -371,15 +371,15 @@ public class ServiceBusConsumerWorkerCoverageTests {
       transport: transport,
       scopeFactory: scopeFactory,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      options: options,
       lifecycleMessageDeserializer: lifecycleMessageDeserializer ?? new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance));
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: options);
   }
 
   private static MessageEnvelope<JsonElement> _buildJsonEnvelope(MessageId messageId, Guid streamId) {

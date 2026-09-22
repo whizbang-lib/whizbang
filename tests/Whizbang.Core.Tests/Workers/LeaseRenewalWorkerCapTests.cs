@@ -120,9 +120,9 @@ public class LeaseRenewalWorkerCapTests {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 100, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 1000 }
       }),
       logger: NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
       leaseRegistry: registry,
-      timeProvider: time,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      timeProvider: time);
     return (worker, coord, time, registry);
   }
 
@@ -238,10 +238,10 @@ public class LeaseRenewalWorkerCapTests {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 5, ImmediateFlushThreshold = 1, ChannelCapacity = 100 }
       }),
       logger: NullLogger<LeaseRenewalWorker>.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
       leaseRegistry: null,
       // not wired
-      timeProvider: time,
-      pinnedPool: NoOpPinnedConnectionPool.Instance);
+      timeProvider: time);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

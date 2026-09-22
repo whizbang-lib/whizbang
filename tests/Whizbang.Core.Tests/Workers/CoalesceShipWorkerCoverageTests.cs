@@ -273,9 +273,9 @@ public class CoalesceShipWorkerCoverageTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       schemaReadyGate: gate ?? SchemaReadyGate.AlreadyReady(),
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      coalesceResolver: resolver,
       logger: logger ?? NullLogger<CoalesceShipWorker>.Instance,
-      timeProvider: time,
-      compositeFactory: new CompositeFactory());
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver,
+      timeProvider: time);
   }
 }

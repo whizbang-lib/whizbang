@@ -18,11 +18,11 @@ namespace Whizbang.Core.Tests.Temporal;
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
 public class ScheduleWorkerTests {
-  private sealed class FakeClaimer : IScheduleClaimer {
-    private readonly Queue<int> _returns;
+  private sealed class FakeClaimer(params int[] returns) : IScheduleClaimer {
+    private readonly Queue<int> _returns = new Queue<int>(returns);
     public int Calls { get; private set; }
     public DateTimeOffset? NextFireTime { get; set; }
-    public FakeClaimer(params int[] returns) => _returns = new Queue<int>(returns);
+
     public Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
       Calls++;
       return Task.FromResult(_returns.Count > 0 ? _returns.Dequeue() : 0);

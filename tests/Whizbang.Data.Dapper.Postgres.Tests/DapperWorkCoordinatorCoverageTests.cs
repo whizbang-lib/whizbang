@@ -40,7 +40,7 @@ public class DapperWorkCoordinatorCoverageTests {
       "Host=unused;Database=unused",
       JsonContextRegistry.CreateCombinedOptions(),
       NullLogger<DapperWorkCoordinator>.Instance);
-    var result = coordinator.SerializeFailures(Array.Empty<MessageFailure>());
+    var result = coordinator.SerializeFailures([]);
 
     await Assert.That(result).IsEqualTo("[]")
       .Because("an empty per-category failure list must serialize to the JSON empty-array literal directly");

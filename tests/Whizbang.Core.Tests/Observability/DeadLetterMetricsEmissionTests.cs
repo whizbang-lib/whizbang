@@ -160,7 +160,7 @@ public class DeadLetterMetricsEmissionTests {
 
   /// <summary>The <c>whizbang.dead_letters.added</c> series that actually counted something.</summary>
   private static List<MetricRecording> _added(IEnumerable<MetricRecording> readings) =>
-    readings.Where(r => r.InstrumentName == "whizbang.dead_letters.added" && r.Value > 0).ToList();
+    [.. readings.Where(r => r.InstrumentName == "whizbang.dead_letters.added" && r.Value > 0)];
 
   private static OutboxWork _work(int attempts) {
     var msgId = (Guid)TrackedGuid.NewMedo();
@@ -214,15 +214,15 @@ public class DeadLetterMetricsEmissionTests {
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      deadLetterStore: dlqStore,
-      generationProvider: new FakeGenerationProvider("test-gen"),
-      dlqMetrics: dlqMetrics,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: dlqStore,
+      generationProvider: new FakeGenerationProvider("test-gen"),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      occurrenceGate: new NoOpOccurrencePublishGate());
+      occurrenceGate: new NoOpOccurrencePublishGate(),
+      dlqMetrics: dlqMetrics);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -288,15 +288,15 @@ public class DeadLetterMetricsEmissionTests {
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
-      deadLetterStore: dlqStore,
-      generationProvider: new FakeGenerationProvider("test-gen"),
-      dlqMetrics: dlqMetrics,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: dlqStore,
+      generationProvider: new FakeGenerationProvider("test-gen"),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      occurrenceGate: new NoOpOccurrencePublishGate());
+      occurrenceGate: new NoOpOccurrencePublishGate(),
+      dlqMetrics: dlqMetrics);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
