@@ -1,8 +1,15 @@
+extern alias shared;
+
 using System.Collections.Immutable;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Models;
+// Through the extern alias, the way every other test of a shared type reaches it. A plain using
+// resolves against the ILRepack-merged copy inside one of the generator assemblies instead, which
+// compiles and is the wrong type identity -- the alias exists to keep those apart.
+using CompositeIndexElement = shared::Whizbang.Generators.Shared.Models.CompositeIndexElement;
+using CompositeIndexInfo = shared::Whizbang.Generators.Shared.Models.CompositeIndexInfo;
+using CompositeIndexSql = shared::Whizbang.Generators.Shared.Models.CompositeIndexSql;
 
 namespace Whizbang.Generators.Tests;
 
