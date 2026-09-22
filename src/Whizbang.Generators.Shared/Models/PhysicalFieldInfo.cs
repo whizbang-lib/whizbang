@@ -11,15 +11,15 @@ namespace Whizbang.Generators.Shared.Models;
 /// <param name="IsIndexed">Whether an index should be created</param>
 /// <param name="IsUnique">Whether a unique constraint should be applied</param>
 /// <param name="MaxLength">Maximum length for string fields (VARCHAR constraint)</param>
-/// <param name="ColumnType">
-/// The author's own PostgreSQL type for the column, or null to derive one from the CLR type. Last in
-/// the list and defaulted so the construction sites that do not set it are unaffected.
-/// </param>
 /// <param name="IsVector">Whether this is a vector field (float[])</param>
 /// <param name="VectorDimensions">Dimension count for vector fields</param>
 /// <param name="VectorDistanceMetric">Distance metric for vector index (L2=0, InnerProduct=1, Cosine=2)</param>
 /// <param name="VectorIndexType">Index type for vectors (None=0, IVFFlat=1, HNSW=2)</param>
 /// <param name="VectorIndexLists">Number of lists for IVFFlat index</param>
+/// <param name="ColumnType">
+/// The author's own PostgreSQL type for the column, or null to derive one from the CLR type. Last in
+/// the list and defaulted so the construction sites that do not set it are unaffected.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(

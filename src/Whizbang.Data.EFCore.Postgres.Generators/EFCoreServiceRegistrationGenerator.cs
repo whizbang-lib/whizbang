@@ -803,7 +803,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     bool isUnique = false;
     string? columnName = null;
     string? columnType = null;
-    int? maxLength = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
@@ -818,18 +817,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           // validate against that would not refuse the cases this exists for.
           columnType = namedArg.Value.Value as string;
           break;
-        case "MaxLength":
-          // Read here as well as on the model side. This generator emits the DDL, and it did not
-          // read MaxLength at all, so a promoted string declared varchar(n) in the model was
-          // created as text in the table -- the model and the table describing different columns,
-          // which is the same hazard ColumnType would otherwise reintroduce.
-          if (namedArg.Value.Kind == TypedConstantKind.Primitive && namedArg.Value.Value != null) {
-            var declared = System.Convert.ToInt32(namedArg.Value.Value, System.Globalization.CultureInfo.InvariantCulture);
-            if (declared > 0) {
-              maxLength = declared;
-            }
-          }
-          break;
       }
     }
 
@@ -842,7 +829,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         TypeName: typeName,
         IsIndexed: isIndexed,
         IsUnique: isUnique,
-        MaxLength: maxLength,
+        // Deliberately not read from the attribute here, though the model side reads it. This
+        // generator emits CREATE TABLE plus additive ADD COLUMN, and never ALTER COLUMN TYPE, so
+        // honouring a length that has been declarable and ignored for a long time would give a new
+        // database varchar(n) where an existing one keeps text -- the same model constrained
+        // differently depending on when its database was created, and a write that succeeds on one
+        // deployment failing on another. The disagreement is real and is filed rather than papered
+        // over, because closing it needs a migration path and not a generator tweak.
+        MaxLength: null,
         IsVector: false,
         VectorDimensions: null,
         VectorDistanceMetric: null,
