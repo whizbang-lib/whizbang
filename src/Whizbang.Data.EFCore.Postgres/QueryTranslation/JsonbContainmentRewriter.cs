@@ -59,6 +59,33 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   private int _predicateDepth;
 
   /// <summary>
+  /// The properties of a perspective row that are stored as one JSON document.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// All three carry a GIN index built by the perspective's schema pass, and containment is the only
+  /// shape any of those indexes can answer. The rewrite used to name <c>Data</c> alone, so a filter
+  /// on the other two compiled to an extraction: the index was built, maintained on every applied
+  /// event, and never read. Scope is the one that matters, because tenant isolation filters on it on
+  /// every perspective read.
+  /// </para>
+  /// <para>
+  /// Naming the three rather than accepting any complex property keeps the rewrite to documents the
+  /// framework owns the shape of. A consumer's own nested object inside <c>Data</c> is reached
+  /// through <c>Data</c> and needs no entry here.
+  /// </para>
+  /// </remarks>
+  private static readonly string[] _documentRoots = [
+    nameof(PerspectiveRow<>.Data),
+    nameof(PerspectiveRow<>.Metadata),
+    nameof(PerspectiveRow<>.Scope),
+  ];
+
+  /// <summary>Whether <paramref name="name"/> is one of the row's JSON documents.</summary>
+  private static bool _isDocumentRoot(string name) =>
+    Array.IndexOf(_documentRoots, name) >= 0;
+
+  /// <summary>
   /// The operators whose lambda argument decides which rows survive. Only inside one of these is a
   /// comparison a filter, and only there do an extraction and a containment test agree.
   /// </summary>
@@ -308,8 +335,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </remarks>
   private static bool _isTopLevel(MemberExpression member) =>
     member.Expression is ParameterExpression
-    || (member.Expression is MemberExpression inner
-        && string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal));
+    || (member.Expression is MemberExpression inner && _isDocumentRoot(inner.Member.Name));
 
   private bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
     rewritten = Expression.Empty();
@@ -355,14 +381,17 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// first, <c>model.A.B</c>, and is recognized by the chain ending at a parameter. Either way the
   /// names come back ordered from the document root, so <c>Data.A.B</c> yields A then B.
   /// </remarks>
-  private static (Type? Root, List<string> Names) _resolvePath(MemberExpression member) {
+  private static (Type? Root, List<string> Names, string? Document, Type? Row) _resolvePath(MemberExpression member) {
     var names = new List<string>();
     Type? rootModel = null;
+    string? document = null;
+    Type? rowType = null;
 
     for (Expression? current = member; current is MemberExpression link; current = link.Expression) {
-      if (string.Equals(link.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal)
-          && _isPerspectiveRow(link.Expression?.Type)) {
+      if (_isDocumentRoot(link.Member.Name) && _isPerspectiveRow(link.Expression?.Type)) {
         rootModel = link.Type;
+        document = link.Member.Name;
+        rowType = link.Expression!.Type;
         break;
       }
 
@@ -370,11 +399,14 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
 
       if (link.Expression is ParameterExpression parameter) {
         rootModel = parameter.Type;
+        // A projected model has had the row removed, so the only document it can be reached through
+        // is the one holding the model.
+        document = nameof(PerspectiveRow<>.Data);
         break;
       }
     }
 
-    return (rootModel, names);
+    return (rootModel, names, document, rowType);
   }
 
   /// <summary>
@@ -394,10 +426,14 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </para>
   /// </remarks>
   private static bool _hasOwnIndex(MemberExpression member) {
-    var (rootModel, names) = _resolvePath(member);
+    var (rootModel, names, document, _) = _resolvePath(member);
 
+    // Only the Data document can hold a declared index. [Indexed] is written on a perspective
+    // model's property, and metadata and scope are the framework's own documents with no model to
+    // declare against, so there is never an index of theirs to protect.
     return rootModel is not null
         && names.Count == 1
+        && string.Equals(document, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal)
         && JsonIndexRegistry.HasOrdered(rootModel, names[0]);
   }
 
@@ -420,7 +456,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </para>
   /// </remarks>
   private bool _isValueConverted(MemberExpression member) {
-    var (rootModel, names) = _resolvePath(member);
+    var (rootModel, names, document, rowType) = _resolvePath(member);
 
     // Both call sites ask this only after _isJsonMember has accepted the member, and _enabled has
     // already established the model. Between them that is what makes the model, the root and a
@@ -428,9 +464,13 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     // either check fails loudly in development, rather than restated as a branch nothing can take.
     Debug.Assert(_model is not null);
     Debug.Assert(rootModel is not null && names.Count > 0);
+    Debug.Assert(document is not null);
 
-    var row = _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(rootModel));
-    var complex = row?.FindComplexProperty(nameof(PerspectiveRow<>.Data))?.ComplexType;
+    // The row type as the chain gave it, falling back to constructing it from the model for a
+    // projected model where the row was removed before the filter. Metadata and scope are not
+    // generic in the model, so the constructed form is only correct for the Data document.
+    var row = _model.FindEntityType(rowType ?? typeof(PerspectiveRow<>).MakeGenericType(rootModel));
+    var complex = row?.FindComplexProperty(document)?.ComplexType;
     if (complex is null) {
       return true;
     }
@@ -478,8 +518,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
     while (current is not null) {
       switch (current) {
         case MemberExpression inner
-          when string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal)
-               && _isPerspectiveRow(inner.Expression?.Type):
+          when _isDocumentRoot(inner.Member.Name) && _isPerspectiveRow(inner.Expression?.Type):
           return true;
 
         case MemberExpression inner:
