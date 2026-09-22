@@ -26,14 +26,18 @@ namespace Whizbang.Core.Tests;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/TypeMatcher.cs</code-under-test>
-public class TypeMatcherCoverageTests {
+public partial class TypeMatcherCoverageTests {
+
+  [System.Text.RegularExpressions.GeneratedRegex(".*")]
+  private static partial System.Text.RegularExpressions.Regex AnyPattern();
+
   [Test]
   public async Task Matches_RegexPattern_EmptyTypeString_ReturnsFalseAsync() {
     // A type matcher decides whether an incoming message maps to a handler. If this guard
     // regressed, an empty/unresolved type string could spuriously match a broad pattern (e.g.
     // ".*") and route a message with no real type identity to the wrong handler instead of being
     // rejected outright.
-    var pattern = new Regex(".*");
+    var pattern = AnyPattern();
 
     var result = TypeMatcher.Matches(string.Empty, pattern);
 
