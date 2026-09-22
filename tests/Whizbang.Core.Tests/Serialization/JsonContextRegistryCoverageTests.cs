@@ -235,39 +235,78 @@ public class JsonContextRegistryCoverageTests {
     await Assert.That(result).IsEmpty();
   }
 
+  // A registered modifier is process-wide and has no public unregister: these three run alone and
+  // take their modifier back in a finally, or every later type info in the process would be built
+  // through it -- including the polymorphic builder's trial configure, which deadlocked the suite
+  // when a modifier from a test was left behind.
+
   [Test]
+  [NotInParallel]
   public async Task RegisterTypeInfoModifier_RunsOverTheResolvedTypesOfItsProfileAsync() {
-    var seenByPersistence = new List<Type>();
-    JsonContextRegistry.RegisterTypeInfoModifier(info => seenByPersistence.Add(info.Type), SerializationProfile.Persistence);
-    var options = new JsonSerializerOptions();
+    var seenByPersistence = new System.Collections.Concurrent.ConcurrentBag<Type>();
+    Action<JsonTypeInfo> modifier = info => seenByPersistence.Add(info.Type);
+    JsonContextRegistry.RegisterTypeInfoModifier(modifier, SerializationProfile.Persistence);
+    try {
+      var options = new JsonSerializerOptions();
 
-    var persistence = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Persistence);
-    _ = persistence.GetTypeInfo(typeof(Uri), options);
-    var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
-    _ = wire.GetTypeInfo(typeof(Uri), options);
+      var persistence = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Persistence);
+      _ = persistence.GetTypeInfo(typeof(Uri), options);
+      var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
+      _ = wire.GetTypeInfo(typeof(Uri), options);
 
-    await Assert.That(seenByPersistence).Contains(typeof(Uri))
-      .Because("a modifier registered for the persistence profile runs over every type the persistence resolver resolves");
-    await Assert.That(seenByPersistence.Count(t => t == typeof(Uri))).IsEqualTo(1)
-      .Because("the wire profile's resolver must not carry a persistence-only modifier");
+      await Assert.That(seenByPersistence).Contains(typeof(Uri))
+        .Because("a modifier registered for the persistence profile runs over every type the persistence resolver resolves");
+      await Assert.That(seenByPersistence.Count(t => t == typeof(Uri))).IsEqualTo(1)
+        .Because("the wire profile's resolver must not carry a persistence-only modifier");
+    } finally {
+      JsonContextRegistry.RemoveTypeInfoModifierForTests(modifier);
+    }
   }
 
   [Test]
+  [NotInParallel]
   public async Task RegisterTypeInfoModifier_WithoutAProfile_RunsForEveryProfileAsync() {
-    var seen = new List<Type>();
-    JsonContextRegistry.RegisterTypeInfoModifier(info => seen.Add(info.Type));
-    var options = new JsonSerializerOptions();
+    var seen = new System.Collections.Concurrent.ConcurrentBag<Type>();
+    Action<JsonTypeInfo> modifier = info => seen.Add(info.Type);
+    JsonContextRegistry.RegisterTypeInfoModifier(modifier);
+    try {
+      var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
+      _ = wire.GetTypeInfo(typeof(Version), new JsonSerializerOptions());
 
-    var wire = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
-    _ = wire.GetTypeInfo(typeof(Version), options);
+      await Assert.That(seen).Contains(typeof(Version))
+        .Because("a modifier with no profile applies to whichever profile is being built");
+    } finally {
+      JsonContextRegistry.RemoveTypeInfoModifierForTests(modifier);
+    }
+  }
 
-    await Assert.That(seen).Contains(typeof(Version))
-      .Because("a modifier with no profile applies to whichever profile is being built");
+  [Test]
+  [NotInParallel]
+  public async Task RemoveTypeInfoModifierForTests_TakesBackOnlyThatModifierAsync() {
+    var kept = new System.Collections.Concurrent.ConcurrentBag<Type>();
+    var removed = new System.Collections.Concurrent.ConcurrentBag<Type>();
+    Action<JsonTypeInfo> keptModifier = info => kept.Add(info.Type);
+    Action<JsonTypeInfo> removedModifier = info => removed.Add(info.Type);
+    JsonContextRegistry.RegisterTypeInfoModifier(keptModifier);
+    JsonContextRegistry.RegisterTypeInfoModifier(removedModifier);
+    try {
+      JsonContextRegistry.RemoveTypeInfoModifierForTests(removedModifier);
+
+      var resolver = JsonContextRegistry.WithRegisteredModifiers(new DefaultJsonTypeInfoResolver(), SerializationProfile.Default);
+      _ = resolver.GetTypeInfo(typeof(TimeZoneInfo), new JsonSerializerOptions());
+
+      await Assert.That(kept).Contains(typeof(TimeZoneInfo))
+        .Because("taking one modifier back must leave the others registered, in their order");
+      await Assert.That(removed).IsEmpty();
+    } finally {
+      JsonContextRegistry.RemoveTypeInfoModifierForTests(keptModifier);
+    }
   }
 
   [Test]
   public async Task RegisterTypeInfoModifier_RejectsANullModifierAsync() {
     await Assert.That(() => JsonContextRegistry.RegisterTypeInfoModifier(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => JsonContextRegistry.RemoveTypeInfoModifierForTests(null!)).Throws<ArgumentNullException>();
   }
 
 }
