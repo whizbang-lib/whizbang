@@ -18,14 +18,12 @@ namespace Whizbang.Data.Postgres.Notifications;
 public sealed class PgScheduleOccurrenceStore(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
-  ILogger<PgScheduleOccurrenceStore> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null) : IScheduleOccurrenceStore {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly ILogger<PgScheduleOccurrenceStore> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async Task DeferAsync(Guid occurrenceId, DateTimeOffset until, CancellationToken cancellationToken = default) {

@@ -26,7 +26,7 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
     }
     // Create a new in-memory SQLite connection
     Connection = new SqliteConnection("Data Source=:memory:");
-    Connection.Open();
+    await Connection.OpenAsync();
 
     // Initialize executor and connection factory
     // IMPORTANT: For in-memory SQLite, we must reuse the same connection
@@ -51,8 +51,15 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
   }
 
   public void Dispose() {
-    Connection?.Dispose();
+    Dispose(disposing: true);
     GC.SuppressFinalize(this);
+  }
+
+  /// <summary>Releases the connection; a fixture that owns more overrides this and calls the base.</summary>
+  protected virtual void Dispose(bool disposing) {
+    if (disposing) {
+      Connection?.Dispose();
+    }
   }
 
   public async ValueTask DisposeAsync() {

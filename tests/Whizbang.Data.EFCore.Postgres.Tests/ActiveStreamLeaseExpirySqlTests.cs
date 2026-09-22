@@ -136,8 +136,8 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       throw new InvalidOperationException($"No wh_active_streams row for {streamId}");
     }
-    var owner = reader.IsDBNull(0) ? (Guid?)null : reader.GetGuid(0);
-    var lease = reader.IsDBNull(1) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(1);
+    var owner = await reader.IsDBNullAsync(0) ? (Guid?)null : reader.GetGuid(0);
+    var lease = await reader.IsDBNullAsync(1) ? (DateTimeOffset?)null : await reader.GetFieldValueAsync<DateTimeOffset>(1);
     return (owner, lease);
   }
 

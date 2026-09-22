@@ -28,13 +28,13 @@ public class HotChocolateSecurityExtensionsTests {
         });
 
     if (preEnableExceptionDetails) {
-      // Simulates a host that (like a dev-oriented default) turned details on earlier in the chain;
+      // Simulates a host that (like a dev-oriented default) turned details on earlier in the chain —
       // production hardening registered afterwards must win.
       builder = builder.ModifyRequestOptions(o => o.IncludeExceptionDetails = true);
     }
 
     if (isProduction is not null) {
-      builder = builder.AddWhizbangGraphQLSecurityDefaults(isProduction.Value);
+      _ = builder.AddWhizbangGraphQLSecurityDefaults(isProduction.Value);
     }
 
     return services.BuildServiceProvider();

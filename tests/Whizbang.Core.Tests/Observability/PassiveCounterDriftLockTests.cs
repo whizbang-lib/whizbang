@@ -167,11 +167,13 @@ public class PassiveCounterDriftLockTests {
   private static object _construct(Type metricsClass, TestMeterFactory factory) {
     var ctor = metricsClass.GetConstructors()
       .First(c => c.GetParameters().Length > 0 && c.GetParameters()[0].ParameterType == typeof(WhizbangMetrics));
-    var args = ctor.GetParameters()
-      .Select(p => p.ParameterType == typeof(WhizbangMetrics) ? new WhizbangMetrics(factory)
-                 : p.HasDefaultValue ? p.DefaultValue
-                 : null)
-      .ToArray();
+    object? ArgumentFor(System.Reflection.ParameterInfo p) {
+      if (p.ParameterType == typeof(WhizbangMetrics)) {
+        return new WhizbangMetrics(factory);
+      }
+      return p.HasDefaultValue ? p.DefaultValue : null;
+    }
+    var args = ctor.GetParameters().Select(ArgumentFor).ToArray();
     return ctor.Invoke(args);
   }
 

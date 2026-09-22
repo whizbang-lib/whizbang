@@ -99,7 +99,7 @@ public class JsonContextRegistryCoverageTests {
 
   /// <summary>Hand-rolled resolver that THROWS instead of returning null for one specific type — a
   /// real shape some hand-written or third-party resolvers take.</summary>
-  private sealed class _throwOnResolveResolver : IJsonTypeInfoResolver {
+  private sealed class ThrowOnResolveResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       if (type == typeof(ThrowingResolutionProbe)) {
         throw new NotSupportedException("simulated: this resolver cannot describe ThrowingResolutionProbe");
@@ -117,7 +117,7 @@ public class JsonContextRegistryCoverageTests {
   [Test]
   public async Task GetLazyPolymorphicListTypeInfo_DerivedTypeWhoseResolverThrows_IsExcludedWithoutPropagatingAsync() {
     JsonContextRegistry.RegisterContext(HealthyResolutionProbeJsonContext.Default);
-    JsonContextRegistry.RegisterContext(new _throwOnResolveResolver());
+    JsonContextRegistry.RegisterContext(new ThrowOnResolveResolver());
     JsonContextRegistry.RegisterDerivedType<IThrowingResolutionBase, HealthyResolutionProbe>("Healthy");
     JsonContextRegistry.RegisterDerivedType<IThrowingResolutionBase, ThrowingResolutionProbe>("Throwing");
 
@@ -156,7 +156,7 @@ public class JsonContextRegistryCoverageTests {
   /// <see cref="GetTypeInfo"/> call (never <c>ctx.Options</c>) — the same safe pattern
   /// <c>JsonContextRegistry</c>'s own polymorphic builders use.
   /// </summary>
-  private sealed class _trialCompositeResolver : IJsonTypeInfoResolver {
+  private sealed class TrialCompositeResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       if (type != typeof(TrialCompositeProbe)) {
         return null;
@@ -195,7 +195,7 @@ public class JsonContextRegistryCoverageTests {
   /// </summary>
   [Test]
   public async Task GetLazyPolymorphicTypeInfo_CompositeWithNestedListAndEnvelopeMembers_ConfiguresWithoutThrowingAsync() {
-    JsonContextRegistry.RegisterContext(new _trialCompositeResolver());
+    JsonContextRegistry.RegisterContext(new TrialCompositeResolver());
     JsonContextRegistry.RegisterDerivedType<ITrialCompositeBase, TrialCompositeProbe>("TrialComposite");
 
     var options = JsonContextRegistry.CreateCombinedOptions();

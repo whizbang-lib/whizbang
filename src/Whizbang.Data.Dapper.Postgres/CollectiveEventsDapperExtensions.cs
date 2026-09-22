@@ -112,7 +112,7 @@ public static class CollectiveEventsDapperExtensions {
     return services;
   }
 
-  // The Dapper table registry is a single shared instance populated across all AddCollective*Dapper calls;
+  // The Dapper table registry is a single shared instance populated across all AddCollective*Dapper calls —
   // each executor closes over its live Tables map, so registrations in any order are visible at apply time.
   private static DapperCollectiveTableRegistry _getOrAddTableRegistry(IServiceCollection services) {
     var existing = services.FirstOrDefault(d => d.ServiceType == typeof(DapperCollectiveTableRegistry))

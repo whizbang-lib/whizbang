@@ -46,7 +46,7 @@ public class RebuildCommandReceptorRegistrarTests {
     // A service that dispatches this command to itself only ever reaches LocalImmediateInline.
     // Registering the distributed stages alone would leave in-process rebuilds dispatched into
     // silence — no receptor, no error, no rebuild.
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
 
     await _registrar(registry).StartAsync(CancellationToken.None);
 
@@ -77,7 +77,7 @@ public class RebuildCommandReceptorRegistrarTests {
   public async Task StoppingRegistersNothingAndCompletesAsync() {
     // Registration is startup-only; the receptor lives as long as the registry does. Stop having
     // work to do would mean the registrar held state it never took.
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var registrar = _registrar(registry);
     await registrar.StartAsync(CancellationToken.None);
     var afterStart = registry.Registrations.Count;
@@ -90,7 +90,7 @@ public class RebuildCommandReceptorRegistrarTests {
   }
 
   /// <summary>Records what was registered and where, which is the whole contract here.</summary>
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Message, LifecycleStage Stage)> Registrations { get; } = [];
 
     public IReadOnlyList<LifecycleStage> StagesFor(Type message) =>

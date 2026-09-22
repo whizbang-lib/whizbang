@@ -398,7 +398,7 @@ public class TransportConsumerWorkerCoverageTests {
       .Because("At least one subscribe attempt should have been made");
 
     // ExecuteAsync faulted; StopAsync observes that same fault on its way out.
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   // ========================================
@@ -460,7 +460,7 @@ public class TransportConsumerWorkerCoverageTests {
       // Expected - strategy won't have real DB, but the code path is exercised
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - work coordinator should have been called
     await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
@@ -521,7 +521,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - should not throw; duplicate is handled gracefully
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message was stored via StoreInboxMessagesAsync (duplicate detection happens downstream)
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
@@ -581,7 +581,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - the message is dropped at the build step, so nothing reaches the inbox...
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
@@ -645,7 +645,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - the message is dropped at the build step, so nothing reaches the inbox...
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
@@ -718,7 +718,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - the message is dropped at the build step, so nothing reaches the inbox...
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
@@ -788,7 +788,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - should not throw
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message was stored via StoreInboxMessagesAsync
     await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
@@ -850,11 +850,11 @@ public class TransportConsumerWorkerCoverageTests {
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(streamId)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(streamId)
       .Because("StreamId should be extracted from AggregateId metadata");
   }
 
@@ -911,10 +911,10 @@ public class TransportConsumerWorkerCoverageTests {
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
-    await Assert.That(noOpCoordinator.StoredMessages.Last().StreamId).IsEqualTo(messageId.Value)
+    await Assert.That(noOpCoordinator.StoredMessages[^1].StreamId).IsEqualTo(messageId.Value)
       .Because("StreamId should fall back to MessageId when no AggregateId metadata");
   }
 
@@ -1059,7 +1059,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - returning normally IS the containment: an escape here is what stops the host.
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - the store really was attempted, so the containment below is not vacuous.
     await Assert.That(throwingCoordinator.StoreAttempts).IsEqualTo(1)
@@ -1128,7 +1128,7 @@ public class TransportConsumerWorkerCoverageTests {
       // but the code paths for InboxWork processing are exercised
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
@@ -1209,7 +1209,7 @@ public class TransportConsumerWorkerCoverageTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
       .Because("Recovery should re-subscribe to all destinations");
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   // ========================================
@@ -1278,7 +1278,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Act - the _populateDeliveredAtTimestamp path is exercised
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message was stored via StoreInboxMessagesAsync
     await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1);
@@ -1471,9 +1471,9 @@ public class TransportConsumerWorkerCoverageTests {
   public async Task Batch_PoisonQuarantineWithoutDeadLetterDependencies_StillProcessesEveryObservationAsync() {
     var firstHostage = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff1001");
     var secondHostage = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff1002");
-    var coordinator = new CoverageObservingWorkCoordinator(
+    var coordinator = new CoverageObservingWorkCoordinator([
       [new InboxRedeliveryObservation(firstHostage, 10) { ProcessingAttempts = 10 }],
-      [new InboxRedeliveryObservation(secondHostage, 10) { ProcessingAttempts = 10 }]);
+      [new InboxRedeliveryObservation(secondHostage, 10) { ProcessingAttempts = 10 }]]);
     var detector = new CoverageAlwaysQuarantineDetector();
 
     var transport = new CoverageTransport();
@@ -1523,7 +1523,7 @@ public class TransportConsumerWorkerCoverageTests {
     await transport.SimulateMessageReceivedAsync(firstEnvelope, envelopeType);
     await transport.SimulateMessageReceivedAsync(secondEnvelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(detector.QuarantinedMessageIds).Contains(firstHostage.ToString());
     await Assert.That(detector.QuarantinedMessageIds).Contains(secondHostage.ToString())
@@ -1589,7 +1589,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(coordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
       .Because("the diagnostic must not block the message from still being stored");
@@ -1804,14 +1804,12 @@ public class TransportConsumerWorkerCoverageTests {
   // ========================================
 
   private sealed class CoverageTransport : ITransport {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<CoverageSubscription> _subscriptions = [];
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
-    public IReadOnlyList<CoverageSubscription> Subscriptions => _subscriptions;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1821,17 +1819,6 @@ public class TransportConsumerWorkerCoverageTests {
         string? envelopeType = null,
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      _handler = handler;
-      var subscription = new CoverageSubscription();
-      _subscriptions.Add(subscription);
-      return Task.FromResult<ISubscription>(subscription);
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -1856,8 +1843,6 @@ public class TransportConsumerWorkerCoverageTests {
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
       if (_batchHandler != null) {
         await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-      } else if (_handler != null) {
-        await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
   }
@@ -1901,14 +1886,6 @@ public class TransportConsumerWorkerCoverageTests {
         string? envelopeType = null,
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      return Task.FromResult<ISubscription>(new CoverageSubscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -1982,17 +1959,6 @@ public class TransportConsumerWorkerCoverageTests {
         ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      _recordSubscribe();
-      if (_failingTopics.Contains(destination.Address)) {
-        throw new InvalidOperationException($"Subscription to {destination.Address} failed");
-      }
-      return Task.FromResult<ISubscription>(new CoverageSubscription());
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -2035,11 +2001,11 @@ public class TransportConsumerWorkerCoverageTests {
       LastQueuedHandlerName = message.HandlerName;
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -2149,7 +2115,7 @@ public class TransportConsumerWorkerCoverageTests {
     private readonly Queue<IReadOnlyList<InboxRedeliveryObservation>> _perCallObservations;
     public new int StoredInboxCount { get; private set; }
 
-    public CoverageObservingWorkCoordinator(params IReadOnlyList<InboxRedeliveryObservation>[] perCallObservations) {
+    public CoverageObservingWorkCoordinator(IReadOnlyList<IReadOnlyList<InboxRedeliveryObservation>> perCallObservations) {
       _perCallObservations = new Queue<IReadOnlyList<InboxRedeliveryObservation>>(perCallObservations);
     }
 

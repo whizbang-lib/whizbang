@@ -25,8 +25,8 @@ namespace Whizbang.Core.Tests.Messaging;
 public class RedeliveryPumpPriorityTests {
   [Test]
   public async Task Publish_EveryBundlesEnvelopeIsBackground_BeforeSerializationAsync() {
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
     var streamA = TrackedGuid.NewMedo().Value;
     var streamB = TrackedGuid.NewMedo().Value;
@@ -44,7 +44,7 @@ public class RedeliveryPumpPriorityTests {
 
   [Test]
   public async Task Publish_EveryBundleOnTheWireIsBackgroundAsync() {
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()), instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
     var stream = TrackedGuid.NewMedo().Value;
 
@@ -56,8 +56,8 @@ public class RedeliveryPumpPriorityTests {
 
   [Test]
   public async Task Publish_InsideAnInteractiveHandling_TheBundleStaysBackgroundAsync() {
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     var pump = new RedeliveryPump(transport: transport, envelopeSerializer: serializer, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), compositeFactory: new CompositeFactory());
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
@@ -80,7 +80,7 @@ public class RedeliveryPumpPriorityTests {
     Flags = 0
   };
 
-  private sealed class _captureSerializer : IEnvelopeSerializer {
+  private sealed class CaptureSerializer : IEnvelopeSerializer {
     public List<IMessageEnvelope> Captured { get; } = [];
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       Captured.Add(envelope);
@@ -102,7 +102,7 @@ public class RedeliveryPumpPriorityTests {
       throw new NotSupportedException();
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

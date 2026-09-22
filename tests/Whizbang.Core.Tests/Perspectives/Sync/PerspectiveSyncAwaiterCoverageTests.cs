@@ -19,21 +19,21 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Perspectives/Sync/PerspectiveSyncAwaiter.cs</code-under-test>
 public class PerspectiveSyncAwaiterCoverageTests {
-  private sealed class _testPerspective;
+  private sealed class TestPerspective;
 
   // A stand-in for the one real way _buildSyncInquiries sees zero groups after a Count-based
   // non-empty check has already passed: Count and the actual enumeration disagree.
-  private sealed class _countDisagreesWithEnumerationList : IReadOnlyList<TrackedEvent> {
+  private sealed class CountDisagreesWithEnumerationList : IReadOnlyList<TrackedEvent> {
     public int Count => 1;
     public TrackedEvent this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
     public IEnumerator<TrackedEvent> GetEnumerator() { yield break; }
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
   }
 
-  private sealed class _raceyScopedEventTracker : IScopedEventTracker {
+  private sealed class RaceyScopedEventTracker : IScopedEventTracker {
     public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) { }
     public IReadOnlyList<TrackedEvent> GetEmittedEvents() => [];
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => new _countDisagreesWithEnumerationList();
+    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => new CountDisagreesWithEnumerationList();
     public bool AreAllProcessed(SyncFilterNode filter, IReadOnlySet<Guid> processedEventIds) => true;
   }
 
@@ -52,9 +52,9 @@ public class PerspectiveSyncAwaiterCoverageTests {
   // would spin until their own timeout instead of seeing "nothing to wait on" on the first check.
   [Test]
   public async Task IsCaughtUpAsync_TrackerReportsEventsButEnumeratesNone_ReturnsTrueWithoutQueryingAsync() {
-    var awaiter = _awaiter(new _raceyScopedEventTracker());
+    var awaiter = _awaiter(new RaceyScopedEventTracker());
 
-    var isCaughtUp = await awaiter.IsCaughtUpAsync(typeof(_testPerspective), SyncFilter.All().Build());
+    var isCaughtUp = await awaiter.IsCaughtUpAsync(typeof(TestPerspective), SyncFilter.All().Build());
 
     await Assert.That(isCaughtUp).IsTrue();
   }
@@ -64,9 +64,9 @@ public class PerspectiveSyncAwaiterCoverageTests {
   // zero events that were never going to arrive.
   [Test]
   public async Task WaitAsync_TrackerReportsEventsButEnumeratesNone_ReturnsNoPendingEventsWithoutBlockingAsync() {
-    var awaiter = _awaiter(new _raceyScopedEventTracker());
+    var awaiter = _awaiter(new RaceyScopedEventTracker());
 
-    var result = await awaiter.WaitAsync(typeof(_testPerspective), SyncFilter.All().Build());
+    var result = await awaiter.WaitAsync(typeof(TestPerspective), SyncFilter.All().Build());
 
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
     await Assert.That(result.EventsAwaited).IsEqualTo(0);

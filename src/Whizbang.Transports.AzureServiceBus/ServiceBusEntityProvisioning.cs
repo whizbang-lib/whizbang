@@ -1,3 +1,4 @@
+using System.Linq;
 using Azure;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
@@ -130,9 +131,9 @@ internal static class ServiceBusEntityProvisioning {
 
       // Delete existing rules (including $Default)
       var deletedRules = new List<string>();
-      foreach (var rule in existingRules) {
-        await adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
-        deletedRules.Add(rule.Name);
+      foreach (var ruleName in existingRules.Select(rule => rule.Name)) {
+        await adminClient.DeleteRuleAsync(topicName, subscriptionName, ruleName, cancellationToken);
+        deletedRules.Add(ruleName);
       }
 
       // Create SqlFilter rule

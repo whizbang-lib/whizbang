@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Tracing;
 /// </summary>
 public class TracerCoverageTests {
 
-  private sealed class _capturingLogger : ILogger<Tracer> {
+  private sealed class CapturingLogger : ILogger<Tracer> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -32,7 +32,7 @@ public class TracerCoverageTests {
     public List<string> Messages { get { lock (_messages) { return [.. _messages]; } } }
   }
 
-  private sealed class _staticOptionsMonitor(TracingOptions value) : IOptionsMonitor<TracingOptions> {
+  private sealed class StaticOptionsMonitor(TracingOptions value) : IOptionsMonitor<TracingOptions> {
     public TracingOptions CurrentValue => value;
     public TracingOptions Get(string? name) => value;
     public IDisposable? OnChange(Action<TracingOptions, string?> listener) => null;
@@ -44,14 +44,14 @@ public class TracerCoverageTests {
   /// belongs to, or the watch silently does nothing.</summary>
   [Test]
   public async Task BeginHandlerTrace_WildcardPatternMatchesOnlyTheShortNameAsync() {
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var options = new TracingOptions {
       Verbosity = TraceVerbosity.Verbose,
       Components = TraceComponents.Handlers,
       EnableStructuredLogging = true,
     };
     options.TracedHandlers["Order*"] = TraceVerbosity.Verbose;
-    var tracer = new Tracer(logger, new _staticOptionsMonitor(options));
+    var tracer = new Tracer(logger, new StaticOptionsMonitor(options));
 
     tracer.BeginHandlerTrace("MyApp.Handlers.OrderReceptor", "OrderPlaced", handlerCount: 1, isExplicit: false);
     tracer.EndHandlerTrace("MyApp.Handlers.OrderReceptor", "OrderPlaced", HandlerStatus.Success,
@@ -66,14 +66,14 @@ public class TracerCoverageTests {
   /// operator's targeted watch with every routine trace instead of just the one they asked for.</summary>
   [Test]
   public async Task BeginHandlerTrace_NonWildcardPatternNotMatching_StaysRoutineAsync() {
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var options = new TracingOptions {
       Verbosity = TraceVerbosity.Verbose,
       Components = TraceComponents.Handlers,
       EnableStructuredLogging = true,
     };
     options.TracedHandlers["SomethingElseEntirely"] = TraceVerbosity.Verbose;
-    var tracer = new Tracer(logger, new _staticOptionsMonitor(options));
+    var tracer = new Tracer(logger, new StaticOptionsMonitor(options));
 
     tracer.BeginHandlerTrace("MyApp.Handlers.OrderReceptor", "OrderPlaced", handlerCount: 1, isExplicit: false);
     tracer.EndHandlerTrace("MyApp.Handlers.OrderReceptor", "OrderPlaced", HandlerStatus.Success,
@@ -96,7 +96,7 @@ public class TracerCoverageTests {
       Components = TraceComponents.Handlers,
       EnableOpenTelemetry = true,
     };
-    var tracer = new Tracer(NullLogger<Tracer>.Instance, new _staticOptionsMonitor(options));
+    var tracer = new Tracer(NullLogger<Tracer>.Instance, new StaticOptionsMonitor(options));
 
     tracer.BeginHandlerTrace("Foo.Bar", "SomeMessage", handlerCount: 1, isExplicit: false);
     tracer.EndHandlerTrace("Foo.Bar", "SomeMessage", HandlerStatus.Success,

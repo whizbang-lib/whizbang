@@ -172,7 +172,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Act - Initialize database schema
     await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
-    // Assert - the claim's work-state columns are provisioned. Migration 002 put them on wh_inbox;
+    // Assert - the claim's work-state columns are provisioned. Migration 002 put them on wh_inbox —
     // 162 moved them to wh_inbox_state, because they are rewritten on every claim, lease renewal and
     // completion while the message row is written once. The property under test is unchanged -- a
     // database initialized with no perspectives still gets the columns a claim needs -- so the

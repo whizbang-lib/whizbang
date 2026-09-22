@@ -32,7 +32,7 @@ public class InertConcurrencyStartupReporterCoverageTests {
       outboxDrain: Options.Create(new OutboxDrainWorkerOptions()),
       inboxDispatch: Options.Create(new InboxDispatchWorkerOptions()));
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () => await reporter.StopAsync(cts.Token)).ThrowsNothing();
   }

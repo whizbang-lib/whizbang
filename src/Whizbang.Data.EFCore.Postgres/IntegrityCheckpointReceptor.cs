@@ -95,7 +95,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     // UNMEASURED falls back to the previous behavior rather than gating. A backend that has not
     // implemented the count would otherwise have self-healing silently switched off by a package
     // upgrade — the same silent-disable this codebase refuses elsewhere ("the 0s are precisely the
-    // silent-disable this method exists to make impossible"). Stores that CAN report get the gate;
+    // silent-disable this method exists to make impossible"). Stores that CAN report get the gate —
     // stores that cannot get a loud one-line warning and the old behavior.
     var measurable = backlog is not null;
     // IsQuiescent, not IsSettled: since 167 the latter ignores the idle band, and a gap check that
@@ -200,7 +200,7 @@ public sealed partial class IntegrityCheckpointReceptor(
 
       // Log the confirmation before the publish gate (a capped report must not lose its log
       // line) — but WARN only on the window's FIRST confirmation (#667). An origin that
-      // keeps checkpointing the same watermark re-registers the same deficit every cycle;
+      // keeps checkpointing the same watermark re-registers the same deficit every cycle —
       // per-cycle repeats of an identical warning bury the log precisely when there is most
       // to read. Re-confirmations stay visible at Debug and countable on the meter.
       if (tracker.MarkConfirmed(pending)) {

@@ -16,18 +16,18 @@ namespace Whizbang.Core.Tests.Transports;
 [Category("Core")]
 [Category("Transports")]
 public class NamespaceRoutingTransportCoverageTests {
-  private sealed class _testRequest;
-  private sealed class _testResponse;
+  private sealed class TestRequest;
+  private sealed class TestResponse;
 
   [Test]
   public async Task SendAsync_StampedDestination_RoutesToThatNamespacesTransportAsync() {
-    var @default = new _recordingSendTransport();
-    var bulk = new _recordingSendTransport();
+    var @default = new RecordingSendTransport();
+    var bulk = new RecordingSendTransport();
     var transport = new NamespaceRoutingTransport(
       @default, new Dictionary<string, ITransport>(StringComparer.Ordinal) { ["bulk"] = bulk });
     var destination = TransportNamespaces.Stamp(new TransportDestination("coverage-topic"), "bulk");
 
-    await transport.SendAsync<_testRequest, _testResponse>(null!, destination);
+    await transport.SendAsync<TestRequest, TestResponse>(null!, destination);
 
     await Assert.That(bulk.SendCalls.Count).IsEqualTo(1);
     await Assert.That(@default.SendCalls.Count).IsEqualTo(0)
@@ -38,7 +38,7 @@ public class NamespaceRoutingTransportCoverageTests {
   // every namespace transport ordered after it would leak its connection forever.
   [Test]
   public async Task DisposeAsync_TransportImplementingOnlyIDisposable_CallsDisposeAsync() {
-    var syncDisposable = new _syncDisposableTransport();
+    var syncDisposable = new SyncDisposableTransport();
     var transport = new NamespaceRoutingTransport(syncDisposable, new Dictionary<string, ITransport>());
 
     await transport.DisposeAsync();
@@ -51,13 +51,13 @@ public class NamespaceRoutingTransportCoverageTests {
   [Test]
   public async Task DisposeAsync_TransportsImplementingNeitherDisposable_CompletesWithoutThrowingAsync() {
     var transport = new NamespaceRoutingTransport(
-      new _plainTransport(), new Dictionary<string, ITransport>(StringComparer.Ordinal) { ["bulk"] = new _plainTransport() });
+      new PlainTransport(), new Dictionary<string, ITransport>(StringComparer.Ordinal) { ["bulk"] = new PlainTransport() });
 
     await Assert.That(async () => await transport.DisposeAsync()).ThrowsNothing()
       .Because("a namespace transport with no disposal contract must not block disposal of the composition");
   }
 
-  private sealed class _recordingSendTransport : ITransport {
+  private sealed class RecordingSendTransport : ITransport {
     public List<TransportDestination> SendCalls { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.RequestResponse;
@@ -86,7 +86,7 @@ public class NamespaceRoutingTransportCoverageTests {
     }
   }
 
-  private sealed class _syncDisposableTransport : ITransport, IDisposable {
+  private sealed class SyncDisposableTransport : ITransport, IDisposable {
     public int DisposeCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -114,7 +114,7 @@ public class NamespaceRoutingTransportCoverageTests {
     public void Dispose() => DisposeCount++;
   }
 
-  private sealed class _plainTransport : ITransport {
+  private sealed class PlainTransport : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

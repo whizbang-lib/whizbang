@@ -23,9 +23,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Test message types
-  public record _testEvent1([StreamId] string Id = "test-1") : IEvent;
-  public record _testEvent2([StreamId] string Id = "test-2") : IEvent;
-  public record _testEvent3([StreamId] string Id = "test-3") : IEvent;
+  public record TestEvent1([StreamId] string Id = "test-1") : IEvent;
+  public record TestEvent2([StreamId] string Id = "test-2") : IEvent;
+  public record TestEvent3([StreamId] string Id = "test-3") : IEvent;
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -59,9 +59,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-    var envelope1 = new MessageEnvelope<_testEvent1> {
+    var envelope1 = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId1),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -94,9 +94,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope2 = new MessageEnvelope<_testEvent2> {
+    var envelope2 = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(messageId2),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -164,9 +164,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -248,9 +248,9 @@ public class ScopedWorkCoordinatorStrategyTests {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     // Queue multiple types of operations
-    var envelope1 = new MessageEnvelope<_testEvent1> {
+    var envelope1 = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(outboxId1),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -282,9 +282,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope2 = new MessageEnvelope<_testEvent2> {
+    var envelope2 = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(outboxId2),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -316,9 +316,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       }
     });
 
-    var envelope3 = new MessageEnvelope<_testEvent3> {
+    var envelope3 = new MessageEnvelope<TestEvent3> {
       MessageId = MessageId.From(inboxId1),
-      Payload = new _testEvent3(),
+      Payload = new TestEvent3(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -648,9 +648,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -682,9 +682,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -986,7 +986,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -1005,7 +1005,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -1042,9 +1042,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private void _queueTestOutboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1069,9 +1069,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private void _queueTestInboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent2> {
+    var envelope = new MessageEnvelope<TestEvent2> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent2(),
+      Payload = new TestEvent2(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1101,7 +1101,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       if (_disposed) {
         throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
@@ -1115,7 +1115,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       if (_disposed) {
         throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
       }
@@ -1337,7 +1337,7 @@ public class ScopedWorkCoordinatorStrategyTests {
   // IWorkFlusher EXPLICIT INTERFACE (Line 190-191)
   // ========================================
   // Deleted: FlushAsync_WithLogger_OutboxWorkReturned_LogsReturnedWorkAsync.
-  // Asserted on WorkBatch.OutboxWork.Count > 0 from the legacy claim-during-flush;
+  // Asserted on WorkBatch.OutboxWork.Count > 0 from the legacy claim-during-flush —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. Returned-work logging
   // is exercised in publisher-worker / claim-worker tests.
 
@@ -1492,9 +1492,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1535,9 +1535,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent1> {
+    var envelope = new MessageEnvelope<TestEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent1(),
+      Payload = new TestEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -1635,7 +1635,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
   // ========================================
   // DELETED: FlushAsync_WithLogger_MultipleOutboxWorkReturned_LogsUpToThreeAsync.
-  // Asserted result.OutboxWork.Count == 4 against the legacy claim-during-flush path;
+  // Asserted result.OutboxWork.Count == 4 against the legacy claim-during-flush path —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H.
   // ========================================
 
@@ -1695,7 +1695,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
@@ -1706,7 +1706,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
     }

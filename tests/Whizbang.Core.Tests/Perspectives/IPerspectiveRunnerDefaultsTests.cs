@@ -31,7 +31,7 @@ public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task RunWithEventsAsync_DefaultImpl_ReturnsNoneStatusAsync() {
-    IPerspectiveRunner runner = new _MinimalRunner();
+    IPerspectiveRunner runner = new MinimalRunner();
     var streamId = Guid.NewGuid();
     var lastEventId = Guid.NewGuid();
 
@@ -50,7 +50,7 @@ public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task RunWithEventsAsync_NullLastProcessedEventId_LandsOnGuidEmptyAsync() {
-    IPerspectiveRunner runner = new _MinimalRunner();
+    IPerspectiveRunner runner = new MinimalRunner();
 
     var result = await runner.RunWithEventsAsync(
       Guid.NewGuid(),
@@ -66,7 +66,7 @@ public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task CommitSequenceRewind_DelegatesToLegacyRewindAsync() {
-    var runner = new _MinimalRunner();
+    var runner = new MinimalRunner();
     var streamId = Guid.NewGuid();
     var triggerId = Guid.NewGuid();
 
@@ -83,11 +83,11 @@ public class IPerspectiveRunnerDefaultsTests {
     // 3-arg overload — that's the whole point of the legacy fallback contract.
   }
 
-  private sealed class _MinimalRunner : IPerspectiveRunner {
+  private sealed class MinimalRunner : IPerspectiveRunner {
     public int RewindCalls { get; private set; }
     public Guid? LastTriggerEventId { get; private set; }
 
-    public Type PerspectiveType => typeof(_MinimalRunner);
+    public Type PerspectiveType => typeof(MinimalRunner);
 
     public Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId,

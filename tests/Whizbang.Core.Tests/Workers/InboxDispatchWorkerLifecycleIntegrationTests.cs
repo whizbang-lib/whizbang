@@ -77,7 +77,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
     }
@@ -85,7 +85,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> Failures { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       Failures.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -117,7 +117,8 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
         var count = Invocations.Count(i => i.Stage == stage);
         for (var i = _waiters.Count - 1; i >= 0; i--) {
           if (_waiters[i].Stage == stage && count >= _waiters[i].Target) {
-            (toRelease ??= []).Add(_waiters[i].Tcs);
+            toRelease ??= [];
+            toRelease.Add(_waiters[i].Tcs);
             _waiters.RemoveAt(i);
           }
         }
@@ -168,8 +169,8 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName)
       => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType)
-      => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
+      => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
       => jsonElement;
   }

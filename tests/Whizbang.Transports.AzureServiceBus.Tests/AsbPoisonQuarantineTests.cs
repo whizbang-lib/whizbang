@@ -400,9 +400,9 @@ internal sealed class StubPoisonDetector(PoisonVerdict verdict) : IPoisonMessage
 
   public void RecordQuarantine(
       PoisonQuarantineGate gate,
-      PoisonVerdict quarantined,
+      PoisonVerdict verdict,
       PoisonEvaluationContext context,
-      IReadOnlyDictionary<string, object?>? additionalTags = null) => Recorded.Add(quarantined);
+      IReadOnlyDictionary<string, object?>? additionalTags = null) => Recorded.Add(verdict);
 
   public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) =>
     CapabilityReports.Add((transport, entity, canSupplyTrustworthyAge));

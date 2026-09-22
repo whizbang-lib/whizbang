@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/WhizbangShutdownService.cs</code-under-test>
 public class WhizbangShutdownServiceCoverageTests {
 
-  private sealed class _StubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-service";
     public string HostName => "test-host";
@@ -41,7 +41,7 @@ public class WhizbangShutdownServiceCoverageTests {
   public async Task StartAsync_IsANoOpThatCompletesSynchronouslyAsync() {
     var service = new WhizbangShutdownService(
       new ServiceCollection().BuildServiceProvider(),
-      new _StubInstanceProvider(),
+      new StubInstanceProvider(),
       new WhizbangCoreOptions(),
       NullLogger<WhizbangShutdownService>.Instance);
 

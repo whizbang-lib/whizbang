@@ -73,7 +73,7 @@ public class RabbitMQControlClassTtlTests {
 
     await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(channel.Published).Count().IsEqualTo(2);
-    foreach (var (Exchange, RoutingKey, Body, Properties) in channel.Published) {
+    foreach (var (_, _, _, Properties) in channel.Published) {
       await Assert.That(Properties.Expiration)
         .IsEqualTo(90_000.ToString(CultureInfo.InvariantCulture));
     }

@@ -510,7 +510,6 @@ public class TransportConsumerBuilderExtensionsTests {
 
   private sealed class TestServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
     public string ServiceName { get; } = serviceName;
-    public string InstanceId => Guid.NewGuid().ToString("N")[..8];
 
     public string HostName => throw new NotImplementedException();
 

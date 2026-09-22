@@ -27,9 +27,9 @@ public sealed class ReEmissionDiagnosticTests {
   private sealed record ConsumedEvent : IEvent;
 
   private sealed class StubRegistryQuery : IReceptorRegistryQuery {
-    public bool HasAnyConsumer(string messageTypeName) => false;
-    public bool HasInboxHandler(string messageTypeName) => false;
-    public bool HasReceptors(LifecycleStage stage, string messageTypeName) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public IReadOnlyList<HandledMessageInfo> GetHandledMessages() =>
       [new HandledMessageInfo(Whizbang.Core.TypeNameFormatter.Format(typeof(ConsumedEvent)), "tests", Whizbang.Core.Routing.MessageKind.Event)];
   }
@@ -150,9 +150,9 @@ public sealed class ReEmissionDiagnosticTests {
   }
 
   private sealed class ConsumesProbeRegistry : IReceptorRegistryQuery {
-    public bool HasAnyConsumer(string messageTypeName) => false;
-    public bool HasInboxHandler(string messageTypeName) => false;
-    public bool HasReceptors(LifecycleStage stage, string messageTypeName) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public IReadOnlyList<HandledMessageInfo> GetHandledMessages() =>
       [new HandledMessageInfo(Whizbang.Core.TypeNameFormatter.Format(typeof(ProbeEvent)), "tests", Whizbang.Core.Routing.MessageKind.Event)];
   }

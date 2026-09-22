@@ -104,10 +104,8 @@ public readonly struct SemanticVersion : IEquatable<SemanticVersion>, IComparabl
     if (span.IsEmpty) {
       return false;
     }
-    foreach (var c in span) {
-      if (c is < '0' or > '9') {
-        return false;
-      }
+    if (span.ContainsAnyExceptInRange('0', '9')) {
+      return false;
     }
     return int.TryParse(span, out value);
   }
@@ -131,7 +129,10 @@ public readonly struct SemanticVersion : IEquatable<SemanticVersion>, IComparabl
     var mine = PreRelease.Length == 0;
     var theirs = other.PreRelease.Length == 0;
     if (mine || theirs) {
-      return mine && theirs ? 0 : mine ? 1 : -1;
+      if (mine && theirs) {
+        return 0;
+      }
+      return mine ? 1 : -1;
     }
 
     return _comparePreRelease(PreRelease.AsSpan(), other.PreRelease.AsSpan());
@@ -141,7 +142,10 @@ public readonly struct SemanticVersion : IEquatable<SemanticVersion>, IComparabl
     while (true) {
       if (left.IsEmpty || right.IsEmpty) {
         // A larger set of identifiers outranks a smaller one when every preceding one is equal.
-        return left.IsEmpty && right.IsEmpty ? 0 : left.IsEmpty ? -1 : 1;
+        if (left.IsEmpty && right.IsEmpty) {
+          return 0;
+        }
+        return left.IsEmpty ? -1 : 1;
       }
 
       var l = _nextIdentifier(ref left);
@@ -183,12 +187,7 @@ public readonly struct SemanticVersion : IEquatable<SemanticVersion>, IComparabl
     if (span.IsEmpty) {
       return false;
     }
-    foreach (var c in span) {
-      if (c is < '0' or > '9') {
-        return false;
-      }
-    }
-    return true;
+    return !span.ContainsAnyExceptInRange('0', '9');
   }
 
   private static int _compareNumeric(ReadOnlySpan<char> left, ReadOnlySpan<char> right) {

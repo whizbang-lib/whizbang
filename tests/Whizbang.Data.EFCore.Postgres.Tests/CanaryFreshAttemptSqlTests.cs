@@ -41,9 +41,8 @@ public class CanaryFreshAttemptSqlTests : EFCoreTestBase {
     return id;
   }
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static async Task<int> _attemptsOfPendingAsync(NpgsqlConnection conn, string fp) {
     await using var q = conn.CreateCommand();

@@ -51,23 +51,18 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
       _firstBatchSubscribe.TrySetResult();
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
-    public void Dispose() { }
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
       if (_batchHandler is null) {
@@ -76,7 +71,7 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       await _batchHandler(batch, CancellationToken.None);
     }
 
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -110,15 +105,15 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       throw new NotSupportedException();
   }
 
-  private sealed record _innerEvent(string Id) : IEvent;
+  private sealed record InnerEvent(string Id) : IEvent;
 
-  private sealed class _composite(params _innerEvent[] inner) : ICompositeEvent {
+  private sealed class Composite(params InnerEvent[] inner) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
   private static readonly string _compositeEnvelopeType =
-    $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeof(_composite).AssemblyQualifiedName}]], Whizbang.Core";
+    $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeof(Composite).AssemblyQualifiedName}]], Whizbang.Core";
 
   [Test]
   public async Task CompositeFromTransport_StoredAsSingleInboxRow_NotExpandedAsync() {
@@ -163,15 +158,15 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
       await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
-      var compositeEnvelope = new MessageEnvelope<_composite> {
+      var compositeEnvelope = new MessageEnvelope<Composite> {
         MessageId = MessageId.New(),
-        Payload = new _composite(new _innerEvent("J-1"), new _innerEvent("J-2"), new _innerEvent("J-3")),
+        Payload = new Composite(new InnerEvent("J-1"), new InnerEvent("J-2"), new InnerEvent("J-3")),
         Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       };
       await transport.SimulateBatchReceivedAsync([new TransportMessage(compositeEnvelope, _compositeEnvelopeType)]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1);
       await Assert.That(coordinator.StoreInboxBatchSizes).IsEquivalentTo([1])

@@ -65,7 +65,8 @@ public class WhizbangLifecycleCoordinatorTests {
     });
     var coordinator = new WhizbangLifecycleCoordinator([participant], new WhizbangLifecycleOptions());
 
-    var first = coordinator.TransitionAsync(LifecyclePhase.Migrating, CancellationToken.None).AsTask();
+    async Task StartFirst() => await coordinator.TransitionAsync(LifecyclePhase.Migrating, CancellationToken.None);
+    var first = StartFirst();
     var second = coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None).AsTask();
 
     await migratingInvoked.Task; // first transition is in flight
@@ -105,7 +106,8 @@ public class WhizbangLifecycleCoordinatorTests {
   public async Task Transition_NoParticipants_IsNoOpAsync() {
     var coordinator = new WhizbangLifecycleCoordinator([], new WhizbangLifecycleOptions());
 
-    var transition = coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None).AsTask();
+    async Task StartTransition() => await coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None);
+    var transition = StartTransition();
 
     // An empty barrier has no acks to wait on, so it is already done — no ack timeout to serve out,
     // no scheduling round-trip on a host that registered no participants.

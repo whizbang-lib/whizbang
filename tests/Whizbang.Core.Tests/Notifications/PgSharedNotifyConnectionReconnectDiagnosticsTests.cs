@@ -53,7 +53,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -101,7 +101,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -138,7 +138,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -172,7 +172,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -191,7 +191,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
-  private sealed class _CapturingLogger : ILogger<PgSharedNotifyConnection> {
+  private sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
     public TaskCompletionSource DisconnectLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ResolvedConnectionLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource PooledFallbackWarningTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

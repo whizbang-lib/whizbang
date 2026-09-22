@@ -42,7 +42,7 @@ public sealed partial class IntegrityAuditWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.AuditEnabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     LogStarted(_logger, _options.AuditIntervalMinutes);

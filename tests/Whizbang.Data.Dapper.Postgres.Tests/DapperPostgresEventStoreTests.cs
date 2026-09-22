@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 [InheritsTests]
-public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposable {
+public sealed class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposable {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]

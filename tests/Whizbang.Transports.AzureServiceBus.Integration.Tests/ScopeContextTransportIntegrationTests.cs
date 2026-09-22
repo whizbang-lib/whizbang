@@ -29,7 +29,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   // ========================================
   // Tests

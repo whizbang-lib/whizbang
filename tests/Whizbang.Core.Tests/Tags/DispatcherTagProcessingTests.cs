@@ -249,7 +249,7 @@ public class DispatcherTagProcessingTests {
 
   // Receptor that always throws
   public class ThrowingReceptor : IReceptor<ThrowingCommand, ThrowingResult> {
-    public static void Reset() { }
+    public static void Reset() { /* the fake has nothing to do here */ }
 
     public ValueTask<ThrowingResult> HandleAsync(ThrowingCommand message, CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("Receptor failed");

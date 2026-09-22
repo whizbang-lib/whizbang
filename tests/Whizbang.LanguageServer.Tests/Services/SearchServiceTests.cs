@@ -3,7 +3,7 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Tests.Services;
 
-public class SearchServiceTests : IDisposable {
+public sealed class SearchServiceTests : IDisposable {
   private readonly SearchService _sut = new();
 
   private static readonly List<SearchDocument> _sampleDocs =

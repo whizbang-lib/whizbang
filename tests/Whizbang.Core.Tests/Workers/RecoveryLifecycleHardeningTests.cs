@@ -237,7 +237,7 @@ public sealed class RecoveryLifecycleHardeningTests {
   }
 
   private sealed class ImmediateGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public void MarkReady() { }
     public bool IsReady => true;
   }

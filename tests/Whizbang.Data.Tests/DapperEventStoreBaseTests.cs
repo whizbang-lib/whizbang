@@ -32,7 +32,7 @@ namespace Whizbang.Data.Tests;
 /// row shape (EventType/EventData/Metadata/Scope), so malformed rows can be seeded
 /// directly with SQL and read back through the public base-class API.
 /// </remarks>
-public class DapperEventStoreBaseTests : IDisposable {
+public sealed class DapperEventStoreBaseTests : IDisposable {
   private static readonly JsonSerializerOptions _jsonOptions = JsonOptionsHelper.CreateOptions();
 
   private DapperTestBase _testBase = null!;
@@ -242,7 +242,7 @@ public class DapperEventStoreBaseTests : IDisposable {
 
   [Test]
   public async Task GetEventsBetweenAsync_HopsJsonNull_YieldsEmptyHopsAsync() {
-    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm;
+    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm —
     // scope column is SQL NULL, covering the scope-absent early return
     var store = await _createStoreAsync();
     var streamId = (Guid)TrackedGuid.NewMedo();

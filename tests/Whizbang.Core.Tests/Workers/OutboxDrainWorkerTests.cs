@@ -32,19 +32,18 @@ public class OutboxDrainWorkerTests {
   private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public ConcurrentBag<Guid> AllIds { get; } = [];
     private readonly object _gate = new();
     private int _target = -1;
-    private TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
       lock (_gate) {
         if (_target > 0 && AllIds.Count >= _target) {
           _reached.TrySetResult();
@@ -68,7 +67,7 @@ public class OutboxDrainWorkerTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -78,8 +77,8 @@ public class OutboxDrainWorkerTests {
     public List<OutboxWork> Published { get; } = [];
     public TaskCompletionSource<int> ReachedCount { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int TargetCount { get; set; } = 1;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Add(work);
       if (Published.Count >= TargetCount) {
         ReachedCount.TrySetResult(Published.Count);
@@ -165,14 +164,14 @@ public class OutboxDrainWorkerTests {
     }
 
     // Required (non-default-implemented) interface members — minimal stubs.
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -215,12 +214,12 @@ public class OutboxDrainWorkerTests {
   /// deadlocks and the timeout assertion fails. With a parallel drainer (one task per
   /// stream within a batch), N publishes arrive concurrently and the gate releases.
   /// </summary>
-  private sealed class _ConcurrentPublishGateStrategy(int targetInFlight) : IMessagePublishStrategy {
+  private sealed class ConcurrentPublishGateStrategy(int targetInFlight) : IMessagePublishStrategy {
     public TaskCompletionSource<int> AllInFlight { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<OutboxWork> Published { get; } = [];
     private int _inFlight;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       var n = Interlocked.Increment(ref _inFlight);
       if (n >= targetInFlight) {
         AllInFlight.TrySetResult(n);
@@ -257,7 +256,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkCapablePublishStrategy();
+    var publish = new BulkCapablePublishStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
@@ -343,7 +342,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkCapablePublishStrategy();
+    var publish = new BulkCapablePublishStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
@@ -433,7 +432,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkCapablePublishStrategy();
+    var publish = new BulkCapablePublishStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
@@ -526,7 +525,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _ConcurrentPublishGateStrategy(targetInFlight: streamCount);
+    var publish = new ConcurrentPublishGateStrategy(targetInFlight: streamCount);
     var instance = new FakeServiceInstanceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -571,22 +570,22 @@ public class OutboxDrainWorkerTests {
     // With cross-stream parallelism: all 4 PublishAsync invocations arrive and release the
     // gate within a few hundred ms. Without it: only 1 is ever in-flight → AllInFlight never
     // resolves → the timeout below wins and the assertion fails.
-    var winner = await Task.WhenAny(publish.AllInFlight.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+    _ = await Task.WhenAny(publish.AllInFlight.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
     await Assert.That(publish.AllInFlight.Task.IsCompletedSuccessfully)
       .IsTrue()
       .Because("OutboxDrainWorker must drain different streams within one batch in parallel; serial cross-stream foreach blocks all but one publish");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   /// <summary>Publish strategy that completes a signal once N rows have been published.</summary>
-  private sealed class _CountingPublishStrategy(int expected) : IMessagePublishStrategy {
+  private sealed class CountingPublishStrategy(int expected) : IMessagePublishStrategy {
     public TaskCompletionSource<int> Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _count;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       if (Interlocked.Increment(ref _count) >= expected) {
         Reached.TrySetResult(_count);
       }
@@ -629,7 +628,7 @@ public class OutboxDrainWorkerTests {
     }
 
     var drainChannel = new FakeOutboxDrainChannel();
-    var publish = new _CountingPublishStrategy(expected: streamCount);
+    var publish = new CountingPublishStrategy(expected: streamCount);
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
@@ -688,8 +687,8 @@ public class OutboxDrainWorkerTests {
     await Assert.That(coord.FetchCalls).IsLessThan(streamCount)
       .Because("batching must reduce the round-trip count below one-per-stream");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   /// <summary>
@@ -697,12 +696,12 @@ public class OutboxDrainWorkerTests {
   /// batch API vs the single API. Used to prove the drainer prefers <c>PublishBatchAsync</c>
   /// when <c>SupportsBulkPublish == true</c>, instead of looping <c>PublishAsync</c> per row.
   /// </summary>
-  private sealed class _BulkCapablePublishStrategy : IMessagePublishStrategy {
+  private sealed class BulkCapablePublishStrategy : IMessagePublishStrategy {
     public int SingleCallCount;
     public List<IReadOnlyList<OutboxWork>> BatchCalls { get; } = [];
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Interlocked.Increment(ref SingleCallCount);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -710,9 +709,9 @@ public class OutboxDrainWorkerTests {
         CompletedStatus = MessageProcessingStatus.Published,
       });
     }
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      lock (BatchCalls) { BatchCalls.Add(works); }
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      lock (BatchCalls) { BatchCalls.Add(workItems); }
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,
@@ -740,7 +739,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkCapablePublishStrategy();
+    var publish = new BulkCapablePublishStrategy();
     var instance = new FakeServiceInstanceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -779,8 +778,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(allPublished.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.BatchCalls.Count)
       .IsEqualTo(1)
@@ -793,15 +792,15 @@ public class OutboxDrainWorkerTests {
 
   /// <summary>Bulk strategy that returns a mix of success and failure results — covers
   /// the per-result routing branches in <c>_publishBulkAsync</c>.</summary>
-  private sealed class _BulkMixedResultStrategy(HashSet<Guid> failIds) : IMessagePublishStrategy {
+  private sealed class BulkMixedResultStrategy(HashSet<Guid> failIds) : IMessagePublishStrategy {
     public List<IReadOnlyList<OutboxWork>> BatchCalls { get; } = [];
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       Task.FromResult(new MessagePublishResult { MessageId = work.MessageId, Success = true, CompletedStatus = MessageProcessingStatus.Published });
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      lock (BatchCalls) { BatchCalls.Add(works); }
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      lock (BatchCalls) { BatchCalls.Add(workItems); }
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = !failIds.Contains(w.MessageId),
         CompletedStatus = failIds.Contains(w.MessageId) ? w.Status : MessageProcessingStatus.Published,
@@ -813,12 +812,12 @@ public class OutboxDrainWorkerTests {
 
   /// <summary>Bulk strategy whose batch call throws — covers the "whole batch fails" branch
   /// that fans every row out to the failure channel.</summary>
-  private sealed class _BulkThrowingPublishStrategy : IMessagePublishStrategy {
+  private sealed class BulkThrowingPublishStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("PublishAsync should not be called on bulk-capable strategy");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) =>
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("transport down");
   }
 
@@ -838,7 +837,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkMixedResultStrategy([bad]);
+    var publish = new BulkMixedResultStrategy([bad]);
     var instance = new FakeServiceInstanceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -876,8 +875,8 @@ public class OutboxDrainWorkerTests {
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
     _ = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(completion.AllIds).Contains(ok1);
     await Assert.That(completion.AllIds).Contains(ok2);
@@ -900,7 +899,7 @@ public class OutboxDrainWorkerTests {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var publish = new _BulkThrowingPublishStrategy();
+    var publish = new BulkThrowingPublishStrategy();
     var instance = new FakeServiceInstanceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -910,7 +909,7 @@ public class OutboxDrainWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    _ = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
@@ -938,8 +937,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(idle.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(failure.All.Count)
       .IsEqualTo(msgIds.Length)
@@ -1008,8 +1007,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamB);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(2);
   }
@@ -1059,13 +1058,13 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     // Diagnose: was FetchOutboxBatchAsync even called?
-    var fetchCalled = await Task.WhenAny(coord.FirstFetchCalled.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    _ = await Task.WhenAny(coord.FirstFetchCalled.Task, Task.Delay(TimeSpan.FromSeconds(15)));
     await Assert.That(coord.FirstFetchCalled.Task.IsCompleted).IsTrue()
       .Because("worker should call FetchOutboxBatchAsync after a stream_id arrives on the drain channel");
 
-    var reached = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.ReachedCount.Task.IsCompleted).IsTrue();
     await Assert.That(publish.Published.Count).IsEqualTo(2);
@@ -1126,8 +1125,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(30)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(250)
       .Because("drainer must keep fetching for the same stream until pending=0; 250 rows / MaxPerStream=100 = 3 iterations");
@@ -1185,8 +1184,8 @@ public class OutboxDrainWorkerTests {
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(30)));
     // Give a chance for any spurious second-pass publishes to happen.
     await Task.Delay(200);
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(50)
       .Because("session-set dedup must skip rows already published this drain session — no re-publish even if fetch returns the same rows");
@@ -1210,14 +1209,14 @@ public class OutboxDrainWorkerTests {
       return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -1290,9 +1289,9 @@ public class OutboxDrainWorkerTests {
       secondCompletionSeen.TrySetResult(true);
     });
 
-    var ok = await Task.WhenAny(secondCompletionSeen.Task, Task.Delay(TimeSpan.FromSeconds(30)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    _ = await Task.WhenAny(secondCompletionSeen.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1);
   }
@@ -1305,7 +1304,7 @@ public class OutboxDrainWorkerTests {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
     public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => jsonBytes;
-    public object DeserializeFromJsonElement(JsonElement payload, string messageTypeName) => payload;
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
   private sealed class CapturingReceptorInvoker : IReceptorInvoker {
@@ -1383,8 +1382,8 @@ public class OutboxDrainWorkerTests {
     for (var i = 0; i < 50 && invoker.Invocations.All(x => x.Stage != LifecycleStage.PostOutboxInline); i++) {
       await Task.Delay(20);
     }
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var stages = invoker.Invocations.ConvertAll(x => x.Stage);
     await Assert.That(stages).Contains(LifecycleStage.PreOutboxInline)
@@ -1441,8 +1440,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1)
       .Because("publish must still happen even when lifecycle dependencies are unwired (legacy host).");
@@ -1514,8 +1513,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1)
       .Because("Receptor throwing at PreOutboxInline must not stop the transport publish.");
@@ -1593,8 +1592,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1)
       .Because("Publish must still happen when no receptors are registered for the gated Outbox stages.");
@@ -1655,8 +1654,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
       .Because("Empty-destination (event-store-only) messages must not fire transport-side lifecycle stages.");
@@ -1665,8 +1664,8 @@ public class OutboxDrainWorkerTests {
   /// <summary>Publish strategy that returns Success=false to exercise the failure path.</summary>
   private sealed class FailingPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Reached.TrySetResult();
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -1730,8 +1729,8 @@ public class OutboxDrainWorkerTests {
     for (var i = 0; i < 50 && failure.All.IsEmpty; i++) {
       await Task.Delay(20);
     }
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(failure.All.Count).IsEqualTo(1)
       .Because("Success=false from transport must route the row to the failure channel for orphan re-claim.");
@@ -1742,8 +1741,8 @@ public class OutboxDrainWorkerTests {
   /// <summary>Publish strategy that throws a non-cancellation exception to exercise the catch path.</summary>
   private sealed class ThrowingPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Reached.TrySetResult();
       throw new InvalidOperationException("simulated transport blow-up");
     }
@@ -1799,8 +1798,8 @@ public class OutboxDrainWorkerTests {
     for (var i = 0; i < 50 && failure.All.IsEmpty; i++) {
       await Task.Delay(20);
     }
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(failure.All.Count).IsEqualTo(1)
       .Because("A throwing publish must route the row to the failure channel.");
@@ -1869,8 +1868,8 @@ public class OutboxDrainWorkerTests {
     await drainChannel.WriteAsync(streamId);
 
     _ = await Task.WhenAny(publish.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(publish.Published.Count).IsEqualTo(1)
       .Because("Lifecycle deserialize failure must not block publish.");

@@ -60,24 +60,8 @@ public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<S
     // truncate. Cancel or Defer vetoes the close (nothing is truncated). A THROWING pre-hook aborts the
     // close — durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
     // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
-    {
-      DestructionResult decision;
-      try {
-        decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogPreCloseFailed(_logger, ex, streamId);
-        throw;
-      }
-      if (decision.Cancel) {
-        LogCloseVetoed(_logger, streamId, "canceled");
-        return new StreamCloseResult("canceled", 0);
-      }
-      if (decision.DeferUntil.HasValue) {
-        LogCloseVetoed(_logger, streamId, "deferred");
-        return new StreamCloseResult("deferred", 0);
-      }
+    if (await _vetoedByPreDestructionAsync(context, streamId, cancellationToken).ConfigureAwait(false) is { } veto) {
+      return veto;
     }
 
     // Fold-before-discard (apply-stack lineage): the close is about to truncate this stream's
@@ -119,4 +103,29 @@ public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<S
   [LoggerMessage(EventId = 42, Level = LogLevel.Warning,
     Message = "PostDestruction close hook threw for stream {StreamId}; close already committed")]
   static partial void LogPostCloseFailed(ILogger logger, Exception ex, Guid streamId);
+
+  /// <summary>
+  /// Runs the PreDestruction hook and returns the veto result when the hook cancels or defers the
+  /// close; null means the close proceeds. A throwing hook aborts the close (rethrown after logging).
+  /// </summary>
+  private async Task<StreamCloseResult?> _vetoedByPreDestructionAsync(DestructionContext context, Guid streamId, CancellationToken cancellationToken) {
+    DestructionResult decision;
+    try {
+      decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogPreCloseFailed(_logger, ex, streamId);
+      throw;
+    }
+    if (decision.Cancel) {
+      LogCloseVetoed(_logger, streamId, "canceled");
+      return new StreamCloseResult("canceled", 0);
+    }
+    if (decision.DeferUntil.HasValue) {
+      LogCloseVetoed(_logger, streamId, "deferred");
+      return new StreamCloseResult("deferred", 0);
+    }
+    return null;
+  }
 }

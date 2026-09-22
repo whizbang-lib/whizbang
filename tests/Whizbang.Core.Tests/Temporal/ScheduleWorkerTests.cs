@@ -44,7 +44,7 @@ public class ScheduleWorkerTests {
       options: Options.Create(options ?? new TemporalOptions()),
       logger: logger ?? NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      timerLogger: NullLogger<ScheduleTimer>.Instance,
+      loggerFactory: NullLoggerFactory.Instance,
       signalBus: bus ?? NullSignalBus.Instance,
       timeProvider: clock);
     return (worker, claimer);
@@ -114,7 +114,7 @@ public class ScheduleWorkerTests {
   [Timeout(30000)]
   public async Task Execute_Disabled_ParksWithoutEverClaimingAsync(CancellationToken ct) {
     var claimer = new SignallingClaimer();
-    var log = new _recordingLogger();
+    var log = new RecordingLogger();
     var (worker, _) = _create(new TemporalOptions { Enabled = false }, claimer: claimer, logger: log);
 
     await worker.StartAsync(CancellationToken.None);
@@ -178,7 +178,7 @@ public class ScheduleWorkerTests {
     // loop must treat that as a stop, not as a failed pass -- otherwise every deploy logs a drain
     // failure and re-arms, and the log stops distinguishing a real claim fault from a rollout.
     var claimer = new SignallingClaimer { BlockUntilCancelled = true };
-    var log = new _recordingLogger();
+    var log = new RecordingLogger();
     var (worker, _) = _create(claimer: claimer, logger: log);
 
     await worker.StartAsync(CancellationToken.None);
@@ -355,7 +355,7 @@ public class ScheduleWorkerTests {
   private const int TICK_FAILED_EVENT_ID = 3;
 
   /// <summary>Records the worker's log events, and reports when it announced it was disabled.</summary>
-  private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<ScheduleWorker> {
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<ScheduleWorker> {
     private readonly List<int> _events = [];
     private readonly TaskCompletionSource _disabled = new(TaskCreationOptions.RunContinuationsAsynchronously);
 

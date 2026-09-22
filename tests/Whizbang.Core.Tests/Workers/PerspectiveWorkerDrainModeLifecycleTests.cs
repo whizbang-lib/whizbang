@@ -54,8 +54,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
       [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
 
-    public int InvocationCount => _invocations.Count;
-
     public bool HasStage(LifecycleStage stage) =>
       _invocations.Any(i => i.Stage == stage);
 
@@ -85,11 +83,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     public List<StreamEventData> StreamEventsToReturn { get; set; } = [];
     public int GetStreamEventsCallCount { get; private set; }
 
-    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      await _batchCycleComplete.Task.WaitAsync(cts.Token);
-    }
-
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var batch = Interlocked.Increment(ref _batchCount);
       if (batch >= 2) {
@@ -118,7 +111,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     }
 
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
@@ -173,26 +166,26 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     private sealed class CapturingPerspectiveRunner(FilteringPerspectiveRunnerRegistry registry) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string name, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
-        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = name, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed });
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed });
 
-      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string name, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         Interlocked.Increment(ref registry._runWithEventsCount);
         var eventIds = events.Select(e => e.MessageId.Value).ToList();
-        registry._eventsPerPerspective.AddOrUpdate(name, eventIds, (_, existing) => { existing.AddRange(eventIds); return existing; });
+        registry._eventsPerPerspective.AddOrUpdate(perspectiveName, eventIds, (_, existing) => { existing.AddRange(eventIds); return existing; });
         return Task.FromResult(new PerspectiveCursorCompletion {
           StreamId = streamId,
-          PerspectiveName = name,
+          PerspectiveName = perspectiveName,
           LastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.NewGuid(),
           Status = PerspectiveProcessingStatus.Completed,
           PerspectiveType = typeof(object)
         });
       }
 
-      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string name, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-        RunAsync(streamId, name, null, cancellationToken);
+      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
 
-      public Task BootstrapSnapshotAsync(Guid streamId, string name, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
   }
 
@@ -718,8 +711,6 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
   /// </summary>
   private sealed class GatedReceptorInvoker(LifecycleStage gatedStage, TaskCompletionSource gate, TaskCompletionSource started) : IReceptorInvoker {
     private readonly ConcurrentBag<(Guid EventId, LifecycleStage Stage)> _invocations = [];
-    public IReadOnlyList<(Guid EventId, LifecycleStage Stage)> Invocations =>
-      [.. _invocations.ToArray().OrderBy(i => i.EventId).ThenBy(i => i.Stage)];
     public bool HasStage(LifecycleStage stage) => _invocations.Any(i => i.Stage == stage);
 
     public async ValueTask InvokeAsync(
@@ -818,7 +809,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       _createEnvelope(eventId, new AlphaEvent("test"))
     };
 
-    var (worker, _, _, _, invoker, _, harness) = _createWorkerWithLifecycle(
+    var (worker, _, _, _, _, _, harness) = _createWorkerWithLifecycle(
       registrations, rawEvents, typedEvents, [streamId]);
 
     var batchComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -21,13 +21,11 @@ public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
-  int commandTimeoutSeconds = 5,
   WorkCoordinatorGate? gate = null
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
-  private readonly int _commandTimeoutSeconds = commandTimeoutSeconds;
   private readonly WorkCoordinatorGate? _gate = gate;
 
   /// <summary>
@@ -203,7 +201,7 @@ public partial class DapperWorkCoordinator(
       new { streamIds = streamIds.ToArray() });
   }
 
-  private string _serializeFailures(MessageFailure[] failures) {
+  internal string SerializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
     }
@@ -610,7 +608,7 @@ public partial class DapperWorkCoordinator(
     await using var command = connection.CreateCommand();
     command.CommandText = "SELECT * FROM public.purge_orphan_inbox(@handled_types)";
     command.CommandTimeout = 30;
-    var param = (NpgsqlParameter)command.CreateParameter();
+    var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
     param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];
@@ -831,7 +829,7 @@ public partial class DapperWorkCoordinator(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var failuresJson = _serializeFailures([.. failures]);
+    var failuresJson = SerializeFailures([.. failures]);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
@@ -902,10 +900,8 @@ public partial class DapperWorkCoordinator(
   public async Task FlushCompletionsAsync(FlushCompletionsRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var outboxIds = request.OutboxIds is null ? []
-      : (request.OutboxIds is Guid[] a ? a : [.. request.OutboxIds]);
-    var perspIds = request.PerspectiveEventWorkIds is null ? []
-      : (request.PerspectiveEventWorkIds is Guid[] p ? p : [.. request.PerspectiveEventWorkIds]);
+    Guid[] outboxIds = request.OutboxIds switch { null => [], Guid[] a => a, var ids => [.. ids] };
+    Guid[] perspIds = request.PerspectiveEventWorkIds switch { null => [], Guid[] p => p, var ids => [.. ids] };
     var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
       ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
     var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
@@ -1024,7 +1020,7 @@ public partial class DapperWorkCoordinator(
         sb.Append(',');
       }
       sb.Append("{\"Category\":\"").Append(failures[i].Category.ToSqlCategory()).Append("\",")
-        .Append("\"Items\":").Append(_serializeFailures([.. failures[i].Items])).Append('}');
+        .Append("\"Items\":").Append(SerializeFailures([.. failures[i].Items])).Append('}');
     }
     sb.Append(']');
     return sb.ToString();
@@ -1096,7 +1092,7 @@ internal class StreamEventRow {
   public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }
   // v0.502 slice C.4c — wh_perspective_events.attempts surfaced by get_stream_events
-  // for the perspective worker's pre-apply DLQ check. Dapper hydrates by column name;
+  // for the perspective worker's pre-apply DLQ check. Dapper hydrates by column name —
   // S3459 false positive suppressed (same pattern as out_commit_sequence above).
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
     Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]

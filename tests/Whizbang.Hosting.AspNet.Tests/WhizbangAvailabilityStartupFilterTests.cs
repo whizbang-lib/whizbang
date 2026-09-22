@@ -20,7 +20,7 @@ public class WhizbangAvailabilityStartupFilterTests {
   private sealed class FakeGate : ISchemaReadyGate {
     public bool IsReady => false; // never ready, so the gate is active
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) =>
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
       Task.Delay(Timeout.Infinite, cancellationToken);
   }
 

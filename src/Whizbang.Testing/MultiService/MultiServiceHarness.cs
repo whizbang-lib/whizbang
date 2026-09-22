@@ -35,7 +35,6 @@ namespace Whizbang.Testing.MultiService;
 /// <docs>testing/multi-service-harness</docs>
 public sealed class MultiServiceHarness : IAsyncDisposable {
   private readonly List<ServiceRuntime> _services;
-  private readonly JsonSerializerOptions _wireOptions;
   private readonly WireFaultInjector _faults;
 
   /// <summary>The shared wire connecting every service in the harness.</summary>
@@ -44,7 +43,6 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
   private MultiServiceHarness(InMemoryWireTransport wire, List<ServiceRuntime> services, JsonSerializerOptions wireOptions, WireFaultInjector faults) {
     Wire = wire;
     _services = services;
-    _wireOptions = wireOptions;
     _faults = faults;
   }
 

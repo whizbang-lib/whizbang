@@ -61,10 +61,10 @@ public class RepairDrainWorkerPriorityTests {
       .Because("the worker builds the envelope by hand and publishes straight to the transport; no ambient number applies to it");
   }
 
-  private static (RepairDrainWorker Worker, _drainCoordinator Coordinator, _captureTransport Transport) _build(
+  private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport) _build(
       StreamIntegrityOptions options, Guid origin) {
-    var coordinator = new _drainCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new DrainCoordinator();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var services = new ServiceCollection();
@@ -72,7 +72,7 @@ public class RepairDrainWorkerPriorityTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -85,7 +85,7 @@ public class RepairDrainWorkerPriorityTests {
     return (worker, coordinator, transport);
   }
 
-  private sealed class _drainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class DrainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<IntegrityRepairDrainItem> Eligible { get; } = [];
     public Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
         IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
@@ -98,7 +98,7 @@ public class RepairDrainWorkerPriorityTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -113,7 +113,7 @@ public class RepairDrainWorkerPriorityTests {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";

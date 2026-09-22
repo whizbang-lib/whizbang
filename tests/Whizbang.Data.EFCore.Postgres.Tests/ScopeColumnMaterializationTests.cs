@@ -353,8 +353,8 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
       EventWorkId = Guid.CreateVersion7(),
       EventType = reader.GetString(0),
       EventData = reader.GetString(1),
-      Metadata = reader.IsDBNull(2) ? null : reader.GetString(2),
-      Scope = reader.IsDBNull(3) ? null : reader.GetString(3),
+      Metadata = await reader.IsDBNullAsync(2) ? null : reader.GetString(2),
+      Scope = await reader.IsDBNullAsync(3) ? null : reader.GetString(3),
     };
   }
 

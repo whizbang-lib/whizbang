@@ -131,7 +131,7 @@ public class ReconcilePerspectiveRegistryKeyAdoptionSqlTests : EFCoreTestBase {
     var rows = new List<RegistryRow>();
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
-      rows.Add(new RegistryRow(reader.GetString(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetInt32(2)));
+      rows.Add(new RegistryRow(reader.GetString(0), reader.GetBoolean(1), await reader.IsDBNullAsync(2) ? null : reader.GetInt32(2)));
     }
     return rows;
   }

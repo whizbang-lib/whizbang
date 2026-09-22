@@ -89,7 +89,6 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
     return new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: scopeFactory,
-      jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: gate,
@@ -141,17 +140,6 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public async Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeEntered.TrySetResult();
-      if (BlockSubscribeUntilCanceled) {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
-      }
-      return new StubSubscription();
-    }
-
     public async Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -168,7 +156,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull =>
       throw new NotSupportedException();

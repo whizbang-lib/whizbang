@@ -13,7 +13,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// Simple manual mocks since Rocks isn't working yet.
 /// Only implements members actually used by RabbitMQChannelPool tests.
 /// </summary>
-internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen = true) : IConnection {
+internal sealed class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen = true) : IConnection {
   private readonly Func<Task<IChannel>> _channelFactory = channelFactory;
 
   public Task<IChannel> CreateChannelAsync(CreateChannelOptions? options = null, CancellationToken cancellationToken = default) {
@@ -32,7 +32,7 @@ internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen =
   // from closed to open (or back) between two readiness checks — RabbitMQReadinessCheck's
   // recovery-logging branch only fires on that transition.
   public bool IsOpen { get; set; } = isOpen;
-  public AmqpTcpEndpoint[] KnownHosts => [];
+  public static AmqpTcpEndpoint[] KnownHosts => [];
   public IProtocol Protocol => throw new NotImplementedException();
   public IDictionary<string, object?>? ServerProperties => null;
   public IEnumerable<ShutdownReportEntry> ShutdownReport => [];
@@ -64,7 +64,7 @@ internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen =
   public event AsyncEventHandler<RecoveringConsumerEventArgs>? RecoveringConsumerAsync;
 
   public Task CloseAsync(ushort reasonCode, string reasonText, TimeSpan timeout, bool abort, CancellationToken cancellationToken = default) => Task.CompletedTask;
-  public Task CloseAsync(ShutdownEventArgs reason, bool abort, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  public static Task CloseAsync(ShutdownEventArgs reason, bool abort, CancellationToken cancellationToken = default) => Task.CompletedTask;
   public ValueTask DisposeAsync() => ValueTask.CompletedTask;
   public void Dispose() { }
   public Task UpdateSecretAsync(string newSecret, string reason, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -112,6 +112,11 @@ internal class FakeChannel : IChannel {
   public Exception? ExceptionToThrowOnDispose { get; set; }
 
   public void Dispose() {
+    Dispose(true);
+    GC.SuppressFinalize(this);
+  }
+
+  protected virtual void Dispose(bool disposing) {
     if (ExceptionToThrowOnDispose != null) {
       throw ExceptionToThrowOnDispose;
     }
@@ -128,7 +133,7 @@ internal class FakeChannel : IChannel {
   public ShutdownEventArgs? CloseReason => null;
   public IAsyncBasicConsumer? DefaultConsumer { get; set; }
   public bool IsClosed => IsDisposed;
-  public ulong NextPublishSeqNo => 0;
+  public static ulong NextPublishSeqNo => 0;
   public string? CurrentQueue => null;
   public TimeSpan ContinuationTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
@@ -173,7 +178,7 @@ internal class FakeChannel : IChannel {
   }
 
   // Implement methods used by PublishAsync
-  public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+  public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments = null, bool passive = false, bool noWait = false, CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
     ExchangeDeclareAsyncCalled = true;
     ExchangeDeclareCount++;
@@ -182,7 +187,7 @@ internal class FakeChannel : IChannel {
     return Task.CompletedTask;
   }
 
-  public ValueTask BasicPublishAsync<TProperties>(string exchange, string routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
+  public ValueTask BasicPublishAsync<TProperties>(string exchange, string routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
     if (ExceptionToThrowOnPublish != null) {
       throw ExceptionToThrowOnPublish;
     }
@@ -192,7 +197,7 @@ internal class FakeChannel : IChannel {
     return ValueTask.CompletedTask;
   }
 
-  public ValueTask BasicPublishAsync<TProperties>(CachedString exchange, CachedString routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body = default, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
+  public ValueTask BasicPublishAsync<TProperties>(CachedString exchange, CachedString routingKey, bool mandatory, TProperties basicProperties, ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) where TProperties : IReadOnlyBasicProperties, IAmqpHeader {
     if (ExceptionToThrowOnPublish != null) {
       throw ExceptionToThrowOnPublish;
     }
@@ -201,7 +206,7 @@ internal class FakeChannel : IChannel {
   }
 
   // Implement subscription methods for SubscribeAsync tests
-  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments = null, bool passive = false, bool noWait = false, CancellationToken cancellationToken = default) {
     QueueDeclareAsyncCalled = true;
     QueueDeclareCount++;
     LastDeclaredQueueName = queue;
@@ -212,7 +217,7 @@ internal class FakeChannel : IChannel {
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }
 
-  public virtual Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+  public virtual Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) {
     QueueBindAsyncCalled = true;
     QueueBindCount++;
     QueueBindings.Add((queue, exchange, routingKey));
@@ -226,7 +231,7 @@ internal class FakeChannel : IChannel {
     return Task.FromResult(consumerTag);
   }
 
-  public Task BasicCancelAsync(string consumerTag, bool noWait, CancellationToken cancellationToken = default) {
+  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) {
     BasicCancelAsyncCalled = true;
     return Task.CompletedTask;
   }
@@ -265,7 +270,7 @@ internal class FakeChannel : IChannel {
 
   // All other methods throw NotImplementedException
   public ValueTask<ulong> GetNextPublishSequenceNumberAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 
   public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) {
     if (ExceptionToThrowOnAck != null) {
@@ -299,9 +304,9 @@ internal class FakeChannel : IChannel {
   public Task CloseAsync(ushort replyCode, string replyText, bool abort, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task CloseAsync(ShutdownEventArgs reason, bool abort, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task CloseAsync(ShutdownEventArgs reason, bool abort) => Task.CompletedTask;
-  public ValueTask ConfirmSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static ValueTask ConfirmSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> ConsumerCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeBindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeBindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 
   public Task ExchangeDeclarePassiveAsync(string exchange, CancellationToken cancellationToken = default) {
     PassiveExchangeDeclareCount++;
@@ -312,8 +317,8 @@ internal class FakeChannel : IChannel {
     return Task.CompletedTask;
   }
 
-  public Task ExchangeDeleteAsync(string exchange, bool ifUnused, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeDeleteAsync(string exchange, bool ifUnused = false, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> MessageCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 
   /// <summary>
@@ -331,12 +336,12 @@ internal class FakeChannel : IChannel {
     var depth = PassiveQueueDepths.TryGetValue(queue, out var mapped) ? mapped : 0u;
     return Task.FromResult(new QueueDeclareOk(queue, depth, 0));
   }
-  public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxCommitAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxRollbackAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<bool> WaitForConfirmsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task WaitForConfirmsOrDieAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task<bool> WaitForConfirmsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public static Task WaitForConfirmsOrDieAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
 }

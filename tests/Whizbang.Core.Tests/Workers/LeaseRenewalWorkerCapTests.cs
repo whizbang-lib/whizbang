@@ -103,7 +103,7 @@ public class LeaseRenewalWorkerCapTests {
     }
   }
 
-  private static (LeaseRenewalWorker worker, FakeCoordinator coord, FakeTimeProvider time, LeaseRegistry registry) _build(int maxRenewals) {
+  private static (LeaseRenewalWorker worker, FakeCoordinator coord, FakeTimeProvider time, LeaseRegistry registry) _build() {
     var coord = new FakeCoordinator();
     var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero));
     var registry = new LeaseRegistry();
@@ -140,7 +140,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task Renewal_BumpsHandleCountAndCallsRenewLeasesAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 6);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();
@@ -166,7 +166,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task RenewalCount_AtCap_StopsSubmittingToRenewLeasesAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 3);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     using var handle = _newHandle(time, registry, workId, maxRenewals: 3);
     using var cts = new CancellationTokenSource();
@@ -199,7 +199,7 @@ public class LeaseRenewalWorkerCapTests {
 
   [Test]
   public async Task DisposedHandle_SkippedAtRenewalAsync() {
-    var (worker, coord, time, registry) = _build(maxRenewals: 6);
+    var (worker, coord, time, registry) = _build();
     var workId = (Guid)TrackedGuid.NewMedo();
     var handle = _newHandle(time, registry, workId, maxRenewals: 6);
     using var cts = new CancellationTokenSource();

@@ -119,7 +119,7 @@ public class DrainChannelTests {
     // A bare implementation that DOESN'T override IsInFlight / MarkDraining /
     // MarkDrained falls through to the interface defaults — false + no-op.
     // Default interface methods can only be reached via the interface reference.
-    IOutboxDrainChannel ch = new _MinimalOutboxChannel();
+    IOutboxDrainChannel ch = new MinimalOutboxChannel();
     var sid = Guid.NewGuid();
 
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
@@ -132,7 +132,7 @@ public class DrainChannelTests {
 
   [Test]
   public async Task IInboxDrainChannel_DefaultMethods_ReturnFalseAndNoOpAsync() {
-    IInboxDrainChannel ch = new _MinimalInboxChannel();
+    IInboxDrainChannel ch = new MinimalInboxChannel();
     var sid = Guid.NewGuid();
 
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
@@ -142,7 +142,7 @@ public class DrainChannelTests {
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
   }
 
-  private sealed class _MinimalOutboxChannel : IOutboxDrainChannel {
+  private sealed class MinimalOutboxChannel : IOutboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default)
@@ -150,7 +150,7 @@ public class DrainChannelTests {
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 
-  private sealed class _MinimalInboxChannel : IInboxDrainChannel {
+  private sealed class MinimalInboxChannel : IInboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default)

@@ -60,7 +60,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
 
   [Test]
   public async Task LivenessFactory_ResolvesAgainstTheAggregatorAsync() {
-    // The registration factories are only run when the health check is materialised;
+    // The registration factories are only run when the health check is materialised —
     // resolving them here is what exercises the lambdas rather than just their registration.
     await using var provider = _buildProvider();
     var live = _registrations(provider).Single(r => r.Name == "whizbang-live");

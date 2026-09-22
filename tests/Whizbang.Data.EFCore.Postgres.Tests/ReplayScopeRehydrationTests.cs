@@ -75,7 +75,7 @@ public class ReplayScopeRehydrationTests : EFCoreTestBase {
   // NOTE: the hops-present path is deliberately not covered here. Building valid EnvelopeMetadata
   // JSON for a fixture proved unreliable (MessageHop has a custom converter with required members),
   // and a test that fails on fixture shape rather than behavior is worse than no test. That path is
-  // unchanged by construction: the fix is an `else if (hops.Count == 0)` branch, so an event that
+  // unchanged by construction: the fix is a separate branch taken only when there are no hops, so an event that
   // arrives WITH hops takes exactly the code it took before.
 
   [Test]

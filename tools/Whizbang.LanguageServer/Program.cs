@@ -50,4 +50,4 @@ await server.WaitForExit.ConfigureAwait(false);
   Justification = "Process entry point: binds the LSP server to this process's stdin/stdout and blocks until exit. "
                 + "Cannot run under a test host without taking over its console streams. The decisions it makes are "
                 + "covered directly in LanguageServerServicesTests.")]
-internal partial class Program { }
+internal static partial class Program { }

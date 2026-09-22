@@ -215,7 +215,8 @@ public sealed class RedeliveryPump(
     // aborts the whole serve — every later chunk dies with it and the requester's attempt burns
     // for nothing. Cancellation is a shutdown signal, never retried.
     var attempts = Math.Max(1, _options.PublishRetryAttempts);
-    for (var attempt = 1; ; attempt++) {
+    var attempt = 1;
+    while (true) {
       try {
         await _transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
           cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -227,6 +228,7 @@ public sealed class RedeliveryPump(
         if (delayMs > 0) {
           await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _time, cancellationToken).ConfigureAwait(false);
         }
+        attempt++;
       }
     }
   }

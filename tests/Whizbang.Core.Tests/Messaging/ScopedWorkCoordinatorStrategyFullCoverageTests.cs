@@ -26,8 +26,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Test events
-  public record _coverageEvent1([StreamId] string Id = "coverage-1") : IEvent;
-  public record _coverageEvent2([StreamId] string Id = "coverage-2") : IEvent;
+  public record CoverageEvent1([StreamId] string Id = "coverage-1") : IEvent;
+  public record CoverageEvent2([StreamId] string Id = "coverage-2") : IEvent;
 
   // ========================================
   // DISPOSE: unflushed items WITHOUT logger — exercises null-logger path
@@ -173,7 +173,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
   // ========================================
   // FLUSH: with logger, inbox messages but 0 outbox work returned
-  // exercises the "else if (outboxMessages.Length > 0)" at line 181
+  // exercises the the outboxMessages.Length > 0 guard at line 181
   // ========================================
 
   [Test]
@@ -241,7 +241,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
   // ========================================
   // DISPOSE: pending audit messages NULL path (no audit configured)
-  // exercises: pendingAuditMessages = _queues.PendingAuditMessages.Count > 0 ? ... : null;
+  // exercises: pendingAuditMessages = _queues.PendingAuditMessages.Count > 0 ? ... : null —
   // ========================================
 
   [Test]
@@ -479,9 +479,9 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_coverageEvent1> {
+    var envelope = new MessageEnvelope<CoverageEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _coverageEvent1(),
+      Payload = new CoverageEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -528,9 +528,9 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_coverageEvent2> {
+    var envelope = new MessageEnvelope<CoverageEvent2> {
       MessageId = MessageId.From(messageId),
-      Payload = new _coverageEvent2(),
+      Payload = new CoverageEvent2(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -564,9 +564,9 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   private void _queueOutboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_coverageEvent1> {
+    var envelope = new MessageEnvelope<CoverageEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _coverageEvent1(),
+      Payload = new CoverageEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -591,9 +591,9 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   private void _queueNonEventOutboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_coverageEvent1> {
+    var envelope = new MessageEnvelope<CoverageEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new _coverageEvent1(),
+      Payload = new CoverageEvent1(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -618,9 +618,9 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   private void _queueInboxMessage(ScopedWorkCoordinatorStrategy strategy) {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_coverageEvent2> {
+    var envelope = new MessageEnvelope<CoverageEvent2> {
       MessageId = MessageId.From(messageId),
-      Payload = new _coverageEvent2(),
+      Payload = new CoverageEvent2(),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -661,7 +661,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -686,7 +686,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -716,7 +716,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _storeOutboxCalls);
       throw new InvalidOperationException("Simulated failure");
@@ -730,7 +730,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());

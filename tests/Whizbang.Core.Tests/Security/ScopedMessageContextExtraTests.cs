@@ -42,7 +42,7 @@ public class ScopedMessageContextExtraTests {
 
     var initiatingScope = _MakeScope("initiating-user", "initiating-tenant");
     var currentScope = _MakeScope("current-user", "current-tenant");
-    scopeAccessor.InitiatingContext = new _CapturingContext { ScopeContext = initiatingScope };
+    scopeAccessor.InitiatingContext = new CapturingContext { ScopeContext = initiatingScope };
     scopeAccessor.Current = currentScope;
 
     var ctx = new ScopedMessageContext(messageAccessor, scopeAccessor);
@@ -70,7 +70,7 @@ public class ScopedMessageContextExtraTests {
     var messageAccessor = new MessageContextAccessor();
 
     var currentScope = _MakeScope("current-user", "current-tenant");
-    scopeAccessor.InitiatingContext = new _CapturingContext { ScopeContext = null };
+    scopeAccessor.InitiatingContext = new CapturingContext { ScopeContext = null };
     scopeAccessor.Current = currentScope;
 
     var ctx = new ScopedMessageContext(messageAccessor, scopeAccessor);
@@ -91,12 +91,12 @@ public class ScopedMessageContextExtraTests {
   public async Task CallerInfo_WithMessageContextCallerInfo_ReturnsItAsync() {
     var scopeAccessor = new ScopeContextAccessor();
     var messageAccessor = new MessageContextAccessor();
-    var caller = new _CapturingCallerInfo {
+    var caller = new CapturingCallerInfo {
       CallerMemberName = "DoThing",
       CallerFilePath = "/x/y.cs",
       CallerLineNumber = 42,
     };
-    messageAccessor.Current = new _CapturingContext { CallerInfo = caller };
+    messageAccessor.Current = new CapturingContext { CallerInfo = caller };
 
     var ctx = new ScopedMessageContext(messageAccessor, scopeAccessor);
 
@@ -131,7 +131,7 @@ public class ScopedMessageContextExtraTests {
   /// <see cref="ScopeContext"/> and <see cref="CallerInfo"/> directly,
   /// which the existing nested <c>TestMessageContext</c> hard-coded to null.
   /// </summary>
-  private sealed class _CapturingContext : IMessageContext {
+  private sealed class CapturingContext : IMessageContext {
     public MessageId MessageId { get; init; } = MessageId.New();
     public CorrelationId CorrelationId { get; init; } = CorrelationId.New();
     public MessageId CausationId { get; init; } = MessageId.New();
@@ -143,7 +143,7 @@ public class ScopedMessageContextExtraTests {
     public ICallerInfo? CallerInfo { get; init; }
   }
 
-  private sealed class _CapturingCallerInfo : ICallerInfo {
+  private sealed class CapturingCallerInfo : ICallerInfo {
     public string CallerMemberName { get; init; } = "";
     public string CallerFilePath { get; init; } = "";
     public int CallerLineNumber { get; init; }

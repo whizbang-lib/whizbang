@@ -76,7 +76,7 @@ public class PerspectiveApplyExactlyOnceTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     const string perspectiveName = "Test.DoubleDispatchPerspective";
-    var runner = new _pathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
+    var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
 
     var perspectiveWork = new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
@@ -86,15 +86,15 @@ public class PerspectiveApplyExactlyOnceTests {
       PartitionNumber = 1
     };
 
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       StreamIdsToReturnOnce = [streamId],
       PerspectiveWorkToReturnOnce = [perspectiveWork],
       StreamEventsToReturn = [
         new StreamEventData {
           StreamId = streamId,
           EventId = eventId,
-          EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
-          EventData = JsonSerializer.Serialize(new _fakeApplyEvent(1)),
+          EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new FakeApplyEvent(1)),
           Metadata = null,
           Scope = null,
           EventWorkId = Guid.CreateVersion7()
@@ -104,12 +104,12 @@ public class PerspectiveApplyExactlyOnceTests {
 
     var envelope = new MessageEnvelope<IEvent> {
       MessageId = new MessageId(eventId),
-      Payload = new _fakeApplyEvent(1),
+      Payload = new FakeApplyEvent(1),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
-    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
     // Act — drive the worker.
     using var cts = new CancellationTokenSource();
@@ -170,16 +170,16 @@ public class PerspectiveApplyExactlyOnceTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     const string perspectiveName = "Test.DedupePerspective";
-    var runner = new _pathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
+    var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventId);
 
     var envelope = new MessageEnvelope<IEvent> {
       MessageId = new MessageId(eventId),
-      Payload = new _fakeApplyEvent(1),
+      Payload = new FakeApplyEvent(1),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       StreamIdsToReturnOnce = [streamId],
       // NO PerspectiveWork — we're isolating the drain path.
       PerspectiveWorkToReturnOnce = [],
@@ -189,8 +189,8 @@ public class PerspectiveApplyExactlyOnceTests {
         new StreamEventData {
           StreamId = streamId,
           EventId = eventId,
-          EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
-          EventData = JsonSerializer.Serialize(new _fakeApplyEvent(1)),
+          EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new FakeApplyEvent(1)),
           Metadata = null,
           Scope = null,
           EventWorkId = Guid.CreateVersion7()
@@ -198,8 +198,8 @@ public class PerspectiveApplyExactlyOnceTests {
         new StreamEventData {
           StreamId = streamId,
           EventId = eventId,
-          EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
-          EventData = JsonSerializer.Serialize(new _fakeApplyEvent(1)),
+          EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new FakeApplyEvent(1)),
           Metadata = null,
           Scope = null,
           EventWorkId = Guid.CreateVersion7()
@@ -208,8 +208,8 @@ public class PerspectiveApplyExactlyOnceTests {
     };
 
     // DeserializeStreamEvents returns one envelope per row; both have the same MessageId.
-    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope, envelope] } };
-    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope, envelope] } };
+    var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
     // Act — wait deterministically on the runner having processed the (deduped) terminal event,
     // not on a claim-cycle count that races the async drain.
@@ -248,11 +248,11 @@ public class PerspectiveApplyExactlyOnceTests {
     var eventIdB = TrackedGuid.NewMedo().Value;
     var eventIdC = TrackedGuid.NewMedo().Value;
     const string perspectiveName = "Test.MixedMultiplicityPerspective";
-    var runner = new _pathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventIdC);
+    var runner = new PathTrackingRunner(Status: PerspectiveProcessingStatus.Completed, AdvanceToEventId: eventIdC);
 
     static MessageEnvelope<IEvent> _envelope(Guid id, int seq) => new() {
       MessageId = new MessageId(id),
-      Payload = new _fakeApplyEvent(seq),
+      Payload = new FakeApplyEvent(seq),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -264,14 +264,14 @@ public class PerspectiveApplyExactlyOnceTests {
     static StreamEventData _raw(Guid streamId, Guid eventId, int seq) => new() {
       StreamId = streamId,
       EventId = eventId,
-      EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
-      EventData = JsonSerializer.Serialize(new _fakeApplyEvent(seq)),
+      EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+      EventData = JsonSerializer.Serialize(new FakeApplyEvent(seq)),
       Metadata = null,
       Scope = null,
       EventWorkId = Guid.CreateVersion7()
     };
 
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       StreamIdsToReturnOnce = [streamId],
       PerspectiveWorkToReturnOnce = [],
       StreamEventsToReturn = [
@@ -289,10 +289,10 @@ public class PerspectiveApplyExactlyOnceTests {
 
     // StreamEnvelopes contains the envelopes matching the raw rows — DeserializeStreamEvents
     // will look up by event id and return the same envelope for each duplicate raw row.
-    var eventStore = new _applyTestEventStore {
+    var eventStore = new ApplyTestEventStore {
       StreamEnvelopes = { [streamId] = [envelopeA, envelopeB, envelopeC] }
     };
-    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+    var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
@@ -333,9 +333,9 @@ public class PerspectiveApplyExactlyOnceTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
     const string perspectiveName = "Test.AffinityGatePerspective";
-    var runner = new _blockingDrainRunner();
+    var runner = new BlockingDrainRunner();
 
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       // We enqueue the drain signal MANUALLY (twice, at controlled times) so the two consumers overlap
       // deterministically — the pump-driven path can't guarantee the second signal lands mid-apply.
       StreamIdsToReturnOnce = [],
@@ -344,8 +344,8 @@ public class PerspectiveApplyExactlyOnceTests {
         new StreamEventData {
           StreamId = streamId,
           EventId = eventId,
-          EventType = TypeNameFormatter.Format(typeof(_fakeApplyEvent)),
-          EventData = JsonSerializer.Serialize(new _fakeApplyEvent(1)),
+          EventType = TypeNameFormatter.Format(typeof(FakeApplyEvent)),
+          EventData = JsonSerializer.Serialize(new FakeApplyEvent(1)),
           Metadata = null,
           Scope = null,
           EventWorkId = Guid.CreateVersion7()
@@ -354,12 +354,12 @@ public class PerspectiveApplyExactlyOnceTests {
     };
     var envelope = new MessageEnvelope<IEvent> {
       MessageId = new MessageId(eventId),
-      Payload = new _fakeApplyEvent(1),
+      Payload = new FakeApplyEvent(1),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
-    var registry = new _singleRegistry(runner, perspectiveName, [typeof(_fakeApplyEvent)]);
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore,
@@ -458,7 +458,7 @@ public class PerspectiveApplyExactlyOnceTests {
   public async Task CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
 
     var sinkWork = new PerspectiveWork {
       WorkId = Guid.CreateVersion7(),
@@ -467,7 +467,7 @@ public class PerspectiveApplyExactlyOnceTests {
       LastProcessedEventId = null,
       PartitionNumber = 1
     };
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       PerspectiveWorkToReturnOnce = [sinkWork]
     };
     var envelope = new MessageEnvelope<IEvent> {
@@ -476,11 +476,11 @@ public class PerspectiveApplyExactlyOnceTests {
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
     // Runner registered for a DIFFERENT perspective — the sink must never reach it.
-    var runner = new _pathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
-    var registry = new _singleRegistry(runner, "Test.NonCollectivePerspective", [typeof(_testCollectiveEvent)]);
-    var dispatcher = new _recordingCollectiveDispatcher();
+    var runner = new PathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
+    var registry = new SingleRegistry(runner, "Test.NonCollectivePerspective", [typeof(TestCollectiveEvent)]);
+    var dispatcher = new RecordingCollectiveDispatcher();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
@@ -521,17 +521,17 @@ public class PerspectiveApplyExactlyOnceTests {
   public async Task CollectiveSink_ViaDrainPath_DispatchesEventOnceAndSkipsRunner_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
     var eventId = TrackedGuid.NewMedo().Value;
-    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var collectiveEvent = new TestCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
 
     // DRAIN path: the sink stream arrives as a PerspectiveStreamId, exactly as claim_work emits it.
-    var coordinator = new _dualPathCoordinator {
+    var coordinator = new DualPathCoordinator {
       StreamIdsToReturnOnce = [streamId],
       PerspectiveWorkToReturnOnce = [],
       StreamEventsToReturn = [
         new StreamEventData {
           StreamId = streamId,
           EventId = eventId,
-          EventType = TypeNameFormatter.Format(typeof(_testCollectiveEvent)),
+          EventType = TypeNameFormatter.Format(typeof(TestCollectiveEvent)),
           EventData = JsonSerializer.Serialize(collectiveEvent),
           Metadata = null,
           Scope = null,
@@ -545,11 +545,11 @@ public class PerspectiveApplyExactlyOnceTests {
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-    var eventStore = new _applyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
+    var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
     // Runner registered for a DIFFERENT perspective — the sink must never reach it.
-    var runner = new _pathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
-    var registry = new _singleRegistry(runner, "Test.NonCollectivePerspective", [typeof(_testCollectiveEvent)]);
-    var dispatcher = new _recordingCollectiveDispatcher();
+    var runner = new PathTrackingRunner(PerspectiveProcessingStatus.Completed, eventId);
+    var registry = new SingleRegistry(runner, "Test.NonCollectivePerspective", [typeof(TestCollectiveEvent)]);
+    var dispatcher = new RecordingCollectiveDispatcher();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
@@ -573,11 +573,11 @@ public class PerspectiveApplyExactlyOnceTests {
 
   // ==================== Shared test-double infrastructure ====================
 
-  private sealed record _testCollectiveEvent : ICollectiveEvent {
+  private sealed record TestCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
 
-  private sealed class _recordingCollectiveDispatcher : ICollectiveDispatcher {
+  private sealed class RecordingCollectiveDispatcher : ICollectiveDispatcher {
     private readonly TaskCompletionSource _firstDispatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(ICollectiveEvent Event, Guid EventId, object Session)> Calls { get; } = [];
 
@@ -586,7 +586,7 @@ public class PerspectiveApplyExactlyOnceTests {
     public Task FirstDispatch => _firstDispatch.Task;
 
     public Task<CollectiveDispatchResult> DispatchAsync(
-        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied, CancellationToken cancellationToken) {
+        ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession, Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) {
       lock (Calls) {
         Calls.Add((evt, collectiveEventId, dbContextOrSession));
       }
@@ -595,13 +595,13 @@ public class PerspectiveApplyExactlyOnceTests {
     }
   }
 
-  private sealed class _stubCollectiveSessionAccessor : ICollectiveSessionAccessor {
+  private sealed class StubCollectiveSessionAccessor : ICollectiveSessionAccessor {
     public object GetSession(IServiceProvider scopedServiceProvider) => new();
   }
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createCollectiveWorker(
       IWorkCoordinator coordinator, IPerspectiveRunnerRegistry registry, IEventStore eventStore, ICollectiveDispatcher dispatcher) {
-    var instanceProvider = new _fakeInstanceProvider();
+    var instanceProvider = new FakeInstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 
@@ -613,7 +613,7 @@ public class PerspectiveApplyExactlyOnceTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton(eventStore);
     services.AddSingleton(dispatcher);
-    services.AddSingleton<ICollectiveSessionAccessor>(new _stubCollectiveSessionAccessor());
+    services.AddSingleton<ICollectiveSessionAccessor>(new StubCollectiveSessionAccessor());
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -656,7 +656,7 @@ public class PerspectiveApplyExactlyOnceTests {
     return (worker, harness);
   }
 
-  private sealed record _fakeApplyEvent(int Sequence) : IEvent;
+  private sealed record FakeApplyEvent(int Sequence) : IEvent;
 
   /// <summary>
   /// Runner that records every path invocation — <c>RunAsync</c>, <c>RunWithEventsAsync</c>,
@@ -665,17 +665,17 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </summary>
   /// <param name="Status">Status to return from RunAsync / RunWithEventsAsync.</param>
   /// <param name="AdvanceToEventId">Event id to report as LastEventId when Completed.</param>
-  private sealed class _pathTrackingRunner(
+  private sealed class PathTrackingRunner(
       PerspectiveProcessingStatus Status,
       Guid AdvanceToEventId) : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
 
-    private readonly ConcurrentBag<_Invocation> _invocations = [];
+    private readonly ConcurrentBag<Invocation> _invocations = [];
     private readonly TaskCompletionSource _terminalSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _countWaiters = new();
     private int _invocationCount;
 
-    public IReadOnlyCollection<_Invocation> Invocations => [.. _invocations];
+    public IReadOnlyCollection<Invocation> Invocations => [.. _invocations];
 
     /// <summary>Completes once an invocation for <c>AdvanceToEventId</c> (the terminal event of the
     /// batch) is recorded — a deterministic settle signal for the async drain path, replacing
@@ -697,7 +697,7 @@ public class PerspectiveApplyExactlyOnceTests {
       return tcs.Task.WaitAsync(timeout);
     }
 
-    private void _record(_Invocation invocation) {
+    private void _record(Invocation invocation) {
       _invocations.Add(invocation);
       if (invocation.EventId == AdvanceToEventId) {
         _terminalSeen.TrySetResult();
@@ -711,8 +711,8 @@ public class PerspectiveApplyExactlyOnceTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
-      _record(new _Invocation("RunAsync", streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
+      _record(new Invocation("RunAsync", streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -726,7 +726,7 @@ public class PerspectiveApplyExactlyOnceTests {
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
         IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
       foreach (var envelope in events) {
-        _record(new _Invocation("RunWithEventsAsync", streamId, perspectiveName, envelope.MessageId.Value));
+        _record(new Invocation("RunWithEventsAsync", streamId, perspectiveName, envelope.MessageId.Value));
       }
       var lastId = events.Count > 0 ? events[^1].MessageId.Value : lastProcessedEventId ?? Guid.Empty;
       return Task.FromResult(new PerspectiveCursorCompletion {
@@ -740,7 +740,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
         Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
-      _record(new _Invocation("RewindAndRunAsync", streamId, perspectiveName, triggeringEventId));
+      _record(new Invocation("RewindAndRunAsync", streamId, perspectiveName, triggeringEventId));
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -754,7 +754,7 @@ public class PerspectiveApplyExactlyOnceTests {
         Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
-    public sealed record _Invocation(string Path, Guid StreamId, string PerspectiveName, Guid EventId);
+    public sealed record Invocation(string Path, Guid StreamId, string PerspectiveName, Guid EventId);
   }
 
   /// <summary>
@@ -762,7 +762,7 @@ public class PerspectiveApplyExactlyOnceTests {
   /// can drive a second consumer into the same (stream, perspective) window and assert the drain-path
   /// affinity gate serializes them. Counts total entries; signals first + second entry.
   /// </summary>
-  private sealed class _blockingDrainRunner : IPerspectiveRunner {
+  private sealed class BlockingDrainRunner : IPerspectiveRunner {
     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _firstEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _firstReturned = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -807,7 +807,7 @@ public class PerspectiveApplyExactlyOnceTests {
     }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -836,7 +836,7 @@ public class PerspectiveApplyExactlyOnceTests {
   /// populated for the same stream. Models the production condition the plan calls out as
   /// suspect #1. After one cycle, subsequent polls return an empty batch so the test settles.
   /// </summary>
-  private sealed class _dualPathCoordinator : IWorkCoordinator {
+  private sealed class DualPathCoordinator : IWorkCoordinator {
     private int _cycleCount;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _cycleWaiters = new();
 
@@ -883,7 +883,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
@@ -895,7 +895,7 @@ public class PerspectiveApplyExactlyOnceTests {
   /// path (<see cref="DeserializeStreamEvents"/>) and the standard-mode read path
   /// (<see cref="ReadPolymorphicAsync"/>). Needed so both dispatch paths can actually run.
   /// </summary>
-  private sealed class _applyTestEventStore : IEventStore {
+  private sealed class ApplyTestEventStore : IEventStore {
     public ConcurrentDictionary<Guid, List<MessageEnvelope<IEvent>>> StreamEnvelopes { get; } = new();
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
@@ -933,25 +933,25 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _empty<TMessage>();
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _empty<TMessage>();
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
 
-    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>([EnumeratorCancellation] CancellationToken ct = default) {
+    private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>() {
       await Task.CompletedTask;
       yield break;
     }
   }
 
-  private sealed class _singleRegistry(IPerspectiveRunner runner, string perspectiveName, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
-      name == perspectiveName ? runner : null;
+  private sealed class SingleRegistry(IPerspectiveRunner runner, string registeredName, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
+      perspectiveName == registeredName ? runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [
       new PerspectiveRegistrationInfo(
-        perspectiveName,
-        $"global::{perspectiveName}",
+        registeredName,
+        $"global::{registeredName}",
         "global::Test.Model",
         [.. eventTypes.Select(TypeNameFormatter.Format)])
     ];
@@ -960,7 +960,7 @@ public class PerspectiveApplyExactlyOnceTests {
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
-  private sealed class _fakeInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = "ApplyExactlyOnceTestService";
     public string HostName { get; } = "test-host";
@@ -973,7 +973,7 @@ public class PerspectiveApplyExactlyOnceTests {
       IPerspectiveRunnerRegistry registry,
       IEventStore eventStore,
       Action<PerspectiveWorkerOptions>? configureOptions = null) {
-    var instanceProvider = new _fakeInstanceProvider();
+    var instanceProvider = new FakeInstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
 

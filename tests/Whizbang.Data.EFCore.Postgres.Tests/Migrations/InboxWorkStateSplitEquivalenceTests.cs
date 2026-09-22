@@ -53,7 +53,7 @@ public class InboxWorkStateSplitEquivalenceTests : EFCoreTestBase {
     // Scoped, because the connection stays busy until the reader is disposed and there is another
     // command below.
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = _gateComparison();
+      cmd.CommandText = GATE_COMPARISON;
       cmd.CommandTimeout = 300;
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       _ = await reader.ReadAsync(cancellationToken);
@@ -221,7 +221,7 @@ public class InboxWorkStateSplitEquivalenceTests : EFCoreTestBase {
   /// <summary>
   /// The gate in both forms, and the two directions of disagreement between them.
   /// </summary>
-  private static string _gateComparison() => @"
+  private const string GATE_COMPARISON = @"
     WITH wide AS (
       SELECT i.message_id FROM wide_inbox i
       WHERE i.processed_at IS NULL

@@ -27,7 +27,7 @@ public partial class InboxDispatchWorkerTests {
     var composite = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.NewMedo() };
     for (var i = 0; i < innerCount; i++) {
       composite.InnerPayloads.Add(JsonDocument.Parse("{}").RootElement);
-      composite.InnerTypeNames.Add(typeof(_innerImportEvent).AssemblyQualifiedName!);
+      composite.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
       composite.InnerEventIds.Add((Guid)TrackedGuid.NewMedo());
     }
     return composite;
@@ -96,7 +96,7 @@ public partial class InboxDispatchWorkerTests {
 
   [Test]
   public async Task OrdinaryComposite_UnderReportOnly_StillFansOutAsync() {
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
 
     var (routed, _) = await _runCompositeUnderRepairModeAsync(composite, IntegrityRepairMode.ReportOnly);
 

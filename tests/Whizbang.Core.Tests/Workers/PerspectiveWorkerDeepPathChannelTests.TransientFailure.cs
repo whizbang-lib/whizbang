@@ -41,8 +41,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     const string perspectiveName = "Deep.DeadlockedPerspective";
 
     var coordinator = new RecordingWorkCoordinator {
-      NextCursorException = FakeDbException.WithSqlState("40P01", message: "deadlock detected")
+
     };
+    coordinator.SetNextCursorException(FakeDbException.WithSqlState("40P01", message: "deadlock detected"));
     var instanceProvider = new FakeInstanceProvider();
     var runner = new RecordingRunner();
     var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
@@ -148,6 +149,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse();
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

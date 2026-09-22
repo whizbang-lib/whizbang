@@ -1263,10 +1263,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return new StandbyRequest(
       reader.GetGuid(0),
       reader.GetString(1),
-      reader.GetFieldValue<DateTime>(2) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
-      reader.IsDBNull(3)
+      await reader.GetFieldValueAsync<DateTime>(2) is { } at ? new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc)) : DateTimeOffset.MinValue,
+      await reader.IsDBNullAsync(3, cancellationToken)
         ? null
-        : new DateTimeOffset(DateTime.SpecifyKind(reader.GetFieldValue<DateTime>(3), DateTimeKind.Utc)));
+        : new DateTimeOffset(DateTime.SpecifyKind(await reader.GetFieldValueAsync<DateTime>(3), DateTimeKind.Utc)));
   }
 
   /// <summary>Executes a schema-qualified scalar function with named parameters — the shared
@@ -1684,8 +1684,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       list.Add(new ArchivedEvent(
         reader.GetGuid(0), reader.GetGuid(1), reader.GetInt32(2), reader.GetString(3),
-        reader.IsDBNull(4) ? null : reader.GetString(4),
-        reader.IsDBNull(5) ? null : reader.GetString(5)));
+        await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
+        await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5)));
     }
     return list;
   }
@@ -1946,12 +1946,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "flush_completions");
 
-    var outboxIds = request.OutboxIds is null || request.OutboxIds.Count == 0
-      ? []
-      : (request.OutboxIds is Guid[] arr ? arr : [.. request.OutboxIds]);
-    var perspIds = request.PerspectiveEventWorkIds is null || request.PerspectiveEventWorkIds.Count == 0
-      ? []
-      : (request.PerspectiveEventWorkIds is Guid[] parr ? parr : [.. request.PerspectiveEventWorkIds]);
+    Guid[] outboxIds = request.OutboxIds switch { null or { Count: 0 } => [], Guid[] arr => arr, var ids => [.. ids] };
+    Guid[] perspIds = request.PerspectiveEventWorkIds switch { null or { Count: 0 } => [], Guid[] parr => parr, var ids => [.. ids] };
 
     var cursorsJson = request.PerspectiveCursors is null || request.PerspectiveCursors.Count == 0
       ? "[]"
@@ -2125,22 +2121,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
       while (await reader.ReadAsync(cancellationToken)) {
         rows.Add(new WorkBatchRow {
           Source = reader.GetString(0),
-          WorkId = reader.IsDBNull(1) ? null : reader.GetGuid(1),
-          StreamId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
-          PartitionNumber = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-          Destination = reader.IsDBNull(4) ? null : reader.GetString(4),
-          MessageType = reader.IsDBNull(5) ? null : reader.GetString(5),
-          EnvelopeType = reader.IsDBNull(6) ? null : reader.GetString(6),
-          MessageData = reader.IsDBNull(7) ? null : reader.GetString(7),
-          Metadata = reader.IsDBNull(8) ? null : reader.GetValue(8)?.ToString(),
-          Status = reader.IsDBNull(9) ? null : reader.GetInt32(9),
-          Attempts = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-          IsNewlyStored = reader.IsDBNull(11) ? null : reader.GetBoolean(11),
-          IsOrphaned = reader.IsDBNull(12) ? null : reader.GetBoolean(12),
-          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13),
+          WorkId = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetGuid(1),
+          StreamId = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetGuid(2),
+          PartitionNumber = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt32(3),
+          Destination = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4),
+          MessageType = await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
+          EnvelopeType = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
+          MessageData = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
+          Metadata = await reader.IsDBNullAsync(8, cancellationToken) ? null : reader.GetValue(8)?.ToString(),
+          Status = await reader.IsDBNullAsync(9, cancellationToken) ? null : reader.GetInt32(9),
+          Attempts = await reader.IsDBNullAsync(10, cancellationToken) ? null : reader.GetInt32(10),
+          IsNewlyStored = await reader.IsDBNullAsync(11, cancellationToken) ? null : reader.GetBoolean(11),
+          IsOrphaned = await reader.IsDBNullAsync(12, cancellationToken) ? null : reader.GetBoolean(12),
+          PerspectiveName = await reader.IsDBNullAsync(13, cancellationToken) ? null : reader.GetString(13),
           // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
-          Priority = reader.IsDBNull(14) ? null : reader.GetInt32(14),
-          ReceivedAt = reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15)
+          Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
+          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15)
         });
       }
       if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
@@ -2249,10 +2245,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         results.Add(new HandlerBatchResult(
           HandlerId: reader.GetGuid(0),
           Success: reader.GetBoolean(1),
-          ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
+          ErrorMessage: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2)));
         if (!fellBack && reader.GetInt32(3) == 2) {
           fellBack = true;
-          bulkError = reader.IsDBNull(4) ? null : reader.GetString(4);
+          bulkError = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4);
         }
       }
     }
@@ -2510,11 +2506,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventId = reader.GetGuid(0),
         StreamId = reader.GetGuid(1),
         Version = reader.GetInt64(2),
-        CommitSequence = reader.IsDBNull(3) ? null : reader.GetInt64(3),
+        CommitSequence = await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetInt64(3),
         EventType = reader.GetString(4),
         EventData = reader.GetString(5),
-        Metadata = reader.IsDBNull(6) ? null : reader.GetString(6),
-        Scope = reader.IsDBNull(7) ? null : reader.GetString(7),
+        Metadata = await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
+        Scope = await reader.IsDBNullAsync(7, cancellationToken) ? null : reader.GetString(7),
         Flags = reader.GetInt32(8)
       });
     }
@@ -3074,7 +3070,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await using var reader = await read.ExecuteReaderAsync(cancellationToken);
       await reader.ReadAsync(cancellationToken);
       current = reader.GetInt64(0);
-      prior = reader.IsDBNull(1)
+      prior = await reader.IsDBNullAsync(1, cancellationToken)
         ? null
         : long.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -3492,7 +3488,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         DigestLo = reader.GetInt64(idx),
         DigestHi = reader.GetInt64(idx + 1),
         EventCount = reader.GetInt32(idx + 2),
-        UpdatedAt = hasUpdatedAt ? reader.GetFieldValue<DateTimeOffset>(idx + 3) : null,
+        UpdatedAt = hasUpdatedAt ? await reader.GetFieldValueAsync<DateTimeOffset>(idx + 3) : null,
       });
     }
     return results;
@@ -3521,7 +3517,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // store and heal the table three ways (update drifted / delete phantom / insert missing). The
     // settle gates (bucket updated_at, event created_at) keep in-flight folds out of both sides:
     // a bucket touched inside the window is skipped this pass, and a fresh event with no bucket is
-    // not "missing" — it simply hasn't settled. Data-modifying CTEs share the statement snapshot;
+    // not "missing" — it simply hasn't settled. Data-modifying CTEs share the statement snapshot —
     // the three heal sets are disjoint by construction, so ordering between them is immaterial.
     cmd.CommandText = $"""
       WITH recomputed AS (
@@ -3749,7 +3745,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
         if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
             && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-          projection = reader.IsDBNull(0) ? null : reader.GetString(0);
+          projection = await reader.IsDBNullAsync(0) ? null : reader.GetString(0);
         }
       }
       // #720: ring the doorbells the store queued, after its commit.
@@ -3868,8 +3864,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       results.Add(new Whizbang.Core.Messaging.CoalesceGroupStats {
         Group = reader.GetString(0),
         PendingCount = reader.GetInt64(1),
-        OldestCreatedAt = reader.GetFieldValue<DateTimeOffset>(2),
-        NewestCreatedAt = reader.GetFieldValue<DateTimeOffset>(3),
+        OldestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(2),
+        NewestCreatedAt = await reader.GetFieldValueAsync<DateTimeOffset>(3),
       });
     }
     return results;
@@ -3939,7 +3935,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         IsEvent = reader.GetBoolean(7),
         ScheduledFor = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
           ? null
-          : reader.GetFieldValue<DateTimeOffset>(8),
+          : await reader.GetFieldValueAsync<DateTimeOffset>(8),
         Priority = reader.GetInt32(9),   // priority step 1: the ship worker folds the singles' numbers into the composite
         CoalesceGroup = group,
       });
@@ -4060,7 +4056,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       rows.Add(new Whizbang.Core.Messaging.StuckRow {
         MessageId = reader.GetGuid(0),
         MessageType = reader.GetString(1),
-        StreamId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        StreamId = await reader.IsDBNullAsync(2, ct) ? null : reader.GetGuid(2),
         Attempts = reader.GetInt32(3),
         ClaimedSince = reader.GetDateTime(4),
       });
@@ -4636,13 +4632,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       return result is bool imported && imported;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(ex,
-        "ImportBrokerDeadLetterAsync failed for message {MessageId} from {Destination} — message stays on the broker DLQ for the next drain pass",
-        import.MessageId, import.Destination);
-      // Rethrow: FALSE means "duplicate — custody already exists, safe to settle at the broker".
-      // A failed import must NOT look like a duplicate, or the drainer would complete the broker
-      // message and lose it. Throwing makes the drainer abandon, so the broker re-offers it.
-      throw;
+      // Throw, never return: FALSE means "duplicate — custody already exists, safe to settle at the
+      // broker". A failed import must NOT look like a duplicate, or the drainer would complete the
+      // broker message and lose it. Throwing makes the drainer abandon, so the broker re-offers it —
+      // the drainer logs what it abandoned, with this context.
+      throw new InvalidOperationException(
+        $"ImportBrokerDeadLetterAsync failed for message {import.MessageId} from {import.Destination} — the message stays on the broker DLQ for the next drain pass",
+        ex);
     }
   }
 
@@ -5003,18 +4999,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default)
     => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
 
-  /// <summary>
-  /// The ordinal of <paramref name="name"/>, or -1 when the function this build talks to predates the column, so a
-  /// mid-rollout package mix reads the row without the column instead of failing.
-  /// </summary>
-  private static int _ordinalOrAbsent(System.Data.Common.DbDataReader reader, string name) {
-    try {
-      return reader.GetOrdinal(name);
-    } catch (IndexOutOfRangeException) {
-      return -1;
-    }
-  }
-
   /// <inheritdoc />
   public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
@@ -5077,6 +5061,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
     }
     return results;
+  }
+
+  /// <summary>
+  /// The ordinal of <paramref name="name"/>, or -1 when the function this build talks to predates the column, so a
+  /// mid-rollout package mix reads the row without the column instead of failing.
+  /// </summary>
+  private static int _ordinalOrAbsent(System.Data.Common.DbDataReader reader, string name) {
+    try {
+      return reader.GetOrdinal(name);
+    } catch (IndexOutOfRangeException) {
+      return -1;
+    }
   }
 
   /// <inheritdoc />
@@ -5236,7 +5232,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
     command.CommandText = $"SELECT * FROM \"{schema}\".purge_orphan_inbox(@handled_types)";
     command.CommandTimeout = 30;
-    var param = (Npgsql.NpgsqlParameter)command.CreateParameter();
+    var param = command.CreateParameter();
     param.ParameterName = "handled_types";
     param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
     param.Value = handledTypeNames is string[] arr ? arr : [.. handledTypeNames];

@@ -89,7 +89,7 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
       return new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.Ready, detail));
     }
 
-    // In progress. Migrating is the state operators reason about most, so it gets its own answer;
+    // In progress. Migrating is the state operators reason about most, so it gets its own answer —
     // everything else in the pre-ready band reports as Starting with the current step in detail.
     var state = currentStep == FrameworkStartupSteps.MIGRATE
       ? ComponentState.Migrating

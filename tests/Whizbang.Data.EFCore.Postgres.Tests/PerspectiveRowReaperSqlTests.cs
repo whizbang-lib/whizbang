@@ -44,7 +44,7 @@ public class PerspectiveRowReaperSqlTests : EFCoreTestBase {
     await using var m = connection.CreateCommand();
     m.CommandText = "SELECT * FROM perform_maintenance()";
     await using var r = await m.ExecuteReaderAsync();
-    while (await r.ReadAsync()) { }
+    while (await r.ReadAsync()) { /* drain */ }
   }
 
   private static async Task<long> _existsAsync(NpgsqlConnection connection, string table, Guid id) {

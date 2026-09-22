@@ -222,54 +222,6 @@ public class CrossScopeRealScenarioTests {
       .Because("No events tracked in SyncEventTracker - nothing to wait for");
   }
 
-  /// <summary>
-  /// CRITICAL BUG FIX TEST: Verify the EventTypeFilter format includes assembly name.
-  /// Before the fix, EventTypeFilter was just "Namespace.TypeName".
-  /// After the fix, it should be "Namespace.TypeName, AssemblyName" to match how
-  /// events are stored in wh_event_store via normalize_event_type().
-  /// </summary>
-  [Test]
-  public async Task BUGFIX_EventTypeFilter_ShouldIncludeAssemblyNameAsync() {
-    // Arrange
-    var streamId = Guid.NewGuid();
-    SyncInquiry? capturedInquiry = null;
-
-    var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedInquiry = (request.Count > 0 ? request[0] : null);
-
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        SyncInquiryResults = [
-          new SyncInquiryResult {
-            InquiryId = capturedInquiry?.InquiryId ?? Guid.NewGuid(),
-            StreamId = streamId,
-            PendingCount = 0,
-            ProcessedCount = 0
-          }
-        ]
-      });
-    });
-
-    var clock = new DebuggerAwareClock();
-    var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: mockCoordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Act - Call WaitForStreamAsync with a real Type
-    var result = await awaiter.WaitForStreamAsync(
-      typeof(FakeProjection),
-      streamId,
-      [typeof(FakeStartedEvent)],
-      timeout: TimeSpan.FromSeconds(1)
-    );
-
-    // Assert - With empty SyncEventTracker, no events tracked = NoPendingEvents
-    // No more DB fallback - coordinator may not be called, so EventTypeFilter
-    // verification is no longer applicable
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
-      .Because("No events tracked in SyncEventTracker - nothing to wait for");
-  }
 }
 
 // Fake types for testing

@@ -64,7 +64,7 @@ public class AuditingEventStoreDecoratorTests {
   [Test]
   public async Task AppendAsync_WithEnvelope_DelegatesToInnerStoreAsync() {
     // Arrange
-    var (decorator, inner, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var (decorator, inner, _) = _createDecorator(opts => opts.EnableEventAudit());
     var streamId = Guid.NewGuid();
     var envelope = _createTestEnvelope(new TestEvent { Name = "Test" });
 
@@ -482,12 +482,10 @@ public class AuditingEventStoreDecoratorTests {
 
   [AuditEvent(Exclude = true, Reason = "Test excluded event")]
   private sealed record ExcludedEvent : IEvent {
-    public required string Name { get; init; }
   }
 
   [AuditEvent(Reason = "Explicitly marked for audit")]
   private sealed record MarkedEvent : IEvent {
-    public required string Name { get; init; }
   }
 
   #endregion

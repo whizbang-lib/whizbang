@@ -24,12 +24,12 @@ namespace Whizbang.Core.Tests.Priority;
 [Category("Unit")]
 public class PriorityTagSurfaceTests {
 
-  private sealed record _importRow(string Id) : IEvent;
-  private sealed record _permissionRevoked(string User) : IEvent;
-  private sealed record _plain(string Id) : IEvent;
+  private sealed record ImportRow(string Id) : IEvent;
+  private sealed record PermissionRevoked(string User) : IEvent;
+  private sealed record Plain(string Id) : IEvent;
 
   /// <summary>A registry that tags one type, the way the generated registry tags attributed message types.</summary>
-  private sealed class _oneTagRegistry(Type taggedType, string tag) : IMessageTagRegistry {
+  private sealed class OneTagRegistry(Type taggedType, string tag) : IMessageTagRegistry {
     private readonly MessageTagRegistration _registration = new() {
       MessageType = taggedType,
       AttributeType = typeof(MessageTagAttribute),
@@ -42,7 +42,7 @@ public class PriorityTagSurfaceTests {
   }
 
   private static readonly Lazy<bool> _registered = new(() => {
-    MessageTagRegistry.Register(new _oneTagRegistry(typeof(_importRow), "bulk-import"));
+    MessageTagRegistry.Register(new OneTagRegistry(typeof(ImportRow), "bulk-import"));
     return true;
   });
 
@@ -68,9 +68,9 @@ public class PriorityTagSurfaceTests {
     var tags = new TagOptions().DeclarePriority("bulk-import", WorkPriority.BACKGROUND);
     var hook = new TagDeclaredPriorityProducerHook(tags);
 
-    await Assert.That(hook.DeclarePriority(_declaration(new _importRow("r")))).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(hook.DeclarePriority(_declaration(new ImportRow("r")))).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a tag classifies; binding a priority to it declares every message type that carries it, whatever context it is dispatched from");
-    await Assert.That(hook.DeclarePriority(_declaration(new _plain("p")))).IsEqualTo(WorkPriority.UNDECLARED)
+    await Assert.That(hook.DeclarePriority(_declaration(new Plain("p")))).IsEqualTo(WorkPriority.UNDECLARED)
       .Because("a type without a bound tag is left for the framework default to derive from context");
   }
 
@@ -80,7 +80,7 @@ public class PriorityTagSurfaceTests {
     var tags = new TagOptions().DeclarePriority("bulk-import", WorkPriority.BACKGROUND);
     var hook = new TagDeclaredPriorityProducerHook(tags);
 
-    await Assert.That(hook.DeclarePriority(_declaration(new _importRow("r"), declared: 20))).IsEqualTo(20)
+    await Assert.That(hook.DeclarePriority(_declaration(new ImportRow("r"), declared: 20))).IsEqualTo(20)
       .Because("an explicit declaration made earlier in the chain is the more specific word");
   }
 
@@ -126,12 +126,12 @@ public class PriorityTagSurfaceTests {
   public async Task ClassifyType_RaisesOneType_AndTheMostSpecificRuleWinsAsync() {
     var options = new PriorityOptions()
       .ClassifyNamespace("Whizbang.Core.Tests.Priority", WorkPriority.BACKGROUND)
-      .ClassifyType<_permissionRevoked>(WorkPriority.INTERACTIVE);
+      .ClassifyType<PermissionRevoked>(WorkPriority.INTERACTIVE);
     var hook = new PriorityClassificationReceiveHook(options);
 
-    await Assert.That(hook.Classify(_receive(TypeNameFormatter.AssemblyQualifiedName(typeof(_permissionRevoked)), WorkPriority.STANDARD))).IsEqualTo(WorkPriority.INTERACTIVE)
+    await Assert.That(hook.Classify(_receive(TypeNameFormatter.AssemblyQualifiedName(typeof(PermissionRevoked)), WorkPriority.STANDARD))).IsEqualTo(WorkPriority.INTERACTIVE)
       .Because("a consumer may raise by declared policy; the type rule is more specific than the namespace rule that would lower it");
-    await Assert.That(hook.Classify(_receive(TypeNameFormatter.AssemblyQualifiedName(typeof(_plain)), WorkPriority.STANDARD))).IsEqualTo(WorkPriority.BACKGROUND);
+    await Assert.That(hook.Classify(_receive(TypeNameFormatter.AssemblyQualifiedName(typeof(Plain)), WorkPriority.STANDARD))).IsEqualTo(WorkPriority.BACKGROUND);
   }
 
   [Test]
@@ -157,7 +157,7 @@ public class PriorityTagSurfaceTests {
     await using var sp = services.BuildServiceProvider();
     var chain = sp.GetRequiredService<PriorityHookChain>();
 
-    await Assert.That(chain.DeclarePriority(_declaration(new _importRow("r")))).IsEqualTo(WorkPriority.BACKGROUND)
+    await Assert.That(chain.DeclarePriority(_declaration(new ImportRow("r")))).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("the tag hook runs before the context default, which keeps the declaration");
     await Assert.That(chain.Classify(_receive("Contracts.Job.RowAddedEvent, Contracts", WorkPriority.UNDECLARED))).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("the classification hook runs before the accept-declared default");

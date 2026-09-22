@@ -26,7 +26,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     await Assert.That(() => new ScopedEFCoreDeadLetterStore(
       scopeFactory: null!,
       dbContextType: typeof(WorkCoordinationDbContext),
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
       gate: null))
       .Throws<ArgumentNullException>();
   }
@@ -38,7 +37,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     await Assert.That(() => new ScopedEFCoreDeadLetterStore(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       dbContextType: null!,
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
       gate: null))
       .Throws<ArgumentNullException>();
   }
@@ -50,7 +48,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     await Assert.That(() => new ScopedEFCoreDeadLetterStore(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       dbContextType: typeof(WorkCoordinationDbContext),
-      logger: null!,
       gate: null))
       .Throws<ArgumentNullException>();
   }
@@ -69,7 +66,6 @@ public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
     var adapter = new ScopedEFCoreDeadLetterStore(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       dbContextType: typeof(WorkCoordinationDbContext),
-      logger: NullLogger<EFCoreDeadLetterStore<DbContext>>.Instance,
       gate: null);
 
     await using var conn = new NpgsqlConnection(ConnectionString);

@@ -29,7 +29,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(120_000)]  // 120s timeout — retry on quota exhaustion needs headroom
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   // Pre-provisioned in Config.json
   private const string TOPIC_NAME = "topic-filter-test";

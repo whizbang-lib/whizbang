@@ -154,9 +154,11 @@ public sealed partial class TypeDefinitionReconciler(
       var schemaChanged = !string.Equals(prev.SchemaHashHex, entry.SchemaHash, StringComparison.OrdinalIgnoreCase);
       var isEphemeral = entry.Ephemeral is not null;
 
-      var relationship = schemaChanged
-        ? DefinitionRelationship.SchemaUpgradedTo
-        : (isEphemeral ? DefinitionRelationship.ReclassifiedTo : DefinitionRelationship.MetadataChangedTo);
+      var relationship = (schemaChanged, isEphemeral) switch {
+        (true, _) => DefinitionRelationship.SchemaUpgradedTo,
+        (false, true) => DefinitionRelationship.ReclassifiedTo,
+        _ => DefinitionRelationship.MetadataChangedTo,
+      };
       await coordinator.RecordDefinitionLineageAsync(
         prevId, reg.DefinitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
       LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());

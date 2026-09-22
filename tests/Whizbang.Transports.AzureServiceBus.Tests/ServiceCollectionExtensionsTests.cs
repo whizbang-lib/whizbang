@@ -841,13 +841,7 @@ public class ServiceCollectionExtensionsTests {
   /// which branch of the IMessagePublishStrategy factory selected the topic.
   /// </summary>
   private static string? _getInboxTopic(IMessagePublishStrategy strategy) {
-    var field = typeof(TransportPublishStrategy).GetField(
-      "_inboxTopic",
-      BindingFlags.NonPublic | BindingFlags.Instance)
-      ?? throw new InvalidOperationException(
-        "_inboxTopic field not found on TransportPublishStrategy - was it renamed?");
-
-    return (string?)field.GetValue(strategy);
+    return ((TransportPublishStrategy)strategy).InboxTopic;
   }
 
   /// <summary>
@@ -856,13 +850,7 @@ public class ServiceCollectionExtensionsTests {
   /// </summary>
   private static Whizbang.Core.Routing.ICommandInboxAddressResolver? _getNamespaceRouting(
       IMessagePublishStrategy strategy) {
-    var field = typeof(TransportPublishStrategy).GetField(
-      "_namespaceRouting",
-      BindingFlags.NonPublic | BindingFlags.Instance)
-      ?? throw new InvalidOperationException(
-        "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
-
-    return (Whizbang.Core.Routing.ICommandInboxAddressResolver?)field.GetValue(strategy);
+    return ((TransportPublishStrategy)strategy).NamespaceRouting;
   }
 
   /// <summary>

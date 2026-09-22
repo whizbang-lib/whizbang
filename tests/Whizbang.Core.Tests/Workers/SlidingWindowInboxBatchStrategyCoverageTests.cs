@@ -42,7 +42,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
 
   /// <summary>Captures error-level messages — used to prove a shutdown-forced cancellation of an
   /// in-flight flush is never mistaken for a flush failure.</summary>
-  private sealed class _RecordingLogger : ILogger<SlidingWindowInboxBatchStrategy> {
+  private sealed class RecordingLogger : ILogger<SlidingWindowInboxBatchStrategy> {
     private readonly Lock _lock = new();
     private readonly List<string> _errors = [];
 
@@ -82,7 +82,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   public async Task FlushAndStopAsync_CallerTokenFiresWhileFlushIsHung_ForceCancelsWithoutLoggingFailureAsync(
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new _RecordingLogger();
+    var logger = new RecordingLogger();
 
     var sut = new SlidingWindowInboxBatchStrategy(
       flush: async (_, ct) => {
@@ -109,7 +109,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     // strategy's own hard-cancel — rather than this call ever throwing out to us.
     await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    // Give the drain task's own catch (now unblocked by the forced cancellation) a moment to
+    // Give the drain task's own exception handler, now unblocked by the forced cancellation, a moment to
     // run — it either returns quietly or, if regressed, logs a spurious failure.
     await Task.Delay(200, testToken);
 
@@ -139,7 +139,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   [Timeout(30000)]
   public async Task IdleSweep_TickArrivingDuringShutdown_DoesNotTouchTheBuffersTheStopPathIsDrainingAsync(
       CancellationToken testToken) {
-    var timeProvider = new _parkingSweepTimerProvider();
+    var timeProvider = new ParkingSweepTimerProvider();
     var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
       options: new SlidingWindowInboxOptions {
@@ -179,9 +179,9 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   /// creates — and delegates every later timer to the system provider so the per-stream batchers
   /// keep their real behavior.
   /// </summary>
-  private sealed class _parkingSweepTimerProvider : TimeProvider {
+  private sealed class ParkingSweepTimerProvider : TimeProvider {
     private int _created;
-    public _parkingTimer SweepTimer { get; } = new();
+    public ParkingTimer SweepTimer { get; } = new();
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       if (Interlocked.Exchange(ref _created, 1) == 0) {
@@ -197,7 +197,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
   /// and <see cref="ITimer.DisposeAsync"/> parks until <see cref="ReleaseDispose"/> is called,
   /// which is what holds a shutdown open at a chosen instruction.
   /// </summary>
-  private sealed class _parkingTimer : ITimer {
+  private sealed class ParkingTimer : ITimer {
     private readonly TaskCompletionSource _disposeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _releaseDispose = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TimerCallback? _callback;

@@ -40,7 +40,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   private const string ORDERS_ENTITY = "inbox.wbtopo.orders.commands";
   private const string BILLING_ENTITY = "inbox.wbtopo.billing.commands";

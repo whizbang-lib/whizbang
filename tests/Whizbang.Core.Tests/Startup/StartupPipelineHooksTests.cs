@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class StartupPipelineHooksTests {
 
-  private sealed class _step(string name, List<string>? log = null,
+  private sealed class Step(string name, List<string>? log = null,
       StartupStepOutcome outcome = StartupStepOutcome.Completed,
       string? reason = null, string[]? dependsOn = null) : IStartupStep {
     public StartupStepDescriptor Descriptor { get; } = new() { Name = name, DependsOn = dependsOn ?? [] };
@@ -26,28 +26,28 @@ public class StartupPipelineHooksTests {
     }
   }
 
-  private sealed class _recordingObserver : IStartupStepObserver {
+  private sealed class RecordingObserver : IStartupStepObserver {
     public List<string> Events { get; } = [];
-    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken ct) {
+    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken cancellationToken) {
       Events.Add($"starting:{context.Descriptor.Name}");
       return ValueTask.CompletedTask;
     }
-    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken ct) {
+    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken cancellationToken) {
       Events.Add($"completed:{result.Name}:{result.Outcome}");
       return ValueTask.CompletedTask;
     }
-    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken ct) {
+    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken cancellationToken) {
       Events.Add($"pipeline:{summary.Results.Count}");
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _throwingObserver : IStartupStepObserver {
-    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken ct)
+  private sealed class ThrowingObserver : IStartupStepObserver {
+    public ValueTask OnStepStartingAsync(StartupStepContext context, CancellationToken cancellationToken)
       => throw new InvalidOperationException("diagnostic exploded");
-    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken ct)
+    public ValueTask OnStepCompletedAsync(StartupStepResult result, CancellationToken cancellationToken)
       => throw new InvalidOperationException("diagnostic exploded");
-    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken ct)
+    public ValueTask OnPipelineCompletedAsync(StartupSummary summary, CancellationToken cancellationToken)
       => throw new InvalidOperationException("diagnostic exploded");
   }
 
@@ -55,9 +55,9 @@ public class StartupPipelineHooksTests {
 
   [Test]
   public async Task RunAsync_NotifiesStartingAndCompletedForEachStepInOrderAsync() {
-    var observer = new _recordingObserver();
+    var observer = new RecordingObserver();
     var runner = new StartupPipelineRunner(
-      steps: [new _step("Ready", dependsOn: ["Migrate"]), new _step("Migrate")],
+      steps: [new Step("Ready", dependsOn: ["Migrate"]), new Step("Migrate")],
       observers: [observer],
       dutyElector: NullDutyElector.Instance);
 
@@ -70,9 +70,9 @@ public class StartupPipelineHooksTests {
 
   [Test]
   public async Task RunAsync_ObserverSeesSkipOutcomeAndReasonAsync() {
-    var observer = new _recordingObserver();
+    var observer = new RecordingObserver();
     var runner = new StartupPipelineRunner(
-      steps: [new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "nothing to repair")],
+      steps: [new Step("Repair", outcome: StartupStepOutcome.Skipped, reason: "nothing to repair")],
       observers: [observer],
       dutyElector: NullDutyElector.Instance);
 
@@ -87,8 +87,8 @@ public class StartupPipelineHooksTests {
   public async Task RunAsync_ThrowingObserver_DoesNotFailTheStepOrThePipelineAsync() {
     var log = new List<string>();
     var runner = new StartupPipelineRunner(
-      steps: [new _step("Migrate", log)],
-      observers: [new _throwingObserver()],
+      steps: [new Step("Migrate", log)],
+      observers: [new ThrowingObserver()],
       dutyElector: NullDutyElector.Instance);
 
     var results = await runner.RunAsync(CancellationToken.None);
@@ -101,10 +101,10 @@ public class StartupPipelineHooksTests {
 
   [Test]
   public async Task RunAsync_ThrowingObserver_DoesNotStarveOtherObserversAsync() {
-    var healthy = new _recordingObserver();
+    var healthy = new RecordingObserver();
     var runner = new StartupPipelineRunner(
-      steps: [new _step("Migrate")],
-      observers: [new _throwingObserver(), healthy],
+      steps: [new Step("Migrate")],
+      observers: [new ThrowingObserver(), healthy],
       dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
@@ -128,7 +128,7 @@ public class StartupPipelineHooksTests {
   public async Task State_AfterARun_ReportsPerStepStatusAndCompletionAsync() {
     var state = new StartupPipelineState();
     var runner = new StartupPipelineRunner(
-      steps: [new _step("Migrate"), new _step("Repair", outcome: StartupStepOutcome.Skipped, reason: "cold")],
+      steps: [new Step("Migrate"), new Step("Repair", outcome: StartupStepOutcome.Skipped, reason: "cold")],
       observers: [state],
       dutyElector: NullDutyElector.Instance);
 
@@ -145,7 +145,7 @@ public class StartupPipelineHooksTests {
     var state = new StartupPipelineState();
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var blocked = new _gatedStep("Migrate", gate.Task);
+    var blocked = new GatedStep("Migrate", gate.Task);
     var runner = new StartupPipelineRunner(steps: [blocked], observers: [state], dutyElector: NullDutyElector.Instance);
 
     var run = runner.RunAsync(CancellationToken.None);
@@ -164,7 +164,7 @@ public class StartupPipelineHooksTests {
   [Test]
   public async Task State_WaitForAsync_AfterTheStepAlreadyCompleted_ReturnsImmediatelyAsync() {
     var state = new StartupPipelineState();
-    var runner = new StartupPipelineRunner(steps: [new _step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
+    var runner = new StartupPipelineRunner(steps: [new Step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
     await runner.RunAsync(CancellationToken.None);
 
     var waiter = state.WaitForAsync("Migrate", CancellationToken.None);
@@ -178,13 +178,13 @@ public class StartupPipelineHooksTests {
   [Test]
   public async Task State_OnReentry_ResetsToTheNewRunAsync() {
     var state = new StartupPipelineState();
-    var runner = new StartupPipelineRunner(steps: [new _step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
+    var runner = new StartupPipelineRunner(steps: [new Step("Migrate")], observers: [state], dutyElector: NullDutyElector.Instance);
 
     await runner.RunAsync(CancellationToken.None);
     await Assert.That(state.IsComplete).IsTrue();
 
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var runner2 = new StartupPipelineRunner(steps: [new _gatedStep("Migrate", gate.Task)], observers: [state], dutyElector: NullDutyElector.Instance);
+    var runner2 = new StartupPipelineRunner(steps: [new GatedStep("Migrate", gate.Task)], observers: [state], dutyElector: NullDutyElector.Instance);
     var run2 = runner2.RunAsync(CancellationToken.None);
 
     // Poll briefly: the reset happens when the new run begins.
@@ -201,7 +201,7 @@ public class StartupPipelineHooksTests {
     await Assert.That(state.IsComplete).IsTrue();
   }
 
-  private sealed class _gatedStep(string name, Task gate) : IStartupStep {
+  private sealed class GatedStep(string name, Task gate) : IStartupStep {
     public StartupStepDescriptor Descriptor { get; } = new() { Name = name };
     public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
       await gate.WaitAsync(cancellationToken);

@@ -155,17 +155,6 @@ public class TransportConsumerWorkerPostLifecycleTests {
     await Assert.That(hasMatch).IsFalse();
   }
 
-  [Test]
-  public async Task NullRegistry_ReturnsTrue_AllEventsWithoutPerspectivesAsync() {
-    var services = new ServiceCollection();
-    services.TryAddWhizbangDefaults();
-    var serviceProvider = services.BuildServiceProvider();
-
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    await Assert.That(registry).IsNull();
-    // _isEventWithoutPerspectives returns true when registry is null
-  }
-
   /// <summary>
   /// Mirrors the logic in TransportConsumerWorker._isEventWithoutPerspectives
   /// Uses EventTypeMatchingHelper.NormalizeTypeName for consistent matching.

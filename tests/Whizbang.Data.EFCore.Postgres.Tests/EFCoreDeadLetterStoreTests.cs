@@ -25,8 +25,7 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
   [Test]
   public async Task Constructor_NullDbContext_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new EFCoreDeadLetterStore<WorkCoordinationDbContext>(
-      dbContext: null!,
-      logger: NullLogger<EFCoreDeadLetterStore<WorkCoordinationDbContext>>.Instance))
+      dbContext: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -34,8 +33,7 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
   public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
     await using var ctx = CreateDbContext();
     await Assert.That(() => new EFCoreDeadLetterStore<WorkCoordinationDbContext>(
-      dbContext: ctx,
-      logger: null!))
+      dbContext: ctx))
       .Throws<ArgumentNullException>();
   }
 
@@ -180,7 +178,7 @@ public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
   // ===== Helpers =====
 
   private static EFCoreDeadLetterStore<WorkCoordinationDbContext> _newStore(WorkCoordinationDbContext ctx) =>
-    new(ctx, NullLogger<EFCoreDeadLetterStore<WorkCoordinationDbContext>>.Instance);
+    new(ctx);
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext ctx) {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

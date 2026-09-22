@@ -24,7 +24,7 @@ public class MigrationReadinessDegradedTests {
   private sealed class FakeGate : ISchemaReadyGate {
     public bool IsReady => false;
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default)
+    public Task WaitForReadyAsync(CancellationToken cancellationToken)
       => Task.Delay(Timeout.Infinite, cancellationToken);
   }
 

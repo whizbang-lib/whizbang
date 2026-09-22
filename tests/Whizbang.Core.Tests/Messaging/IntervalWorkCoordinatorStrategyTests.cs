@@ -793,7 +793,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -838,7 +838,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -858,7 +858,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       _flushSignal.Release();
@@ -936,7 +936,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       // Slow the live store path so a concurrent flush observes one in progress.
       await Task.Delay(_delayMilliseconds, cancellationToken);
@@ -954,7 +954,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

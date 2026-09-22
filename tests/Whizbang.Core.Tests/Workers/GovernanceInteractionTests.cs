@@ -211,7 +211,7 @@ public class GovernanceInteractionTests {
 
   [Test]
   public async Task CompositeExpansionBypassesEveryRowDenominatedBoundAsync() {
-    var (window, page, budget) = _stack();
+    var (_, _, budget) = _stack();
     budget.Observe(completed: 100, elapsed: TimeSpan.FromSeconds(1));
 
     // One message is admitted. Every control above counted exactly one row for it.

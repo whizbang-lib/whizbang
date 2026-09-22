@@ -2834,7 +2834,7 @@ public class CommentReceptor : IReceptor<CommentCommand, CommentEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Debug: Write generated code to see what we're actually getting
-    System.IO.File.WriteAllText("/tmp/test-dispatcher.g.cs", dispatcher);
+    await System.IO.File.WriteAllTextAsync("/tmp/test-dispatcher.g.cs", dispatcher);
 
     // Verify the dispatcher contains the else branch with cascade security context establishment
     await Assert.That(dispatcher!.Contains("} else {", StringComparison.Ordinal)).IsTrue();
@@ -3124,8 +3124,8 @@ public class MarkerReceptor : IReceptor<IMyMarker> {
     await Assert.That(registry).Contains("MyApp.Events.MyContracts.NestedEventB");
   }
 
-  // Persistence-completeness fallback: the generated cascade type-switch (CascadeToOutboxAsync /
-  // CascadeToEventStoreOnlyAsync) must always end with an IEvent catch-all so an event with no concrete arm —
+  // Persistence-completeness fallback: the generated cascade type-switch, CascadeToOutboxAsync and
+  // CascadeToEventStoreOnlyAsync, must always end with an IEvent catch-all so an event with no concrete arm —
   // e.g. a composite inner event whose type no receptor produces — is never silently dropped from the event store.
 
   [Test]

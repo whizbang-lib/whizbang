@@ -21,30 +21,6 @@ public static class ServiceBusConsumerWorkerTests {
   // using checkpoints created by process_work_batch, not inline during message handling.
   // See ServiceBusConsumerWorker.cs:134-137 for architecture details.
 
-  private static MessageEnvelope<ServiceBusWorkerTestEvent> _createTestEnvelope(ServiceBusWorkerTestEvent payload) {
-    // Create hop without PayloadType metadata - not needed for scope disposal test
-    // In production, PayloadType would be a JsonElement from Service Bus deserialization
-    var hop = new MessageHop {
-      Type = HopType.Current,
-      ServiceInstance = new ServiceInstanceInfo {
-        ServiceName = "TestService",
-        InstanceId = Guid.NewGuid(),
-        HostName = "test-host",
-        ProcessId = 12345
-      },
-      Topic = "test-topic",
-      Timestamp = DateTimeOffset.UtcNow
-    };
-
-    var envelope = new MessageEnvelope<ServiceBusWorkerTestEvent> {
-      MessageId = MessageId.New(),
-      Payload = payload,
-      Hops = [hop],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-
-    return envelope;
-  }
 }
 
 /// <summary>
@@ -77,13 +53,6 @@ internal sealed class TestTransport : ITransport {
     return Task.CompletedTask;
   }
 
-  public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-    TransportDestination destination,
-    CancellationToken cancellationToken = default) {
-    return Task.FromResult<ISubscription>(new TestSubscription());
-  }
-
   public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -102,7 +71,7 @@ internal sealed class TestTransport : ITransport {
   }
 
   public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
-    IMessageEnvelope envelope,
+    IMessageEnvelope requestEnvelope,
     TransportDestination destination,
     CancellationToken cancellationToken = default)
     where TRequest : notnull
@@ -110,9 +79,6 @@ internal sealed class TestTransport : ITransport {
     throw new NotImplementedException("Request-response not needed for worker tests");
   }
 
-  public void Dispose() {
-    // No unmanaged resources to dispose
-  }
 }
 
 /// <summary>
@@ -149,10 +115,10 @@ internal sealed class TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) : I
 
   public void QueueOutboxMessage(OutboxMessage message) { }
   public void QueueInboxMessage(InboxMessage message) { }
-  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     return FlushAndGetBatchAsync(flags, ct);

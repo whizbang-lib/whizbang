@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel(Order = 105)]
 public class ReadModelsReadyDriverTests {
 
-  private sealed class _stubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "svc";
     public string HostName => "host";
@@ -80,7 +80,7 @@ public class ReadModelsReadyDriverTests {
 
     var inner = new ServiceCollection().BuildServiceProvider();
     var worker = new PerspectiveWorker(
-      instanceProvider: new _stubInstanceProvider(),
+      instanceProvider: new StubInstanceProvider(),
       scopeFactory: inner.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: schemaGate,

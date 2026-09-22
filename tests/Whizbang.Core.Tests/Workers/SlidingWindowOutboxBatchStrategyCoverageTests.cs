@@ -23,7 +23,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Target: src/Whizbang.Core/Workers/SlidingWindowOutboxBatchStrategy.cs:140 — `return;` in
-  // `catch (OperationCanceledException) when (_stopCts.IsCancellationRequested)` around the flush
+  // the OperationCanceledException handler around the flush
   // call. FlushAndStopAsync always completes the stream's channel writer before it ever cancels
   // _stopCts, so a flush callback that itself awaits _stopCts's own token (as production flush
   // callbacks resolving a DI scope legitimately can, via the token this class hands them) is the

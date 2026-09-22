@@ -67,11 +67,6 @@ public class HeartbeatWorkerTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
 
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
   }
 
   [Test]
@@ -202,7 +197,7 @@ public class HeartbeatWorkerTests {
     await worker.StartAsync(cts.Token);
 
     // Give the worker a moment — if the killswitch leaks, the first heartbeat will fire fast.
-    var raced = await Task.WhenAny(
+    _ = await Task.WhenAny(
         coord.FirstHeartbeat.Task,
         Task.Delay(500, CancellationToken.None));
     await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();
@@ -237,7 +232,7 @@ public class HeartbeatWorkerTests {
     await worker.StartAsync(cts.Token);
 
     // Confirm no heartbeat while gate is closed.
-    var racedBefore = await Task.WhenAny(
+    _ = await Task.WhenAny(
         coord.FirstHeartbeat.Task,
         Task.Delay(300, CancellationToken.None));
     await Assert.That(coord.FirstHeartbeat.Task.IsCompleted).IsFalse();

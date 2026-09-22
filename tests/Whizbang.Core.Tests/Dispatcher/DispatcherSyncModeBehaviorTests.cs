@@ -155,7 +155,7 @@ public sealed class DispatcherSyncModeBehaviorTests {
       scopedEventTracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
 
       using var cts = new CancellationTokenSource();
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(async () =>
         await dispatcher.LocalInvokeAndSyncAsync(new VoidCommand("x"), SyncMode.AllProjections, cts.Token))

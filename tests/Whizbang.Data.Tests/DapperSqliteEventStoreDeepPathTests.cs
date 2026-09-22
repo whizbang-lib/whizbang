@@ -35,7 +35,7 @@ namespace Whizbang.Data.Tests;
 /// tests therefore prepend a test-only resolver that registers an object-form MessageId
 /// converter, which is the only way to drive <c>_tryDeserializeAsEventType</c> to completion.
 /// </remarks>
-public class DapperSqliteEventStoreDeepPathTests : IDisposable {
+public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -240,10 +240,7 @@ public class DapperSqliteEventStoreDeepPathTests : IDisposable {
     // Act - abandon the iterator after the first element (exercises the
     // state machine's dispose path instead of running to completion)
     var payloads = new List<string>();
-    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
-      payloads.Add(evt.Payload.Payload);
-      break;
-    }
+    payloads.Add((await eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0).FirstAsync()).Payload.Payload);
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);
@@ -260,10 +257,7 @@ public class DapperSqliteEventStoreDeepPathTests : IDisposable {
 
     // Act - abandon the UUIDv7-overload iterator after the first element
     var payloads = new List<string>();
-    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, (Guid?)null)) {
-      payloads.Add(evt.Payload.Payload);
-      break;
-    }
+    payloads.Add((await eventStore.ReadAsync<TestEvent>(streamId, (Guid?)null).FirstAsync()).Payload.Payload);
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);
@@ -280,10 +274,7 @@ public class DapperSqliteEventStoreDeepPathTests : IDisposable {
 
     // Act - abandon the polymorphic iterator after the first yielded envelope
     var payloads = new List<string>();
-    await foreach (var evt in eventStore.ReadPolymorphicAsync(streamId, null, [typeof(TestEvent)])) {
-      payloads.Add(((TestEvent)evt.Payload).Payload);
-      break;
-    }
+    payloads.Add(((TestEvent)(await eventStore.ReadPolymorphicAsync(streamId, null, [typeof(TestEvent)]).FirstAsync()).Payload).Payload);
 
     // Assert
     await Assert.That(payloads).Count().IsEqualTo(1);

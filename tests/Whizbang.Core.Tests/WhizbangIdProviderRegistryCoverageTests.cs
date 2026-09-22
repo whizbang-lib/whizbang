@@ -31,7 +31,7 @@ public class WhizbangIdProviderRegistryCoverageTests {
   // A plain, un-attributed struct: it satisfies CreateProvider<TId>'s `where TId : struct`
   // constraint but carries no [WhizbangId] attribute, so no generated ModuleInitializer ever
   // registers a factory for it.
-  private readonly struct _unregisteredCoverageId;
+  private readonly struct UnregisteredCoverageId;
 
   // If this threw the wrong exception (or returned a mismatched/null provider) instead of failing
   // loudly with a message naming the unresolved type, a consumer whose source generator didn't run
@@ -41,8 +41,8 @@ public class WhizbangIdProviderRegistryCoverageTests {
   public async Task CreateProvider_WithNoFactoryRegisteredForType_ThrowsInvalidOperationExceptionNamingTheTypeAsync() {
     var baseProvider = new Uuid7IdProvider();
 
-    await Assert.That(() => WhizbangIdProviderRegistry.CreateProvider<_unregisteredCoverageId>(baseProvider))
+    await Assert.That(() => WhizbangIdProviderRegistry.CreateProvider<UnregisteredCoverageId>(baseProvider))
       .Throws<InvalidOperationException>()
-      .WithMessageContaining(nameof(_unregisteredCoverageId));
+      .WithMessageContaining(nameof(UnregisteredCoverageId));
   }
 }

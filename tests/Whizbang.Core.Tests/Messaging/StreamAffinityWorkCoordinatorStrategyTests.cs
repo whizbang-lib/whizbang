@@ -319,15 +319,15 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
       Interlocked.Increment(ref QueueInboxCompletionCount);
     }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
       Interlocked.Increment(ref QueueOutboxFailureCount);
     }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
       Interlocked.Increment(ref QueueInboxFailureCount);
     }
-    public Task FlushAsync(WorkBatchOptions options = WorkBatchOptions.None, CancellationToken ct = default)
+    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default)
       => Task.CompletedTask;
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions options = WorkBatchOptions.None, CancellationToken ct = default)
+    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default)
       => Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
   }
 }

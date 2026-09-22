@@ -32,9 +32,9 @@ public class EFCoreCollectiveQueryCoverageTests {
   public async Task Of_ReturnsTheLiveDbContextsDbSetForThatModelAsync() {
     await using var ctx = _newCtx();
     var now = DateTime.UtcNow;
-    var seeded = new PerspectiveRow<_siblingModel> {
+    var seeded = new PerspectiveRow<SiblingModel> {
       Id = Guid.NewGuid(),
-      Data = new _siblingModel { Name = "sibling" },
+      Data = new SiblingModel { Name = "sibling" },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope(),
       CreatedAt = now,
@@ -45,32 +45,31 @@ public class EFCoreCollectiveQueryCoverageTests {
     await ctx.SaveChangesAsync();
     var query = new EFCoreCollectiveQuery(ctx);
 
-    var result = query.Of<_siblingModel>();
+    var result = query.Of<SiblingModel>();
 
-    await Assert.That(result.Count()).IsEqualTo(1)
+    await Assert.That(await result.CountAsync()).IsEqualTo(1)
       .Because("Of<TOther>() must return the SAME DbContext's live DbSet, not a disconnected or "
              + "empty one, or a handler's sibling-perspective cohort check would see no rows");
   }
 
-  private sealed class _siblingModel {
+  private sealed class SiblingModel {
     public string Name { get; set; } = string.Empty;
   }
 
-  private static _ctx _newCtx() {
-    var options = new DbContextOptionsBuilder<_ctx>()
+  private static Ctx _newCtx() {
+    var options = new DbContextOptionsBuilder<Ctx>()
       .UseInMemoryDatabase($"collective-query-coverage-{Guid.NewGuid():N}")
       .Options;
-    return new _ctx(options);
+    return new Ctx(options);
   }
 
-  private sealed class _ctx(DbContextOptions<_ctx> opts) : DbContext(opts) {
-    public DbSet<PerspectiveRow<_siblingModel>> Siblings => Set<PerspectiveRow<_siblingModel>>();
+  private sealed class Ctx(DbContextOptions<Ctx> opts) : DbContext(opts) {
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
-      modelBuilder.Entity<PerspectiveRow<_siblingModel>>(entity => {
+      modelBuilder.Entity<PerspectiveRow<SiblingModel>>(entity => {
         entity.HasKey(e => e.Id);
         // Owned types for the InMemory provider — matches the TestDbContext pattern in
-        // EFCorePostgresLensQueryTests.cs. Production maps these as JSONB via .ToJson();
+        // EFCorePostgresLensQueryTests.cs. Production maps these as JSONB via .ToJson() —
         // that translation is a real-Postgres concern, not what Of<TOther>() itself does.
         entity.OwnsOne(e => e.Data, data => data.WithOwner());
         entity.OwnsOne(e => e.Metadata, metadata => metadata.WithOwner());

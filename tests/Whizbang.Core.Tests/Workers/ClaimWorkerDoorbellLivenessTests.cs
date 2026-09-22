@@ -44,7 +44,7 @@ public class ClaimWorkerDoorbellLivenessTests {
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;
-    public event Action<bool>? OnAvailabilityChanged { add { } remove { } }
+    public event Action<bool>? OnAvailabilityChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 

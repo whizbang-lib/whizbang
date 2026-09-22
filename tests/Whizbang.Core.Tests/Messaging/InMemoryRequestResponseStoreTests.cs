@@ -115,7 +115,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var waitTask = store.WaitForResponseAsync(correlationId, cts.Token);
 
     // Act - cancel the wait
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var result = await waitTask;
 
@@ -178,7 +178,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var waitTask = store.WaitForResponseAsync<string>(correlationId, cts.Token);
 
     // Act
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var result = await waitTask;
 

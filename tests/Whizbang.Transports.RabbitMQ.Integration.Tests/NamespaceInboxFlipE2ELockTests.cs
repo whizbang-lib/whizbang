@@ -271,7 +271,7 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
   public async Task MisdeliveredMessage_OnFlippedEntity_DiscardedAtReceiveBoundary_NoDlqNoHandlerAsync(CancellationToken ct) {
     // Discard-at-receive-boundary stays the safety belt on the NEW entities: a deliverable,
     // deserializable message whose type this service does NOT consume is acked+dropped —
-    // never dead-lettered, never handled. The discard policy consults the receptor registry;
+    // never dead-lettered, never handled. The discard policy consults the receptor registry —
     // this stub consumes PlaceOrder (the sentinel) and nothing else, so the mis-delivered
     // ChargeCard on the orders exchange is exactly a mis-delivery.
     var discardPolicy = new MessageDiscardPolicy(

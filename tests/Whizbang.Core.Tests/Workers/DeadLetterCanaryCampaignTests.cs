@@ -166,7 +166,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.BeginCalls.Count).IsEqualTo(1)
@@ -184,7 +184,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.BeginCalls.Count).IsEqualTo(0);
@@ -199,7 +199,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.EvaluateCalls.Count).IsEqualTo(0)
@@ -244,7 +244,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.Scheduled.Task.WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     var delay = svc.ScheduledAt!.Value - DateTimeOffset.UtcNow;
@@ -277,7 +277,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       Scheduled.TrySetResult();
       return Task.CompletedTask;
     }
-    public int GenerationReplayReturn { get; set; }
+    public int GenerationReplayReturn { get; }
     public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) =>
       Task.FromResult(GenerationReplayReturn);
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
@@ -314,7 +314,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.WaveSignal(1).WaitAsync(_timeout);   // Mixed -> first wave same scan
     bell.Ring();
     await svc.WaveSignal(2).WaitAsync(_timeout);   // clean -> second wave next scan
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     List<(string, int)> waves;
@@ -344,7 +344,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.FetchSignal(2).WaitAsync(_timeout);
     bell.Ring();
     await svc.FetchSignal(3).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     List<(string, int)> waves;
@@ -373,7 +373,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.WaveSignal(2).WaitAsync(_timeout);
     bell.Ring();
     await svc.FetchSignal(3).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     var done = logs.GetSnapshot().Any(r => r.Message.Contains("fp-mix", StringComparison.Ordinal)
@@ -391,12 +391,12 @@ public sealed class DeadLetterCanaryCampaignTests {
       add { _onSignal += value; }
       remove { _onSignal -= value; }
     }
-    public event Action<bool>? OnHealthChanged { add { } remove { } }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public void Ring() => _onSignal?.Invoke(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
   }
 
   private sealed class Gate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public void MarkReady() { }
     public bool IsReady => true;
   }
@@ -404,7 +404,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     public string GetGeneration() => "build/9.9.9";
   }
 
-  // Generous: these are completion signals that resolve in milliseconds when healthy;
+  // Generous: these are completion signals that resolve in milliseconds when healthy —
   // the ceiling exists only so a genuine hang fails rather than deadlocks, and a saturated
   // parallel suite host must not be able to starve past it.
   private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(90);
@@ -445,7 +445,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.PurgeCalls).IsEqualTo(0)
@@ -460,11 +460,11 @@ public sealed class DeadLetterCanaryCampaignTests {
       Cohorts = [new("fp-aaa", 5000, 3), new("fp-bbb", 200, 1)],
       PurgeReturn = 12,
     };
-    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     List<string> order;
@@ -481,11 +481,11 @@ public sealed class DeadLetterCanaryCampaignTests {
   public async Task Canary_PassVerdict_ReleasesTheCohort_WithConfiguredStaggerAsync() {
     var svc = new CampaignFake { Cohorts = [new("fp-aaa", 5000, 3)] };
     svc.Verdicts["fp-aaa"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Pass, 7, 0, 0)]);
-    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.ReleaseSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(1);
@@ -507,7 +507,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.FetchSignal(2).WaitAsync(_timeout);
     bell.Ring();
     await svc.FetchSignal(3).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(0)
@@ -526,7 +526,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.EvaluateSignal(1).WaitAsync(_timeout);
     bell.Ring();
     await svc.FetchSignal(2).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(0)
@@ -552,7 +552,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.EvaluateSignal(1).WaitAsync(_timeout);
     bell.Ring();
     await svc.ReleaseSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.EvaluateCalls.Count).IsEqualTo(2)
@@ -577,7 +577,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.EvaluateSignal(1).WaitAsync(_timeout);
     bell.Ring();
     await svc.ReleaseSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.BeginCalls.Count).IsEqualTo(2)
@@ -590,11 +590,11 @@ public sealed class DeadLetterCanaryCampaignTests {
   [Test]
   public async Task Full_ReleasesEveryCohort_WithoutProbingAsync() {
     var svc = new CampaignFake { Cohorts = [new("fp-aaa", 5000, 3), new("fp-bbb", 200, 1)] };
-    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Full), svc);
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Full), svc);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.ReleaseSignal(2).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.BeginCalls.Count).IsEqualTo(0)
@@ -615,7 +615,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     var expected = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(text)!.SequenceHash;
@@ -638,7 +638,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     List<int> prunes;
@@ -660,7 +660,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await svc.FetchSignal(1).WaitAsync(_timeout);
     bell.Ring();
     await svc.FetchSignal(2).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.PruneCalls.Count).IsEqualTo(0)
@@ -677,7 +677,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.RecordedStacks.Count).IsEqualTo(0)
@@ -707,8 +707,8 @@ public sealed class DeadLetterCanaryCampaignTests {
       if (deadline.IsCompleted) { break; }
       await Task.Yield();
     }
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var warnings = logs.GetSnapshot().Count(r => r.Level == LogLevel.Warning
       && r.Message.Contains("IDeadLetterRecoveryService", StringComparison.Ordinal));
@@ -723,11 +723,11 @@ public sealed class DeadLetterCanaryCampaignTests {
     // e.g. the pod restarted mid-campaign. The worker must still evaluate it.
     var svc = new CampaignFake { Cohorts = [new("fp-aaa", 5000, 3)], BeginReturns = _ => 0 };
     svc.Verdicts["fp-aaa"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Pass, 7, 0, 0)]);
-    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.ReleaseSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(1)
@@ -747,7 +747,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.BeginCalls.Count).IsEqualTo(0)
@@ -774,7 +774,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     await worker.StartAsync(cts.Token);
     await svc.PurgeStartedSignal.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(svc.CallOrder.Contains("list")).IsFalse()
@@ -802,7 +802,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await svc.FetchSignal(1).WaitAsync(_timeout);
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     var logged = logs.GetSnapshot().Any(r => r.Level == LogLevel.Information

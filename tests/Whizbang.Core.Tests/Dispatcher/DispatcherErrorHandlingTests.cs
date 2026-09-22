@@ -306,7 +306,7 @@ public class DispatcherErrorHandlingTests {
     var dispatcher = _createDispatcher();
     var command = new SimpleCommand("test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);
 
     await Assert.That(async () =>

@@ -70,7 +70,7 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   }
 
   /// <summary>Minimal provider so a test can force a specific set of migration scripts to run.</summary>
-  private sealed class _customMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
+  private sealed class CustomMigrationProvider(string version, MigrationScript[] migrations) : IMigrationProvider {
     public string Version => version;
     public string? ReleaseNotes => null;
     public IReadOnlyList<MigrationScript> GetMigrations() => migrations;
@@ -118,7 +118,7 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
   public async Task InitializeSchemaAsync_CoreMigrationSqlFails_RethrowsAfterRecordingFailureAsync() {
     var bootstrap = new PostgresMigrationProvider().GetMigrations()
       .First(m => m.Name.StartsWith("000", StringComparison.Ordinal));
-    var provider = new _customMigrationProvider("9.9.20-coverage", [
+    var provider = new CustomMigrationProvider("9.9.20-coverage", [
       bootstrap,
       new MigrationScript("910_coverage_broken", "SELECT * FROM wh_coverage_table_does_not_exist;")
     ]);

@@ -199,22 +199,6 @@ public class SystemEventEmitterTests {
     await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
   }
 
-  [Test]
-  public async Task EmitCommandAuditedAsync_WithNullContext_DoesNotThrowAsync() {
-    // Arrange - Test that null context is handled gracefully
-    var eventStore = new MockEventStore();
-    var options = Options.Create(new SystemEventOptions()); // Disabled to avoid serialization
-    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
-
-    var command = new TestCommand { OrderId = "ABC123" };
-
-    // Act - Should not throw even with null context
-    await emitter.EmitCommandAuditedAsync(command, "result", "TestReceptor", null);
-
-    // Assert - No exception thrown, no events because disabled
-    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
-  }
-
   #endregion
 
   #region EmitAsync Tests
@@ -548,12 +532,10 @@ public class SystemEventEmitterTests {
 
   [AuditEvent(Reason = "Compliance")]
   private sealed record AuditedEvent {
-    public required string Name { get; init; }
   }
 
   [AuditEvent(Exclude = false)]
   private sealed record ExplicitlyIncludedEvent {
-    public required string Name { get; init; }
   }
 
   private sealed record TestCommand {

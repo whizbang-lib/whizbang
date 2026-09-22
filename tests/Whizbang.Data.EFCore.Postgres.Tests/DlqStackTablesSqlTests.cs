@@ -19,9 +19,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard2")]
 public class DlqStackTablesSqlTests : EFCoreTestBase {
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static readonly string[] _expectedOrderedFrames = ["My.App.First.RunAsync", "My.App.Second.RunAsync"];
 

@@ -45,11 +45,11 @@ public sealed class InboxHandlerWorkerCoverageTests {
     // handler on a dashboard that shows nothing wrong.
     var opts = _enabledOptions();
     opts.Flusher.CoalesceWindowMs = 300; // real window the test uses to flip Enabled before the flush fires
-    var coordinator = new _countingCoordinator();
-    var log = new _disabledFlushCapturingLogger();
+    var coordinator = new CountingCoordinator();
+    var log = new DisabledFlushCapturingLogger();
     var worker = new InboxHandlerWorker(
-      scopeFactory: new _stubScopeFactory(coordinator),
-      failureChannel: new _noopFailureChannel(),
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new NoopFailureChannel(),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(opts),
       logger: log,
@@ -77,12 +77,12 @@ public sealed class InboxHandlerWorkerCoverageTests {
     // coordinator contention) is actually responsible, exactly the ambiguity this warning exists
     // to remove.
     var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var coordinator = new _countingCoordinator(committed);
-    var log = new _slowPhaseCapturingLogger();
+    var coordinator = new CountingCoordinator(committed);
+    var log = new SlowPhaseCapturingLogger();
     var worker = new InboxHandlerWorker(
-      scopeFactory: new _stubScopeFactory(coordinator),
-      failureChannel: new _noopFailureChannel(),
-      schemaReadyGate: new _slowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new NoopFailureChannel(),
+      schemaReadyGate: new SlowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
       options: Options.Create(_enabledOptions()),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance);
@@ -105,12 +105,12 @@ public sealed class InboxHandlerWorkerCoverageTests {
   // Test doubles
   // ==========================================================================
 
-  private sealed class _noopFailureChannel : IFailureChannel {
+  private sealed class NoopFailureChannel : IFailureChannel {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 
-  private sealed class _slowSchemaReadyGate(TimeSpan delay) : ISchemaReadyGate {
+  private sealed class SlowSchemaReadyGate(TimeSpan delay) : ISchemaReadyGate {
     public bool IsReady => true;
     public async Task WaitForReadyAsync(CancellationToken cancellationToken) => await Task.Delay(delay, cancellationToken);
     public void MarkReady() { }
@@ -119,14 +119,14 @@ public sealed class InboxHandlerWorkerCoverageTests {
   // Extends the shared NoOpWorkCoordinator rather than reimplementing IWorkCoordinator: the
   // interface has many members this test does not care about, and re-declaring them here would
   // break every time one is added.
-  private sealed class _countingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private readonly TaskCompletionSource? _committed;
     private int _callCount;
 
     public int CallCount => Volatile.Read(ref _callCount);
 
-    public _countingCoordinator() { }
-    public _countingCoordinator(TaskCompletionSource committed) => _committed = committed;
+    public CountingCoordinator() { }
+    public CountingCoordinator(TaskCompletionSource committed) => _committed = committed;
 
     public Task<IReadOnlyList<HandlerBatchResult>> CommitHandlerBatchAsync(
         IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default) {
@@ -137,7 +137,7 @@ public sealed class InboxHandlerWorkerCoverageTests {
     }
   }
 
-  private sealed class _disabledFlushCapturingLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+  private sealed class DisabledFlushCapturingLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
     private readonly TaskCompletionSource _logged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task DisabledFlushLogged => _logged.Task;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -152,7 +152,7 @@ public sealed class InboxHandlerWorkerCoverageTests {
     }
   }
 
-  private sealed class _slowPhaseCapturingLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+  private sealed class SlowPhaseCapturingLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
     private readonly TaskCompletionSource<string> _slowPhaseLogged = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<string> SlowPhaseLogged => _slowPhaseLogged.Task;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -167,17 +167,17 @@ public sealed class InboxHandlerWorkerCoverageTests {
     }
   }
 
-  private sealed class _stubScopeFactory(IWorkCoordinator coordinator) : IServiceScopeFactory {
+  private sealed class StubScopeFactory(IWorkCoordinator coordinator) : IServiceScopeFactory {
     private readonly IWorkCoordinator _coordinator = coordinator;
 
-    public IServiceScope CreateScope() => new _stubScope(_coordinator);
+    public IServiceScope CreateScope() => new StubScope(_coordinator);
 
-    private sealed class _stubScope(IWorkCoordinator coordinator) : IServiceScope {
-      public IServiceProvider ServiceProvider { get; } = new _stubProvider(coordinator);
+    private sealed class StubScope(IWorkCoordinator coordinator) : IServiceScope {
+      public IServiceProvider ServiceProvider { get; } = new StubProvider(coordinator);
       public void Dispose() { }
     }
 
-    private sealed class _stubProvider(IWorkCoordinator coordinator) : IServiceProvider {
+    private sealed class StubProvider(IWorkCoordinator coordinator) : IServiceProvider {
       private readonly IWorkCoordinator _coordinator = coordinator;
 
       public object? GetService(Type serviceType)

@@ -117,7 +117,7 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
     await using (var m = connection.CreateCommand()) {
       m.CommandText = "SELECT * FROM perform_maintenance()";
       await using var rd = await m.ExecuteReaderAsync();
-      while (await rd.ReadAsync()) { }
+      while (await rd.ReadAsync()) { /* drain */ }
     }
     await Assert.That((await _rowStateAsync(connection, eventId)).bodyCount).IsEqualTo(0L)
       .Because("After reclassification the tier-1 reaper reaps the now-ephemeral body, consumption-gated.");
@@ -160,7 +160,7 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
     const string eventType = "Whizbang.Tests.IdempotentReclassifyEvent";
     await _commitAsync(connection, Guid.NewGuid(), Guid.NewGuid(), eventType, flags: 0);
 
-    var (reclassified, streams, blocked) = await _reclassifyAsync(connection, eventType);
+    var (reclassified, _, _) = await _reclassifyAsync(connection, eventType);
     await Assert.That(reclassified).IsEqualTo(1L).Because("First run reclassifies the historical event.");
 
     var second = await _reclassifyAsync(connection, eventType);
@@ -177,7 +177,7 @@ public class EphemeralReclassifySqlTests : EFCoreTestBase {
     const string eventType = "Whizbang.Tests.BornEphemeralEvent";
     // Emitted ephemeral from the start: flags 8, body already offloaded.
     await _commitAsync(connection, eventId, Guid.NewGuid(), eventType, flags: 8);
-    var (flags, bodyCount) = await _rowStateAsync(connection, eventId);
+    var (_, bodyCount) = await _rowStateAsync(connection, eventId);
     await Assert.That(bodyCount).IsEqualTo(1L).Because("Born-ephemeral event already has its body in wh_event_body.");
 
     var (reclassified, _, blocked) = await _reclassifyAsync(connection, eventType);

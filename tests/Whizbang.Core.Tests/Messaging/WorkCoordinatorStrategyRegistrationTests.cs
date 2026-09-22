@@ -203,6 +203,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
     await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
       .Because("Interval option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+    await Assert.That(strategy2).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("every scope resolves the same non-disposing wrapper shape");
 
     // Verify the underlying singleton is shared (resolve concrete type)
     var singleton = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
@@ -237,6 +239,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
     await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
       .Because("Batch option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+    await Assert.That(strategy2).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("every scope resolves the same non-disposing wrapper shape");
 
     // Verify the underlying singleton is shared (resolve concrete type)
     var singleton = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
@@ -542,7 +546,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -555,31 +559,6 @@ public class WorkCoordinatorStrategyRegistrationTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
-    public void ClearInFlight() { }
-    private readonly List<OutboxWork> _writtenWork = [];
-    public IReadOnlyList<OutboxWork> WrittenWork => _writtenWork;
-    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
-      System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>().Reader;
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
-      _writtenWork.Add(work);
-      return ValueTask.CompletedTask;
-    }
-    public bool TryWrite(OutboxWork work) {
-      _writtenWork.Add(work);
-      return true;
-    }
-    public void Complete() { }
-
-    public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
-    public bool ShouldRenewLease(Guid messageId) => false;
-    public event Action? OnNewWorkAvailable;
-    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
-    public event Action? OnNewPerspectiveWorkAvailable;
-    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
-  }
-
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
@@ -589,7 +568,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class IntegrityAuditWorkerCoverageTests {
 
   /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
-  private sealed class _messageLogger : ILogger<IntegrityAuditWorker> {
+  private sealed class MessageLogger : ILogger<IntegrityAuditWorker> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -36,7 +36,7 @@ public class IntegrityAuditWorkerCoverageTests {
   }
 
   /// <summary>A coordinator whose claim always succeeds and counts its calls.</summary>
-  private sealed class _claimCountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class ClaimCountingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int ClaimCalls { get; private set; }
 
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) {
@@ -46,7 +46,7 @@ public class IntegrityAuditWorkerCoverageTests {
   }
 
   /// <summary>A coordinator whose claim always throws <see cref="OperationCanceledException"/>.</summary>
-  private sealed class _canceledMidCycleCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CanceledMidCycleCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int ClaimCalls { get; private set; }
 
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) {
@@ -57,7 +57,7 @@ public class IntegrityAuditWorkerCoverageTests {
 
   /// <summary>A coordinator whose claim always throws a non-cancellation exception, signaling
   /// once it has been called a second time (proof the loop survived the first failure).</summary>
-  private sealed class _repeatedlyFailingCoordinator(TaskCompletionSource secondCallSignal) : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RepeatedlyFailingCoordinator(TaskCompletionSource secondCallSignal) : NoOpWorkCoordinator, IWorkCoordinator {
     public int ClaimCalls { get; private set; }
 
     public Task<bool> TryClaimIntegrityAuditCycleAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default) {
@@ -80,7 +80,7 @@ public class IntegrityAuditWorkerCoverageTests {
   /// without ever invoking the delegate. A "nothing was claimed" assertion is satisfied by that
   /// too, so the wait is what makes the assertion mean anything.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -101,9 +101,9 @@ public class IntegrityAuditWorkerCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
-    var coordinator = new _claimCountingCoordinator();
+    var coordinator = new ClaimCountingCoordinator();
     // A gate that never opens — a host stopped mid-migration.
-    var gate = new _blockingGate();
+    var gate = new BlockingGate();
     var worker = _buildWorker(coordinator, new StreamIntegrityOptions { AuditEnabled = true }, gate: gate);
 
     using var cts = new CancellationTokenSource();
@@ -130,7 +130,7 @@ public class IntegrityAuditWorkerCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_AuditCoreCanceledMidCycle_BreaksTheLoopWithoutFaultingAsync(CancellationToken testToken) {
-    var coordinator = new _canceledMidCycleCoordinator();
+    var coordinator = new CanceledMidCycleCoordinator();
     var worker = _buildWorker(coordinator, new StreamIntegrityOptions {
       AuditEnabled = true,
       AuditOnStartup = false,
@@ -161,8 +161,8 @@ public class IntegrityAuditWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_AuditCoreThrowsNonCancellation_LogsAndKeepsLoopingAsync(CancellationToken testToken) {
     var secondCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var coordinator = new _repeatedlyFailingCoordinator(secondCall);
-    var logger = new _messageLogger();
+    var coordinator = new RepeatedlyFailingCoordinator(secondCall);
+    var logger = new MessageLogger();
     var worker = _buildWorker(coordinator, new StreamIntegrityOptions {
       AuditEnabled = true,
       AuditOnStartup = false,
@@ -199,7 +199,7 @@ public class IntegrityAuditWorkerCoverageTests {
   /// </remarks>
   [Test]
   public async Task RunAuditOnceAsync_NoTransportWired_CompletesCleanlyWithoutTouchingANullTransportAsync() {
-    var coordinator = new _claimCountingCoordinator();
+    var coordinator = new ClaimCountingCoordinator();
     var tracker = new IntegrityGapTracker();
     // A known origin proves the tracker (the local half's own state) is genuinely wired, and is
     // exactly what a broken guard would iterate to reach the null transport — this is "the local

@@ -342,7 +342,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT * FROM claim_work(@p_inst, 'test-svc', 'test-host', 100, 100, 100, 100)";
     cmd.Parameters.AddWithValue("p_inst", instanceId);
     await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync()) { }
+    while (await reader.ReadAsync()) { /* drain */ }
   }
 
   private static async Task<Dictionary<Guid, int>> _readVersionsAsync(NpgsqlConnection conn, Guid streamId) {

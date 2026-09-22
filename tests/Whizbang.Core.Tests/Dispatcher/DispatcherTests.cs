@@ -615,7 +615,7 @@ public class DispatcherTests {
     await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
 
     // Verify the envelope has the correct generic type parameter
-    var envelope = traces.First();
+    var envelope = traces[0];
     var envelopeType = envelope.GetType();
     await Assert.That(envelopeType.IsGenericType).IsTrue()
       .Because("MessageEnvelope should be a generic type");
@@ -963,7 +963,7 @@ public class DispatcherTests {
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1029,7 +1029,7 @@ public class DispatcherTests {
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1062,7 +1062,7 @@ public class DispatcherTests {
     var dispatcher = _createDispatcher();
     var command = new LogCommand("Test with canceled token");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 
@@ -1102,7 +1102,7 @@ public class DispatcherTests {
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
       .WithCancellationToken(cts.Token);
 

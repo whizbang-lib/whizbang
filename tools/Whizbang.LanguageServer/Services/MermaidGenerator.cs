@@ -17,7 +17,7 @@ public sealed class MermaidGenerator {
   /// <param name="receptors">List of (className, methodName) tuples that handle this message.</param>
   /// <param name="perspectives">List of class names that observe this message.</param>
   /// <returns>Mermaid diagram code string.</returns>
-  public string Generate(
+  public static string Generate(
       string messageType,
       bool isCommand,
       bool isEvent,
@@ -29,7 +29,12 @@ public sealed class MermaidGenerator {
 
     var msgId = _sanitizeId(messageType);
     var msgLabel = messageType;
-    var msgShape = isCommand ? $"[/{msgLabel}\\]" : isEvent ? $"(({msgLabel}))" : $"[{msgLabel}]";
+    var msgShape = $"[{msgLabel}]";
+    if (isCommand) {
+      msgShape = $"[/{msgLabel}\\]";
+    } else if (isEvent) {
+      msgShape = $"(({msgLabel}))";
+    }
 
     // Message node
     sb.AppendLine($"    {msgId}{msgShape}");

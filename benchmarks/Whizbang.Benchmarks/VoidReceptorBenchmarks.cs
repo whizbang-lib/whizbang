@@ -254,9 +254,9 @@ public class VoidReceptorBenchmarks {
       return Task.FromResult(_traces.Where(t => t.MessageId == messageId).ToList());
     }
 
-    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default) {
+    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
       return Task.FromResult(_traces.Where(t =>
-        t.Hops.Any(h => h.Timestamp >= from && h.Timestamp <= to)
+        t.Hops.Any(h => h.Timestamp >= from && h.Timestamp <= toTime)
       ).ToList());
     }
   }

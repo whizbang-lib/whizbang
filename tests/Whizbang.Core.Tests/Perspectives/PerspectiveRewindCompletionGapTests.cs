@@ -48,12 +48,6 @@ namespace Whizbang.Core.Tests.Perspectives;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class PerspectiveRewindCompletionGapTests {
 
-  /// <summary>Mirrors a consumer's bulk-import CompletedItems counter.</summary>
-  private sealed class CountModel {
-    public Guid Id { get; init; }
-    public int CompletedItems { get; set; }
-  }
-
   /// <summary>
   /// Stand-in for the event store. The producer can <see cref="Append"/>
   /// events any time; a consumer snapshots the current event list via

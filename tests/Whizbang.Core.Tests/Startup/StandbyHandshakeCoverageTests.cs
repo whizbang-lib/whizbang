@@ -19,12 +19,12 @@ namespace Whizbang.Core.Tests.Startup;
 /// </summary>
 public class StandbyHandshakeCoverageTests {
 
-  private sealed class _fakeFleetSource(IReadOnlyList<FleetInstanceStatus> fleet) : IStartupFleetStatusSource {
+  private sealed class FakeFleetSource(IReadOnlyList<FleetInstanceStatus> fleet) : IStartupFleetStatusSource {
     public Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) =>
       Task.FromResult(fleet);
   }
 
-  private sealed class _fakeInstanceProvider(Guid instanceId) : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider(Guid instanceId) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = instanceId;
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -47,8 +47,8 @@ public class StandbyHandshakeCoverageTests {
   public async Task AwaitPeersStandingByAsync_UnreadableVersion_ThrowsArgumentExceptionAsync() {
     var handshake = new StandbyHandshake(
       scopeFactory: _emptyScopeFactory(),
-      fleetSource: new _fakeFleetSource([]),
-      instanceProvider: new _fakeInstanceProvider(Guid.NewGuid()),
+      fleetSource: new FakeFleetSource([]),
+      instanceProvider: new FakeInstanceProvider(Guid.NewGuid()),
       logger: NullLogger<StandbyHandshake>.Instance);
 
     await Assert.That(async () => await handshake.AwaitPeersStandingByAsync("not-a-version", CancellationToken.None))
@@ -73,8 +73,8 @@ public class StandbyHandshakeCoverageTests {
     };
     var handshake = new StandbyHandshake(
       scopeFactory: _emptyScopeFactory(),
-      fleetSource: new _fakeFleetSource(fleet),
-      instanceProvider: new _fakeInstanceProvider(self),
+      fleetSource: new FakeFleetSource(fleet),
+      instanceProvider: new FakeInstanceProvider(self),
       logger: NullLogger<StandbyHandshake>.Instance);
 
     var acknowledged = await handshake.AwaitPeersStandingByAsync("1.0.0", CancellationToken.None);

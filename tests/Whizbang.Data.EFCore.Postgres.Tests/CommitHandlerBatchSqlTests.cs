@@ -96,7 +96,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
         results.Add((
           reader.GetGuid(0),
           reader.GetBoolean(1),
-          reader.IsDBNull(2) ? null : reader.GetString(2)));
+          await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
       }
     }
 
@@ -174,12 +174,12 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
         results.Add((
           reader.GetGuid(0),
           reader.GetBoolean(1),
-          reader.IsDBNull(2) ? null : reader.GetString(2)));
+          await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
       }
     }
 
     await Assert.That(results.Count).IsEqualTo(3);
-    var (handlerId, success, error) = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
+    var (_, success, error) = results.SingleOrDefault(r => r.handlerId == failingHandlerId);
     await Assert.That(success).IsFalse();
     await Assert.That(error).IsNotNull();
     await Assert.That(results.Where(r => r.handlerId != failingHandlerId).All(r => r.success)).IsTrue();
@@ -421,7 +421,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
       cmd.Parameters.AddWithValue("req", resultsJson);
       await using var reader = await cmd.ExecuteReaderAsync();
       while (await reader.ReadAsync()) {
-        rows.Add((reader.GetBoolean(0), reader.GetInt32(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+        rows.Add((reader.GetBoolean(0), reader.GetInt32(1), await reader.IsDBNullAsync(2) ? null : reader.GetString(2)));
       }
     }
 
@@ -480,7 +480,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     await Assert.That(reader.GetInt32(0)).IsEqualTo(1)
       .Because("the healthy path is the bulk tier — tier 1 on every row is the fleet-wide "
              + "normal an operator baselines against");
-    await Assert.That(reader.IsDBNull(1)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
   }
 
 }

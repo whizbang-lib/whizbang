@@ -1,3 +1,4 @@
+using System.Linq;
 namespace Whizbang.Core.RunControl;
 
 /// <summary>
@@ -40,13 +41,11 @@ public sealed class WhizbangLifecycleCoordinator : IDisposable {
   public async ValueTask TransitionAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
     await _serialize.WaitAsync(cancellationToken).ConfigureAwait(false);
     try {
-      var acks = new List<Task>();
-      foreach (var participant in _participants) {
-        // A per-component operator override pins that component to its own phase, independent of the
-        // system phase (e.g. drain one transport for maintenance while the rest keep Running).
-        var effective = _overrides.TryGetValue(participant.Component, out var pinned) ? pinned : phase;
-        acks.Add(_ackAsync(participant, effective, cancellationToken));
-      }
+      // A per-component operator override pins that component to its own phase, independent of the
+      // system phase (e.g. drain one transport for maintenance while the rest keep Running).
+      var acks = _participants
+        .Select(participant => _ackAsync(participant, _overrides.TryGetValue(participant.Component, out var pinned) ? pinned : phase, cancellationToken))
+        .ToList();
       await Task.WhenAll(acks).ConfigureAwait(false);
     } finally {
       _serialize.Release();
@@ -70,12 +69,10 @@ public sealed class WhizbangLifecycleCoordinator : IDisposable {
         _overrides[component] = overridePhase.Value;
       }
       var effective = overridePhase ?? systemPhase;
-      var acks = new List<Task>();
-      foreach (var participant in _participants) {
-        if (string.Equals(participant.Component, component, StringComparison.Ordinal)) {
-          acks.Add(_ackAsync(participant, effective, cancellationToken));
-        }
-      }
+      var acks = _participants
+        .Where(participant => string.Equals(participant.Component, component, StringComparison.Ordinal))
+        .Select(participant => _ackAsync(participant, effective, cancellationToken))
+        .ToList();
       await Task.WhenAll(acks).ConfigureAwait(false);
     } finally {
       _serialize.Release();

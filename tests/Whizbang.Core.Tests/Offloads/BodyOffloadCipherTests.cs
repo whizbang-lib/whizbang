@@ -185,13 +185,13 @@ public class BodyOffloadCipherTests {
   public async Task AddWhizbangMessageBodyCipher_ResolvesByNameAsync() {
     var services = new ServiceCollection();
     services.AddSingleton<IMessageBodyKeyWrapper>(new LocalAesKeyWrapper("kek-1", _kek));
-    services.AddWhizbangMessageBodyCipher<_namedCipher>("custom");
+    services.AddWhizbangMessageBodyCipher<NamedCipher>("custom");
     var sp = services.BuildServiceProvider();
 
     var cipher = sp.GetKeyedService<IMessageBodyCipher>("custom");
 
     await Assert.That(cipher).IsNotNull();
-    await Assert.That(cipher).IsTypeOf<_namedCipher>();
+    await Assert.That(cipher).IsTypeOf<NamedCipher>();
     await Assert.That(sp.GetKeyedService<IMessageBodyCipher>("other")).IsNull();
   }
 
@@ -215,15 +215,15 @@ public class BodyOffloadCipherTests {
     var services = new ServiceCollection();
 
     await Assert.That(() => services.AddWhizbangAesGcmBodyCipher("", "k", _kek)).Throws<ArgumentException>();
-    await Assert.That(() => services.AddWhizbangMessageBodyCipher<_namedCipher>(" ")).Throws<ArgumentException>();
+    await Assert.That(() => services.AddWhizbangMessageBodyCipher<NamedCipher>(" ")).Throws<ArgumentException>();
     await Assert.That(() => services.AddWhizbangAesGcmBodyCipher("kv", null!)).Throws<ArgumentNullException>();
   }
 
   // -------------------------------------------------------------------------------------------
 
-  private static (BodyOffloadPostSerializeHook Hook, _hashingStore Store) _buildHook(Action<MessageBodyOffloadOptions> configure, bool registerCipher = true) {
+  private static (BodyOffloadPostSerializeHook Hook, HashingStore Store) _buildHook(Action<MessageBodyOffloadOptions> configure, bool registerCipher = true) {
     var services = new ServiceCollection();
-    var store = new _hashingStore("memory");
+    var store = new HashingStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => store);
     if (registerCipher) {
       services.AddWhizbangAesGcmBodyCipher("kv", "kek-1", _kek);
@@ -233,10 +233,10 @@ public class BodyOffloadCipherTests {
     return (new BodyOffloadPostSerializeHook(sp, sp.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>()), store);
   }
 
-  private static (ServiceProvider Provider, _hashingStore Store, _countingCipher Cipher) _buildReceiver() {
+  private static (ServiceProvider Provider, HashingStore Store, CountingCipher Cipher) _buildReceiver() {
     var services = new ServiceCollection();
-    var store = new _hashingStore("memory");
-    var cipher = new _countingCipher(new AesGcmEnvelopeCipher("kv", new LocalAesKeyWrapper("kek-1", _kek)));
+    var store = new HashingStore("memory");
+    var cipher = new CountingCipher(new AesGcmEnvelopeCipher("kv", new LocalAesKeyWrapper("kek-1", _kek)));
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => store);
     services.AddKeyedSingleton<IMessageBodyCipher>("kv", (_, _) => cipher);
     return (services.BuildServiceProvider(), store, cipher);
@@ -245,10 +245,10 @@ public class BodyOffloadCipherTests {
   private static JsonSerializerOptions _jsonOptions() => Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
   private static PostSerializeContext _buildContext(byte[] bytes) {
-    var envelope = new MessageEnvelope<_payload> {
+    var envelope = new MessageEnvelope<FakePayload> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = new _payload("x"),
+      Payload = new FakePayload("x"),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
     return new PostSerializeContext(
@@ -275,16 +275,16 @@ public class BodyOffloadCipherTests {
     Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
   };
 
-  private sealed record _payload(string Content);
+  private sealed record FakePayload(string Content);
 
-  private sealed class _namedCipher(IMessageBodyKeyWrapper wrapper) : IMessageBodyCipher {
+  private sealed class NamedCipher(IMessageBodyKeyWrapper wrapper) : IMessageBodyCipher {
     private readonly AesGcmEnvelopeCipher _inner = new("custom", wrapper);
     public string CipherName => "custom";
     public ValueTask<SealedBody> SealAsync(ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) => _inner.SealAsync(body, cancellationToken);
     public ValueTask<ReadOnlyMemory<byte>> OpenAsync(ReadOnlyMemory<byte> sealedBody, MessageBodyCipherDescriptor descriptor, CancellationToken cancellationToken = default) => _inner.OpenAsync(sealedBody, descriptor, cancellationToken);
   }
 
-  private sealed class _countingCipher(IMessageBodyCipher inner) : IMessageBodyCipher {
+  private sealed class CountingCipher(IMessageBodyCipher inner) : IMessageBodyCipher {
     public int OpenCalls;
     public string CipherName => inner.CipherName;
     public ValueTask<SealedBody> SealAsync(ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default) => inner.SealAsync(body, cancellationToken);
@@ -295,7 +295,7 @@ public class BodyOffloadCipherTests {
   }
 
   /// <summary>A store that hashes exactly what it is given, like the real providers.</summary>
-  private sealed class _hashingStore(string providerName) : IMessageBodyStore {
+  private sealed class HashingStore(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
     public string ProviderName { get; } = providerName;
     public int UploadCount { get; private set; }

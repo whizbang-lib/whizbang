@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
 
-  private sealed class _captureLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+  private sealed class CaptureLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
     public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
@@ -32,7 +32,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
   }
 
   /// <summary>A logger with Debug disabled: the forensic line must be skipped without formatting cost.</summary>
-  private sealed class _quietLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+  private sealed class QuietLogger : Microsoft.Extensions.Logging.ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
     public int Calls;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => logLevel > Microsoft.Extensions.Logging.LogLevel.Debug;
@@ -45,11 +45,11 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
   }
 
   /// <summary>Observes the deduplication counter; the passive counter reports running totals per tag set.</summary>
-  private sealed class _dedupObserver : IDisposable {
+  private sealed class DedupObserver : IDisposable {
     private readonly MeterListener _listener = new();
     public List<(long Value, string? MessageType)> Cells { get; } = [];
 
-    public _dedupObserver(WorkCoordinatorMetrics metrics) {
+    public DedupObserver(WorkCoordinatorMetrics metrics) {
       _listener.InstrumentPublished = (instrument, l) => {
         if (ReferenceEquals(instrument.Meter, metrics.ProcessBatchCalls.Meter)
             && instrument.Name == "whizbang.work_coordinator.outbox.emission_deduplicated") {
@@ -91,8 +91,8 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
   [Test]
   public async Task StoreOutboxMessagesAsync_SameMessageStoredTwice_CountsTheSkippedRowByTypeAsync() {
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    using var observer = new _dedupObserver(metrics);
-    var logger = new _captureLogger();
+    using var observer = new DedupObserver(metrics);
+    var logger = new CaptureLogger();
 
     await using var dbContext = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -129,8 +129,8 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
   [Test]
   public async Task StoreOutboxMessagesAsync_MixedBatch_CountsOnlyTheRowsThatAlreadyExistedAsync() {
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    using var observer = new _dedupObserver(metrics);
-    var quiet = new _quietLogger();
+    using var observer = new DedupObserver(metrics);
+    var quiet = new QuietLogger();
 
     await using var dbContext = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
@@ -169,7 +169,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
   [Test]
   public async Task StoreOutboxMessagesAsync_InsideAnOpenTransaction_StoresAndCountsOnTheSameConnectionAsync() {
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    using var observer = new _dedupObserver(metrics);
+    using var observer = new DedupObserver(metrics);
 
     await using var dbContext = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(

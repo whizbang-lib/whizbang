@@ -65,7 +65,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     // tables, the receive/inbox discard gates silently drop every control-plane message —
     // observed live: checkpoints/rebuild commands discarded as "no consumer" on services whose
     // runtime registrars had them.
-    var runtime = new _runtimeRegistryFake(UNKNOWN_TYPE);
+    var runtime = new RuntimeRegistryFake(UNKNOWN_TYPE);
     var sut = new WhizbangReceptorRegistryQueryAdapter(runtime);
 
     await Assert.That(sut.HasAnyConsumer(UNKNOWN_TYPE)).IsTrue()
@@ -97,7 +97,7 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
       .Because("the adapter surfaces the runtime registration to both discard gates.");
   }
 
-  private sealed class _runtimeRegistryFake(string knownName) : IReceptorRegistry {
+  private sealed class RuntimeRegistryFake(string knownName) : IReceptorRegistry {
     public bool HasRuntimeConsumerFor(string clrTypeName) => clrTypeName == knownName;
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
@@ -144,12 +144,12 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     // Default-interface-member contract: implementations that predate the enumeration
     // surface (custom/test fakes with predicates only) keep compiling AND degrade to an
     // empty enumeration — topology consumers fall back to the singular strategy behavior.
-    IReceptorRegistryQuery predicatesOnly = new _predicatesOnlyQueryFake();
+    IReceptorRegistryQuery predicatesOnly = new PredicatesOnlyQueryFake();
 
     await Assert.That(predicatesOnly.GetHandledMessages()).IsEmpty();
   }
 
-  private sealed class _predicatesOnlyQueryFake : IReceptorRegistryQuery {
+  private sealed class PredicatesOnlyQueryFake : IReceptorRegistryQuery {
     public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public bool HasInboxHandler(string messageType) => false;
     public bool HasAnyConsumer(string messageType) => false;

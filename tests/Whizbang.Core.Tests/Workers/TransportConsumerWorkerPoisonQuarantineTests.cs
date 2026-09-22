@@ -41,7 +41,7 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
 
   [Test]
   public async Task Batch_RedeliveryObservationsPastBound_MovesTheInboxRowToDeadLettersAsync() {
-    // The lock: the store reports the same message id observed 10 times AND attempted 10 times;
+    // The lock: the store reports the same message id observed 10 times AND attempted 10 times —
     // layer 2 quarantines it into the EXISTING dead-letter store, from which the existing recovery
     // flow replays it.
     //
@@ -302,11 +302,6 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new NopSubscription());
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
@@ -316,11 +311,9 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
       return Task.FromResult<ISubscription>(new NopSubscription());
     }
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull => throw new NotImplementedException();
-
-    public void Dispose() { }
 
     public Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) =>
       _batchHandler is null

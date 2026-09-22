@@ -411,11 +411,11 @@ public sealed class PostgresSchemaInitializer {
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
         var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = existingHash == hash
-          ? "Re-applied (redefinition closure)"
-          : isUpdate
-            ? $"Updated from hash {existingHash![..8]}..."
-            : "First apply";
+        var desc = (existingHash == hash, isUpdate) switch {
+          (true, _) => "Re-applied (redefinition closure)",
+          (false, true) => $"Updated from hash {existingHash![..8]}...",
+          _ => "First apply",
+        };
 
         // Store previous SQL content for rollback support (functions can be re-applied)
         var previousContent = isUpdate ? migration.Sql : null;

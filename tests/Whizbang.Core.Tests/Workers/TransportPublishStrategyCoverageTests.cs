@@ -63,12 +63,12 @@ public class TransportPublishStrategyCoverageTests {
   [Test]
   public async Task PublishAsync_AzureServiceBusTransportThrottledOnce_LogsAsbTransportTagAsync() {
     var transport = new AzureServiceBusTransport();
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var strategy = new TransportPublishStrategy(
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      loggerFactory: new _loggerFactoryReturning(logger),
+      loggerFactory: new LoggerFactoryReturning(logger),
       throttleRetryOptions: _fastOpts(),
       namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
@@ -86,12 +86,12 @@ public class TransportPublishStrategyCoverageTests {
   [Test]
   public async Task PublishAsync_RabbitMqTransportThrottledOnce_LogsRabbitmqTransportTagAsync() {
     var transport = new RabbitMQTransport();
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var strategy = new TransportPublishStrategy(
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      loggerFactory: new _loggerFactoryReturning(logger),
+      loggerFactory: new LoggerFactoryReturning(logger),
       throttleRetryOptions: _fastOpts(),
       namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
@@ -108,12 +108,12 @@ public class TransportPublishStrategyCoverageTests {
   [Test]
   public async Task PublishAsync_InMemoryTransportThrottledOnce_LogsInmemoryTransportTagAsync() {
     var transport = new InMemoryTransport();
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var strategy = new TransportPublishStrategy(
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
       inboxTopic: "inbox",
-      loggerFactory: new _loggerFactoryReturning(logger),
+      loggerFactory: new LoggerFactoryReturning(logger),
       throttleRetryOptions: _fastOpts(),
       namespaceRouting: NullCommandInboxAddressResolver.Instance);
 
@@ -137,7 +137,7 @@ public class TransportPublishStrategyCoverageTests {
   [Test]
   public async Task PublishAsync_ThrottledOnceThenHardFailure_ReturnsHardFailureReasonAsync() {
     var calls = 0;
-    var transport = new _switchingFailureTransport(() => {
+    var transport = new SwitchingFailureTransport(() => {
       var n = Interlocked.Increment(ref calls);
       if (n == 1) {
         throw new Azure.Messaging.ServiceBus.ServiceBusException(
@@ -189,8 +189,8 @@ public class TransportPublishStrategyCoverageTests {
   // tags) would silently vanish from the wire even though the hook itself ran and reported success.
   [Test]
   public async Task PublishAsync_HookAddsDestinationMetadata_SurvivesIntoFinalDestinationAsync() {
-    var transport = new _captureTransport();
-    var chain = new PostSerializeHookChain([new _metadataAddingHook("custom-header", "custom-value")]);
+    var transport = new CaptureTransport();
+    var chain = new PostSerializeHookChain([new MetadataAddingHook("custom-header", "custom-value")]);
     var strategy = new TransportPublishStrategy(
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
@@ -317,7 +317,7 @@ public class TransportPublishStrategyCoverageTests {
 
   // Runs a caller-supplied action on every PublishAsync call; the action decides per-call
   // whether (and how) to fail, via its own closure-captured counter.
-  private sealed class _switchingFailureTransport(Action onPublish) : ITransport {
+  private sealed class SwitchingFailureTransport(Action onPublish) : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => new();
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -335,7 +335,7 @@ public class TransportPublishStrategyCoverageTests {
 
   // Captures the destination the strategy hands to the transport, so tests can inspect the
   // final merged metadata post-hook-chain.
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public TransportDestination? LastDestination { get; private set; }
@@ -355,7 +355,7 @@ public class TransportPublishStrategyCoverageTests {
 
   // A post-serialize hook contributing exactly one destination-metadata entry — the minimal
   // shape needed to drive the chain's merge loop through at least one iteration.
-  private sealed class _metadataAddingHook(string key, string value) : IPostSerializeHook {
+  private sealed class MetadataAddingHook(string key, string value) : IPostSerializeHook {
     public int Order => 100;
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) {
       return Task.FromResult(new PostSerializeResult {
@@ -366,7 +366,7 @@ public class TransportPublishStrategyCoverageTests {
     }
   }
 
-  private sealed class _capturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -380,7 +380,7 @@ public class TransportPublishStrategyCoverageTests {
     }
   }
 
-  private sealed class _loggerFactoryReturning(ILogger logger) : ILoggerFactory {
+  private sealed class LoggerFactoryReturning(ILogger logger) : ILoggerFactory {
     public void AddProvider(ILoggerProvider provider) { }
     public ILogger CreateLogger(string categoryName) => logger;
     public void Dispose() { }

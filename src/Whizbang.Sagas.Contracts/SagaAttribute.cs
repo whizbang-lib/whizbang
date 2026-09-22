@@ -45,6 +45,7 @@ public sealed class SagaAttribute(string sagaName) : Attribute {
 /// </typeparam>
 /// <remarks>Constructs the attribute with the saga's name.</remarks>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "The type argument is what the saga generator reads from the attribute; it carries no data at runtime.")]
 public sealed class SagaAttribute<TEventBase>(string sagaName) : Attribute where TEventBase : class, IEvent {
 
   /// <summary>Saga name (matches the value emitted as the <c>SagaName</c> const on the marked class).</summary>

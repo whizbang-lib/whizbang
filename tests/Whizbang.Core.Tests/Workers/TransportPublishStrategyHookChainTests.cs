@@ -30,10 +30,10 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_NoHookChain_SkipsPreSerializeFastPathAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: null,
       // no chain
@@ -50,10 +50,10 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_EmptyChainAndNoTransportCeiling_SkipsPreSerializeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
       // empty
@@ -70,10 +70,10 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_TransportHasCeiling_AlwaysSerializesAndStampsBodySizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: 256 * 1024);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 256 * 1024);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions(),
@@ -95,10 +95,10 @@ public class TransportPublishStrategyHookChainTests {
   [Test]
   public async Task PublishAsync_OversizedAndNoOffload_FailsWithMessageBodyTooLargeAsync() {
     // Set the transport ceiling tiny so the envelope's serialized form exceeds it.
-    var transport = new _captureTransport(maxMessageSizeBytes: 10);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 10);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions(),
@@ -123,10 +123,10 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishBatchAsync_PerItemChainRunsAndStampsPerItemBodySizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: 256 * 1024);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 256 * 1024);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions(),
@@ -151,10 +151,10 @@ public class TransportPublishStrategyHookChainTests {
   [Test]
   public async Task PublishBatchAsync_OversizedItem_FailsOnlyThatItemAsync() {
     // Set a tiny ceiling and feed two items — both will exceed.
-    var transport = new _captureTransport(maxMessageSizeBytes: 10);
+    var transport = new CaptureTransport(maxMessageSizeBytes: 10);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: new PostSerializeHookChain([]),
       jsonOptions: _buildJsonOptions(),
@@ -172,14 +172,14 @@ public class TransportPublishStrategyHookChainTests {
 
   [Test]
   public async Task PublishAsync_HookReplacesBody_TransportReceivesReplacementAndUpdatedSizeAsync() {
-    var transport = new _captureTransport(maxMessageSizeBytes: null);
+    var transport = new CaptureTransport(maxMessageSizeBytes: null);
     var replacementBytes = "REPLACED_BY_HOOK"u8.ToArray();
     var chain = new PostSerializeHookChain([
-      new _substituteHook(order: 1000, replacement: replacementBytes)
+      new SubstituteHook(order: 1000, replacement: replacementBytes)
     ]);
     var strategy = new TransportPublishStrategy(
       transport: transport,
-      readinessCheck: new _alwaysReadyReadinessCheck(),
+      readinessCheck: new AlwaysReadyReadinessCheck(),
       inboxTopic: "test-inbox",
       postSerializeHookChain: chain,
       jsonOptions: _buildJsonOptions(),
@@ -222,8 +222,8 @@ public class TransportPublishStrategyHookChainTests {
     };
   }
 
-  private sealed class _captureTransport : ITransport {
-    public _captureTransport(long? maxMessageSizeBytes) {
+  private sealed class CaptureTransport : ITransport {
+    public CaptureTransport(long? maxMessageSizeBytes) {
       MaxMessageSizeBytes = maxMessageSizeBytes;
     }
     public bool IsInitialized => true;
@@ -272,13 +272,13 @@ public class TransportPublishStrategyHookChainTests {
           => throw new NotImplementedException();
   }
 
-  private sealed class _alwaysReadyReadinessCheck : ITransportReadinessCheck {
+  private sealed class AlwaysReadyReadinessCheck : ITransportReadinessCheck {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class _substituteHook : IPostSerializeHook {
+  private sealed class SubstituteHook : IPostSerializeHook {
     private readonly byte[] _replacement;
-    public _substituteHook(int order, byte[] replacement) {
+    public SubstituteHook(int order, byte[] replacement) {
       Order = order;
       _replacement = replacement;
     }

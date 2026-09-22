@@ -106,7 +106,7 @@ public class RekeyThroughRebuildTests : EFCoreTestBase {
 
     await using var sp = _buildRekeyServices();
 
-    // Both events are appended on the SAME physical stream. The first re-keys to targetStream;
+    // Both events are appended on the SAME physical stream. The first re-keys to targetStream —
     // the second (TargetStreamId == Empty) stays on physicalStream.
     await using (var appendScope = sp.CreateAsyncScope()) {
       var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();

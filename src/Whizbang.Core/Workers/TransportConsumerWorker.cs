@@ -48,9 +48,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly JsonSerializerOptions _jsonOptions;
-  private readonly OrderedStreamProcessor _orderedProcessor;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
@@ -107,7 +104,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   // Lazily-built set of event type names this service handles (has perspectives or receptors for).
   // Built from IEventTypeProvider on first use, immutable after. Used to pre-filter irrelevant inbox events.
   private HashSet<string>? _knownEventTypeNames;
-  private readonly SemaphoreSlim? _concurrencySemaphore;
   private readonly TransportBatchOptions _transportBatchOptions;
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
@@ -183,9 +179,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _options = options;
     _resilienceOptions = resilienceOptions;
     _scopeFactory = scopeFactory;
-    _jsonOptions = jsonOptions;
-    _orderedProcessor = orderedProcessor;
-    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _metrics = metrics;
     _logger = logger;
     _ownedDomains = routingOptions.Value.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -209,9 +202,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _partitionCount = claimWorkerOptions.Value.PartitionCount;
     _controlClass = controlClass.Value;
     _controlClassResolver = controlClassResolver;
-
-    var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
-    _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
@@ -593,7 +583,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         // ICompositeEvent payload and fans it out into per-inner-event inbox rows.
         inboxMessages.Add(inboxMessage);
         if (cleanupClaim is not null) {
-          (pendingCleanupClaims ??= []).Add(cleanupClaim);
+          pendingCleanupClaims ??= [];
+          pendingCleanupClaims.Add(cleanupClaim);
         }
       }
     }
@@ -1031,6 +1022,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 
+  /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
   /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
@@ -1227,13 +1225,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
   )]
   private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
-
-  /// <summary>Logs that a detached lifecycle stage failed during fire-and-forget execution.</summary>
-  [LoggerMessage(
-    Level = LogLevel.Error,
-    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
-  )]
-  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
 
   /// <summary>
   /// Checks if the message originated from this service (self-echo).

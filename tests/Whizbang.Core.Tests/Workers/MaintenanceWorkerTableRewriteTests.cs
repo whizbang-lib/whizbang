@@ -46,28 +46,28 @@ public class MaintenanceWorkerTableRewriteTests {
     /// <summary>When set, recording a rewrite request fails for every candidate.</summary>
     public Exception? RequestThrows { get; init; }
 
-    public Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken cancellationToken = default)
       => ScanThrows is not null
         ? Task.FromException<IReadOnlyList<TableRewriteCandidate>>(ScanThrows)
         : Task.FromResult<IReadOnlyList<TableRewriteCandidate>>(Candidates);
 
-    public Task<double?> RewriteTableAsync(string tableName, CancellationToken ct = default) {
+    public Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
       Rewritten.Add(tableName);
       return Task.FromResult(RatioAfterRewrite);
     }
 
-    public Task ClearTableRewriteRequestAsync(string tableName, CancellationToken ct = default) {
+    public Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
       Cleared.Add(tableName);
       return Task.CompletedTask;
     }
 
-    public Task RequestTableRewriteAsync(string tableName, CancellationToken ct = default) {
+    public Task RequestTableRewriteAsync(string tableName, CancellationToken cancellationToken = default) {
       Requested.Add(tableName);
       return RequestThrows is not null ? Task.FromException(RequestThrows) : Task.CompletedTask;
     }
     public List<string> Requested { get; } = [];
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
 
     // Unused surface for this test.
@@ -79,8 +79,6 @@ public class MaintenanceWorkerTableRewriteTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static MaintenanceWorker _buildWorker(RewriteCoordinator coord, bool allowRewrite) {

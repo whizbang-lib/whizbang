@@ -158,7 +158,7 @@ public partial class JsonbPolymorphicOrderingTests {
 
   private sealed record MechHolder(PictureDto Object);
   private abstract record PictureDto;
-  private sealed record ShapeDto : PictureDto { public string Shape { get; init; } = ""; public int A { get; init; } public string? Id { get; init; } }
+  private sealed record ShapeDto : PictureDto { public string Shape { get; init; } = ""; }
 }
 
 /// <summary>

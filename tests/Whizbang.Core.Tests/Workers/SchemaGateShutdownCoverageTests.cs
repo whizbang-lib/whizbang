@@ -399,10 +399,8 @@ public class SchemaGateShutdownCoverageTests {
       return Task.FromResult(_ok(perspectiveName));
     }
 
-    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) {
-      Interlocked.Increment(ref _rebuildCalls);
-      return Task.FromResult(_ok(perspectiveName));
-    }
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
+      RebuildBlueGreenAsync(perspectiveName, ct);
 
     public Task<RebuildResult> RebuildStreamsAsync(
         string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {
@@ -428,14 +426,6 @@ public class SchemaGateShutdownCoverageTests {
         IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null,
         ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCalls);
-      return Task.FromResult<ISubscription>(new NoOpSubscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,

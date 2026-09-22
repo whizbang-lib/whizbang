@@ -49,7 +49,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
 
     // Act
-    var worker = new TransportConsumerWorker(
+    _ = new TransportConsumerWorker(
       transport: transport,
       options: options,
       resilienceOptions: new SubscriptionResilienceOptions(),
@@ -136,7 +136,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     await Assert.That(transport.SubscribeCallCount).IsGreaterThan(initialSubscribeCount)
       .Because("Recovery should re-subscribe to all destinations");
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -231,7 +231,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(1);
 
     // Act
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     // Assert - states should be cleared
@@ -342,7 +342,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
       .Because("Readiness check returned false, so no subscriptions should be created");
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   // ========================================
@@ -448,17 +448,6 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default
-    ) {
-      SubscribeCallCount++;
-      var subscription = new SimpleSubscription();
-      _subscriptions.Add(subscription);
-      return Task.FromResult<ISubscription>(subscription);
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
       TransportDestination destination,
@@ -478,8 +467,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     ) where TRequest : notnull where TResponse : notnull =>
       throw new NotSupportedException();
 
-    public void SetRecoveryHandler(Func<CancellationToken, Task>? handler) {
-      _recoveryHandler = handler;
+    public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
+      _recoveryHandler = onRecovered;
     }
 
     public async Task SimulateRecoveryAsync(CancellationToken ct) {
@@ -503,15 +492,6 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       ReadOnlyMemory<byte>? preSerializedBytes = null,
       CancellationToken cancellationToken = default
     ) => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default
-    ) {
-      SubscribeCallCount++;
-      return Task.FromResult<ISubscription>(new SimpleSubscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,

@@ -93,10 +93,10 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
     // NpgsqlOperationInProgressException.
     using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var waitTask = Task.Run(async () => {
-      try { await listenConn.WaitAsync(waitCts.Token); } catch (OperationCanceledException) { }
+      try { await listenConn.WaitAsync(waitCts.Token); } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
     });
     await Task.WhenAny(firstNotification.Task, Task.Delay(TimeSpan.FromSeconds(5)));
-    waitCts.Cancel();
+    await waitCts.CancelAsync();
     await waitTask;
 
     await Assert.That(firstNotification.Task.IsCompleted).IsTrue()

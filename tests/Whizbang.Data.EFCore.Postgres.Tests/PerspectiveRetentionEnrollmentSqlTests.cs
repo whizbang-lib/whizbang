@@ -88,7 +88,7 @@ public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
     await Assert.That(reader.GetInt32(1)).IsEqualTo(5_184_000)
       .Because("the sliding window reaches SQL through the registry rather than being threaded into "
         + "the maintenance call on every cycle");
-    await Assert.That(reader.IsDBNull(2)).IsTrue()
+    await Assert.That(await reader.IsDBNullAsync(2)).IsTrue()
       .Because("no absolute cap was declared, and absent must stay distinct from zero");
     await Assert.That(reader.GetString(3)).IsEqualTo("hash-before")
       .Because("retention is not part of the table's SHAPE, so syncing it must not disturb the schema "
@@ -129,7 +129,7 @@ public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
     await using var reader = await read.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
     await Assert.That(reader.GetBoolean(0)).IsFalse();
-    await Assert.That(reader.IsDBNull(1)).IsTrue()
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue()
       .Because("un-enrolling clears the window too, so a later re-enrolment cannot inherit a stale one");
   }
 }

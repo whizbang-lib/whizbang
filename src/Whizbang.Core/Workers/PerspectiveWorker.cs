@@ -1100,8 +1100,8 @@ public partial class PerspectiveWorker(
     var effectiveParent = batchActivity?.Context ?? parentContext;
 
     await using var scope = _scopeFactory.CreateAsyncScope();
-    var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    _ = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    _ = scope.ServiceProvider.GetService<IReceptorInvoker>();
     var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
     _processedEventCache.EvictExpired();
@@ -1121,9 +1121,9 @@ public partial class PerspectiveWorker(
     };
 
     // Issue #520: reservations taken by the dedup filter below are owned by THIS batch and are
-    // released when the batch scope exits, whatever the outcome (see _claimWindowScope).
+    // released when the batch scope exits, whatever the outcome (see ClaimWindowScope).
     var claimWindowReservations = new List<Guid>();
-    using var claimWindowScope = new _claimWindowScope(
+    using var claimWindowScope = new ClaimWindowScope(
       _claimWindowWorkIds, claimWindowReservations, _completionMeter, workBatch.PerspectiveWork.Count);
 
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
@@ -1319,7 +1319,7 @@ public partial class PerspectiveWorker(
             foreach (var envelope in processedEvents) {
               var id = envelope.MessageId.Value;
               batchProcessedEvents.TryAdd(id, (envelope, streamId));
-              batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
+              batchIsNewByEventId.AddOrUpdate(id, true, (_, _) => true);
             }
 
             _markAffinityPhase(streamId, perspectiveName, "report");
@@ -1643,8 +1643,7 @@ public partial class PerspectiveWorker(
     foreach (var tc in pendingCompletions) {
       await _perspectiveCompletionChannel!.EnqueueCursorAsync(tc.Completion, ct).ConfigureAwait(false);
     }
-    foreach (var tc in pendingFailures) {
-      var f = tc.Completion;
+    foreach (var f in pendingFailures.Select(tc => tc.Completion)) {
       await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
@@ -2097,20 +2096,16 @@ public partial class PerspectiveWorker(
       List<MessageEnvelope<IEvent>> streamEvents,
       Dictionary<Type, string> typeNameCache) {
     var perspectiveNames = new HashSet<string>();
-    foreach (var envelope in streamEvents) {
+    foreach (var payload in streamEvents.Select(envelope => envelope.Payload)) {
       // Collective events route (mig 061) to the fixed __collective__ sink, which has no registered
       // IPerspectiveFor runner — only a [CollectiveApplyFor] handler. _perspectivesPerEventType maps
       // event types to registered IPerspectiveFor perspectives only, so it never surfaces the sink.
       // Add it explicitly so the drain guard (_runDrainModePerspectiveAsync) dispatches the event.
-      if (envelope.Payload is ICollectiveEvent) {
+      if (payload is ICollectiveEvent) {
         perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
-        continue;
-      }
-      if (typeNameCache.TryGetValue(envelope.Payload.GetType(), out var eventTypeKey)
+      } else if (typeNameCache.TryGetValue(payload.GetType(), out var eventTypeKey)
           && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)) {
-        foreach (var p in perspectives) {
-          perspectiveNames.Add(p);
-        }
+        perspectiveNames.UnionWith(perspectives);
       }
     }
     return perspectiveNames;
@@ -2401,11 +2396,11 @@ public partial class PerspectiveWorker(
           }
         }
       });
-    } catch (OperationCanceledException) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
+    } catch (OperationCanceledException leaseExpired) when (lease.Token.IsCancellationRequested && !ct.IsCancellationRequested) {
       // Lease deadline fired (not worker shutdown). Route to failure path same as any other
       // exception so the row's lease releases and claim_orphaned re-issues with bumped attempts.
 #pragma warning disable CA1848
-      _logger.LogWarning("Drain mode: lease deadline exceeded for {Perspective} stream {StreamId} — routing to failure", perspectiveName, streamId);
+      _logger.LogWarning(leaseExpired, "Drain mode: lease deadline exceeded for {Perspective} stream {StreamId} — routing to failure", perspectiveName, streamId);
 #pragma warning restore CA1848
       _metrics?.Errors.Add(1);
       var failure = new PerspectiveCursorFailure {
@@ -2557,11 +2552,10 @@ public partial class PerspectiveWorker(
     Guid? earliest = null;
     foreach (var envelope in events) {
       var msgId = envelope.MessageId.Value;
-      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) < 0) {
-        if (earliest is null
-            || string.Compare(msgId.ToString("D"), earliest.Value.ToString("D"), StringComparison.Ordinal) < 0) {
-          earliest = msgId;
-        }
+      if (string.Compare(msgId.ToString("D"), cursorStr, StringComparison.Ordinal) < 0
+          && (earliest is null
+              || string.Compare(msgId.ToString("D"), earliest.Value.ToString("D"), StringComparison.Ordinal) < 0)) {
+        earliest = msgId;
       }
     }
     return earliest;
@@ -2970,7 +2964,7 @@ public partial class PerspectiveWorker(
   /// silently un-retryable until process restart. Trading a duplicate-apply bug for a
   /// message-loss bug would be the worse outcome, so the release is never conditional.
   /// </summary>
-  private readonly struct _claimWindowScope(
+  private readonly struct ClaimWindowScope(
       ConcurrentDictionary<Guid, byte> reservations,
       List<Guid> owned,
       WorkCompletionMeter? completionMeter = null,
@@ -3217,14 +3211,14 @@ public partial class PerspectiveWorker(
     var dispatcher = scope.ServiceProvider.GetService<ICollectiveDispatcher>();
     var sessionAccessor = scope.ServiceProvider.GetService<ICollectiveSessionAccessor>();
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-    var eventTypeProvider = _eventTypeProvider;
+    var typeProvider = _eventTypeProvider;
 
-    if (dispatcher is null || sessionAccessor is null || eventStore is null || !eventTypeProvider.IsAvailable) {
+    if (dispatcher is null || sessionAccessor is null || eventStore is null || !typeProvider.IsAvailable) {
 #pragma warning disable CA1848
       _logger.LogWarning(
         "Collective sink work for stream {StreamId} skipped — collective infrastructure not registered " +
-        "(dispatcher={HasDispatcher}, sessionAccessor={HasSession}, eventStore={HasEventStore}, eventTypeProvider={HasEventTypes}).",
-        streamId, dispatcher is not null, sessionAccessor is not null, eventStore is not null, eventTypeProvider.IsAvailable);
+        "(dispatcher={HasDispatcher}, sessionAccessor={HasSession}, eventStore={HasEventStore}, typeProvider={HasEventTypes}).",
+        streamId, dispatcher is not null, sessionAccessor is not null, eventStore is not null, typeProvider.IsAvailable);
 #pragma warning restore CA1848
       return;
     }
@@ -3239,7 +3233,7 @@ public partial class PerspectiveWorker(
     var lastProcessedEventId = checkpoint?.LastEventId;
 
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
-      streamId, lastProcessedEventId, Guid.Empty, eventTypeProvider.GetEventTypes(), cancellationToken)
+      streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
       .ConfigureAwait(false);
 
     var collectiveEnvelopes = events.Where(e => e.Payload is ICollectiveEvent).ToList();
@@ -4344,7 +4338,9 @@ public partial class PerspectiveWorker(
 
       if (securityContext is not null) {
         var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-        accessor?.Current = securityContext;
+        if (accessor is not null) {
+          accessor.Current = securityContext;
+        }
       }
     }
 
@@ -4366,7 +4362,9 @@ public partial class PerspectiveWorker(
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (required for GetSecurityFromAmbient)
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      accessor?.Current = immutableScope;
+      if (accessor is not null) {
+        accessor.Current = immutableScope;
+      }
 
       // Invoke callbacks with the immutable scope
       var callbacks = scopedProvider.GetServices<ISecurityContextCallback>();

@@ -74,7 +74,7 @@ public sealed partial class StreamCompactor(
       ThroughVersion = throughVersion.Value,
     };
     // Compacted is ICompactedEvent, so the flag deriver stamps EventFlags.Compacted (permanent StateBased) —
-    // the reaper (self-destruct = flags&8) never targets it. The authoritative origin is protected BY MODE;
+    // the reaper (self-destruct, flag bit 8) never targets it. The authoritative origin is protected BY MODE —
     // no hold-at-infinity is needed (the design-review payoff of the StateBased factoring).
     await _eventStore.AppendAsync(streamId, compacted, cancellationToken).ConfigureAwait(false);
 

@@ -774,7 +774,7 @@ public class MessageHopSecurityExtractorTests {
   // ========================================
   // Logger Coverage Tests
   // ========================================
-  // The internal Log.* helpers each have a `if (logger != null)` guard. Other tests pass
+  // The internal Log.* helpers each have a the logger != null guard guard. Other tests pass
   // null logger via the default ctor (private _logger stays null) so the guarded body of
   // each helper never runs. These tests pass a non-null logger via NullLogger<T>.Instance
   // (which is itself non-null) so the guarded bodies execute and the helper methods get

@@ -101,7 +101,7 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.AddWithValue("lim", LIMIT);
     await using (var reader = await cmd.ExecuteReaderAsync()) {
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     var leased = await _leasedCountAsync(conn, instance);
@@ -128,7 +128,7 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.AddWithValue("lim", LIMIT);
     await using (var reader = await cmd.ExecuteReaderAsync()) {
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     var leased = await _leasedCountAsync(conn, instance);
@@ -155,7 +155,7 @@ public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.AddWithValue("lim", LIMIT);
     await using (var reader = await cmd.ExecuteReaderAsync()) {
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     await using var count = conn.CreateCommand();

@@ -115,7 +115,7 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await worker.StartAsync(cts.Token);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-    var (claimEnvelope, originalMessageId, _, _) =
+    var (claimEnvelope, _, _, _) =
       await _uploadOriginalEnvelopeAsync(store, jsonOptions);
 
     // Faithful to the wire: the transport hands the worker the CLAIM envelope's type as EnvelopeType

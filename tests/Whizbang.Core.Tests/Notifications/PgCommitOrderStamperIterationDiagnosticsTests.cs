@@ -50,7 +50,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null);
 
-    var logger = new _StamperCapturingLogger();
+    var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
@@ -94,7 +94,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null);
 
-    var logger = new _StamperCapturingLogger();
+    var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
@@ -134,7 +134,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
       Microsoft.Extensions.Logging.Abstractions.NullLogger<PgSharedNotifyConnection>.Instance,
       connectionStringFallback: null);
 
-    var logger = new _StamperCapturingLogger();
+    var logger = new StamperCapturingLogger();
     var worker = new PgCommitOrderStamperWorker(
       Options.Create(notifyOptions),
       Options.Create(stamperOptions),
@@ -154,7 +154,7 @@ public class PgCommitOrderStamperIterationDiagnosticsTests {
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
-  private sealed class _StamperCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
+  private sealed class StamperCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
     public TaskCompletionSource IterationFailedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource StartedLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource PooledFallbackWarningTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

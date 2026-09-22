@@ -23,19 +23,20 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public class WorkCoordinatorGateTests {
 
-  private sealed record _LogEntry(LogLevel Level, string Message);
+  private sealed record LogEntry(LogLevel Level, string Message);
 
-  private sealed class _CapturingLogger<T> : ILogger<T> {
-    public List<_LogEntry> Entries { get; } = [];
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    public List<LogEntry> Entries { get; } = [];
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      Entries.Add(new _LogEntry(logLevel, formatter(state, exception)));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   /// <summary>
@@ -65,7 +66,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task AcquireAsync_SaturatedBeyondDeadline_ReturnsNoopReleaserAndLogsWarningAsync() {
-    var logger = new _CapturingLogger<WorkCoordinatorGate>();
+    var logger = new CapturingLogger<WorkCoordinatorGate>();
     using var gate = new WorkCoordinatorGate(
       maxConcurrent: 1,
       acquireTimeoutMilliseconds: 100,
@@ -118,7 +119,7 @@ public class WorkCoordinatorGateTests {
   /// </summary>
   [Test]
   public async Task AcquireAsync_DisabledGate_AlwaysReturnsDefaultReleaserAsync() {
-    var logger = new _CapturingLogger<WorkCoordinatorGate>();
+    var logger = new CapturingLogger<WorkCoordinatorGate>();
     using var gate = new WorkCoordinatorGate(maxConcurrent: 0, logger: logger);
 
     var releasers = new List<WorkCoordinatorGate.Releaser>();

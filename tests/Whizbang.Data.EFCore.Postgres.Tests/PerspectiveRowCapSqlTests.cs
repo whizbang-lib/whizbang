@@ -55,7 +55,7 @@ public class PerspectiveRowCapSqlTests : EFCoreTestBase {
     await set.ExecuteNonQueryAsync();
   }
 
-  private async Task _seedAsync(NpgsqlConnection conn, Guid id, string user, int updatedDaysAgo) {
+  private static async Task _seedAsync(NpgsqlConnection conn, Guid id, string user, int updatedDaysAgo) {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, jsonb_build_object('u', @u),

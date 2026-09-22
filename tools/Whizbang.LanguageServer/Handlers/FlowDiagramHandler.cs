@@ -36,7 +36,7 @@ public sealed class FlowDiagramHandler(SymbolResolver symbolResolver, MermaidGen
         .Select(i => $"Perspective{i + 1}")
         .ToList();
 
-    var mermaid = _mermaidGenerator.Generate(
+    var mermaid = MermaidGenerator.Generate(
         symbolInfo.Name,
         symbolInfo.IsCommand,
         symbolInfo.IsEvent,

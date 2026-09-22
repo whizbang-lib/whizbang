@@ -686,40 +686,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-      Guid streamId,
-      string perspectiveName,
-      CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  private sealed class SlowWorkCoordinator(int delayMs) : IWorkCoordinator {
-    private readonly int _delayMs = delayMs;
-
-    public async Task StoreOutboxMessagesAsync(
-      OutboxMessage[] messages,
-      int partitionCount = 2,
-      CancellationToken cancellationToken = default) {
-      await Task.Delay(_delayMs, cancellationToken);
-    }
-
-    public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCursorCompletion completion,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task ReportPerspectiveFailureAsync(
-      PerspectiveCursorFailure failure,
-      CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
-      await Task.Delay(_delayMs, cancellationToken);
-    }
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -741,7 +708,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       EnteredStore.TrySetResult();
       await ReleaseStore.WaitAsync(cancellationToken);
@@ -755,7 +722,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -772,7 +739,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated coordinator failure");
 
@@ -784,7 +751,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated coordinator failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());

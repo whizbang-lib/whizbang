@@ -59,17 +59,17 @@ public class PerspectiveCompletionFlushWorkerTests {
         : Task.FromResult(streamIds.Count);
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -303,7 +303,7 @@ public class PerspectiveCompletionFlushWorkerTests {
     // BackgroundService.StartAsync dispatches ExecuteAsync with Task.Run(action, stoppingToken),
     // so StartAsync returning proves only that the body was scheduled. A "no more than one
     // completion" assertion is satisfied by a body that never ran at all.
-    var logger = new _eventIdWaiter(1); // LogStarted
+    var logger = new EventIdWaiter(1); // LogStarted
     var worker = _worker(coordinator, logger: logger);
     await worker.StartAsync(testToken);
     await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -325,7 +325,7 @@ public class PerspectiveCompletionFlushWorkerTests {
   [Timeout(30000)]
   public async Task StopIsSafeWithNothingEnqueuedAsync(CancellationToken testToken) {
     var coordinator = new RecordingCoordinator();
-    var logger = new _eventIdWaiter(1); // LogStarted — proof the body reached the enabled path
+    var logger = new EventIdWaiter(1); // LogStarted — proof the body reached the enabled path
     var worker = _worker(coordinator, logger: logger);
     await worker.StartAsync(testToken);
     await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
@@ -364,14 +364,14 @@ public class PerspectiveCompletionFlushWorkerTests {
   /// Waits for one specific <see cref="Microsoft.Extensions.Logging.EventId"/> so a test can key on
   /// something the worker's own body emitted.
   /// </summary>
-  private sealed class _eventIdWaiter(int eventId) : ILogger<PerspectiveCompletionFlushWorker> {
+  private sealed class EventIdWaiter(int expectedEventId) : ILogger<PerspectiveCompletionFlushWorker> {
     public TaskCompletionSource Seen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (id.Id == eventId) {
+      if (eventId.Id == expectedEventId) {
         Seen.TrySetResult();
       }
     }
@@ -393,7 +393,7 @@ public class PerspectiveCompletionFlushWorkerTests {
   [Timeout(30000)]
   public async Task WhenDisabled_ExecuteAsyncParksUntilShutdownAsync(CancellationToken testToken) {
     var coordinator = new RecordingCoordinator();
-    var logger = new _eventIdWaiter(3); // LogDisabled
+    var logger = new EventIdWaiter(3); // LogDisabled
     var worker = _worker(coordinator, enabled: false, logger: logger);
 
     await worker.StartAsync(testToken);

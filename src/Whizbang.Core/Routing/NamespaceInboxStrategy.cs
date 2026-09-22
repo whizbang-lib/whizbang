@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Linq;
 
 namespace Whizbang.Core.Routing;
 
@@ -154,16 +155,10 @@ public sealed class NamespaceInboxStrategy(
     // Part 1 (permanent) — one inbox per DISTINCT handled COMMAND contract namespace.
     // Sorted for deterministic manifests; framework-reserved namespaces ride part 2 instead.
     var commandNamespaces = new SortedSet<string>(StringComparer.Ordinal);
-    foreach (var handled in context.HandledMessages) {
-      if (handled.Kind != MessageKind.Command || string.IsNullOrWhiteSpace(handled.ContractNamespace)) {
-        continue;
-      }
-      var contractNamespace = handled.ContractNamespace.ToLowerInvariant();
-      if (CommandInboxNaming.IsFrameworkReserved(contractNamespace)) {
-        continue;
-      }
-      commandNamespaces.Add(contractNamespace);
-    }
+    commandNamespaces.UnionWith(context.HandledMessages
+      .Where(handled => handled.Kind == MessageKind.Command && !string.IsNullOrWhiteSpace(handled.ContractNamespace))
+      .Select(handled => handled.ContractNamespace!.ToLowerInvariant())
+      .Where(contractNamespace => !CommandInboxNaming.IsFrameworkReserved(contractNamespace)));
 
     foreach (var contractNamespace in commandNamespaces) {
       subscriptions.Add(new InboxSubscription(
@@ -241,16 +236,13 @@ public sealed class NamespaceInboxStrategy(
     ArgumentNullException.ThrowIfNull(context);
 
     var namespaces = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var handled in context.HandledMessages) {
-      if (!string.IsNullOrWhiteSpace(handled.ContractNamespace)) {
-        namespaces.Add(handled.ContractNamespace.ToLowerInvariant());
-      }
-    }
-    foreach (var consumed in context.ConsumedEventNamespaces) {
-      if (!string.IsNullOrWhiteSpace(consumed)) {
-        namespaces.Add(consumed.ToLowerInvariant());
-      }
-    }
+    namespaces.UnionWith(context.HandledMessages
+      .Select(handled => handled.ContractNamespace)
+      .Where(contractNamespace => !string.IsNullOrWhiteSpace(contractNamespace))
+      .Select(contractNamespace => contractNamespace!.ToLowerInvariant()));
+    namespaces.UnionWith(context.ConsumedEventNamespaces
+      .Where(consumed => !string.IsNullOrWhiteSpace(consumed))
+      .Select(consumed => consumed.ToLowerInvariant()));
     return namespaces;
   }
 

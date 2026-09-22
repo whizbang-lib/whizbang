@@ -1,3 +1,4 @@
+using System.Linq;
 namespace Whizbang.Core.Tags;
 
 /// <summary>
@@ -58,15 +59,14 @@ public static class TagPolicyValidator {
 
   private static void _validateRouteNamespaceReservedPrefix(
       IReadOnlyDictionary<string, string> routeNamespaceBindings) {
-    foreach (var binding in routeNamespaceBindings) {
-      if (binding.Key.StartsWith(SystemTags.RESERVED_PREFIX, StringComparison.Ordinal)
-          && !SystemTags.IsFrameworkTag(binding.Key)) {
-        throw new TagPolicyConfigurationException(
-          $"RouteNamespace binding declares tag '{binding.Key}', which mints a new tag under the reserved "
-          + $"'{SystemTags.RESERVED_PREFIX}' prefix. That namespace belongs to framework tags (see SystemTags) so "
-          + "framework and application vocabularies can never collide — rename the tag (for example, drop the "
-          + "prefix), or bind an existing SystemTags value to route that framework traffic class.");
-      }
+    var minted = routeNamespaceBindings.Select(b => b.Key).FirstOrDefault(tag =>
+      tag.StartsWith(SystemTags.RESERVED_PREFIX, StringComparison.Ordinal) && !SystemTags.IsFrameworkTag(tag));
+    if (minted is not null) {
+      throw new TagPolicyConfigurationException(
+        $"RouteNamespace binding declares tag '{minted}', which mints a new tag under the reserved "
+        + $"'{SystemTags.RESERVED_PREFIX}' prefix. That namespace belongs to framework tags (see SystemTags) so "
+        + "framework and application vocabularies can never collide — rename the tag (for example, drop the "
+        + "prefix), or bind an existing SystemTags value to route that framework traffic class.");
     }
   }
 

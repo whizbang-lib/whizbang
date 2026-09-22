@@ -17,7 +17,7 @@ public class ConnectivityHealthSourceTests {
 
   private sealed class FakeLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {
     public LifecyclePhase Phase { get; } = phase;
-    public ValueTask AdvanceToAsync(LifecyclePhase p, CancellationToken cancellationToken) => default;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
     public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
   }
 

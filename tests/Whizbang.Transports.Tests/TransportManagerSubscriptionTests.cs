@@ -282,7 +282,7 @@ public class TransportManagerSubscriptionTests {
     }
 
     // Act
-    var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
+    _ = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Publish a test message
     var testEnvelope = new MessageEnvelope<string> {

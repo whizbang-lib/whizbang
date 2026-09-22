@@ -10,7 +10,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from EventStoreContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperEventStoreTests : EventStoreContractTests, IDisposable {
+public sealed class DapperEventStoreTests : EventStoreContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]

@@ -11,7 +11,6 @@ namespace Whizbang.Core.Tests.Routing;
 /// </summary>
 public class TopicRoutingStrategyTests {
   private sealed record TestEvent : IEvent;
-  private sealed record TestCommand : ICommand;
 
   [Test]
   public async Task PassthroughRoutingStrategy_ReturnsBaseTopicUnchangedAsync() {
@@ -74,19 +73,19 @@ public class TopicRoutingStrategyTests {
   public async Task PoolSuffixRoutingStrategy_WithNullOrWhitespaceSuffix_ThrowsAsync() {
     // Assert - null suffix
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var strategy = new PoolSuffixRoutingStrategy(null!);
+      _ = new PoolSuffixRoutingStrategy(null!);
       await Task.CompletedTask;
     });
 
     // Assert - empty suffix
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var strategy = new PoolSuffixRoutingStrategy("");
+      _ = new PoolSuffixRoutingStrategy("");
       await Task.CompletedTask;
     });
 
     // Assert - whitespace suffix
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var strategy = new PoolSuffixRoutingStrategy("   ");
+      _ = new PoolSuffixRoutingStrategy("   ");
       await Task.CompletedTask;
     });
   }
@@ -128,7 +127,7 @@ public class TopicRoutingStrategyTests {
   public async Task CompositeTopicRoutingStrategy_WithEmptyStrategies_ThrowsAsync() {
     // Assert
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var composite = new CompositeTopicRoutingStrategy([]);
+      _ = new CompositeTopicRoutingStrategy(Array.Empty<ITopicRoutingStrategy>());
       await Task.CompletedTask;
     });
   }
@@ -137,7 +136,7 @@ public class TopicRoutingStrategyTests {
   public async Task CompositeTopicRoutingStrategy_WithNullStrategies_ThrowsAsync() {
     // Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () => {
-      var composite = new CompositeTopicRoutingStrategy(null!);
+      _ = new CompositeTopicRoutingStrategy((ITopicRoutingStrategy[])null!);
       await Task.CompletedTask;
     });
   }

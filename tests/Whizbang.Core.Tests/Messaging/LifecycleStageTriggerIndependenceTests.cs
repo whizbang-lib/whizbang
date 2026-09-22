@@ -54,15 +54,15 @@ public class LifecycleStageTriggerIndependenceTests {
 
   private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new();
-    public object DeserializeFromBytes(byte[] payload, string messageTypeName) => new();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new();
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new();
   }
 
   private sealed class SilentCoordinator : IWorkCoordinator {
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
       => Task.CompletedTask;

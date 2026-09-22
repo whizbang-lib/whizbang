@@ -51,7 +51,7 @@ public class DispatcherCascadeFireCountTests {
   /// Command receptor that returns an unwrapped event (default cascade).
   /// </summary>
   public class FireCountCommandHandler : IReceptor<FireCountCommand, FireCountEvent> {
-    public ValueTask<FireCountEvent> HandleAsync(FireCountCommand message, CancellationToken cancellationToken) {
+    public ValueTask<FireCountEvent> HandleAsync(FireCountCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new FireCountEvent(message.EntityId));
     }
   }
@@ -61,7 +61,7 @@ public class DispatcherCascadeFireCountTests {
   /// This is the handler that should fire exactly ONCE per event.
   /// </summary>
   public class FireCountEventReceptor : IReceptor<FireCountEvent> {
-    public ValueTask HandleAsync(FireCountEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(FireCountEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _handlerFireCount);
       return ValueTask.CompletedTask;
     }

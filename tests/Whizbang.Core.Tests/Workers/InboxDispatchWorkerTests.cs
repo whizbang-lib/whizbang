@@ -56,7 +56,7 @@ public partial class InboxDispatchWorkerTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -66,7 +66,7 @@ public partial class InboxDispatchWorkerTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       First.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -118,9 +118,9 @@ public partial class InboxDispatchWorkerTests {
       throw new NotSupportedException();
   }
 
-  private sealed record _innerImportEvent(string Id) : IEvent;
+  private sealed record InnerImportEvent(string Id) : IEvent;
 
-  private sealed class _bulkComposite(params _innerImportEvent[] inner) : ICompositeEvent {
+  private sealed class BulkComposite(params InnerImportEvent[] inner) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => inner;
   }
@@ -141,7 +141,7 @@ public partial class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"), new _innerImportEvent("J-3"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"), new InnerImportEvent("J-3"));
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -179,7 +179,7 @@ public partial class InboxDispatchWorkerTests {
     await Assert.That(routed.NewInboxMessages).IsNotNull();
     await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(3)
       .Because("One child inbox message per inner event.");
-    await Assert.That(routed.NewInboxMessages!.All(m => m.MessageType.Contains("_innerImportEvent", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(routed.NewInboxMessages!.All(m => m.MessageType.Contains("InnerImportEvent", StringComparison.Ordinal))).IsTrue();
     await Assert.That(failure.All).IsEmpty();
 
     await cts.CancelAsync();
@@ -199,9 +199,9 @@ public partial class InboxDispatchWorkerTests {
     public string GetGeneration() => "test-generation";
   }
 
-  private sealed class _overCapComposite(int count) : ICompositeEvent {
+  private sealed class OverCapComposite(int count) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 1;
-    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new _innerImportEvent($"J-{i}"));
+    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"J-{i}"));
   }
 
   [Test]
@@ -216,7 +216,7 @@ public partial class InboxDispatchWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
-    var composite = new _overCapComposite(5); // cap = 1
+    var composite = new OverCapComposite(5); // cap = 1
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -302,7 +302,7 @@ public partial class InboxDispatchWorkerTests {
   }
 
   // Composite that declares FanoutMode.Manual.
-  private sealed class _manualComposite(params _innerImportEvent[] inner) : ICompositeEvent {
+  private sealed class ManualComposite(params InnerImportEvent[] inner) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10_000;
     public FanoutMode FanoutMode => FanoutMode.Manual;
     public IEnumerable<IMessage> InnerEvents => inner;
@@ -349,7 +349,7 @@ public partial class InboxDispatchWorkerTests {
 
   [Test]
   public async Task CompositeDirective_Skip_CommitsNoChildren_DeletesCompositeAsync() {
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
     var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.Skip));
 
     await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue()
@@ -360,8 +360,8 @@ public partial class InboxDispatchWorkerTests {
 
   [Test]
   public async Task CompositeDirective_ReplaceWith_FansOutReplacementSetAsync() {
-    var composite = new _bulkComposite(new _innerImportEvent("original"));
-    var replacement = new IMessage[] { new _innerImportEvent("R-1"), new _innerImportEvent("R-2"), new _innerImportEvent("R-3") };
+    var composite = new BulkComposite(new InnerImportEvent("original"));
+    var replacement = new IMessage[] { new InnerImportEvent("R-1"), new InnerImportEvent("R-2"), new InnerImportEvent("R-3") };
     var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.ReplaceWith(replacement)));
 
     await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(3)
@@ -370,7 +370,7 @@ public partial class InboxDispatchWorkerTests {
 
   [Test]
   public async Task CompositeFanoutMode_Manual_NoReceptorDirective_FansOutNothingAsync() {
-    var composite = new _manualComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var composite = new ManualComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
     // Invoker present (so the gate opens) but sets no directive.
     var routed = await _runCompositeWithInvokerAsync(composite, new DirectiveInvoker(FanoutDirective.Proceed));
 
@@ -393,7 +393,7 @@ public partial class InboxDispatchWorkerTests {
     gate.MarkReady();
 
     var emitted = _outboxMsg("batch-received");
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .AddSingleton<IReceptorInvoker>(new EmittingInvoker(emitted))
@@ -781,9 +781,9 @@ public partial class InboxDispatchWorkerTests {
     private readonly TaskCompletionSource _block = new();
     public Task Started => _entered.Task;
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public async ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public async ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       _entered.TrySetResult();
-      // Deliberately ignore ct — simulates a hung downstream/handler.
+      // Deliberately ignore cancellationToken — simulates a hung downstream/handler.
       await _block.Task.ConfigureAwait(false);
     }
     public void Unblock() => _block.TrySetResult();

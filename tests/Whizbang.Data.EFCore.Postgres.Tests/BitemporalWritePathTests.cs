@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class BitemporalWritePathTests : EFCoreTestBase {
   private const string TABLE = "wh_per_bitemporal_write";
 
-  private async Task _createTableAsync(NpgsqlConnection conn) {
+  private static async Task _createTableAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (
@@ -62,8 +62,8 @@ public class BitemporalWritePathTests : EFCoreTestBase {
     return (
       reader.GetDateTime(0),
       reader.GetDateTime(1),
-      reader.IsDBNull(2) ? null : reader.GetDateTime(2),
-      reader.IsDBNull(3) ? null : reader.GetDateTime(3));
+      await reader.IsDBNullAsync(2) ? null : reader.GetDateTime(2),
+      await reader.IsDBNullAsync(3) ? null : reader.GetDateTime(3));
   }
 
   [Test]
@@ -82,7 +82,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },
       new PerspectiveScope(), false, _eventAt(occurredAt));
 
-    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
+    var (Created, Updated, SysCreated, _) = await _readAxesAsync(conn, id);
 
     await Assert.That(Created).IsEqualTo(occurredAt)
       .Because("created_at is business time — when the entity came into being, taken from the event, "
@@ -114,7 +114,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "second" },
       new PerspectiveScope(), false, _eventAt(secondEvent));
 
-    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
+    var (Created, Updated, _, _) = await _readAxesAsync(conn, id);
 
     await Assert.That(Created).IsEqualTo(firstEvent)
       .Because("the entity still came into being when the FIRST event occurred");
@@ -141,7 +141,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
       new PerspectiveScope(), false, _eventAt(firstEvent));
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "second" },
       new PerspectiveScope(), false, _eventAt(secondEvent));
-    var (Created, Updated, SysCreated, SysUpdated) = await _readAxesAsync(conn, id);
+    var (_, Updated, _, SysUpdated) = await _readAxesAsync(conn, id);
 
     // A rebuild re-applies the SAME events through the SAME path, now.
     await store.UpsertAsync(id, new BitemporalWriteModel { Name = "first" },

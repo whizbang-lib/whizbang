@@ -3,7 +3,6 @@ using Whizbang.LanguageServer.Services;
 namespace Whizbang.LanguageServer.Tests.Services;
 
 public class MermaidGeneratorTests {
-  private readonly MermaidGenerator _sut = new();
 
   [Test]
   public async Task Generate_CommandWithDispatchersAndReceptors_ProducesValidMermaidAsync() {
@@ -18,7 +17,7 @@ public class MermaidGeneratorTests {
     var perspectives = new List<string>();
 
     // Act
-    var result = _sut.Generate("CreateOrderCommand", isCommand: true, isEvent: false,
+    var result = MermaidGenerator.Generate("CreateOrderCommand", isCommand: true, isEvent: false,
         dispatchers, receptors, perspectives);
 
     // Assert
@@ -42,7 +41,7 @@ public class MermaidGeneratorTests {
         };
 
     // Act
-    var result = _sut.Generate("OrderCreatedEvent", isCommand: false, isEvent: true,
+    var result = MermaidGenerator.Generate("OrderCreatedEvent", isCommand: false, isEvent: true,
         dispatchers, receptors, perspectives);
 
     // Assert
@@ -56,7 +55,7 @@ public class MermaidGeneratorTests {
   [Test]
   public async Task Generate_CommandShape_UsesParallelogramAsync() {
     // Arrange & Act
-    var result = _sut.Generate("DoSomething", isCommand: true, isEvent: false,
+    var result = MermaidGenerator.Generate("DoSomething", isCommand: true, isEvent: false,
         new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — command uses /text\ shape
@@ -66,7 +65,7 @@ public class MermaidGeneratorTests {
   [Test]
   public async Task Generate_EventShape_UsesCircleAsync() {
     // Arrange & Act
-    var result = _sut.Generate("SomethingHappened", isCommand: false, isEvent: true,
+    var result = MermaidGenerator.Generate("SomethingHappened", isCommand: false, isEvent: true,
         new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — event uses ((text)) shape
@@ -76,7 +75,7 @@ public class MermaidGeneratorTests {
   [Test]
   public async Task Generate_NoDispatchersOrReceptors_ProducesMinimalDiagramAsync() {
     // Arrange & Act
-    var result = _sut.Generate("OrphanMessage", isCommand: false, isEvent: false,
+    var result = MermaidGenerator.Generate("OrphanMessage", isCommand: false, isEvent: false,
         new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert
@@ -93,7 +92,7 @@ public class MermaidGeneratorTests {
     var dispatchers = new List<(string, string)> { ("SomeClass", "") };
 
     // Act
-    var result = _sut.Generate("Msg", isCommand: true, isEvent: false,
+    var result = MermaidGenerator.Generate("Msg", isCommand: true, isEvent: false,
         dispatchers, new List<(string, string)>(), []);
 
     // Assert — should show just the class, not "SomeClass."
@@ -104,7 +103,7 @@ public class MermaidGeneratorTests {
   [Test]
   public async Task Generate_SpecialCharactersInName_SanitizesIdAsync() {
     // Arrange & Act
-    var result = _sut.Generate("Whizbang.Core.Events<T>", isCommand: false, isEvent: true,
+    var result = MermaidGenerator.Generate("Whizbang.Core.Events<T>", isCommand: false, isEvent: true,
         new List<(string, string)>(), new List<(string, string)>(), []);
 
     // Assert — ID should not contain . < > characters
@@ -119,7 +118,7 @@ public class MermaidGeneratorTests {
     var perspectives = new List<string> { "E" };
 
     // Act
-    var result = _sut.Generate("Msg", isCommand: true, isEvent: false,
+    var result = MermaidGenerator.Generate("Msg", isCommand: true, isEvent: false,
         dispatchers, receptors, perspectives);
 
     // Assert — styling for message (blue), dispatchers (green), receptors (orange), perspectives (purple)
@@ -137,7 +136,7 @@ public class MermaidGeneratorTests {
         };
 
     // Act
-    var result = _sut.Generate("Msg", isCommand: true, isEvent: false,
+    var result = MermaidGenerator.Generate("Msg", isCommand: true, isEvent: false,
         dispatchers, new List<(string, string)>(), []);
 
     // Assert

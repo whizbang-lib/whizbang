@@ -80,7 +80,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
     }
@@ -88,7 +88,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -101,7 +101,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       => new TestMessage("integration-test");
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
       => new TestMessage("integration-test");
-    public object DeserializeFromBytes(byte[] bytes, string messageTypeName)
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
       => new TestMessage("integration-test");
   }
 

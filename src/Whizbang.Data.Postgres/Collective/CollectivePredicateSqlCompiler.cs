@@ -90,7 +90,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
     var parameters = new Dictionary<string, object?>(StringComparer.Ordinal);
     var refs = new List<ReferencedJsonPath>();
     var sql = new StringBuilder();
-    var ctx = new _ctx(filter.Parameters[0], OuterQualifier: "", InnerParam: null, InnerAlias: null,
+    var ctx = new Ctx(filter.Parameters[0], OuterQualifier: "", InnerParam: null, InnerAlias: null,
       OuterTableName: outerTableName, InnerTableName: null);
     _compilePredicate(filter.Body, ctx, parameterPrefix, sql, parameters, refs);
     // Distinct so a column referenced twice (e.g. two comparisons on data->>'Status') yields one index candidate.
@@ -99,13 +99,13 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   // How to qualify a member access rooted at the outer row vs. an EXISTS inner row.
-  private sealed record _ctx(
+  private sealed record Ctx(
     ParameterExpression OuterParam, string OuterQualifier,
     ParameterExpression? InnerParam, string? InnerAlias,
     string? OuterTableName, string? InnerTableName);
 
   private static void _compilePredicate(
-      Expression node, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      Expression node, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
     if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } and) {
       sql.Append('(');
@@ -152,7 +152,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   private static void _compileComparison(
-      BinaryExpression cmp, string op, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      BinaryExpression cmp, string op, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
     var leftIsCol = _tryColumn(cmp.Left, ctx, refs, out var leftSql, out var leftProp);
     var rightIsCol = _tryColumn(cmp.Right, ctx, refs, out var rightSql, out var rightProp);
@@ -198,7 +198,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // <values>.Contains(row.Data.X) → row.data->>'X' IN (@p0, @p1, …).
   private static void _compileContains(
-      MethodCallExpression mc, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      MethodCallExpression mc, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
     Expression sourceExpr;
     Expression itemExpr;
@@ -250,7 +250,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
 
   // q.Of<TOther>().Any(s => s.Id == r.Id && …) → EXISTS (SELECT 1 FROM <TOther table> s WHERE …).
   private static void _compileExists(
-      MethodCallExpression anyCall, _ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
+      MethodCallExpression anyCall, Ctx ctx, string prefix, StringBuilder sql, Dictionary<string, object?> parameters,
       List<ReferencedJsonPath> refs) {
     if (ctx.InnerParam is not null) {
       throw new NotSupportedException("Nested cross-perspective cohorts (EXISTS within EXISTS) are not supported.");
@@ -302,7 +302,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   // row.Scope.X → scope->>'X', row.Data.X → data->>'X', row.Id → id — qualified per context (outer/inner).
   // When the match is a jsonb column, also records the UNqualified path against its table in <paramref name="refs"/>
   // as an expression-index candidate (§7).
-  private static bool _tryColumn(Expression e, _ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName) {
+  private static bool _tryColumn(Expression e, Ctx ctx, List<ReferencedJsonPath> refs, out string? columnSql, out string? propName) {
     columnSql = null;
     propName = null;
     while (e is UnaryExpression { NodeType: ExpressionType.Convert } convert) {
@@ -321,9 +321,12 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
       propName = jprop.Name;
       // Attribute the path to its table (outer vs. EXISTS-inner) so the index lands on the right relation.
       // Null table (Compile called without an outer table name) → skip: can't build the DDL, so no candidate.
-      var table = ReferenceEquals(jp, ctx.OuterParam) ? ctx.OuterTableName
-                : ctx.InnerParam is not null && ReferenceEquals(jp, ctx.InnerParam) ? ctx.InnerTableName
-                : null;
+      string? table = null;
+      if (ReferenceEquals(jp, ctx.OuterParam)) {
+        table = ctx.OuterTableName;
+      } else if (ctx.InnerParam is not null && ReferenceEquals(jp, ctx.InnerParam)) {
+        table = ctx.InnerTableName;
+      }
       if (table is not null) {
         refs.Add(new ReferencedJsonPath(table, unqualified));
       }
@@ -341,7 +344,7 @@ public static class CollectivePredicateSqlCompiler<TModel> where TModel : class 
   }
 
   // The SQL qualifier ("" / "{outerTable}." / "{alias}.") for a row param, or null if it isn't a known one.
-  private static string? _qualifierFor(ParameterExpression p, _ctx ctx) {
+  private static string? _qualifierFor(ParameterExpression p, Ctx ctx) {
     if (ReferenceEquals(p, ctx.OuterParam)) {
       return ctx.OuterQualifier;
     }

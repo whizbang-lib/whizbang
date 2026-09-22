@@ -362,7 +362,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
     public CancellationTokenSource Cts => cts;
     public void Dispose() {
       cts.Cancel();
-      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       cts.Dispose();
     }
   }
@@ -414,14 +414,14 @@ public class ClaimWorkerAcquisitionBoundsTests {
     public List<Guid> ReleasedInboxStreams { get; } = [];
     public List<Guid> ReleasedPerspectiveStreams { get; } = [];
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       WorkBatch batch;
       lock (_lock) {
-        Requests.Add(req);
+        Requests.Add(request);
         var call = Requests.Count;
         OnClaim?.Invoke(call);
         batch = script(call);
-        if (req.IncludeOutstanding && OutstandingToReport is not null) {
+        if (request.IncludeOutstanding && OutstandingToReport is not null) {
           batch = batch with { Outstanding = OutstandingToReport };
         }
         if (_watchers.TryGetValue(call, out var tcs)) { tcs.TrySetResult(); }

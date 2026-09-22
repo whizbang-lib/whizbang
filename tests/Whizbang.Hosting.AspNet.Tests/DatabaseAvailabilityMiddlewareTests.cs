@@ -19,7 +19,7 @@ public class DatabaseAvailabilityMiddlewareTests {
   private sealed class FakeGate(bool ready = false) : ISchemaReadyGate {
     public bool IsReady { get; private set; } = ready;
     public void MarkReady() => IsReady = true;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) {
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
       return IsReady ? Task.CompletedTask : Task.Delay(Timeout.Infinite, cancellationToken);
     }
   }

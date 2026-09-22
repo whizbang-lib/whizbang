@@ -70,7 +70,7 @@ public class DispatcherStageFireTests {
 
   /// <summary>Command receptor that returns an unwrapped event.</summary>
   public class StageTestCommandHandler : IReceptor<StageTestCommand, StageTestEvent> {
-    public ValueTask<StageTestEvent> HandleAsync(StageTestCommand message, CancellationToken cancellationToken) {
+    public ValueTask<StageTestEvent> HandleAsync(StageTestCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new StageTestEvent(message.EntityId));
     }
   }
@@ -79,7 +79,7 @@ public class DispatcherStageFireTests {
   public class DefaultStageTestReceptor : IReceptor<StageTestEvent>, IAcceptsLifecycleContext {
     private ILifecycleContext? _ctx;
     public void SetLifecycleContext(ILifecycleContext context) => _ctx = context;
-    public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _defaultHandlerCount);
       _recordFire(nameof(DefaultStageTestReceptor), _ctx?.CurrentStage.ToString() ?? "publish");
       return ValueTask.CompletedTask;
@@ -91,7 +91,7 @@ public class DispatcherStageFireTests {
   public class ExplicitPostAllPerspectivesReceptor : IReceptor<StageTestEvent>, IAcceptsLifecycleContext {
     private ILifecycleContext? _ctx;
     public void SetLifecycleContext(ILifecycleContext context) => _ctx = context;
-    public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(StageTestEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _explicitHandlerCount);
       _recordFire(nameof(ExplicitPostAllPerspectivesReceptor), _ctx?.CurrentStage.ToString() ?? "publish");
       return ValueTask.CompletedTask;
@@ -132,7 +132,7 @@ public class DispatcherStageFireTests {
         typeof(MessageEnvelope<>).MakeGenericType(typeof(TMessage)).AssemblyQualifiedName!,
         typeof(TMessage).AssemblyQualifiedName!);
     }
-    public object DeserializeMessage(MessageEnvelope<JsonElement> e, string t) => throw new NotImplementedException();
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotImplementedException();
   }
 
   // ========================================

@@ -104,7 +104,7 @@ public class DispatcherOwnedDomainTests {
   /// Tests the cascade path: LocalInvokeAsync → receptor → _dispatchByModeAsync → outbox.
   /// </summary>
   public class CascadeTestCommandHandler : IReceptor<CascadeTestCommand, CascadeTestEvent> {
-    public ValueTask<CascadeTestEvent> HandleAsync(CascadeTestCommand message, CancellationToken cancellationToken) {
+    public ValueTask<CascadeTestEvent> HandleAsync(CascadeTestCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new CascadeTestEvent(message.EntityId));
     }
   }

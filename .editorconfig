@@ -405,3 +405,40 @@ csharp_prefer_static_anonymous_function = false:none
 # FindByPinnedId matches case insensitively while KnowsName matches case sensitively, the exact
 # contract a careless LINQ rewrite would flip.
 dotnet_diagnostic.S3267.severity = none
+
+# ---------------------------------------------------------------------------------------------
+# Sonar rules turned off repository-wide. Each entry is a decision about the rule, not a
+# per-site suppression: the code the rule objects to is the intended shape.
+# ---------------------------------------------------------------------------------------------
+[*.cs]
+# S1133 asks for [Obsolete] members to be removed. Deprecation here is a scheduled process: every
+# [Obsolete] names its replacement and the release that removes it, and consumers get one release
+# to move. The rule fires for the whole of that window, so it cannot coexist with having one.
+dotnet_diagnostic.S1133.severity = none
+# S3265 objects to bitwise composition of an enum without [Flags]. NpgsqlDbType is composed that way
+# by Npgsql's own contract (NpgsqlDbType.Array | NpgsqlDbType.Text is how an array parameter is
+# typed); the enum is Npgsql's to annotate, and every site here is that idiom.
+dotnet_diagnostic.S3265.severity = none
+
+[src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs]
+# S3459 sees the row classes Dapper materializes as never assigned: Dapper sets them by column name
+# through reflection, which the analyzer cannot see. The classes exist only to be filled that way.
+dotnet_diagnostic.S3459.severity = none
+
+[{tests,benchmarks}/**.cs]
+# Test-only shapes the rules cannot tell from defects:
+# S2094: empty marker types are the test vocabulary (a message with no payload, a DI type token);
+#        the rule already exempts any type with a base list, which is where production markers live.
+dotnet_diagnostic.S2094.severity = none
+# S3459: test model classes mirror perspective models; their properties are the targets of the
+#        expression-rewriting under test and are never assigned in test code by design.
+dotnet_diagnostic.S3459.severity = none
+# S1244: exact floating-point equality inside query expressions is the SQL translation under test.
+dotnet_diagnostic.S1244.severity = none
+# S1215: GC.Collect is how a test proves a weak reference or a finalizer-driven path let go.
+dotnet_diagnostic.S1215.severity = none
+# S1075: literal URIs and connection strings are the inputs of transport and resolver tests.
+dotnet_diagnostic.S1075.severity = none
+# S3877: a fake whose Dispose throws is how the dispose-failure paths are exercised.
+dotnet_diagnostic.S3877.severity = none
+

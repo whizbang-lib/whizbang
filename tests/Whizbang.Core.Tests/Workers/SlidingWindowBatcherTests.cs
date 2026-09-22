@@ -48,12 +48,9 @@ public class SlidingWindowBatcherTests {
       MaxWait = TimeSpan.FromSeconds(5)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var consumeTask = Task.Run(async () => {
-      await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        firstBatch.TrySetResult(batch);
-        return;
-      }
+      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
     });
 
     await ch.Writer.WriteAsync(1);
@@ -64,8 +61,8 @@ public class SlidingWindowBatcherTests {
     // No more arrivals — sliding window (500ms) will expire ~500ms after the third arrival.
 
     var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await consumeTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
     await Assert.That(batch.SequenceEqual(_expected123)).IsTrue();
   }
@@ -85,12 +82,9 @@ public class SlidingWindowBatcherTests {
       MaxWait = TimeSpan.FromSeconds(60)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var consumeTask = Task.Run(async () => {
-      await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        firstBatch.TrySetResult(batch);
-        return;
-      }
+      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
     });
 
     for (var i = 0; i < 5; i++) {
@@ -99,8 +93,8 @@ public class SlidingWindowBatcherTests {
 
     // Flushes at MaxSize=5 without waiting for the 30 s window.
     var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await consumeTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
     await Assert.That(batch.SequenceEqual(_expected01234)).IsTrue();
   }
@@ -125,15 +119,12 @@ public class SlidingWindowBatcherTests {
       MaxWait = TimeSpan.FromMilliseconds(1500)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var consumeTask = Task.Run(async () => {
-      await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
-        firstBatch.TrySetResult(batch);
-        return;
-      }
+      firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token));
     });
 
-    // Fast steady arrivals — the sliding window keeps resetting so the debounce never expires;
+    // Fast steady arrivals — the sliding window keeps resetting so the debounce never expires —
     // MaxWait is the hard cap that forces the flush.
     var producer = Task.Run(async () => {
       for (var i = 1; i <= 100 && !cts.IsCancellationRequested; i++) {
@@ -145,9 +136,9 @@ public class SlidingWindowBatcherTests {
     });
 
     var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(8));
-    cts.Cancel();
-    try { await consumeTask; } catch (OperationCanceledException) { }
-    try { await producer; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
+    try { await producer; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
     // MaxWait flushed a multi-item batch (>= 3) that includes the first arrival, and it flushed
     // because of MaxWait rather than MaxSize (count stays well under the 100 cap).
@@ -205,15 +196,14 @@ public class SlidingWindowBatcherTests {
   [Test]
   public async Task ReadBatches_CancellationDuringWait_TerminatesAsync() {
     var (ch, batcher) = _setup();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var task = Task.Run(async () => {
-      await foreach (var _ in batcher.ReadBatchesAsync(cts.Token)) {
-      }
+      await foreach (var _ in batcher.ReadBatchesAsync(cts.Token)) { /* no-op callback */ }
     });
 
     await ch.Writer.WriteAsync(1);
     await Task.Delay(10);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await task.WaitAsync(TimeSpan.FromSeconds(2));
     await Assert.That(task.IsCompleted).IsTrue();
@@ -232,7 +222,7 @@ public class SlidingWindowBatcherTests {
     });
     var batch1 = new TaskCompletionSource<IReadOnlyList<int>>();
     var batch2 = new TaskCompletionSource<IReadOnlyList<int>>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var task = Task.Run(async () => {
       var seen = 0;
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
@@ -253,8 +243,8 @@ public class SlidingWindowBatcherTests {
     var b2 = await batch2.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(b2.SequenceEqual(_expected34)).IsTrue();
 
-    cts.Cancel();
-    try { await task; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await task; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
   }
 
   /// <summary>

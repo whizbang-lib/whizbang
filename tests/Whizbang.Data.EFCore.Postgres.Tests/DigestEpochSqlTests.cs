@@ -233,7 +233,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull();
-    var (Lo, Hi) = await _expectedFoldAsync(conn, kept);
+    var (Lo, _) = await _expectedFoldAsync(conn, kept);
     await Assert.That(row!.Value.Count).IsEqualTo(1)
       .Because("ephemeral and at-most-once events must not be counted — they are outside the audited set");
     await Assert.That(row.Value.Lo).IsEqualTo(Lo)
@@ -260,7 +260,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     var row = await _epochRowAsync(conn, origin.ToString(), "", "Contracts.EpochProbe", 0);
     await Assert.That(row).IsNotNull()
       .Because("each origin gets its own lane with its own frontier");
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     await Assert.That(row!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(row.Value.Count).IsEqualTo(2);
 
@@ -316,7 +316,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     }
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, late);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, late);
     await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
       .Because("after refold the epoch reflects the repaired reality, not the stale pre-repair fold");
     await Assert.That(row.Value.Count).IsEqualTo(2);
@@ -325,7 +325,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
   [Test]
   public async Task EpochWidth_PinnedAtFirstClose_LaterSettingChangeIsIgnoredAsync() {
     // Epoch identity is floor(seq / width): changing the width remaps every epoch boundary and
-    // makes existing folds meaningless. The width is therefore pinned per lane at first close;
+    // makes existing folds meaningless. The width is therefore pinned per lane at first close —
     // changing the setting afterwards must not shift the boundaries of an existing lane.
     await using var conn = await _openAsync();
     await _setWidthAsync(conn, 100);

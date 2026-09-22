@@ -97,12 +97,12 @@ public class PriorityHooksTests {
 
   // ---- chain ---------------------------------------------------------------------------------------
 
-  private sealed class _producer(int order, Func<PriorityDeclarationContext, int> f) : IPriorityProducerHook {
+  private sealed class Producer(int order, Func<PriorityDeclarationContext, int> f) : IPriorityProducerHook {
     public int Order => order;
     public int DeclarePriority(PriorityDeclarationContext context) => f(context);
   }
 
-  private sealed class _receiver(int order, Func<PriorityReceiveContext, int> f) : IPriorityReceiveHook {
+  private sealed class Receiver(int order, Func<PriorityReceiveContext, int> f) : IPriorityReceiveHook {
     public int Order => order;
     public int Classify(PriorityReceiveContext context) => f(context);
   }
@@ -110,7 +110,7 @@ public class PriorityHooksTests {
   [Test]
   public async Task Chain_RunsProducerHooksInOrder_EachSeeingThePreviousAnswerAsync() {
     var chain = new PriorityHookChain(
-      [new _producer(200, c => c.Declared + 1), new _producer(100, _ => 10)],
+      [new Producer(200, c => c.Declared + 1), new Producer(100, _ => 10)],
       [], []);
 
     var declared = chain.DeclarePriority(_declaration(_envelope(MessageSource.Local)));
@@ -123,7 +123,7 @@ public class PriorityHooksTests {
   public async Task Chain_RunsReceiveHooksInOrder_AndTheLastWordWinsAsync() {
     var chain = new PriorityHookChain(
       [],
-      [new _receiver(500, c => c.Declared * 2), new _receiver(100, _ => 40)],
+      [new Receiver(500, c => c.Declared * 2), new Receiver(100, _ => 40)],
       []);
 
     var effective = chain.Classify(new PriorityReceiveContext(150, _envelope(MessageSource.Outbox), "Contracts.X, Contracts"));

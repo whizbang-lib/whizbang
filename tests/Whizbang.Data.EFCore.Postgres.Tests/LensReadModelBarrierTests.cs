@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class LensReadModelBarrierTests : EFCoreTestBase {
 
   private sealed class ProbeModel {
-    public Guid Id { get; set; }
   }
 
   private ServiceProvider _buildHost(IReadModelsReadyGate? gate) {

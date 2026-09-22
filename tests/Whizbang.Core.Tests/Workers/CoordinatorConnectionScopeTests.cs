@@ -124,7 +124,7 @@ public class CoordinatorConnectionScopeTests {
   public async Task AcquireAsync_CanceledToken_PropagatesOperationCanceledAsync() {
     var connString = "Host=192.0.2.60;Port=1;Database=x;Username=x;Password=x;Timeout=1";
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () =>
         await CoordinatorConnectionScope.AcquireAsync(connString, cts.Token))

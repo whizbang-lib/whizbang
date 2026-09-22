@@ -574,7 +574,7 @@ public class JsonMessageSerializerCoverageTests {
 
     // Act
     converter.Write(writer, dictionary, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert - Parse back and verify structure
     var json = Encoding.UTF8.GetString(stream.ToArray());

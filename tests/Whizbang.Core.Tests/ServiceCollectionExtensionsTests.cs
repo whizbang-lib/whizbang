@@ -1042,7 +1042,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1050,7 +1050,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestTelemetryHook : IMessageTagHook<TelemetryTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1058,7 +1058,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestMetricHook : IMessageTagHook<MetricTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1066,7 +1066,7 @@ public class ServiceCollectionExtensionsTests {
   private sealed class TestUniversalHook : IMessageTagHook<MessageTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -1468,7 +1468,7 @@ public class ServiceCollectionExtensionsTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1622,6 +1622,11 @@ public class ServiceCollectionExtensionsTests {
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
 
+    public Task FlushAsync(CancellationToken ct = default) {
+      ManualFlushCount++;
+      return Task.CompletedTask;
+    }
+
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
       Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -1629,9 +1634,5 @@ public class ServiceCollectionExtensionsTests {
         PerspectiveWork = []
       });
 
-    public Task FlushAsync(CancellationToken ct = default) {
-      ManualFlushCount++;
-      return Task.CompletedTask;
-    }
   }
 }

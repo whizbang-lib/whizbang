@@ -59,8 +59,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(eventStore.DeserializeCallCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(0)
@@ -87,8 +87,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(eventStore.DeserializeCallCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(0)
@@ -128,8 +128,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — prefetch hydrated the cache (single batch call, no per-perspective fallback)
     await Assert.That(coordinator.GetCursorsBatchCallCount).IsEqualTo(1);
@@ -173,8 +173,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the fallback read the persisted cursor and the runner saw it
     await Assert.That(coordinator.GetPerspectiveCursorCallCount).IsGreaterThanOrEqualTo(1)
@@ -233,8 +233,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     sw.Stop();
     await cts.CancelAsync();
-    try { await feeder; } catch (OperationCanceledException) { }
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await feeder; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — bounded by the sliding window from the first signal, not MaxWait.
     await Assert.That(sw.Elapsed).IsLessThan(TimeSpan.FromSeconds(5))
@@ -272,8 +272,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await lifecycle.FirstPerspectiveSignal.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — apply was skipped but the WhenAll bookkeeping was still satisfied
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(0)
@@ -317,8 +317,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the runner saw exactly the fresh remainder
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1);
@@ -360,8 +360,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForStreamEventsCallsAsync(2, TimeSpan.FromSeconds(10));
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — exactly one refetch happened, and the first iteration applied both events
     await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(2);
@@ -401,8 +401,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — refetch was attempted, its failure did not undo the completed apply
     await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(2);
@@ -445,8 +445,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForStreamEventsCallsAsync(2, TimeSpan.FromSeconds(10));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — only the first iteration ran the runner (foreign rows never applied here)
     await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(2);
@@ -476,8 +476,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(coordinator.GetStreamEventsCallCount).IsEqualTo(1)
@@ -515,8 +515,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await healthyRunner.FirstRunWithEvents.WaitAsync(TimeSpan.FromSeconds(10));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the healthy sibling applied despite the OCE from the other perspective
     await Assert.That(healthyRunner.RunWithEventsCallCount).IsEqualTo(1)
@@ -562,7 +562,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, CancellationToken.None);
     await oceRunner.FirstRunWithEvents.WaitAsync(TimeSpan.FromSeconds(10));
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(oceRunner.RunWithEventsCallCount).IsEqualTo(1)
       .Because("the perspective must actually have been reached, or this asserts nothing about "
@@ -603,8 +603,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — one apply pass covering all five events. The worker may hand the runner the
     // batch in id/commit-sorted order rather than seed order, so assert set membership (all
@@ -646,8 +646,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
     fakeTime.Advance(TimeSpan.FromSeconds(10));
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the failure carries the lease-deadline error, not a generic exception
     coordinator.Failures.TryPeek(out var failure);
@@ -673,8 +673,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     coordinator.Failures.TryPeek(out var failure);
     await Assert.That(failure).IsNotNull();
@@ -704,8 +704,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
@@ -734,8 +734,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     var cursor = await harness.WaitForCompletionAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the buffered completion reached the Phase C channel, not the coordinator
     await Assert.That(cursor.StreamId).IsEqualTo(streamId);
@@ -768,8 +768,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await failureChannel.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the buffered failure surfaced on the failure channel with its category + error
     failureChannel.Items.TryPeek(out var item);
@@ -875,7 +875,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       completionStrategy: useBatchedStrategy
         ? new BatchedCompletionStrategy(
             retryTimeout: TimeSpan.FromSeconds(options.RetryOptions.RetryTimeoutSeconds),
-            backoffMultiplier: options.RetryOptions.EnableExponentialBackoff ? options.RetryOptions.BackoffMultiplier : 1.0,
+            backoffMultiplier: options.RetryOptions switch { { EnableExponentialBackoff: true } r => r.BackoffMultiplier, _ => 1.0 },
             maxTimeout: TimeSpan.FromSeconds(options.RetryOptions.MaxBackoffSeconds))
         : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,
@@ -1012,7 +1012,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
         : Task.FromResult(new UnstartedLeaseRelease(0, perspectiveStreamIds.Count));
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
@@ -1059,7 +1059,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
   }
 
-  private sealed class MultiRunnerRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry, IEventTypeProvider {
+  private sealed class MultiRunnerRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
     private readonly ConcurrentDictionary<string, IPerspectiveRunner> _runners = new(StringComparer.Ordinal);
 
     public void Add(string perspectiveName, IPerspectiveRunner runner) => _runners[perspectiveName] = runner;
@@ -1095,7 +1095,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public Task FirstRunWithEvents => _firstRunWithEvents.Task;
     public Type PerspectiveType => typeof(DrainRunner);
 
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(_completed(streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
 
     public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
@@ -1123,7 +1123,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
         // propagation runs as callbacks, so there is a window where the outer source is cancelled
         // and the token the worker's exception filter tests is not yet.
         //
-        // That filter is the whole decision: `catch (OCE) when (ct.IsCancellationRequested)` means
+        // That filter is the whole decision: the OCE handler means
         // shutdown and stops the stream; falling past it means "one perspective misbehaving" and
         // logs a warning per perspective per stream. Throwing inside the window sends a shutdown
         // down the misbehaving path -- which is exactly what this test asserts against, and why it

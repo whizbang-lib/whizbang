@@ -117,14 +117,14 @@ public class PinnedPoolRegistrationTests {
       opts.Enabled = true;
       opts.ConnectionString = "Host=test;Database=test;Username=x;Password=x";
     });
-    services.AddPinnedWorker<_customWorker>();
+    services.AddPinnedWorker<CustomWorker>();
     services.AddWhizbangPostgresPinnedPool();
 
     var sp = services.BuildServiceProvider();
     var registry = sp.GetRequiredService<PinnedWorkerRegistry>();
     var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangPinnedPoolOptions>>().Value;
 
-    await Assert.That(registry.IsEligible(typeof(_customWorker), opts)).IsTrue()
+    await Assert.That(registry.IsEligible(typeof(CustomWorker), opts)).IsTrue()
       .Because("Consumer opt-in MUST surface as eligibility on the registry; otherwise the custom worker silently doesn't pin.");
   }
 
@@ -215,7 +215,7 @@ public class PinnedPoolRegistrationTests {
       .Because("Enabled=true with no string source resolvable MUST fall to NoOp — silent NoOp matches existing 'safe to call unconditionally' semantics.");
   }
 
-  private sealed class _customWorker : Microsoft.Extensions.Hosting.IHostedService {
+  private sealed class CustomWorker : Microsoft.Extensions.Hosting.IHostedService {
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
   }

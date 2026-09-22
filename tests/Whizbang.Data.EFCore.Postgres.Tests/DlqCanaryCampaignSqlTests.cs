@@ -47,9 +47,8 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     return id;
   }
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static async Task<(int Status, DateTimeOffset? Next)> _rowAsync(NpgsqlConnection conn, Guid id) {
     await using var q = conn.CreateCommand();
@@ -57,7 +56,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     q.Parameters.AddWithValue(nameof(id), id);
     await using var r = await q.ExecuteReaderAsync();
     await r.ReadAsync();
-    return (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetFieldValue<DateTimeOffset>(1));
+    return (r.GetInt32(0), await r.IsDBNullAsync(1) ? null : await r.GetFieldValueAsync<DateTimeOffset>(1));
   }
 
   [Test]

@@ -114,7 +114,7 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
 
     var expectedName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(
       SERVICE_NAME, "inbox.myapp.orders.commands");
-    var (Topic, Subscription, RequiresSession, MaxDeliveryCount) = adminClient.CreatedSubscriptions
+    var (_, Subscription, RequiresSession, MaxDeliveryCount) = adminClient.CreatedSubscriptions
       .Single(s => s.Topic == "inbox.myapp.orders.commands");
     await Assert.That(Subscription).IsEqualTo(expectedName)
       .Because("the provisioner must derive names exactly as the transport does — "

@@ -22,22 +22,9 @@
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 
-  <!-- Sonar's analyzers now run in every build (see the root Directory.Build.props). In test code
-       they fire 4,938 times, overwhelmingly on deliberate test-fake idioms: locally declared fakes
-       named with a leading underscore (S101, 1,024 of them), `ct` rather than `cancellationToken`
-       on an interface implementation (S927, 984), empty stub classes (S2094), and parameters a
-       signature requires but a fake never reads (S1172).
-
-       None of these reach the quality gate. Walking all 4,920 issues SonarCloud reports for this
-       project, every test side finding is an imported Roslyn rule and not one is a csharpsquid
-       rule, because the scanner's profile differs from this package's defaults.
-
-       So they are warnings here rather than build errors. This is an explicit, shrinking list and
-       not a blanket exemption: when a rule is cleared from the test suite, delete it from this
-       list and it becomes an error again. src/ deliberately gets no such list, so there they are
-       errors today. -->
-  <PropertyGroup>
-    <WarningsNotAsErrors>$(WarningsNotAsErrors);S101;S108;S112;S125;S927;S1006;S1075;S1104;S1121;S1125;S1135;S1144;S1172;S1186;S1199;S1215;S1244;S1450;S1481;S1751;S1854;S1871;S1905;S1939;S1940;S1994;S2094;S2183;S2201;S2219;S2223;S2292;S2325;S2326;S2344;S2365;S2479;S2486;S2696;S2743;S2761;S2930;S2933;S2953;S2971;S3011;S3220;S3246;S3265;S3267;S3358;S3376;S3398;S3400;S3459;S3871;S3877;S3878;S3881;S3903;S3923;S3928;S3993;S4136;S4143;S4144;S4487;S4581;S5034;S6562;S6608;S6966</WarningsNotAsErrors>
-  </PropertyGroup>
+  <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings
+       are errors here exactly as they are in src/. Test code gets no downgraded rule list: a rule
+       either holds for the whole repository or is turned off for the whole repository, with the
+       reason recorded next to the setting in .editorconfig. -->
 
 </Project>

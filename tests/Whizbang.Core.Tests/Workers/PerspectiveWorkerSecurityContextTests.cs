@@ -1637,7 +1637,9 @@ public class PerspectiveWorkerSecurityContextTests {
       var context = new TestScopeContext { UserId = _userId ?? "default-user" };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      _scopeContextAccessor?.Current = context;
+      if (_scopeContextAccessor is not null) {
+        _scopeContextAccessor.Current = context;
+      }
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1665,7 +1667,9 @@ public class PerspectiveWorkerSecurityContextTests {
       };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      _scopeContextAccessor?.Current = context;
+      if (_scopeContextAccessor is not null) {
+        _scopeContextAccessor.Current = context;
+      }
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1732,7 +1736,6 @@ public class PerspectiveWorkerSecurityContextTests {
   private sealed class TestScopeContextAccessor(Action? onSet = null) : IScopeContextAccessor {
     private readonly Action? _onSet = onSet;
     private IScopeContext? _current;
-    private IMessageContext? _initiatingContext;
 
     public IScopeContext? Current {
       get => _current;
@@ -1742,10 +1745,7 @@ public class PerspectiveWorkerSecurityContextTests {
       }
     }
 
-    public IMessageContext? InitiatingContext {
-      get => _initiatingContext;
-      set => _initiatingContext = value;
-    }
+    public IMessageContext? InitiatingContext { get; set; }
   }
 
   // Plain shared field. Fine for single-envelope tests: the Detached stage re-establishes the SAME
@@ -1803,7 +1803,7 @@ public class PerspectiveWorkerSecurityContextTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -1852,7 +1852,7 @@ public class PerspectiveWorkerSecurityContextTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,

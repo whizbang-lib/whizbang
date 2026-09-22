@@ -60,7 +60,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -68,7 +68,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default)
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 
@@ -97,9 +97,9 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       Interlocked.Increment(ref CallCount);
       return envelope.Payload;
     }
-    public object DeserializeFromBytes(byte[] payload, string messageType) {
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) {
       Interlocked.Increment(ref CallCount);
-      return JsonDocument.Parse(payload).RootElement;
+      return JsonDocument.Parse(jsonBytes).RootElement;
     }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
       Interlocked.Increment(ref CallCount);

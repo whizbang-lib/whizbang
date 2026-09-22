@@ -146,7 +146,7 @@ public class GraphQLMutationBaseTests {
     var mutation = new TestGraphQLMutation();
     var command = new TestMutationCommand { Value = "test" };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

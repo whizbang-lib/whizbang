@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
@@ -298,7 +299,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Swallowing these in the consumer event handler prevents the unhandled exception from
   /// surfacing as noise on the processor's <c>ProcessErrorAsync</c> path.
   /// </summary>
-  private static bool _isSettlementShouldSwallow(Exception ex) {
+  internal static bool IsSettlementShouldSwallow(Exception ex) {
     if (ex is ObjectDisposedException) {
       return true;
     }
@@ -319,7 +320,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private async Task _safeAbandonAsync(ProcessMessageEventArgs args) {
     try {
       await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+    } catch (Exception ex) when (IsSettlementShouldSwallow(ex)) {
       _logger.LogWarning(ex,
         "ASB Abandon swallowed for message {MessageId} — lock lost or processor disposed; broker will redeliver",
         args.Message.MessageId);
@@ -333,7 +334,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private async Task _safeAbandonAsync(ProcessSessionMessageEventArgs args) {
     try {
       await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+    } catch (Exception ex) when (IsSettlementShouldSwallow(ex)) {
       _logger.LogWarning(ex,
         "ASB Abandon swallowed for session message {MessageId} (session {SessionId}) — lock lost or processor disposed; broker will redeliver",
         args.Message.MessageId, args.SessionId);
@@ -348,7 +349,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private async Task _safeDeadLetterAsync(ProcessMessageEventArgs args, string reason, string description) {
     try {
       await args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken: args.CancellationToken);
-    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+    } catch (Exception ex) when (IsSettlementShouldSwallow(ex)) {
       _logger.LogWarning(ex,
         "ASB DeadLetter swallowed for message {MessageId} — lock lost or processor disposed; broker will redeliver",
         args.Message.MessageId);
@@ -362,7 +363,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private async Task _safeDeadLetterAsync(ProcessSessionMessageEventArgs args, string reason, string description) {
     try {
       await args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken: args.CancellationToken);
-    } catch (Exception ex) when (_isSettlementShouldSwallow(ex)) {
+    } catch (Exception ex) when (IsSettlementShouldSwallow(ex)) {
       _logger.LogWarning(ex,
         "ASB DeadLetter swallowed for session message {MessageId} (session {SessionId}) — lock lost or processor disposed; broker will redeliver",
         args.Message.MessageId, args.SessionId);
@@ -456,7 +457,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
   // Azure Service Bus Standard tier hard limit: 256 KB per message including envelope+headers.
-  // Premium supports up to 100 MB — consumers running Premium can override at the options layer;
+  // Premium supports up to 100 MB — consumers running Premium can override at the options layer —
   // we ship the conservative Standard default so out-of-the-box deployments don't silently exceed.
   public long? MaxMessageSizeBytes => 256L * 1024L;
 
@@ -1556,7 +1557,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // into a contention point. A lock-free read of the last-reported value keeps steady state to
       // one lookup.
       var entity = $"{destination.Address}/{subscription}";
-      if (_reportedAgeCapability.TryGetValue(entity, out var previous) != true
+      if (!_reportedAgeCapability.TryGetValue(entity, out var previous)
           || previous != hasTrustworthyAge) {
         _reportedAgeCapability[entity] = hasTrustworthyAge;
         _poisonDetector.ReportAgeCapability(ASB_TRANSPORT_TAG, entity, hasTrustworthyAge);
@@ -2081,21 +2082,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       // Remove default rule if it exists
       var deletedRules = 0;
-      foreach (var rule in existingRules) {
-        if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
-          await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
-          deletedRules++;
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var ruleName = rule.Name;
-            var topic = topicName;
-            var subscription = subscriptionName;
-            _logger.LogDebug(
-              "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
-              ruleName,
-              topic,
-              subscription
-            );
-          }
+      foreach (var ruleName in existingRules.Where(rule => rule.Name == defaultRuleName || rule.Name == customRuleName).Select(rule => rule.Name)) {
+        await _adminClient.DeleteRuleAsync(topicName, subscriptionName, ruleName, cancellationToken);
+        deletedRules++;
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var topic = topicName;
+          var subscription = subscriptionName;
+          _logger.LogDebug(
+            "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
+            ruleName,
+            topic,
+            subscription
+          );
         }
       }
       activity?.SetTag("servicebus.rules_deleted", deletedRules);

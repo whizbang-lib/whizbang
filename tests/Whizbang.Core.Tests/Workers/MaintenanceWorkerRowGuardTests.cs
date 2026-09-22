@@ -52,39 +52,39 @@ public class MaintenanceWorkerRowGuardTests {
     public int FailuresRecorded;
 
     public Task<IReadOnlyList<PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
-        IReadOnlyCollection<string> clrTypeNames, int perTableLimit = 500, CancellationToken ct = default)
+        IReadOnlyCollection<string> clrTypeNames, int perTableLimit = 500, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<PerspectiveRowDestructionTarget>>(AboutToReap);
 
     public Task ReleasePerspectiveRowHoldsAsync(
-        IReadOnlyCollection<PerspectiveRowRef> rows, CancellationToken ct = default) {
+        IReadOnlyCollection<PerspectiveRowRef> rows, CancellationToken cancellationToken = default) {
       lock (Released) { Released.AddRange(rows); }
       return Task.CompletedTask;
     }
 
     public Task HoldPerspectiveRowDestructionAsync(
-        IReadOnlyCollection<PerspectiveRowRef> rows, DateTimeOffset holdUntil, CancellationToken ct = default) {
+        IReadOnlyCollection<PerspectiveRowRef> rows, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) {
       lock (Held) { Held.AddRange(rows.Select(r => (r, holdUntil))); }
       return Task.CompletedTask;
     }
 
     public Task<int> RecordPerspectiveRowDestructionFailureAsync(
         IReadOnlyCollection<PerspectiveRowRef> rows, TimeSpan retryBackoff, int maxRetries,
-        OnDestroyFailure onDestroyFailure, CancellationToken ct = default) {
+        OnDestroyFailure onDestroyFailure, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref FailuresRecorded);
       return Task.FromResult(1);
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -96,7 +96,7 @@ public class MaintenanceWorkerRowGuardTests {
     public int AfterCalls;
 
     public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken ct = default) {
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken cancellationToken = default) {
       if (beforeThrows is not null) {
         return ValueTask.FromException<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(beforeThrows);
       }
@@ -110,7 +110,7 @@ public class MaintenanceWorkerRowGuardTests {
     }
 
     public ValueTask OnAfterReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken ct = default) {
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref AfterCalls);
       return afterThrows is not null ? ValueTask.FromException(afterThrows) : ValueTask.CompletedTask;
     }
@@ -217,10 +217,12 @@ public class MaintenanceWorkerRowGuardTests {
     var defer = _target();
     var until = DateTimeOffset.UtcNow.AddHours(2);
     var coord = new GuardCoordinator { AboutToReap = { proceed, cancel, defer } };
-    var guard = new StubGuard(t =>
-      t.RowId == proceed.RowId ? PerspectiveRowDecision.Proceed()
-      : t.RowId == cancel.RowId ? PerspectiveRowDecision.Cancel()
-      : PerspectiveRowDecision.Defer(until));
+    var guard = new StubGuard(t => {
+      if (t.RowId == proceed.RowId) {
+        return PerspectiveRowDecision.Proceed();
+      }
+      return t.RowId == cancel.RowId ? PerspectiveRowDecision.Cancel() : PerspectiveRowDecision.Defer(until);
+    });
     var (worker, _) = _build(coord, guard);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);

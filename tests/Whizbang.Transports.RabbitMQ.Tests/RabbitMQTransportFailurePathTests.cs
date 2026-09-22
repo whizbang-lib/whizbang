@@ -341,7 +341,7 @@ public class RabbitMQTransportFailurePathTests {
 
   [Test]
   public async Task ProcessMessage_IsClaimHeaderVariants_AllDecodedAndProcessedAsync() {
-    // _tryReadStringHeader must handle byte[] (AMQP wire form), string (pre-decoded),
+    // TryReadStringHeader must handle byte[] (AMQP wire form), string (pre-decoded),
     // arbitrary objects (ToString fallback), and explicit null — none of which mark a claim.
     var (channel, handled, _, _) = await _subscribeAsync();
 

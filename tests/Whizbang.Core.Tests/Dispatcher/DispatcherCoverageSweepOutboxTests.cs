@@ -627,7 +627,7 @@ public class DispatcherCoverageSweepOutboxTests {
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());
     await Assert.That(strategy.Queued).Count().IsEqualTo(1);
 
-    provider.Dispose();
+    await provider.DisposeAsync();
 
     // Act - dropping the event during shutdown must NOT throw
     await dispatcher.CallPublishToOutboxAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), MessageId.New());

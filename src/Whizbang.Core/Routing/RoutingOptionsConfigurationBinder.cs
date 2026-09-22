@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Routing;
@@ -82,15 +83,11 @@ internal static class RoutingOptionsConfigurationBinder {
     // the same GetChildren() loop TracingOptionsPostConfigure uses (house idiom).
     // RouteCommandNamespaceToInbox steps the all-namespaces DEFAULT aside for us: naming a
     // namespace is the migrate-one-at-a-time statement wherever it is written.
-    foreach (var child in flipSection.GetChildren()) {
-      if (string.IsNullOrWhiteSpace(child.Value)) {
-        continue;
-      }
-
-      if (child.Value == ROUTE_ALL_WILDCARD) {
+    foreach (var value in flipSection.GetChildren().Select(c => c.Value).Where(v => !string.IsNullOrWhiteSpace(v))) {
+      if (value == ROUTE_ALL_WILDCARD) {
         options.RouteAllCommandNamespacesToInbox();
       } else {
-        options.RouteCommandNamespaceToInbox(child.Value);
+        options.RouteCommandNamespaceToInbox(value!);
       }
     }
   }

@@ -463,7 +463,8 @@ public sealed class RoutingOptions {
 
       var owner = OwnedNamespaceMatcher.FindOwner(subscribed, _ownedDomains);
       if (owner is not null) {
-        (contradictions ??= []).Add($"'{subscribed}' (owned via '{owner}')");
+        contradictions ??= [];
+        contradictions.Add($"'{subscribed}' (owned via '{owner}')");
       }
     }
 

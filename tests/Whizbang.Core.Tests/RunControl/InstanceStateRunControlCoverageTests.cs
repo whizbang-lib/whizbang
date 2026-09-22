@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.RunControl;
 [Category("Startup")]
 public class InstanceStateRunControlCoverageTests {
 
-  private sealed class _throwingCoordinator : IWorkCoordinator {
+  private sealed class ThrowingCoordinator : IWorkCoordinator {
     private int _recordAttempts;
 
     /// <summary>How many times the recording was attempted. Must stay zero: OnPhaseAsync swallows
@@ -40,8 +40,6 @@ public class InstanceStateRunControlCoverageTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
@@ -51,12 +49,12 @@ public class InstanceStateRunControlCoverageTests {
     // missing, the coordinator would be asked to record state for a null/default instance id —
     // either throwing (breaking the lifecycle broadcast the class exists to never break) or writing
     // a bogus row peers could mistake for a real instance.
-    var coordinator = new _throwingCoordinator();
+    var coordinator = new ThrowingCoordinator();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     await using var sp = services.BuildServiceProvider();
 
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
     var control = new InstanceStateRunControl(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: null!,
@@ -75,7 +73,7 @@ public class InstanceStateRunControlCoverageTests {
 
   /// <summary>Captures every log line so the guard's silence is observable — without this, the
   /// class's catch-all would absorb an NRE from the missing provider and the test would pass.</summary>
-  private sealed class _recordingLogger : ILogger<InstanceStateRunControl> {
+  private sealed class RecordingLogger : ILogger<InstanceStateRunControl> {
     public List<string> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

@@ -26,7 +26,7 @@ public sealed class InboxHandlerWorkerTests {
   // had no Enabled guard at all (it wrote into a channel nothing would drain) and the flush dropped
   // its batch with a bare return. Neither logged.
 
-  private sealed class _visibilityLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+  private sealed class VisibilityLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
     public List<string> Messages { get; } = [];
 
     private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,7 +74,7 @@ public sealed class InboxHandlerWorkerTests {
 
   [Test]
   public async Task DisabledCommits_EnqueueSaysSo_RatherThanSilentlyAcceptingWorkAsync() {
-    var log = new _visibilityLogger();
+    var log = new VisibilityLogger();
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
@@ -96,7 +96,7 @@ public sealed class InboxHandlerWorkerTests {
 
   [Test]
   public async Task DisabledCommits_MessageNamesTheConsequenceNotJustTheStateAsync() {
-    var log = new _visibilityLogger();
+    var log = new VisibilityLogger();
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
@@ -217,7 +217,7 @@ public sealed class InboxHandlerWorkerTests {
     var opts = _enabledOptions();
     opts.Enabled = false;
     var coordinator = new StubCoordinator();
-    var log = new _visibilityLogger();
+    var log = new VisibilityLogger();
     var reachedDisabledArm = log.WaitFor("disabled via options");
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
@@ -412,20 +412,20 @@ public sealed class InboxHandlerWorkerTests {
       IReadOnlyList<HandlerCommitRequest> requests, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<HandlerBatchResult>>([]);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default)
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [], SyncInquiryResults = null });
 
     public Task<IReadOnlyList<SyncInquiryResult>> ResolveSyncInquiriesAsync(
       IReadOnlyList<SyncInquiry> inquiries, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<SyncInquiryResult>>([]);
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
@@ -434,7 +434,7 @@ public sealed class InboxHandlerWorkerTests {
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 

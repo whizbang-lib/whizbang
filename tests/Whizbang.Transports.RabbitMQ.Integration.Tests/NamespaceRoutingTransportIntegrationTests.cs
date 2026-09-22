@@ -291,7 +291,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
 
     try {
       // Set up consumers for each unique topic
-      foreach (var (messageType, expectedTopic) in testCases) {
+      foreach (var (_, expectedTopic) in testCases) {
         if (!receivedMessages.ContainsKey(expectedTopic)) {
           receivedMessages[expectedTopic] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 

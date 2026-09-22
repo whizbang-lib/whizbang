@@ -46,33 +46,31 @@ namespace Whizbang.Core.Tests.SystemEvents;
 public class AuditDecisionHookTests {
 
   [AuditEvent(Reason = "field edits are audited only when a person made them")]
-  private sealed record _recordFieldEdited : IEvent {
+  private sealed record RecordFieldEdited : IEvent {
     public bool FromImport { get; init; }
   }
 
   [AuditEvent(Reason = "activity boundary")]
-  private sealed record _bulkImportStarted : IEvent {
+  private sealed record FakeBulkImportStarted : IEvent {
     public int RecordCount { get; init; }
   }
 
-  private sealed record _unmarkedEvent : IEvent;
+  private sealed record UnmarkedEvent : IEvent;
 
   /// <summary>Vetoes import-driven edits and names bulk activity.</summary>
-  private sealed class _hook : IAuditDecisionHook {
+  private sealed class Hook : IAuditDecisionHook {
     public AuditDecision Decide(object payload, Type eventType) => payload switch {
-      _recordFieldEdited e when e.FromImport => AuditDecision.Skip,
-      _bulkImportStarted b => AuditDecision.Record(
+      RecordFieldEdited e when e.FromImport => AuditDecision.Skip,
+      FakeBulkImportStarted b => AuditDecision.Record(
         name: "Bulk record import", description: $"Imported {b.RecordCount} records"),
       _ => AuditDecision.NoOpinion,
     };
   }
 
-  private static readonly SystemEventOptions _optIn = new SystemEventOptions().EnableEventAudit();
-
   [Test]
   public async Task AHookCanVetoAnOccurrenceOfAnAuditedTypeAsync() {
     var decision = AuditEligibility.Decide(
-      new _recordFieldEdited { FromImport = true }, typeof(_recordFieldEdited), AuditMode.OptIn, new _hook());
+      new RecordFieldEdited { FromImport = true }, typeof(RecordFieldEdited), AuditMode.OptIn, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsFalse()
       .Because("an import writing ten thousand edits is not ten thousand things a person did; the "
@@ -82,7 +80,7 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task TheSameTypeIsStillAuditedWhenAPersonDidItAsync() {
     var decision = AuditEligibility.Decide(
-      new _recordFieldEdited { FromImport = false }, typeof(_recordFieldEdited), AuditMode.OptIn, new _hook());
+      new RecordFieldEdited { FromImport = false }, typeof(RecordFieldEdited), AuditMode.OptIn, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsTrue()
       .Because("the veto has to be per-occurrence — vetoing the type would lose the manual edits "
@@ -92,7 +90,7 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task AHookCanNameAndDescribeAnOccurrenceAsync() {
     var decision = AuditEligibility.Decide(
-      new _bulkImportStarted { RecordCount = 500 }, typeof(_bulkImportStarted), AuditMode.OptIn, new _hook());
+      new FakeBulkImportStarted { RecordCount = 500 }, typeof(FakeBulkImportStarted), AuditMode.OptIn, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsTrue();
     await Assert.That(decision.Name).IsEqualTo("Bulk record import");
@@ -104,7 +102,7 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task NoOpinionDefersToTheAttributeRatherThanSuppressingAsync() {
     var decision = AuditEligibility.Decide(
-      new _recordFieldEdited { FromImport = false }, typeof(_recordFieldEdited), AuditMode.OptIn, new _hook());
+      new RecordFieldEdited { FromImport = false }, typeof(RecordFieldEdited), AuditMode.OptIn, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsTrue()
       .Because("a hook that declines to decide must not silently suppress; if 'no opinion' read as "
@@ -114,7 +112,7 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task AnUnmarkedTypeStaysUnauditedUnderOptInAsync() {
     var decision = AuditEligibility.Decide(
-      new _unmarkedEvent(), typeof(_unmarkedEvent), AuditMode.OptIn, new _hook());
+      new UnmarkedEvent(), typeof(UnmarkedEvent), AuditMode.OptIn, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsFalse()
       .Because("OptIn means the attribute is the gate; a hook returning no opinion must not open it");
@@ -123,9 +121,9 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task WithoutAHookTheAttributeAloneDecidesAsync() {
     var marked = AuditEligibility.Decide(
-      new _bulkImportStarted(), typeof(_bulkImportStarted), AuditMode.OptIn, hook: null);
+      new FakeBulkImportStarted(), typeof(FakeBulkImportStarted), AuditMode.OptIn, hook: null);
     var unmarked = AuditEligibility.Decide(
-      new _unmarkedEvent(), typeof(_unmarkedEvent), AuditMode.OptIn, hook: null);
+      new UnmarkedEvent(), typeof(UnmarkedEvent), AuditMode.OptIn, hook: null);
 
     await Assert.That(marked.ShouldAudit).IsTrue();
     await Assert.That(unmarked.ShouldAudit).IsFalse()
@@ -160,7 +158,7 @@ public class AuditDecisionHookTests {
   [Test]
   public async Task AuditRecordsAreNeverThemselvesAuditedAsync() {
     var decision = AuditEligibility.Decide(
-      new object(), typeof(EventAudited), AuditMode.OptOut, new _hook());
+      new object(), typeof(EventAudited), AuditMode.OptOut, new Hook());
 
     await Assert.That(decision.ShouldAudit).IsFalse()
       .Because("auditing an audit record is an infinite loop, and no hook or mode may re-open it");

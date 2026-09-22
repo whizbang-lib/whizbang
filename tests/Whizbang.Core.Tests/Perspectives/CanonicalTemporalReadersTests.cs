@@ -27,7 +27,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 public class CanonicalTemporalReadersTests {
   private static readonly DateTime _instant = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
 
-  private delegate T Reader<T>(ref Utf8JsonReader reader);
+  private delegate T Reader<out T>(ref Utf8JsonReader reader);
 
   private static T _read<T>(Reader<T> read, string json) {
     var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));

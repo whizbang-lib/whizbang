@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// PostgreSQL instance, since every locker method executes a live UPDATE against
 /// wh_perspective_cursors.
 /// </summary>
-public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
+public sealed class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
   private TestFixture _testBase = null!;
   private PerspectiveStreamLockOptions _lockOptions = null!;
 
@@ -47,7 +47,7 @@ public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
 
   /// <summary>Captures the fully formatted message of every log call, and reports itself enabled for
   /// every level so the locker's `logger?.IsEnabled(LogLevel.Debug) == true` guard passes.</summary>
-  private sealed class _capturingLogger : ILogger<DapperPerspectiveStreamLocker> {
+  private sealed class CapturingLogger : ILogger<DapperPerspectiveStreamLocker> {
     public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -71,7 +71,7 @@ public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
     const string perspectiveName = "CoverageAcquiredPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var locker = new DapperPerspectiveStreamLocker(_testBase.TestConnectionString, Options.Create(_lockOptions), logger);
 
     var acquired = await locker.TryAcquireLockAsync(streamId, perspectiveName, instanceId, "coverage-rewind");
@@ -104,7 +104,7 @@ public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
     var holderLocker = new DapperPerspectiveStreamLocker(_testBase.TestConnectionString, Options.Create(_lockOptions));
     await holderLocker.TryAcquireLockAsync(streamId, perspectiveName, instanceA, "held-by-a");
 
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var contendingLocker = new DapperPerspectiveStreamLocker(_testBase.TestConnectionString, Options.Create(_lockOptions), logger);
     var acquired = await contendingLocker.TryAcquireLockAsync(streamId, perspectiveName, instanceB, "coverage-bootstrap");
 
@@ -132,7 +132,7 @@ public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
     const string perspectiveName = "CoverageReleasedPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var locker = new DapperPerspectiveStreamLocker(_testBase.TestConnectionString, Options.Create(_lockOptions), logger);
     await locker.TryAcquireLockAsync(streamId, perspectiveName, instanceId, "coverage-purge");
 

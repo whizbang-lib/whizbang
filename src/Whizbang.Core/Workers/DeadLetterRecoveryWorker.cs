@@ -159,7 +159,7 @@ public partial class DeadLetterRecoveryWorker(
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 
@@ -378,8 +378,8 @@ public partial class DeadLetterRecoveryWorker(
           _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Fail);
           _campaignsInFlight.Remove(fingerprint);
           break;
-        case CanaryVerdictKind.Mixed:
         default:
+          // Mixed, and any verdict this switch does not know, is treated as mixed.
           LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
           _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Mixed);
           _campaignsInFlight.Remove(fingerprint);
@@ -432,7 +432,7 @@ public partial class DeadLetterRecoveryWorker(
     // origin to redeliver over the wire — healing locally removes the reason to ask. It is still
     // gated on settledness: re-driving puts work back onto the same queues, so doing it mid-drain
     // is how a recovery becomes a second storm.
-    HousekeepingCoordinator.Decision? housekeeping = null;
+    HousekeepingCoordinator.Decision? housekeepingDecision = null;
     if (_housekeeping is not null && _options.WaitForIdle) {
       var coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
       ServiceBacklog? backlog = null;
@@ -448,7 +448,7 @@ public partial class DeadLetterRecoveryWorker(
         LogRecoveryDeferred(_logger, decision.Reason, backlog?.UnprocessedInboxRows ?? -1);
         return;
       }
-      housekeeping = decision;
+      housekeepingDecision = decision;
     }
     var scanRecovered = 0;
     try {
@@ -495,7 +495,7 @@ public partial class DeadLetterRecoveryWorker(
           if (pruned > 0) {
             LogStackHistoryPruned(_logger, pruned, _options.StackHistoryRetentionDays);
             // The maintenance facet the operator watches: a dedicated counter, and the
-            // housekeeping volume rollup under the Maintenance activity (this IS cleanup).
+            // housekeepingDecision volume rollup under the Maintenance activity (this IS cleanup).
             _metrics?.RecordStackHistoryPruned(pruned);
             _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, pruned);
           }
@@ -519,7 +519,7 @@ public partial class DeadLetterRecoveryWorker(
             churnThreshold: _options.ScanBatchChurnThreshold);
         }
       }
-      var pressured = housekeeping?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit;
+      var pressured = housekeepingDecision?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit;
       // A forced pass keeps the #669 narrow trickle regardless of the adaptive ramp; a settled
       // pass uses the controller's current width (or the fixed ScanBatchSize when adaptivity off).
       var batchSize = pressured
@@ -666,7 +666,7 @@ public partial class DeadLetterRecoveryWorker(
     } finally {
       // In a finally: a scan that throws and never releases the slot would disable BOTH recovery
       // and every lower-ranked activity for the lifetime of the process.
-      if (housekeeping is not null) {
+      if (housekeepingDecision is not null) {
         // Volume rollup before the slot releases: dead letters actually re-driven this cycle.
         _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.DeadLetterRecovery, scanRecovered);
         _housekeeping?.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);

@@ -124,73 +124,13 @@ public static class GeneratorTestHelper {
             additionalTexts: additionalFiles
                 .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
                 .ToImmutableArray())
-        : CSharpGeneratorDriver.Create(generator);
+        : CSharpGeneratorDriver.Create(ImmutableArray.Create(generator.AsSourceGenerator()), additionalTexts: null, parseOptions: null, optionsProvider: null);
 
     // Run the generator
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
 
     // Get the results
     return driver.GetRunResult();
-  }
-
-  /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
-  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
-    public override string Path { get; } = path;
-    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
-      => SourceText.From(content);
-  }
-
-  /// <summary>
-  /// Gets the generated source by file name from the generator result.
-  /// Checks both GeneratedSources (for all files including SQL, JSON, etc.) and GeneratedTrees (C# syntax trees).
-  /// </summary>
-  public static string? GetGeneratedSource(GeneratorDriverRunResult result, string fileName) {
-    // First try GeneratedSources (works for all file types including SQL, JSON, etc.)
-    foreach (var generatorResult in result.Results) {
-      var source = generatorResult.GeneratedSources
-          .FirstOrDefault(s => Path.GetFileName(s.HintName) == fileName);
-      if (source.SourceText != null) {
-        return source.SourceText.ToString();
-      }
-    }
-
-    // Fall back to GeneratedTrees (C# syntax trees only)
-    return result.GeneratedTrees
-        .FirstOrDefault(t => Path.GetFileName(t.FilePath) == fileName)
-        ?.ToString();
-  }
-
-  /// <summary>
-  /// Gets all generated sources from the generator result.
-  /// </summary>
-  public static IEnumerable<(string FileName, string Source)> GetAllGeneratedSources(GeneratorDriverRunResult result) {
-    return result.GeneratedTrees
-        .Select(t => (Path.GetFileName(t.FilePath), t.ToString()));
-  }
-
-  /// <summary>
-  /// Creates a simple compilation from source code for testing Roslyn symbol APIs.
-  /// </summary>
-  /// <param name="source">The C# source code to compile</param>
-  /// <param name="assemblyName">Optional assembly name (defaults to "TestAssembly")</param>
-  /// <returns>A CSharpCompilation that can be used to get type symbols</returns>
-  public static CSharpCompilation CreateCompilation(string source, string assemblyName = "TestAssembly") {
-    // Parse the source code
-    var syntaxTree = CSharpSyntaxTree.ParseText(source);
-
-    // Get references to basic assemblies
-    var references = new List<MetadataReference>();
-    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-
-    // Create compilation
-    return CSharpCompilation.Create(
-        assemblyName: assemblyName,
-        syntaxTrees: [syntaxTree],
-        references: references,
-        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-    );
   }
 
   /// <summary>
@@ -267,6 +207,66 @@ public static class GeneratorTestHelper {
 
     // Get the results
     return driver.GetRunResult();
+  }
+
+  /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
+  private sealed class TestAdditionalText(string path, string content) : AdditionalText {
+    public override string Path { get; } = path;
+    public override SourceText GetText(System.Threading.CancellationToken cancellationToken = default)
+      => SourceText.From(content);
+  }
+
+  /// <summary>
+  /// Gets the generated source by file name from the generator result.
+  /// Checks both GeneratedSources (for all files including SQL, JSON, etc.) and GeneratedTrees (C# syntax trees).
+  /// </summary>
+  public static string? GetGeneratedSource(GeneratorDriverRunResult result, string fileName) {
+    // First try GeneratedSources (works for all file types including SQL, JSON, etc.)
+    foreach (var generatorResult in result.Results) {
+      var source = generatorResult.GeneratedSources
+          .FirstOrDefault(s => Path.GetFileName(s.HintName) == fileName);
+      if (source.SourceText != null) {
+        return source.SourceText.ToString();
+      }
+    }
+
+    // Fall back to GeneratedTrees (C# syntax trees only)
+    return result.GeneratedTrees
+        .FirstOrDefault(t => Path.GetFileName(t.FilePath) == fileName)
+        ?.ToString();
+  }
+
+  /// <summary>
+  /// Gets all generated sources from the generator result.
+  /// </summary>
+  public static IEnumerable<(string FileName, string Source)> GetAllGeneratedSources(GeneratorDriverRunResult result) {
+    return result.GeneratedTrees
+        .Select(t => (Path.GetFileName(t.FilePath), t.ToString()));
+  }
+
+  /// <summary>
+  /// Creates a simple compilation from source code for testing Roslyn symbol APIs.
+  /// </summary>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="assemblyName">Optional assembly name (defaults to "TestAssembly")</param>
+  /// <returns>A CSharpCompilation that can be used to get type symbols</returns>
+  public static CSharpCompilation CreateCompilation(string source, string assemblyName = "TestAssembly") {
+    // Parse the source code
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+
+    // Get references to basic assemblies
+    var references = new List<MetadataReference>();
+    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+
+    // Create compilation
+    return CSharpCompilation.Create(
+        assemblyName: assemblyName,
+        syntaxTrees: [syntaxTree],
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
   }
 
   /// <summary>
@@ -350,11 +350,9 @@ public static class GeneratorTestHelper {
     var references = new List<MetadataReference>();
 
     var trustedAssemblies = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
-    foreach (var path in trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) {
-      if (File.Exists(path)) {
-        references.Add(MetadataReference.CreateFromFile(path));
-      }
-    }
+    references.AddRange(trustedAssemblies.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+      .Where(File.Exists)
+      .Select(path => MetadataReference.CreateFromFile(path)));
 
     // Whizbang.Core is a project reference (not a platform assembly) — add it explicitly for the
     // message/attribute types the generated populator and registry reference.

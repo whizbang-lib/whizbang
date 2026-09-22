@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -70,7 +71,7 @@ public sealed partial class CoalesceShipWorker(
       LogParkedNoBindings(_logger);
       try {
         await Task.Delay(Timeout.InfiniteTimeSpan, _timeProvider, stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) { }
+      } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 
@@ -143,13 +144,11 @@ public sealed partial class CoalesceShipWorker(
     var now = _timeProvider.GetUtcNow();
 
     // Fold pass FIRST: matured rows prefer folding — batching them is the whole feature.
-    foreach (var groupStats in stats) {
-      var binding = _coalesceResolver!.GetBinding(groupStats.Group);
-      if (binding is null || groupStats.PendingCount <= 0) {
-        continue;  // unbound/disabled strays surface via the release backstop below
-      }
-
-      var quiet = now - groupStats.NewestCreatedAt >= TimeSpan.FromSeconds(binding.SlideSeconds);
+    // Unbound/disabled strays and empty groups are skipped here; they surface via the release backstop below.
+    foreach (var (groupStats, binding) in stats
+        .Select(g => (Stats: g, Binding: _coalesceResolver!.GetBinding(g.Group)))
+        .Where(pair => pair.Binding is not null && pair.Stats.PendingCount > 0)) {
+      var quiet = now - groupStats.NewestCreatedAt >= TimeSpan.FromSeconds(binding!.SlideSeconds);
       var overdue = now - groupStats.OldestCreatedAt >= TimeSpan.FromSeconds(binding.MaxDelaySeconds);
       // #668: under sustained arrivals the slide never goes quiet, so the deadline was the
       // ONLY trigger — steady-state pending grew to arrival_rate x MaxDelaySeconds (a bulk
@@ -176,10 +175,10 @@ public sealed partial class CoalesceShipWorker(
 
     // Release backstop AFTER the fold: whatever a fold could not claim (or belongs to a group
     // nobody binds anymore) and has blown its floor ships individually — degraded, never lost.
-    foreach (var groupStats in stats) {
-      var released = await coordinator.ReleaseMaturedCoalesceAsync(groupStats.Group, cancellationToken).ConfigureAwait(false);
+    foreach (var group in stats.Select(groupStats => groupStats.Group)) {
+      var released = await coordinator.ReleaseMaturedCoalesceAsync(group, cancellationToken).ConfigureAwait(false);
       if (released > 0) {
-        LogReleasedMatured(_logger, released, groupStats.Group);
+        LogReleasedMatured(_logger, released, group);
       }
     }
   }

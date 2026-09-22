@@ -277,14 +277,10 @@ public static class PostgresDriverExtensions {
           new ScopedEFCoreDeadLetterStore(
             sp.GetRequiredService<IServiceScopeFactory>(),
             dbContextType,
-            sp.GetService<ILogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>>()
-              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterStore<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
             sp.GetService<WorkCoordinatorGate>()));
         selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
           new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
             (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
-            sp.GetService<ILogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>>()
-              ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>>.Instance,
             sp.GetService<WorkCoordinatorGate>()));
 
         // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order

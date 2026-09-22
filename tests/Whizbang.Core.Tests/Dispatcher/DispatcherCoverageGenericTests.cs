@@ -138,7 +138,7 @@ public class DispatcherCoverageGenericTests {
     var provider = _buildProvider();
     var dispatcher = new GenericTestDispatcher(provider);
     var command = new GenericCommand(Guid.NewGuid());
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 

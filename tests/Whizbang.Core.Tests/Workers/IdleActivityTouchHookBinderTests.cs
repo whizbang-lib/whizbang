@@ -43,15 +43,13 @@ public class IdleActivityTouchHookBinderTests {
     public bool IsHealthy => true;
     public DateTimeOffset? LastSignalAt { get; private set; }
     public event Action<WorkSignalCategory>? OnSignal;
-    public event Action<bool>? OnHealthChanged;
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* nothing was attached */ } }
 
     public void RaiseSignal(WorkSignalCategory category) {
       LastSignalAt = DateTimeOffset.UtcNow;
       OnSignal?.Invoke(category);
     }
 
-    /// <summary>Exercised only to keep the unused-event warning honest.</summary>
-    public void RaiseHealthChanged(bool healthy) => OnHealthChanged?.Invoke(healthy);
   }
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {

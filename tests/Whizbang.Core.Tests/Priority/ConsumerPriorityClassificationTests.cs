@@ -41,16 +41,13 @@ public class ConsumerPriorityClassificationTests {
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public bool IsInitialized => true;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _nop());
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) {
       BatchHandler = batchHandler;
-      return Task.FromResult<ISubscription>(new _nop());
+      return Task.FromResult<ISubscription>(new Nop());
     }
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-    public void Dispose() { }
-    private sealed class _nop : ISubscription {
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+    private sealed class Nop : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -65,10 +62,10 @@ public class ConsumerPriorityClassificationTests {
     public TaskCompletionSource<InboxMessage> Stored { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) => Stored.TrySetResult(message);
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
       Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
@@ -101,7 +98,7 @@ public class ConsumerPriorityClassificationTests {
     public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotSupportedException();
   }
 
-  private sealed class _lowerToBackground : IPriorityReceiveHook {
+  private sealed class LowerToBackground : IPriorityReceiveHook {
     public int Order => 2000;   // after the framework default, so it sees the accepted number and overrides it
     public int Classify(PriorityReceiveContext context) => WorkPriority.BACKGROUND;
   }
@@ -118,7 +115,6 @@ public class ConsumerPriorityClassificationTests {
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: new JsonSerializerOptions { TypeInfoResolver = PriorityTestJsonContext.Default },
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
@@ -165,7 +161,7 @@ public class ConsumerPriorityClassificationTests {
   public async Task Receive_AHostReceiveHook_LowersTheNumber_AndTheRowCarriesItsAnswerAsync() {
     var stored = await _receiveAsync(declared: WorkPriority.INTERACTIVE, configure: s => {
       s.AddWhizbangPriority();
-      s.AddSingleton<IPriorityReceiveHook, _lowerToBackground>();
+      s.AddSingleton<IPriorityReceiveHook, LowerToBackground>();
     });
     await Assert.That(stored.Priority).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("each consumer is in control of its own situation; a secondary consumer may treat a producer's interactive message as background");

@@ -35,7 +35,7 @@ public class StreamIntegrityMetricsTests {
     };
     listener.Start();
 
-    var _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(observed).Contains("whizbang.stream_integrity.checkpoints_published");
     await Assert.That(observed).Contains("whizbang.stream_integrity.checkpoints_received");
@@ -87,7 +87,7 @@ public class StreamIntegrityMetricsTests {
     };
     listener.Start();
 
-    var _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     // Durations: the compare histogram is the alpha-59-class early warning — comparisons slower
     // than manifest arrivals queued payloads in memory until the process died, invisibly.

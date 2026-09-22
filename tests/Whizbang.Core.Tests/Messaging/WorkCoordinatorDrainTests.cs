@@ -96,7 +96,7 @@ public class WorkCoordinatorDrainTests {
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
-    var batch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
+    _ = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert: Both messages included
     await Assert.That(workCoordinator.LastStoredOutbox).IsNotNull();
@@ -138,7 +138,7 @@ public class WorkCoordinatorDrainTests {
     public OutboxMessage[] LastStoredOutbox { get; private set; } = [];
     public int FlushCount { get; private set; }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       // Legacy fallback (not in live path).
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -147,21 +147,21 @@ public class WorkCoordinatorDrainTests {
       });
     }
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       FlushCount++;
       LastStoredOutbox = messages;
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       FlushCount++;
       return Task.CompletedTask;
     }
@@ -170,7 +170,7 @@ public class WorkCoordinatorDrainTests {
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
       return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }

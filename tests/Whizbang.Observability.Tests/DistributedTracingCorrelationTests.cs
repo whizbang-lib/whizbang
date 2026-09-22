@@ -233,7 +233,7 @@ public class DistributedTracingCorrelationTests {
         parentContext: parentContext);
 
       // Receptor runs under inbox
-      using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Assert - Build tree and verify hierarchy
@@ -295,8 +295,8 @@ public class DistributedTracingCorrelationTests {
         parentContext: perspectiveParentContext)) {
 
         // Create child lifecycle activities
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveDetached", ActivityKind.Internal)) { }
-        using (WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) { }
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveDetached", ActivityKind.Internal)) { /* the scope's start and end are the behavior under test */ }
+        using (WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) { /* the scope's start and end are the behavior under test */ }
 
         // Assert - Perspective should be linked to BFF request (while activities are still open)
         await Assert.That(perspectiveActivity).IsNotNull();
@@ -311,8 +311,4 @@ public class DistributedTracingCorrelationTests {
         .AssertHasChild("Perspective UserProjection");
   }
 
-  // Test helper class
-  private sealed record TestEvent {
-    public required string Name { get; init; }
-  }
 }

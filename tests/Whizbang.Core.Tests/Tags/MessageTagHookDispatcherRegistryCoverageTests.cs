@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Tags;
 [NotInParallel("TagRegistry")]
 public class MessageTagHookDispatcherRegistryCoverageTests {
 
-  private sealed class _decliningDispatcher : IMessageTagHookDispatcher {
+  private sealed class DecliningDispatcher : IMessageTagHookDispatcher {
     public object? TryCreateContext(
         Type attributeType, MessageTagAttribute attribute, object message,
         Type messageType, JsonElement payload, IScopeContext? scope, LifecycleStage stage) => null;
@@ -32,7 +32,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
       ValueTask.FromResult<JsonElement?>(null);
   }
 
-  private sealed class _handlingDispatcher : IMessageTagHookDispatcher {
+  private sealed class HandlingDispatcher : IMessageTagHookDispatcher {
     public object? TryCreateContext(
         Type attributeType, MessageTagAttribute attribute, object message,
         Type messageType, JsonElement payload, IScopeContext? scope, LifecycleStage stage) => null;
@@ -54,7 +54,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
     AssemblyRegistry<IMessageTagHookDispatcher>.ClearForTesting();
     await Assert.That(MessageTagHookDispatcherRegistry.Count).IsEqualTo(0);
 
-    MessageTagHookDispatcherRegistry.Register(new _decliningDispatcher());
+    MessageTagHookDispatcherRegistry.Register(new DecliningDispatcher());
 
     await Assert.That(MessageTagHookDispatcherRegistry.Count).IsEqualTo(1)
       .Because("Count reads straight through to the underlying registry — it must reflect what Register just added");
@@ -67,7 +67,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
   [Test]
   public async Task TryCreateContext_DispatcherDeclinesLoopFallsThroughToNullAsync() {
     AssemblyRegistry<IMessageTagHookDispatcher>.ClearForTesting();
-    MessageTagHookDispatcherRegistry.Register(new _decliningDispatcher());
+    MessageTagHookDispatcherRegistry.Register(new DecliningDispatcher());
 
     var result = MessageTagHookDispatcherRegistry.TryCreateContext(
       typeof(SignalTagAttribute), new SignalTagAttribute { Tag = "t" }, new object(),
@@ -83,7 +83,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
   [Test]
   public async Task TryDispatchAsync_HandlingDispatcherResultIsReturnedAsync() {
     AssemblyRegistry<IMessageTagHookDispatcher>.ClearForTesting();
-    MessageTagHookDispatcherRegistry.Register(new _handlingDispatcher());
+    MessageTagHookDispatcherRegistry.Register(new HandlingDispatcher());
 
     var result = await MessageTagHookDispatcherRegistry.TryDispatchAsync(
       new object(), new object(), typeof(SignalTagAttribute), CancellationToken.None);

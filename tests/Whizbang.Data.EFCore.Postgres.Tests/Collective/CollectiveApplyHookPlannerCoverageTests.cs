@@ -30,13 +30,13 @@ public class CollectiveApplyHookPlannerCoverageTests {
   [Test]
   public async Task Resolve_HookCallsSuppressActivity_IsSilentlyDroppedFromThePlanAsync() {
     var registry = new CollectiveApplyHookRegistry();
-    registry.Register<_model>(new _suppressActivityHook());
+    registry.Register<Model>(new SuppressActivityHook());
     var context = new ApplyHookContext {
-      ModelType = typeof(_model),
+      ModelType = typeof(Model),
       ApplyTimestamp = DateTimeOffset.UtcNow,
     };
 
-    var plan = CollectiveApplyHookPlanner.Resolve<_model>(registry, context);
+    var plan = CollectiveApplyHookPlanner.Resolve<Model>(registry, context);
 
     await Assert.That(plan.StoreColumns).IsEmpty()
       .Because("SuppressActivityOp has no representation in CollectiveStoreColumn — the collective "
@@ -47,12 +47,12 @@ public class CollectiveApplyHookPlannerCoverageTests {
              + "verbs that happen to both be no-representation cases from this fold's point of view");
   }
 
-  private sealed class _model {
+  private sealed class Model {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed class _suppressActivityHook : ICollectiveApplyHook<_model> {
-    public void Configure(ICollectiveApplyHookBuilder<_model> builder, ApplyHookContext context)
+  private sealed class SuppressActivityHook : ICollectiveApplyHook<Model> {
+    public void Configure(ICollectiveApplyHookBuilder<Model> builder, ApplyHookContext context)
       => builder.SuppressActivity();
   }
 }

@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class IntegrityCheckpointWorkerCoverageTests {
 
   // Target: src/Whizbang.Core/Workers/IntegrityCheckpointWorker.cs:47 — `return;` in the
-  // `catch (OperationCanceledException)` around `_schemaReadyGate.WaitForReadyAsync`. If this
+  // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. If this
   // regressed to letting the exception escape, a pod stopped while still waiting for migrations
   // would fault its BackgroundService instead of shutting down quietly, and every fast restart
   // during a rolling deploy would log a crash for something that is not one.
@@ -34,13 +34,13 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
       CancellationToken testToken) {
-    var dispatcher = new _captureDispatcher();
+    var dispatcher = new CaptureDispatcher();
     // A gate that never opens AND reports when a waiter arrives. A plain never-ready gate could not
     // say whether the worker had reached the barrier: StartAsync only SCHEDULES ExecuteAsync, so
     // StopAsync's cancellation can beat the body to the gate entirely and every assertion below
     // would be answered by a worker that never waited on anything.
-    var gate = new _parkedGate();
-    var worker = _buildWorker(new _checkpointCoordinator(), dispatcher, "origin-svc", gate: gate);
+    var gate = new ParkedGate();
+    var worker = _buildWorker(new CheckpointCoordinator(), dispatcher, "origin-svc", gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -57,7 +57,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
              + "have been created");
   }
 
-  // Target: line 54 — `break;` in the `catch (OperationCanceledException)` around
+  // Target: line 54 — the break in the the OperationCanceledException handler around
   // `RunCheckpointOnceAsync` inside the main loop. If a spurious cancellation from a cycle were
   // treated like a generic failure (logged and retried) instead of ending the loop, a worker that
   // should have exited cleanly on shutdown would instead spin retrying a call whose token is
@@ -66,7 +66,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_CycleThrowsOperationCanceled_BreaksTheLoopWithoutRetryingAsync(
       CancellationToken testToken) {
-    var coordinator = new _throwingCoordinator { ThrowOperationCanceled = true };
+    var coordinator = new ThrowingCoordinator { ThrowOperationCanceled = true };
     var worker = _loopWorker(coordinator, SchemaReadyGate.AlreadyReady(),
       new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
@@ -91,14 +91,14 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Test]
   public async Task RunCheckpointOnce_TransportWiredButNoTypesToFanOutTo_FallsBackToDispatcherAsync() {
     var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 },
       // Deliberately empty: no bucket types, no historical own-audited types.
     };
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      transport: transport, catalog: new _catalog(ordersType));
+      transport: transport, catalog: new Catalog(ordersType));
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -114,7 +114,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Test]
   public async Task RunCheckpointOnce_UnresolvableEventType_IsSkippedButOthersStillPublishAsync() {
     var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow {
         FromCommitSequence = 5,
         ToCommitSequence = 9,
@@ -124,10 +124,10 @@ public class IntegrityCheckpointWorkerCoverageTests {
       },
       OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType)],
     };
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      transport: transport, catalog: new _catalog(ordersType));
+      transport: transport, catalog: new Catalog(ordersType));
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -146,16 +146,16 @@ public class IntegrityCheckpointWorkerCoverageTests {
   public async Task RunCheckpointOnce_RegistryRoutedHost_SkipsTypesWithNoRegistryTopicAsync() {
     var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
     var usersType = typeof(CheckpointTopicProbes.Users.UsersProbeEvent);
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 },
       OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType), TypeNameFormatter.Format(usersType)],
     };
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     // Registry only knows the orders topic — users resolves via the catalog but has no mapped topic.
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      transport: transport, catalog: new _catalog(ordersType, usersType),
-      outboxRouting: false, topicRegistry: new _topicRegistry((ordersType, "app.orders")));
+      transport: transport, catalog: new Catalog(ordersType, usersType),
+      outboxRouting: false, topicRegistry: new TopicRegistry((ordersType, "app.orders")));
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -171,7 +171,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   // what keeps the checkpoint from vanishing when the own-topics path comes up completely empty.
   [Test]
   public async Task RunCheckpointOnce_NoCandidateResolvesToADestination_FallsBackToDispatcherAsync() {
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow {
         FromCommitSequence = 5,
         ToCommitSequence = 9,
@@ -180,10 +180,10 @@ public class IntegrityCheckpointWorkerCoverageTests {
         ],
       },
     };
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      transport: transport, catalog: new _catalog(typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent)));
+      transport: transport, catalog: new Catalog(typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent)));
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -198,15 +198,15 @@ public class IntegrityCheckpointWorkerCoverageTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static IntegrityCheckpointWorker _buildWorker(
-      _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
-      _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
+      CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, string serviceName,
+      CaptureTransport? transport = null, IMessageTypeCatalog? catalog = null,
       bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
       ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(Options.Create(new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider(serviceName));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
       services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -229,7 +229,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   }
 
   // Target: src/Whizbang.Core/Workers/IntegrityCheckpointWorker.cs:47 — the `return;` inside the
-  // `catch (OperationCanceledException)` around the schema-gate wait.
+  // the OperationCanceledException handler around the schema-gate wait.
   //
   // The older test above cancels via StopAsync without ever confirming the worker had reached the
   // gate, so it settles whether or not the wait was entered — and measurement showed line 47 never
@@ -246,8 +246,8 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_CanceledWhileParkedOnTheSchemaGate_ReturnsBeforeAnyCheckpointCycleAsync(
       CancellationToken testToken) {
-    var coordinator = new _throwingCoordinator();
-    var gate = new _parkedGate();
+    var coordinator = new ThrowingCoordinator();
+    var gate = new ParkedGate();
     var worker = _loopWorker(coordinator, gate, new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
     using var cts = new CancellationTokenSource();
@@ -274,7 +274,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   }
 
   /// <summary>A gate that never opens and announces the moment a worker begins waiting on it.</summary>
-  private sealed class _parkedGate : ISchemaReadyGate {
+  private sealed class ParkedGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -288,11 +288,11 @@ public class IntegrityCheckpointWorkerCoverageTests {
   }
 
   private static IntegrityCheckpointWorker _loopWorker(
-      _throwingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
+      ThrowingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IDispatcher>(new _captureDispatcher());
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    services.AddSingleton<IDispatcher>(new CaptureDispatcher());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("origin-svc"));
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
@@ -301,7 +301,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }
 
-  private sealed class _checkpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public IntegrityCheckpointWindow? Window { get; init; }
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public List<string> OwnAuditedEventTypes { get; init; } = [];
@@ -317,7 +317,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
   }
 
   /// <summary>Counts cycles and can fail the first one with a chosen exception shape.</summary>
-  private sealed class _throwingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class ThrowingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _calls;
     public int Calls => Volatile.Read(ref _calls);
     public bool ThrowOperationCanceled { get; init; }
@@ -341,7 +341,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
     }
   }
 
-  private sealed class _captureDispatcher : FakeDispatcher, IDispatcher {
+  private sealed class CaptureDispatcher : FakeDispatcher, IDispatcher {
     public List<object> Published { get; } = [];
 
     public new Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
@@ -350,7 +350,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
     }
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -363,17 +363,17 @@ public class IntegrityCheckpointWorkerCoverageTests {
     };
   }
 
-  private sealed class _topicRegistry(params (Type Type, string Topic)[] map) : ITopicRegistry {
+  private sealed class TopicRegistry(params (Type Type, string Topic)[] map) : ITopicRegistry {
     public string? GetBaseTopic(Type messageType) =>
       map.Where(m => m.Type == messageType).Select(m => m.Topic).FirstOrDefault();
   }
 
-  private sealed class _catalog(params Type[] eventTypes) : IMessageTypeCatalog {
+  private sealed class Catalog(params Type[] eventTypes) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
       [.. eventTypes.Select(t => new MessageTypeCatalogEntry(t, TypeNameFormatter.Format(t), "event", null))];
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

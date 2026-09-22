@@ -32,7 +32,7 @@ public class IPerspectiveStoreDefaultsTests {
     // Custom stores that don't override the metadata accessor return null so
     // the runner falls back to "apply all events" — locks against a future
     // accidental break of that compatibility contract.
-    IPerspectiveStore<_Model> store = new _ShortOverloadStore();
+    IPerspectiveStore<Model> store = new ShortOverloadStore();
     var result = await store.GetMetadataByStreamIdAsync(Guid.NewGuid());
 
     await Assert.That(result).IsNull();
@@ -40,12 +40,12 @@ public class IPerspectiveStoreDefaultsTests {
 
   [Test]
   public async Task UpsertAsync_WithScope_DelegatesToShortFormAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
     var streamId = Guid.NewGuid();
-    var model = new _Model { Name = "x" };
+    var model = new Model { Name = "x" };
     var scope = new PerspectiveScope { TenantId = "t1" };
 
-    await ((IPerspectiveStore<_Model>)store).UpsertAsync(streamId, model, scope);
+    await ((IPerspectiveStore<Model>)store).UpsertAsync(streamId, model, scope);
 
     await Assert.That(store.UpsertCalls).IsEqualTo(1);
     await Assert.That(store.LastStreamId).IsEqualTo(streamId);
@@ -54,12 +54,12 @@ public class IPerspectiveStoreDefaultsTests {
 
   [Test]
   public async Task UpsertAsync_WithScopeAndForceUpdate_DelegatesToShortFormAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
     var streamId = Guid.NewGuid();
-    var model = new _Model { Name = "x" };
+    var model = new Model { Name = "x" };
     var scope = new PerspectiveScope { TenantId = "t1" };
 
-    await ((IPerspectiveStore<_Model>)store).UpsertAsync(streamId, model, scope, forceUpdateScope: true);
+    await ((IPerspectiveStore<Model>)store).UpsertAsync(streamId, model, scope, forceUpdateScope: true);
 
     await Assert.That(store.UpsertCalls).IsEqualTo(1);
   }
@@ -69,12 +69,12 @@ public class IPerspectiveStoreDefaultsTests {
     // The richest overload (5 params + metadata) falls through to the
     // forceUpdateScope overload — which falls through to the scope overload —
     // which falls through to the short form. End-to-end: one short call.
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
     var metadata = new PerspectiveMetadata { EventId = Guid.NewGuid().ToString(), EventType = "TestEvent" };
 
-    await ((IPerspectiveStore<_Model>)store).UpsertAsync(
+    await ((IPerspectiveStore<Model>)store).UpsertAsync(
       Guid.NewGuid(),
-      new _Model(),
+      new Model(),
       new PerspectiveScope(),
       forceUpdateScope: false,
       metadata,
@@ -85,12 +85,12 @@ public class IPerspectiveStoreDefaultsTests {
 
   [Test]
   public async Task UpsertWithPhysicalFieldsAsync_WithForceUpdate_DelegatesAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
     var physical = new ConcurrentDictionary<string, object?> { ["col"] = 1 };
 
-    await ((IPerspectiveStore<_Model>)store).UpsertWithPhysicalFieldsAsync(
+    await ((IPerspectiveStore<Model>)store).UpsertWithPhysicalFieldsAsync(
       Guid.NewGuid(),
-      new _Model(),
+      new Model(),
       physical,
       scope: null,
       forceUpdateScope: true);
@@ -100,11 +100,11 @@ public class IPerspectiveStoreDefaultsTests {
 
   [Test]
   public async Task UpsertWithPhysicalFieldsAsync_WithMetadata_DropsAndDelegatesAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
 
-    await ((IPerspectiveStore<_Model>)store).UpsertWithPhysicalFieldsAsync(
+    await ((IPerspectiveStore<Model>)store).UpsertWithPhysicalFieldsAsync(
       Guid.NewGuid(),
-      new _Model(),
+      new Model(),
       new Dictionary<string, object?>(),
       scope: null,
       forceUpdateScope: false,
@@ -116,38 +116,38 @@ public class IPerspectiveStoreDefaultsTests {
 
   [Test]
   public async Task UpsertByPartitionKeyAsync_WithScope_DelegatesToShortFormAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
 
-    await ((IPerspectiveStore<_Model>)store).UpsertByPartitionKeyAsync<string>("k", new _Model(), new PerspectiveScope());
+    await ((IPerspectiveStore<Model>)store).UpsertByPartitionKeyAsync<string>("k", new Model(), new PerspectiveScope());
 
     await Assert.That(store.UpsertByPartitionCalls).IsEqualTo(1);
   }
 
   [Test]
   public async Task UpsertByPartitionKeyAsync_WithForceUpdate_DelegatesAsync() {
-    var store = new _ShortOverloadStore();
+    var store = new ShortOverloadStore();
 
-    await ((IPerspectiveStore<_Model>)store).UpsertByPartitionKeyAsync<string>(
-      "k", new _Model(), new PerspectiveScope(), forceUpdateScope: true);
+    await ((IPerspectiveStore<Model>)store).UpsertByPartitionKeyAsync<string>(
+      "k", new Model(), new PerspectiveScope(), forceUpdateScope: true);
 
     await Assert.That(store.UpsertByPartitionCalls).IsEqualTo(1);
   }
 
-  private sealed class _Model {
+  private sealed class Model {
     public string Name { get; init; } = "";
   }
 
-  private sealed class _ShortOverloadStore : IPerspectiveStore<_Model> {
+  private sealed class ShortOverloadStore : IPerspectiveStore<Model> {
     public int UpsertCalls { get; private set; }
     public int UpsertPhysicalCalls { get; private set; }
     public int UpsertByPartitionCalls { get; private set; }
     public Guid? LastStreamId { get; private set; }
-    public _Model? LastModel { get; private set; }
+    public Model? LastModel { get; private set; }
 
-    public Task<_Model?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default)
-      => Task.FromResult<_Model?>(null);
+    public Task<Model?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default)
+      => Task.FromResult<Model?>(null);
 
-    public Task UpsertAsync(Guid streamId, _Model model, CancellationToken cancellationToken = default) {
+    public Task UpsertAsync(Guid streamId, Model model, CancellationToken cancellationToken = default) {
       UpsertCalls++;
       LastStreamId = streamId;
       LastModel = model;
@@ -156,7 +156,7 @@ public class IPerspectiveStoreDefaultsTests {
 
     public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId,
-      _Model model,
+      Model model,
       IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope = null,
       CancellationToken cancellationToken = default) {
@@ -164,10 +164,10 @@ public class IPerspectiveStoreDefaultsTests {
       return Task.CompletedTask;
     }
 
-    public Task<_Model?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
-      where TPartitionKey : notnull => Task.FromResult<_Model?>(null);
+    public Task<Model?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull => Task.FromResult<Model?>(null);
 
-    public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, _Model model, CancellationToken cancellationToken = default)
+    public Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, Model model, CancellationToken cancellationToken = default)
       where TPartitionKey : notnull {
       UpsertByPartitionCalls++;
       return Task.CompletedTask;

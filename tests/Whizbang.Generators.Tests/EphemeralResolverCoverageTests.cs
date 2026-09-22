@@ -22,7 +22,7 @@ public class EphemeralResolverCoverageTests {
   // whose BASE carries an explicit [Ephemeral] but that ALSO happens to implement two sibling interface
   // profiles that disagree would fall through into the interface-carrier check and get wrongly flagged
   // WHIZ134 — a hard compile error for code that is already unambiguously resolved by its base class.
-  // Every existing WHIZ134 test resolves the tie via the type's OWN attribute or via interfaces only;
+  // Every existing WHIZ134 test resolves the tie via the type's OWN attribute or via interfaces only —
   // none inherit from an [Ephemeral] BASE while also carrying conflicting interfaces, so this exit was
   // never actually exercised.
   [Test]

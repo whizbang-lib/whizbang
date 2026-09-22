@@ -75,7 +75,7 @@ public class InboxDispatchWorkerCoverageTests {
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       First.TrySetResult(request);
       return ValueTask.CompletedTask;
@@ -88,7 +88,7 @@ public class InboxDispatchWorkerCoverageTests {
   private sealed class TimeAdvancingHandlerCommitChannel(Microsoft.Extensions.Time.Testing.FakeTimeProvider timeProvider) : IInboxHandlerCommitChannel {
     public TaskCompletionSource<HandlerCommitRequest> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       timeProvider.Advance(TimeSpan.FromMilliseconds(150));
       First.TrySetResult(request);
@@ -99,7 +99,7 @@ public class InboxDispatchWorkerCoverageTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> First { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       First.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -115,10 +115,11 @@ public class InboxDispatchWorkerCoverageTests {
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Enqueue((logLevel, formatter(state, exception)));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   // Minimal serializer for composite fan-out plumbing (mirrors InboxDispatchWorkerTests).
@@ -165,20 +166,20 @@ public class InboxDispatchWorkerCoverageTests {
   private sealed class PassThroughLifecycleDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType) => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
-  private sealed record _innerImportEvent(string Id) : IEvent;
+  private sealed record InnerImportEvent(string Id) : IEvent;
 
-  private sealed class _bulkComposite(params _innerImportEvent[] inner) : ICompositeEvent {
+  private sealed class BulkComposite(params InnerImportEvent[] inner) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10_000;
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
-  private sealed class _overCapComposite(int count) : ICompositeEvent {
+  private sealed class OverCapComposite(int count) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 1;
-    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new _innerImportEvent($"J-{i}"));
+    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"J-{i}"));
   }
 
   /// <summary>DLQ store whose MoveAsync reports the source row already gone (the documented
@@ -259,7 +260,7 @@ public class InboxDispatchWorkerCoverageTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new _enteredSignallingGate(); // never marked ready
+    var gate = new EnteredSignallingGate(); // never marked ready
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -392,7 +393,7 @@ public class InboxDispatchWorkerCoverageTests {
     var gate = SchemaReadyGate.AlreadyReady();
 
     const string compositeType = "Test.CompositeOverCap, Test";
-    var composite = new _overCapComposite(5); // cap = 1 -> CapExceeded outcome
+    var composite = new OverCapComposite(5); // cap = 1 -> CapExceeded outcome
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -456,9 +457,9 @@ public class InboxDispatchWorkerCoverageTests {
     var gate = SchemaReadyGate.AlreadyReady();
 
     const string compositeType = "Test.CompositeOverBudget, Test";
-    var composite = new _bulkComposite(
-      new _innerImportEvent("J-1"), new _innerImportEvent("J-2"), new _innerImportEvent("J-3"),
-      new _innerImportEvent("J-4"), new _innerImportEvent("J-5")); // 5 children, own cap 10_000 -> Expanded
+    var composite = new BulkComposite(
+      new InnerImportEvent("J-1"), new InnerImportEvent("J-2"), new InnerImportEvent("J-3"),
+      new InnerImportEvent("J-4"), new InnerImportEvent("J-5")); // 5 children, own cap 10_000 -> Expanded
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .BuildServiceProvider();
@@ -521,7 +522,7 @@ public class InboxDispatchWorkerCoverageTests {
       .AddSingleton<IReceptorInvoker>(invoker)
       .BuildServiceProvider();
 
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
     var handlerCommit = new FakeHandlerCommitChannel();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -570,7 +571,7 @@ public class InboxDispatchWorkerCoverageTests {
       .AddSingleton<IReceptorInvoker>(invoker)
       .BuildServiceProvider();
 
-    var composite = new _bulkComposite(new _innerImportEvent("J-1"), new _innerImportEvent("J-2"), new _innerImportEvent("J-3"));
+    var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"), new InnerImportEvent("J-3"));
     var handlerCommit = new FakeHandlerCommitChannel();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -688,8 +689,8 @@ public class InboxDispatchWorkerCoverageTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new _parkThenReturnGate();
-    var logger = new _eventIdCapturingLogger();
+    var gate = new ParkThenReturnGate();
+    var logger = new EventIdCapturingLogger();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -744,7 +745,7 @@ public class InboxDispatchWorkerCoverageTests {
   /// is called or the token fires") and it is what lets a test put the worker past the barrier
   /// with a dead stopping token.
   /// </summary>
-  private sealed class _parkThenReturnGate : ISchemaReadyGate {
+  private sealed class ParkThenReturnGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -760,7 +761,7 @@ public class InboxDispatchWorkerCoverageTests {
   }
 
   /// <summary>Records the event id of every log entry, so a test can assert which lines were reached.</summary>
-  private sealed class _eventIdCapturingLogger : ILogger<InboxDispatchWorker> {
+  private sealed class EventIdCapturingLogger : ILogger<InboxDispatchWorker> {
     private readonly List<int> _eventIds = [];
     private readonly Lock _gate = new();
 
@@ -795,7 +796,7 @@ public class InboxDispatchWorkerCoverageTests {
   /// gate: .NET 10 queues it with <c>Task.Run</c>. Cancelling before it is dequeued skips the body
   /// entirely, so a test that cancels straight after starting can pass or fail on scheduling luck.
   /// </remarks>
-  private sealed class _enteredSignallingGate : ISchemaReadyGate {
+  private sealed class EnteredSignallingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 

@@ -21,22 +21,22 @@ public class ApplyHookRegistryTests {
     string Status { get; }
   }
 
-  private class _baseModel {
+  private class BaseModel {
     public string Status { get; set; } = "Draft";
   }
 
-  private sealed class _job : _baseModel, IAuditable {
+  private sealed class Job : BaseModel, IAuditable {
     public string Title { get; set; } = "";
   }
 
-  private sealed class _unrelated;
+  private sealed class Unrelated;
 
-  private sealed class _collectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class CollectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : ICollectiveApplyHook<TMarker> {
     public void Configure(ICollectiveApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
 
-  private sealed class _perEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class PerEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : IApplyHook<TMarker> {
     public void Configure(IApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
@@ -61,46 +61,46 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task ConcreteMarker_FiresForThatModelAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "concrete")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "concrete")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("concrete");
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("concrete");
   }
 
   [Test]
   public async Task BaseClassMarker_FiresForDerivedModelAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_baseModel>(new _collectiveHook<_baseModel>((b, _) => b.SetColumn("m", "base")));
+    reg.Register<BaseModel>(new CollectiveHook<BaseModel>((b, _) => b.SetColumn("m", "base")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("base")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("base")
       .Because("A hook gated on a base class matches any model assignable to it.");
   }
 
   [Test]
   public async Task InterfaceMarker_FiresForImplementingModelAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<IAuditable>(new _collectiveHook<IAuditable>((b, _) => b.SetColumn("m", "iface")));
+    reg.Register<IAuditable>(new CollectiveHook<IAuditable>((b, _) => b.SetColumn("m", "iface")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("iface")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("iface")
       .Because("A hook gated on an interface matches any model that implements it.");
   }
 
   [Test]
   public async Task ObjectMarker_FiresForEveryModelAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<object>(new _collectiveHook<object>((b, _) => b.SetColumn("m", "all")));
+    reg.Register<object>(new CollectiveHook<object>((b, _) => b.SetColumn("m", "all")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("all");
-    await Assert.That(_columns(_run(reg, typeof(_unrelated)))).IsEqualTo("all")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("all");
+    await Assert.That(_columns(_run(reg, typeof(Unrelated)))).IsEqualTo("all")
       .Because("object is assignable from every model — the default-hook marker.");
   }
 
   [Test]
   public async Task NonAssignableMarker_IsSkippedAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "job")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "job")));
 
-    await Assert.That(_run(reg, typeof(_unrelated))).IsEmpty()
-      .Because("A _job-gated hook must not fire for an unrelated model.");
+    await Assert.That(_run(reg, typeof(Unrelated))).IsEmpty()
+      .Because("A Job-gated hook must not fire for an unrelated model.");
   }
 
   // ── Accumulation + registration order ─────────────────────────────────
@@ -108,21 +108,21 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task MultipleRegistrations_SameMarker_AllFireInRegistrationOrderAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "first")));
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "second")));
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "third")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "first")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "second")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "third")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("first|second|third");
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("first|second|third");
   }
 
   [Test]
   public async Task DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<IAuditable>(new _collectiveHook<IAuditable>((b, _) => b.SetColumn("m", "iface")));
-    reg.Register<_baseModel>(new _collectiveHook<_baseModel>((b, _) => b.SetColumn("m", "base")));
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "concrete")));
+    reg.Register<IAuditable>(new CollectiveHook<IAuditable>((b, _) => b.SetColumn("m", "iface")));
+    reg.Register<BaseModel>(new CollectiveHook<BaseModel>((b, _) => b.SetColumn("m", "base")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "concrete")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("iface|base|concrete")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("iface|base|concrete")
       .Because("All matching markers fire, ordered by registration — not by marker specificity.");
   }
 
@@ -131,22 +131,22 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "A")), key: "k");
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "B")));       // unkeyed, after
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "C")), key: "k"); // replaces position 0
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "A")), key: "k");
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "B")));       // unkeyed, after
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "C")), key: "k"); // replaces position 0
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("C|B")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("C|B")
       .Because("Re-registering an existing key replaces the hook at that slot, preserving its order position.");
   }
 
   [Test]
   public async Task UnkeyedRegistration_AlwaysAppendsAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "A")), key: "k");
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "B")));
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "C")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "A")), key: "k");
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "B")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "C")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("A|B|C");
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("A|B|C");
   }
 
   [Test]
@@ -154,9 +154,9 @@ public class ApplyHookRegistryTests {
     var reg = new CollectiveApplyHookRegistry();
     reg.Register<object>(new TimestampsApplyHook(), key: WhizbangApplyHookKeys.TIMESTAMPS);
     // Developer overrides the default stamping with their own hook under the same documented key.
-    reg.Register<object>(new _collectiveHook<object>((b, _) => b.SetColumn("audit", "custom")), key: WhizbangApplyHookKeys.TIMESTAMPS);
+    reg.Register<object>(new CollectiveHook<object>((b, _) => b.SetColumn("audit", "custom")), key: WhizbangApplyHookKeys.TIMESTAMPS);
 
-    var ops = _run(reg, typeof(_job));
+    var ops = _run(reg, typeof(Job));
     await Assert.That(ops.OfType<BumpVersionOp>()).IsEmpty()
       .Because("Overriding whizbang.timestamps replaces the default stamp+bump entirely.");
     await Assert.That(_columns(ops)).IsEqualTo("custom");
@@ -170,7 +170,7 @@ public class ApplyHookRegistryTests {
     var reg = new CollectiveApplyHookRegistry();
     reg.Register<object>(new TimestampsApplyHook(), key: WhizbangApplyHookKeys.TIMESTAMPS);
 
-    var ops = _run(reg, typeof(_job), stamp);
+    var ops = _run(reg, typeof(Job), stamp);
 
     var updatedAt = ops.OfType<SetColumnOp>().Single(o => o.Column == ApplyHookColumns.UPDATED_AT);
     await Assert.That((DateTimeOffset)updatedAt.Value!).IsEqualTo(stamp);
@@ -183,9 +183,9 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task SetProperty_RecordsNameValueAndTypeAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetProperty(j => j.Status, "Archived")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetProperty(j => j.Status, "Archived")));
 
-    var op = _run(reg, typeof(_job)).OfType<SetPropertyOp>().Single();
+    var op = _run(reg, typeof(Job)).OfType<SetPropertyOp>().Single();
     await Assert.That(op.PropertyName).IsEqualTo("Status");
     await Assert.That(op.Value).IsEqualTo("Archived");
     await Assert.That(op.PropertyType).IsEqualTo(typeof(string));
@@ -194,21 +194,21 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task RemoveSetter_RecordsPropertyNameAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.RemoveSetter(j => j.Title)));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.RemoveSetter(j => j.Title)));
 
-    var op = _run(reg, typeof(_job)).OfType<RemoveSetterOp>().Single();
+    var op = _run(reg, typeof(Job)).OfType<RemoveSetterOp>().Single();
     await Assert.That(op.PropertyName).IsEqualTo("Title");
   }
 
   [Test]
   public async Task CollectiveBuilder_RecordsAndWhereAndReplaceWhereAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => {
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => {
       b.AndWhere(j => j.Status == "Draft");
       b.ReplaceWhere(j => j.Title == "x");
     }));
 
-    var ops = _run(reg, typeof(_job));
+    var ops = _run(reg, typeof(Job));
     await Assert.That(ops.OfType<AndWhereOp>().Count()).IsEqualTo(1);
     await Assert.That(ops.OfType<ReplaceWhereOp>().Count()).IsEqualTo(1);
   }
@@ -216,9 +216,9 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task BumpVersion_IsRecordedAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.BumpVersion()));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.BumpVersion()));
 
-    await Assert.That(_run(reg, typeof(_job)).OfType<BumpVersionOp>().Count()).IsEqualTo(1);
+    await Assert.That(_run(reg, typeof(Job)).OfType<BumpVersionOp>().Count()).IsEqualTo(1);
   }
 
   // ── Late registration invalidates the per-model cache ─────────────────
@@ -226,12 +226,12 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task ResolveAfterFurtherRegistration_SeesNewHooksAsync() {
     var reg = new CollectiveApplyHookRegistry();
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "one")));
-    _ = _run(reg, typeof(_job)); // prime the per-model cache
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "one")));
+    _ = _run(reg, typeof(Job)); // prime the per-model cache
 
-    reg.Register<_job>(new _collectiveHook<_job>((b, _) => b.SetColumn("m", "two")));
+    reg.Register<Job>(new CollectiveHook<Job>((b, _) => b.SetColumn("m", "two")));
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("one|two")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("one|two")
       .Because("A registration after a resolve must invalidate the memoized per-model list.");
   }
 
@@ -240,13 +240,13 @@ public class ApplyHookRegistryTests {
   [Test]
   public async Task PerEventRegistry_Marker_Order_And_KeyedOverrideAsync() {
     var reg = new ApplyHookRegistry();
-    reg.Register<_baseModel>(new _perEventHook<_baseModel>((b, _) => b.SetColumn("m", "A")), key: "k");
-    reg.Register<_job>(new _perEventHook<_job>((b, _) => b.SetColumn("m", "B")));
-    reg.Register<_baseModel>(new _perEventHook<_baseModel>((b, _) => b.SetColumn("m", "C")), key: "k");
+    reg.Register<BaseModel>(new PerEventHook<BaseModel>((b, _) => b.SetColumn("m", "A")), key: "k");
+    reg.Register<Job>(new PerEventHook<Job>((b, _) => b.SetColumn("m", "B")));
+    reg.Register<BaseModel>(new PerEventHook<BaseModel>((b, _) => b.SetColumn("m", "C")), key: "k");
 
-    await Assert.That(_columns(_run(reg, typeof(_job)))).IsEqualTo("C|B")
+    await Assert.That(_columns(_run(reg, typeof(Job)))).IsEqualTo("C|B")
       .Because("The per-event registry shares the base marker-match + keyed-override mechanics.");
-    await Assert.That(_run(reg, typeof(_unrelated))).IsEmpty();
+    await Assert.That(_run(reg, typeof(Unrelated))).IsEmpty();
   }
 
   [Test]
@@ -255,7 +255,7 @@ public class ApplyHookRegistryTests {
     var reg = new ApplyHookRegistry();
     reg.Register<object>(new TimestampsApplyHook(), key: WhizbangApplyHookKeys.TIMESTAMPS);
 
-    var ops = _run(reg, typeof(_job), stamp);
+    var ops = _run(reg, typeof(Job), stamp);
     var updatedAt = ops.OfType<SetColumnOp>().Single(o => o.Column == ApplyHookColumns.UPDATED_AT);
     await Assert.That((DateTimeOffset)updatedAt.Value!).IsEqualTo(stamp);
     await Assert.That(ops.OfType<BumpVersionOp>().Count()).IsEqualTo(1);

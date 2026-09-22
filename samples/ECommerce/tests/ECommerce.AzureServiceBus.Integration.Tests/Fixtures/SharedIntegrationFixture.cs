@@ -337,7 +337,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions: jsonOptions,
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
@@ -478,7 +477,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
       new ServiceBusConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions: jsonOptions,
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),

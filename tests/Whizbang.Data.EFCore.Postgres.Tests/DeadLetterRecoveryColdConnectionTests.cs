@@ -34,7 +34,7 @@ public class DeadLetterRecoveryColdConnectionTests : EFCoreTestBase {
 
   private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(
       WorkCoordinationDbContext ctx) =>
-    new(ctx, NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+    new(ctx, null);
 
   /// <summary>Closes the context's connection so the next call has to open it for itself.</summary>
   private static async Task _goColdAsync(WorkCoordinationDbContext ctx) {

@@ -60,37 +60,6 @@ public static class ServiceCollectionExtensions {
       => AddWhizbang(services, configure: null);
 
   /// <summary>
-  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
-  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
-  /// the same rule each has inside a single call.
-  /// </summary>
-  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
-    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
-#pragma warning disable S3267
-    foreach (var hook in incoming.HookRegistrations) {
-      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
-        existing.UseHookRegistration(hook);
-      }
-    }
-#pragma warning restore S3267
-    foreach (var binding in incoming.CoalesceBindings) {
-      existing.UseCoalesceBinding(binding.Key, binding.Value);
-    }
-    foreach (var binding in incoming.RouteNamespaceBindings) {
-      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
-    }
-    foreach (var declaration in incoming.PriorityDeclarations) {
-      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
-    }
-    foreach (var threshold in incoming.PayloadSizeWarningThresholdBytesByTag) {
-      existing.SetPayloadSizeWarningThreshold(threshold.Key, threshold.Value);
-    }
-    foreach (var threshold in incoming.PayloadSizeErrorThresholdBytesByTag) {
-      existing.SetPayloadSizeErrorThreshold(threshold.Key, threshold.Value);
-    }
-  }
-
-  /// <summary>
   /// Registers Whizbang core infrastructure services with configuration options.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -286,6 +255,37 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
+  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
+  /// the same rule each has inside a single call.
+  /// </summary>
+  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
+    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var hook in incoming.HookRegistrations) {
+      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
+        existing.UseHookRegistration(hook);
+      }
+    }
+#pragma warning restore S3267
+    foreach (var binding in incoming.CoalesceBindings) {
+      existing.UseCoalesceBinding(binding.Key, binding.Value);
+    }
+    foreach (var binding in incoming.RouteNamespaceBindings) {
+      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+    }
+    foreach (var declaration in incoming.PriorityDeclarations) {
+      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
+    }
+    foreach (var threshold in incoming.PayloadSizeWarningThresholdBytesByTag) {
+      existing.SetPayloadSizeWarningThreshold(threshold.Key, threshold.Value);
+    }
+    foreach (var threshold in incoming.PayloadSizeErrorThresholdBytesByTag) {
+      existing.SetPayloadSizeErrorThreshold(threshold.Key, threshold.Value);
+    }
+  }
+
+  /// <summary>
   /// Configures TracingOptions with programmatic defaults.
   /// </summary>
   private static void _configureTracingOptions(IServiceCollection services, WhizbangCoreOptions coreOptions) {
@@ -387,7 +387,7 @@ public static class ServiceCollectionExtensions {
     // repeat AddWhizbang() calls idempotent and lets a host substitute its own families first.
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Minting.ICollectiveMint, Minting.CollectiveMint>();
-    // The checkpoint family reads the control-class options for its TTL derivation (phase 9);
+    // The checkpoint family reads the control-class options for its TTL derivation (phase 9) —
     // register them here too so `AddWhizbang()` alone still yields a mint that derives correctly.
     services.AddOptions<Routing.ControlClassOptions>();
     services.TryAddSingleton<Minting.ICheckpointMint, Minting.CheckpointMint>();

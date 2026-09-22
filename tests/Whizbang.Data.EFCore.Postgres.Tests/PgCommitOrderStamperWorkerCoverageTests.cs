@@ -21,14 +21,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PgCommitOrderStamperWorkerCoverageTests {
 
-  private sealed class _noOpSharedNotifyConnection : ISharedNotifyConnection {
-    public IDisposable Subscribe(INotifySubscription subscription) => new _noOpDisposable();
-    private sealed class _noOpDisposable : IDisposable {
+  private sealed class NoOpSharedNotifyConnection : ISharedNotifyConnection {
+    public IDisposable Subscribe(INotifySubscription subscription) => new NoOpDisposable();
+    private sealed class NoOpDisposable : IDisposable {
       public void Dispose() { }
     }
   }
 
-  private sealed class _throwingSchemaReadyGate : Whizbang.Core.Workers.ISchemaReadyGate {
+  private sealed class ThrowingSchemaReadyGate : Whizbang.Core.Workers.ISchemaReadyGate {
     public bool IsReady => false;
     public void MarkReady() { }
     public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
@@ -40,7 +40,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
   /// count of failed leader-election iterations instead of sleeping. Every non-cancellation
   /// exception thrown while attempting to acquire the lock lands here.
   /// </summary>
-  private sealed class _iterationErrorCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
+  private sealed class IterationErrorCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
     private const int ITERATION_ERROR_EVENT_ID = 6;
     private readonly Lock _gate = new();
     private int _count;
@@ -88,7 +88,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       Options.Create(notificationOptions),
       Options.Create(stamperOptions),
       config,
-      new _noOpSharedNotifyConnection(),
+      new NoOpSharedNotifyConnection(),
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
       schemaReadyGate: schemaReadyGate);
   }
@@ -114,7 +114,7 @@ public class PgCommitOrderStamperWorkerCoverageTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_SchemaGateThrowsOperationCanceled_ShutsDownCleanlyAsync() {
-    var worker = _newWorker(schemaReadyGate: new _throwingSchemaReadyGate());
+    var worker = _newWorker(schemaReadyGate: new ThrowingSchemaReadyGate());
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -161,12 +161,12 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     // (shared by every DbConnectionStringBuilder-based provider, Npgsql included) the instant
     // `new NpgsqlConnection(...)` parses it — synchronous, in-process, no network round-trip, no
     // dependency on how a sandbox handles loopback sockets. That parse failure is NOT
-    // OperationCanceledException, so it lands in the generic `catch (Exception ex)` branch and
+    // OperationCanceledException, so it lands in the generic exception branch and
     // falls through the shared retry-delay tail rather than breaking/continuing past it.
     // Observing a SECOND logged iteration failure proves the outer loop actually looped back
     // around (fell through to its closing brace and re-checked the stopping token) instead of
     // dying on the first one.
-    var logger = new _iterationErrorCapturingLogger();
+    var logger = new IterationErrorCapturingLogger();
     var worker = _newWorker(
       directConnectionString: "this is not a valid connection string",
       logger: logger);

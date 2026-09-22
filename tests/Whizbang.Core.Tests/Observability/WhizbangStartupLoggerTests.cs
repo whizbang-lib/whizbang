@@ -35,9 +35,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_AlwaysLogsVersionAndServiceNameAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("Whizbang.Test.Service");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("Whizbang.Test.Service");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
     var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
@@ -51,9 +51,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigShowBannerOverridesCodeOption_TrueAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcA");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcA");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -72,9 +72,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigShowBannerOverridesCodeOption_FalseAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcB");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcB");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = true };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -92,9 +92,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_ConfigNonBool_FallsBackToCodeOptionAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcC");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcC");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
     var config = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
@@ -112,9 +112,9 @@ public class WhizbangStartupLoggerTests {
 
   [Test]
   public async Task StartAsync_NullConfiguration_UsesCodeOptionAsync() {
-    var capturing = new _CapturingLogger();
-    var loggerFactory = new _FactoryReturning(capturing);
-    var instanceProvider = new _StubInstanceProvider("SvcD");
+    var capturing = new CapturingLogger();
+    var loggerFactory = new FactoryReturning(capturing);
+    var instanceProvider = new StubInstanceProvider("SvcD");
     var coreOptions = new WhizbangCoreOptions { ShowBanner = false };
 
     var sut = new WhizbangStartupLogger(loggerFactory: loggerFactory, instanceProvider: instanceProvider, coreOptions: coreOptions, configuration: new ConfigurationBuilder().Build());
@@ -128,7 +128,7 @@ public class WhizbangStartupLoggerTests {
   public async Task StopAsync_ReturnsCompletedTaskAsync() {
     var sut = new WhizbangStartupLogger(
       loggerFactory: NullLoggerFactory.Instance,
-      instanceProvider: new _StubInstanceProvider("SvcE"),
+      instanceProvider: new StubInstanceProvider("SvcE"),
       coreOptions: new WhizbangCoreOptions(),
       configuration: new ConfigurationBuilder().Build());
 
@@ -137,7 +137,7 @@ public class WhizbangStartupLoggerTests {
     await Assert.That(task.IsCompletedSuccessfully).IsTrue();
   }
 
-  private sealed class _StubInstanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = serviceName;
     public string HostName { get; } = "test-host";
@@ -150,7 +150,7 @@ public class WhizbangStartupLoggerTests {
     };
   }
 
-  private sealed class _CapturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -164,7 +164,7 @@ public class WhizbangStartupLoggerTests {
     }
   }
 
-  private sealed class _FactoryReturning(ILogger logger) : ILoggerFactory {
+  private sealed class FactoryReturning(ILogger logger) : ILoggerFactory {
     public void AddProvider(ILoggerProvider provider) { }
     public ILogger CreateLogger(string categoryName) => logger;
     public void Dispose() { }

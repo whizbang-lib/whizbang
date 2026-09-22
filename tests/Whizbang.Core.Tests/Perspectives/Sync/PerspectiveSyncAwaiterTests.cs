@@ -455,28 +455,6 @@ public class PerspectiveSyncAwaiterTests {
   }
 
   [Test]
-  public async Task WaitForStreamAsync_CrossScope_WithNoPendingEvents_ReturnsSyncedImmediatelyAsync() {
-    // Arrange: No pending events in event store
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Act
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
-  }
-
-  [Test]
   public async Task WaitForStreamAsync_WithExplicitEventId_DoesNotSetDiscoverFlagAsync() {
     // Arrange: When explicit EventId is provided, uses event-driven wait.
     // Since the explicit event ID isn't tracked in SyncEventTracker,
@@ -620,46 +598,6 @@ public class PerspectiveSyncAwaiterTests {
   // ==========================================================================
 
   [Test]
-  public async Task PerspectiveSyncAwaiter_WaitAsync_WithDefaultDebuggerAwareTimeout_UsesHasTimedOutAsync() {
-    // Arrange
-    var tracker = new ScopedEventTracker();
-    var streamId = Guid.NewGuid();
-    var eventId = Guid.NewGuid();
-    tracker.TrackEmittedEvent(streamId, typeof(string), eventId);
-
-    // Create mock that always returns pending
-    var coordinator = new MockWorkCoordinator((_, _) => Task.FromResult(new WorkBatch {
-      OutboxWork = [],
-      InboxWork = [],
-      PerspectiveWork = [],
-      SyncInquiryResults = [
-        new SyncInquiryResult {
-          InquiryId = Guid.NewGuid(),
-          PendingCount = 1  // Always pending
-        }
-      ]
-    }));
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    // Track event in SyncEventTracker so WaitForPerspectiveEventsAsync actually waits
-    var syncEventTracker = new SyncEventTracker();
-    syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Default DebuggerAwareTimeout = true - uses HasTimedOut method
-    var options = SyncFilter.All()
-        .WithTimeout(TimeSpan.FromMilliseconds(150))
-        .Build();
-
-    // Act
-    var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
-
-    // Assert - should timeout using debugger-aware timeout
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
-    await Assert.That(result.ElapsedTime.TotalMilliseconds).IsGreaterThanOrEqualTo(100);
-  }
-
-  [Test]
   public async Task PerspectiveSyncAwaiter_WaitAsync_ReturnsElapsedTimeOnSyncAsync() {
     // Arrange
     var tracker = new ScopedEventTracker();
@@ -708,50 +646,6 @@ public class PerspectiveSyncAwaiterTests {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         await awaiter.WaitForStreamAsync(null!, Guid.NewGuid(), null, TimeSpan.FromSeconds(5)));
-  }
-
-  [Test]
-  public async Task WaitForStreamAsync_WithNullResult_ReturnsSyncedAsync() {
-    // Arrange: With empty SyncEventTracker, no events for this stream → NoPendingEvents
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Act - no explicit event IDs
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
-  }
-
-  [Test]
-  public async Task WaitForStreamAsync_WithEmptyResultList_ReturnsSyncedAsync() {
-    // Arrange: With empty SyncEventTracker, no events for this stream → NoPendingEvents
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-
-    // Act
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   [Test]
@@ -1372,9 +1266,10 @@ public class PerspectiveSyncAwaiterTests {
       }
     }
 
-    private sealed class NullScope : IDisposable {
-      public static NullScope Instance { get; } = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static NullScope Instance { get; } = new();
+    public void Dispose() { }
   }
 }

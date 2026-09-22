@@ -51,7 +51,7 @@ public class PerspectiveDrainChannelCoverageTests {
     // A bare implementation that DOESN'T override IsInFlight / MarkDraining / MarkDrained falls
     // through to the interface defaults — false + no-op. Default interface methods can only be
     // reached via the interface reference.
-    IPerspectiveDrainChannel ch = new _minimalChannel();
+    IPerspectiveDrainChannel ch = new MinimalChannel();
     var sid = Guid.NewGuid();
 
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
@@ -62,7 +62,7 @@ public class PerspectiveDrainChannelCoverageTests {
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
   }
 
-  private sealed class _minimalChannel : IPerspectiveDrainChannel {
+  private sealed class MinimalChannel : IPerspectiveDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default)

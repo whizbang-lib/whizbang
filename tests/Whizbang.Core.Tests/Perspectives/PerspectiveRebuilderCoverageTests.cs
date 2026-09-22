@@ -28,7 +28,7 @@ public class PerspectiveRebuilderCoverageTests {
     public int RunCount { get; private set; }
 
     public Task<PerspectiveCursorCompletion> RunAsync(
-        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       RunCount++;
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
@@ -204,8 +204,8 @@ public class PerspectiveRebuilderCoverageTests {
       },
     }.AsQueryable();
 
-    public IQueryable<EventStoreRecord> GetStreamEvents(Guid id) => Query.Where(e => e.StreamId == id);
-    public IQueryable<EventStoreRecord> GetEventsByType(string type) => Query.Where(e => e.EventType == type);
+    public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Query.Where(e => e.StreamId == streamId);
+    public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Query.Where(e => e.EventType == eventType);
   }
 
   /// <summary>

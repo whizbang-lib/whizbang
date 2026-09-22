@@ -64,7 +64,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
     ArgumentNullException.ThrowIfNull(spec);
     ArgumentNullException.ThrowIfNull(current);
 
-    var setters = new _inMemorySetters(current);
+    var setters = new InMemorySetters(current);
     spec.Setters.Compile().Invoke(setters);
     setters.Flush();
     return current;
@@ -87,7 +87,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
   /// value <em>now</em> (constant, or computed against the pre-apply model) and defers the actual write to
   /// <see cref="Flush"/>, so every computed value reads the original state — matching the SQL path.
   /// </summary>
-  private sealed class _inMemorySetters(TModel original) : ICollectiveSetters<TModel> {
+  private sealed class InMemorySetters(TModel original) : ICollectiveSetters<TModel> {
     private readonly List<(PropertyInfo Property, object? Value)> _writes = [];
 
     public ICollectiveSetters<TModel> SetProperty<TProp>(

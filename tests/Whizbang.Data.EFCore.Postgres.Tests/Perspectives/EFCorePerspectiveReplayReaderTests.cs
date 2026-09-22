@@ -159,7 +159,7 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
   [Test]
   public async Task ReadReplayEventsAsync_EmptyWorkQueue_AllIsNewFalse_Async() {
     var streamId = Guid.NewGuid();
-    var events = await _appendEventsAsync(streamId, count: 3);
+    _ = await _appendEventsAsync(streamId, count: 3);
     // No rows inserted into wh_perspective_events — everything already completed.
 
     await using var dbContext = CreateDbContext();

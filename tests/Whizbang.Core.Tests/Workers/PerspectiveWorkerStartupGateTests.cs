@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel(Order = 101)]
 public class PerspectiveWorkerStartupGateTests {
 
-  private sealed class _stubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "svc";
     public string HostName => "host";
@@ -46,10 +46,10 @@ public class PerspectiveWorkerStartupGateTests {
 
   /// <summary>Counts scope creations — the first thing every piece of the worker's startup work
   /// does is create a scope, so a zero count means none of it has begun.</summary>
-  private sealed class _countingScopeFactory : IServiceScopeFactory {
+  private sealed class CountingScopeFactory : IServiceScopeFactory {
     private readonly IServiceScopeFactory _inner;
     private int _count;
-    public _countingScopeFactory(IServiceScopeFactory inner) { _inner = inner; }
+    public CountingScopeFactory(IServiceScopeFactory inner) { _inner = inner; }
     public int Count => Volatile.Read(ref _count);
     public IServiceScope CreateScope() {
       Interlocked.Increment(ref _count);
@@ -60,11 +60,11 @@ public class PerspectiveWorkerStartupGateTests {
   [Test]
   public async Task ExecuteAsync_DoesNoStartupWorkUntilTheGateOpensAsync() {
     var inner = new ServiceCollection().BuildServiceProvider();
-    var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
+    var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
     var gate = new SchemaReadyGate();   // NOT ready
 
     var worker = new PerspectiveWorker(
-      instanceProvider: new _stubInstanceProvider(),
+      instanceProvider: new StubInstanceProvider(),
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: gate,
@@ -123,10 +123,10 @@ public class PerspectiveWorkerStartupGateTests {
   public async Task ExecuteAsync_WithNoGateSupplied_BehavesAsBeforeAsync() {
     // Test fixtures construct the worker without a gate; they must keep compiling and running.
     var inner = new ServiceCollection().BuildServiceProvider();
-    var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
+    var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
 
     var worker = new PerspectiveWorker(
-      instanceProvider: new _stubInstanceProvider(),
+      instanceProvider: new StubInstanceProvider(),
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -183,11 +183,11 @@ public class PerspectiveWorkerStartupGateTests {
   public async Task ExecuteAsync_CanceledWhileWaitingForTheGate_SettlesTheStartupScanSignalAsync(
       CancellationToken testToken) {
     var inner = new ServiceCollection().BuildServiceProvider();
-    var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
-    var gate = new _parkedGate();   // never opens, and reports when the worker begins waiting
+    var scopeFactory = new CountingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
+    var gate = new ParkedGate();   // never opens, and reports when the worker begins waiting
 
     var worker = new PerspectiveWorker(
-      instanceProvider: new _stubInstanceProvider(),
+      instanceProvider: new StubInstanceProvider(),
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: gate,
@@ -241,7 +241,7 @@ public class PerspectiveWorkerStartupGateTests {
   }
 
   /// <summary>A schema gate that never opens and announces when a worker starts waiting on it.</summary>
-  private sealed class _parkedGate : ISchemaReadyGate {
+  private sealed class ParkedGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;

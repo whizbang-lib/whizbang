@@ -320,8 +320,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     // Arrange
     var provider = new InMemorySequenceProvider();
     const string streamKey = "cancellation-test-stream";
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(

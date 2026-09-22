@@ -17,11 +17,6 @@ public class PerspectiveSyncAwaiterStreamTests {
   /// </summary>
   private sealed class TestPerspective;
 
-  /// <summary>
-  /// Dummy event type for filter tests.
-  /// </summary>
-  private sealed record TestEvent(Guid Id);
-
   // ==========================================================================
   // WaitForStreamAsync - Basic Success/Failure Tests
   // ==========================================================================
@@ -104,8 +99,8 @@ public class PerspectiveSyncAwaiterStreamTests {
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
     var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -260,7 +255,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

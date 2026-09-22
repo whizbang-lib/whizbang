@@ -75,7 +75,7 @@ public sealed class NoOpWorkNotificationListener : IWorkNotificationListener, IN
   /// <inheritdoc />
   public DateTimeOffset? LastSignalAt => null;
   /// <inheritdoc />
-  public event Action<WorkSignalCategory>? OnSignal { add { } remove { } }
+  public event Action<WorkSignalCategory>? OnSignal { add { /* the null default has no listeners to notify */ } remove { /* the null default has no listeners to notify */ } }
   /// <inheritdoc />
-  public event Action<bool>? OnHealthChanged { add { } remove { } }
+  public event Action<bool>? OnHealthChanged { add { /* the null default has no listeners to notify */ } remove { /* the null default has no listeners to notify */ } }
 }

@@ -82,13 +82,16 @@ public sealed class PerformanceBaseline {
       sb.Append("\n=== ").Append(_scenario).Append(" ===\n");
       sb.Append(string.Format(CultureInfo.InvariantCulture,
         "{0,-64}{1,14}{2,14}{3,11}  {4}\n", "measure", "this run", "baseline", "drift", "unit"));
-      foreach (var (name, value, unit, baseline) in _rows) {
+      foreach (var (name, value, unit, recorded) in _rows) {
         var thisRun = value.ToString("N1", CultureInfo.InvariantCulture);
-        var was = baseline is { } b ? b.Value.ToString("N1", CultureInfo.InvariantCulture) : "-";
-        var drift = baseline is { } bb && bb.Value > 0
-          ? ((value - bb.Value) / bb.Value * 100).ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + "%"
-          : baseline is { } zb && zb.Value == 0 && value > 0 ? "new cost" : "-";
-        var ceiling = baseline is { Ceiling: not null } cb
+        var was = recorded is { } b ? b.Value.ToString("N1", CultureInfo.InvariantCulture) : "-";
+        var drift = "-";
+        if (recorded is { } bb && bb.Value > 0) {
+          drift = ((value - bb.Value) / bb.Value * 100).ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + "%";
+        } else if (recorded is { } zb && zb.Value == 0 && value > 0) {
+          drift = "new cost";
+        }
+        var ceiling = recorded is { Ceiling: not null } cb
           ? $"  (ceiling {cb.Ceiling!.Value.ToString("N0", CultureInfo.InvariantCulture)})"
           : "";
         sb.Append(string.Format(CultureInfo.InvariantCulture,

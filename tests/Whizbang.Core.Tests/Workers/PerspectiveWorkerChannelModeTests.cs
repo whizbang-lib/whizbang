@@ -184,7 +184,6 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed class FakeWorkCoordinatorReturningCursor : IWorkCoordinator {
     public int ClaimWorkAsyncCallCount { get; private set; }
-    public int CommitHandlerResultCallCount { get; }
     public int GetStreamEventsCallCount { get; private set; }
     public Guid? LastStreamEventsRequestedFor { get; private set; }
 
@@ -204,15 +203,12 @@ public class PerspectiveWorkerChannelModeTests {
     }
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
@@ -274,7 +270,7 @@ public class PerspectiveWorkerChannelModeTests {
   }
 
   private sealed class FakePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider services) =>
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
       perspectiveName == "Test.FakePerspective" ? new FakePerspectiveRunner() : null;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];
@@ -284,7 +280,7 @@ public class PerspectiveWorkerChannelModeTests {
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,

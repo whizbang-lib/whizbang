@@ -23,12 +23,12 @@ public delegate IReadOnlyList<ApplyHookOp> ApplyHookProducer(ApplyHookContext co
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:KeyedOverride_ReplacesInPlace_KeepingOrderPositionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Hooks/ApplyHookRegistryTests.cs:DifferentMarkers_MatchingModel_FireInRegistrationOrderAsync</tests>
 public abstract class MarkerHookRegistryBase {
-  private readonly List<_registration> _registrations = [];
+  private readonly List<HookRegistration> _registrations = [];
   private readonly Dictionary<string, int> _keyIndex = new(StringComparer.Ordinal);
   private readonly ConcurrentDictionary<Type, IReadOnlyList<ApplyHookProducer>> _cache = new();
   private readonly Lock _gate = new();
 
-  private sealed record _registration(Type Marker, string? Key, ApplyHookProducer Producer);
+  private sealed record HookRegistration(Type Marker, string? Key, ApplyHookProducer Producer);
 
   /// <summary>
   /// Add a producer under <paramref name="marker"/>. When <paramref name="key"/> is non-null and already
@@ -41,7 +41,7 @@ public abstract class MarkerHookRegistryBase {
   protected void Add(Type marker, string? key, ApplyHookProducer producer) {
     ArgumentNullException.ThrowIfNull(marker);
     ArgumentNullException.ThrowIfNull(producer);
-    var entry = new _registration(marker, key, producer);
+    var entry = new HookRegistration(marker, key, producer);
     lock (_gate) {
       if (key is not null && _keyIndex.TryGetValue(key, out var idx)) {
         // Override in place: replace the hook at the existing key's slot, preserving its order position.

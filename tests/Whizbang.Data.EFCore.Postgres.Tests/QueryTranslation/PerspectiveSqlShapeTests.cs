@@ -407,39 +407,39 @@ public class PerspectiveSqlShapeTests {
         .HasDbFunction(typeof(PerspectiveSqlShapeTests).GetMethod(nameof(JsonbContains))!)
         .HasTranslation(_emitContainment);
     }
+
+    /// <summary>
+    /// Builds Npgsql's arbitrary-operator expression by reflection, so the test carries no
+    /// compile-time dependency on a type that lives in an Internal namespace.
+    /// </summary>
+    private static Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression _emitContainment(
+        IReadOnlyList<Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression> args) {
+      var type = System.Reflection.Assembly.Load("Npgsql.EntityFrameworkCore.PostgreSQL")
+        .GetType("Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal.PgUnknownBinaryExpression")!;
+      var ctor = type.GetConstructors()[0];
+      var parameters = ctor.GetParameters();
+      var values = new object?[parameters.Length];
+
+      for (var i = 0; i < parameters.Length; i++) {
+        values[i] = parameters[i].Name switch {
+          "left" => args[0],
+          "right" => args[1],
+          "binaryOperator" => "@>",
+          "type" => typeof(bool),
+          // A null type mapping makes the expression untranslatable, which reads as "could not be
+          // translated" and is easy to mistake for the operator being unsupported.
+          "typeMapping" => Microsoft.EntityFrameworkCore.Storage.BoolTypeMapping.Default,
+          _ => null,
+        };
+      }
+
+      return (Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression)ctor.Invoke(values);
+    }
   }
 
   private sealed class SharedColumnDbContext(DbContextOptions<SharedColumnDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>
       _mapPerspectiveRow(modelBuilder, shareDataColumn: true);
-  }
-
-  /// <summary>
-  /// Builds Npgsql's arbitrary-operator expression by reflection, so the test carries no
-  /// compile-time dependency on a type that lives in an Internal namespace.
-  /// </summary>
-  private static Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression _emitContainment(
-      IReadOnlyList<Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression> args) {
-    var type = System.Reflection.Assembly.Load("Npgsql.EntityFrameworkCore.PostgreSQL")
-      .GetType("Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal.PgUnknownBinaryExpression")!;
-    var ctor = type.GetConstructors()[0];
-    var parameters = ctor.GetParameters();
-    var values = new object?[parameters.Length];
-
-    for (var i = 0; i < parameters.Length; i++) {
-      values[i] = parameters[i].Name switch {
-        "left" => args[0],
-        "right" => args[1],
-        "binaryOperator" => "@>",
-        "type" => typeof(bool),
-        // A null type mapping makes the expression untranslatable, which reads as "could not be
-        // translated" and is easy to mistake for the operator being unsupported.
-        "typeMapping" => Microsoft.EntityFrameworkCore.Storage.BoolTypeMapping.Default,
-        _ => null,
-      };
-    }
-
-    return (Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression)ctor.Invoke(values);
   }
 
   /// <summary>

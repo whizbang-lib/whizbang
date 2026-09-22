@@ -311,7 +311,7 @@ public sealed class PerspectiveWorkerParallelTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       // Track concurrency
       var current = Interlocked.Increment(ref _activeConcurrency);
       _updatePeak(current);
@@ -399,7 +399,7 @@ public sealed class PerspectiveWorkerParallelTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       _signal(_enterWaiters, Interlocked.Increment(ref _entered));
       try {
         await _gate.WaitAsync(cancellationToken);
@@ -463,7 +463,7 @@ public sealed class PerspectiveWorkerParallelTests {
 
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Intentional test failure");
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
@@ -532,7 +532,7 @@ public sealed class PerspectiveWorkerParallelTests {
         CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

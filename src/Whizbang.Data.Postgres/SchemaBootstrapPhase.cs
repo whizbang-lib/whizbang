@@ -90,7 +90,7 @@ public static class SchemaBootstrapPhase {
 
     if (await _isClosureRecordedAsync(connection, target, closure.Hash, cancellationToken).ConfigureAwait(false)) {
       // The closure this instance carries is the one the database already holds. Applying it again
-      // would take a share lock per statement on tables the running instances write, for nothing;
+      // would take a share lock per statement on tables the running instances write, for nothing —
       // an instance starting under load deadlocked on exactly that.
       SchemaBootstrapLog.ClosureCurrent(log, closure.Hash, target);
     } else {

@@ -319,9 +319,9 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     await using var serviceProvider = services.BuildServiceProvider();
 
     // Act - Resolve lens multiple times
-    var lens1 = serviceProvider.GetRequiredService<ILensQuery<Order>>();
-    var lens2 = serviceProvider.GetRequiredService<ILensQuery<Order>>();
-    var lens3 = serviceProvider.GetRequiredService<ILensQuery<Order>>();
+    _ = serviceProvider.GetRequiredService<ILensQuery<Order>>();
+    _ = serviceProvider.GetRequiredService<ILensQuery<Order>>();
+    _ = serviceProvider.GetRequiredService<ILensQuery<Order>>();
 
     // Assert - Should have different context instances
     await Assert.That(contextInstances.Count).IsEqualTo(3);

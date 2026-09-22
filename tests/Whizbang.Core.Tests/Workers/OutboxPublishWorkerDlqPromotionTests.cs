@@ -49,7 +49,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   // --- fakes ---
 
-  private sealed class _FakeWorkChannelWriter : IWorkChannelWriter {
+  private sealed class FakeWorkChannelWriter : IWorkChannelWriter {
     private readonly Channel<OutboxWork> _channel = Channel.CreateUnbounded<OutboxWork>();
     public ChannelReader<OutboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
@@ -65,27 +65,27 @@ public class OutboxPublishWorkerDlqPromotionTests {
     public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
-  private sealed class _FakeOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
+  private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _FakeLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailingStrategy : IMessagePublishStrategy {
+  private sealed class FakeFailingStrategy : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> AttemptedPublish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string ErrorMessage { get; init; } = "simulated transport failure";
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       AttemptedPublish.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -97,7 +97,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
     }
   }
 
-  private sealed record _MoveCall(
+  private sealed record MoveCall(
       Guid DeadLetterId,
       string SourceTable,
       Guid SourceId,
@@ -106,25 +106,25 @@ public class OutboxPublishWorkerDlqPromotionTests {
       Guid InstanceId,
       string Generation);
 
-  private sealed class _FakeDeadLetterStore : IDeadLetterStore {
-    public ConcurrentBag<_MoveCall> Moves { get; } = [];
-    public TaskCompletionSource<_MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private sealed class FakeDeadLetterStore : IDeadLetterStore {
+    public ConcurrentBag<MoveCall> Moves { get; } = [];
+    public TaskCompletionSource<MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<Guid?> MoveAsync(
         Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText,
         Guid instanceId, string generation, CancellationToken ct = default) {
-      var call = new _MoveCall(deadLetterId, sourceTable, sourceId, failureReason, errorText, instanceId, generation);
+      var call = new MoveCall(deadLetterId, sourceTable, sourceId, failureReason, errorText, instanceId, generation);
       Moves.Add(call);
       FirstMove.TrySetResult(call);
       return Task.FromResult<Guid?>(deadLetterId);
     }
   }
 
-  private sealed class _FakeGenerationProvider(string value) : IGenerationProvider {
+  private sealed class FakeGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -160,15 +160,15 @@ public class OutboxPublishWorkerDlqPromotionTests {
     };
   }
 
-  private static (OutboxPublishWorker Worker, _FakeWorkChannelWriter Channel, _FakeFailureChannel Failure, _FakeDeadLetterStore Dlq) _build(
+  private static (OutboxPublishWorker Worker, FakeWorkChannelWriter Channel, FakeFailureChannel Failure, FakeDeadLetterStore Dlq) _build(
       int? maxOutboxAttempts,
       IMessagePublishStrategy strategy,
       bool wireDeadLetterStore = true) {
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _FakeOutboxCompletionChannel();
-    var failure = new _FakeFailureChannel();
-    var renewal = new _FakeLeaseRenewalChannel();
-    var dlq = new _FakeDeadLetterStore();
+    var channel = new FakeWorkChannelWriter();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var renewal = new FakeLeaseRenewalChannel();
+    var dlq = new FakeDeadLetterStore();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
@@ -185,10 +185,10 @@ public class OutboxPublishWorkerDlqPromotionTests {
         MaxOutboxAttempts = maxOutboxAttempts,
       }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: wireDeadLetterStore ? new _FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      instanceProvider: wireDeadLetterStore ? new FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       publishStrategy: strategy,
       deadLetterStore: wireDeadLetterStore ? dlq : null ?? NullDeadLetterStore.Instance,
-      generationProvider: wireDeadLetterStore ? new _FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
+      generationProvider: wireDeadLetterStore ? new FakeGenerationProvider("test-gen") : null ?? new DefaultGenerationProvider(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -202,7 +202,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_AttemptsAtCap_PublishFails_PromotesToDlqAsync() {
-    var strategy = new _FakeFailingStrategy { ErrorMessage = "simulated transport faulted at cap" };
+    var strategy = new FakeFailingStrategy { ErrorMessage = "simulated transport faulted at cap" };
     var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: 3, strategy);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -230,7 +230,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_BelowCap_PublishFails_RoutesToFailureChannelAsync() {
-    var strategy = new _FakeFailingStrategy();
+    var strategy = new FakeFailingStrategy();
     var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: 5, strategy);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -254,7 +254,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_AtCap_NoDeadLetterStoreWired_FallsBackToFailureChannelAsync() {
-    var strategy = new _FakeFailingStrategy();
+    var strategy = new FakeFailingStrategy();
     var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: 3, strategy, wireDeadLetterStore: false);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -278,7 +278,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_AtCap_MaxOutboxAttemptsNotConfigured_RoutesToFailureChannelAsync() {
-    var strategy = new _FakeFailingStrategy();
+    var strategy = new FakeFailingStrategy();
     var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: null, strategy);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -302,28 +302,28 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   // --- additional fakes for the catch/throw branches ---
 
-  private sealed class _FakeThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
+  private sealed class FakeThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> Attempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Attempted.TrySetResult(work);
       throw new InvalidOperationException(exceptionMessage);
     }
   }
 
-  private sealed class _FakeBulkThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
+  private sealed class FakeFakeBulkThrowingPublishStrategy(string exceptionMessage) : IMessagePublishStrategy {
     public TaskCompletionSource<IReadOnlyList<OutboxWork>> AttemptedBatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("FakeBulkThrowingPublishStrategy: only PublishBatchAsync is exercised by this test");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      AttemptedBatch.TrySetResult(works);
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      AttemptedBatch.TrySetResult(workItems);
       throw new InvalidOperationException(exceptionMessage);
     }
   }
 
-  private sealed class _ThrowingDeadLetterStore : IDeadLetterStore {
+  private sealed class ThrowingDeadLetterStore : IDeadLetterStore {
     public TaskCompletionSource<Guid> Attempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation,
@@ -337,7 +337,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_AtCap_PublishAsyncThrows_PromotesToDlqWithFullExceptionTextAsync() {
-    var strategy = new _FakeThrowingPublishStrategy("simulated transport publish-thrown");
+    var strategy = new FakeThrowingPublishStrategy("simulated transport publish-thrown");
     var (worker, channel, failure, dlq) = _build(maxOutboxAttempts: 2, strategy);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -359,14 +359,14 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task BulkPublish_AtCap_PublishBatchAsyncThrows_PromotesEachRowIndependentlyAsync() {
-    var strategy = new _FakeBulkThrowingPublishStrategy("simulated bulk transport thrown");
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _NoOpCompletionChannel();
-    var failure = new _FakeFailureChannel();
-    var renewal = new _NoOpLeaseRenewalChannel();
+    var strategy = new FakeFakeBulkThrowingPublishStrategy("simulated bulk transport thrown");
+    var channel = new FakeWorkChannelWriter();
+    var completion = new NoOpCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var dlq = new _FakeDeadLetterStore();
+    var dlq = new FakeDeadLetterStore();
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -377,10 +377,10 @@ public class OutboxPublishWorkerDlqPromotionTests {
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new _FakeServiceInstanceProvider(),
+      instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
       deadLetterStore: dlq,
-      generationProvider: new _FakeGenerationProvider("test-gen"),
+      generationProvider: new FakeGenerationProvider("test-gen"),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -414,13 +414,13 @@ public class OutboxPublishWorkerDlqPromotionTests {
 
   [Test]
   public async Task SingularPublish_AtCap_MoveAsyncThrows_FallsBackToFailureChannelAsync() {
-    var strategy = new _FakeFailingStrategy();
-    var throwingDlq = new _ThrowingDeadLetterStore();
+    var strategy = new FakeFailingStrategy();
+    var throwingDlq = new ThrowingDeadLetterStore();
 
-    var channel = new _FakeWorkChannelWriter();
-    var completion = new _NoOpCompletionChannel();
-    var failure = new _FakeFailureChannel();
-    var renewal = new _NoOpLeaseRenewalChannel();
+    var channel = new FakeWorkChannelWriter();
+    var completion = new NoOpCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var sp = new ServiceCollection().BuildServiceProvider();
@@ -433,10 +433,10 @@ public class OutboxPublishWorkerDlqPromotionTests {
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new _FakeServiceInstanceProvider(),
+      instanceProvider: new FakeServiceInstanceProvider(),
       publishStrategy: strategy,
       deadLetterStore: throwingDlq,
-      generationProvider: new _FakeGenerationProvider("test-gen"),
+      generationProvider: new FakeGenerationProvider("test-gen"),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -462,11 +462,11 @@ public class OutboxPublishWorkerDlqPromotionTests {
   }
 
   // --- shared no-op channels for the catch/throw tests above ---
-  private sealed class _NoOpCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 }

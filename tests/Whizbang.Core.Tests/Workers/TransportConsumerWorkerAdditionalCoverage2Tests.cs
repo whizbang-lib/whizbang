@@ -112,7 +112,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - serializer was called, message was queued
     await Assert.That(serializer.SerializeCallCount).IsEqualTo(1)
@@ -178,7 +178,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - a JsonElement payload carried by a non-generic envelope has no serializer that can
     // handle it, and guessing would write an inbox row whose body does not match its declared type.
@@ -260,10 +260,10 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - isEvent should be true (runtime check: payload is IEvent)
-    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsTrue()
+    await Assert.That(noOpCoordinator.StoredMessages[^1].IsEvent).IsTrue()
       .Because("Without IEventTypeProvider, fallback to 'payload is IEvent' should detect events");
   }
 
@@ -336,10 +336,10 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - isEvent should be false (runtime check: payload is not IEvent)
-    await Assert.That(noOpCoordinator.StoredMessages.Last().IsEvent).IsFalse()
+    await Assert.That(noOpCoordinator.StoredMessages[^1].IsEvent).IsFalse()
       .Because("Non-IEvent payload without IEventTypeProvider should set isEvent=false");
   }
 
@@ -407,7 +407,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
     await transport.SimulateMessageReceivedAsync(envelope, null);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - the failure names the MISSING ENVELOPE TYPE, which is the step after the timestamp
     // populator: with a null type that populator has to return early rather than parse it.
@@ -486,7 +486,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     // Act - should process without timestamp population
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message was queued successfully
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
@@ -536,7 +536,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - provisioner should NOT be called
     await Assert.That(provisioner.ProvisionCallCount).IsEqualTo(0)
@@ -587,7 +587,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - provisioner should NOT be called
     await Assert.That(provisioner.ProvisionCallCount).IsEqualTo(0)
@@ -640,7 +640,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionsAsync(3, TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - all three should succeed with no exception
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(3);
@@ -702,7 +702,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     // Wait for 2 resubscriptions (recovery re-subscribes both destinations)
     // Note: WaitForSubscriptionsAsync consumes semaphore signals, so we wait for 2 more (not 4 total)
     await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(30));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - should have 4 total subscribe calls (2 initial + 2 recovery)
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(4)
@@ -769,7 +769,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       // May fail in completion handler
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - message was queued for processing
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
@@ -823,7 +823,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert - subscriptions created
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2);
@@ -893,23 +893,6 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     };
   }
 
-  private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithStreamId(
-      MessageId messageId, Guid streamId) {
-    return new MessageEnvelope<JsonElement> {
-      MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-      Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Metadata = _createStreamIdMetadata(streamId)
-        }
-      ]
-    };
-  }
-
   private static Dictionary<string, JsonElement> _createStreamIdMetadata(Guid streamId) {
     var metadataJson = JsonSerializer.SerializeToElement(
       new Dictionary<string, object> { { "AggregateId", streamId.ToString() } });
@@ -931,7 +914,6 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   internal sealed class Cov2TestEvent : IEvent;
 
   private sealed class Cov2Transport : ITransport, IDisposable {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -961,16 +943,6 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      _handler = handler;
-      _subscribeSignal.Release();
-      return Task.FromResult<ISubscription>(new Cov2Subscription());
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination,
@@ -991,14 +963,11 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
       if (_batchHandler != null) {
         await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-      } else if (_handler != null) {
-        await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
   }
 
   private sealed class Cov2RecoveryTransport : ITransport, ITransportWithRecovery, IDisposable {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<CancellationToken, Task>? _recoveryHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -1008,8 +977,8 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     public void Dispose() => _subscribeSignal.Dispose();
 
-    public void SetRecoveryHandler(Func<CancellationToken, Task>? handler) {
-      _recoveryHandler = handler;
+    public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
+      _recoveryHandler = onRecovered;
     }
 
     public async Task SimulateRecoveryAsync() {
@@ -1031,16 +1000,6 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public Task PublishAsync(
         IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      _handler = handler;
-      _subscribeSignal.Release();
-      return Task.FromResult<ISubscription>(new Cov2Subscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -1091,17 +1050,17 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       LastQueuedIsEvent = message.IsEvent;
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) {
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
       CompletionCount++;
     }
 
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) {
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
       FailureCount++;
     }
 
     public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -1225,35 +1184,6 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) {
       return new object();
     }
-  }
-
-  private sealed class Cov2ReceptorInvoker : IReceptorInvoker {
-    public int InvokeCallCount { get; private set; }
-    public List<LifecycleStage> InvokedStages { get; } = [];
-
-    public ValueTask InvokeAsync(
-        IMessageEnvelope envelope, LifecycleStage stage,
-        ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
-      InvokeCallCount++;
-      InvokedStages.Add(stage);
-      return ValueTask.CompletedTask;
-    }
-  }
-
-  private sealed class Cov2LifecycleDeserializer : ILifecycleMessageDeserializer {
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new();
-    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new();
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
-    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new();
-  }
-
-  private sealed class Cov2PerspectiveRegistry(
-      IReadOnlyList<PerspectiveRegistrationInfo> perspectives
-  ) : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
-    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => perspectives;
-    public IReadOnlyList<Type> GetEventTypes() => [];
-    public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
   private sealed class Cov2Provisioner : IInfrastructureProvisioner {

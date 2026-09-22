@@ -66,11 +66,12 @@ public class CircuitBreakerCoverageTests {
   }
 
   // CA2201 forbids throwing a reserved exception type, and normally it is right. Here the
-  // production filter is literally `catch (Exception ex) when (ex is not OutOfMemoryException)`,
+  // production filter is literally the Exception filter,
   // so OutOfMemoryException is the ONLY exception that escapes the breaker — testing that
   // carve-out requires throwing exactly it. A substitute type gets caught and the test proves
   // nothing (which is what happened when one was tried).
 #pragma warning disable CA2201 // deliberately throwing the one type the production filter excludes
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S112:General or reserved exceptions should never be thrown", Justification = "Simulates a fatal exception to prove the breaker lets it surface instead of falling back.")]
   [Test]
   public async Task ExecuteAsync_BreakerStuckHalfOpenAfterUncaughtCatastrophicFailure_SubsequentCallFailsFastWithoutProbingAgainAsync() {
     // OutOfMemoryException is deliberately excluded from the breaker's catch filter (never swallow

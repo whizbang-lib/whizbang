@@ -28,12 +28,7 @@ public class MessageContextInitiatingContextTests {
   }
 
   [After(Test)]
-  public void Cleanup() {
-    // Clear all AsyncLocals after each test
-    ScopeContextAccessor.CurrentContext = null;
-    ScopeContextAccessor.CurrentInitiatingContext = null;
-    MessageContextAccessor.CurrentContext = null;
-  }
+  public void Cleanup() => Setup();
 
   /// <summary>
   /// Verifies that MessageContext.New() reads UserId and TenantId from

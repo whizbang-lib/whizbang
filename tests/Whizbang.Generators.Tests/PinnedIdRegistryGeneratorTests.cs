@@ -252,7 +252,7 @@ public class PinnedIdRegistryGeneratorTests {
 
   [Test]
   public async Task Generator_UnpinnedType_ReturnsNullFromGeneratedGetPinnedIdAsync() {
-    // The generated code should return null for types not in the registry;
+    // The generated code should return null for types not in the registry —
     // we check this by confirming the method ends with "return null;".
     const string source = """
 

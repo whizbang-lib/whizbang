@@ -49,14 +49,14 @@ public class DispatcherOwnedEventSelfEchoTests {
 
   /// <summary>Command → Event receptor (produces the event that cascades).</summary>
   public class SelfEchoCommandHandler : IReceptor<SelfEchoCommand, SelfEchoEvent> {
-    public ValueTask<SelfEchoEvent> HandleAsync(SelfEchoCommand message, CancellationToken cancellationToken) {
+    public ValueTask<SelfEchoEvent> HandleAsync(SelfEchoCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new SelfEchoEvent(message.EntityId));
     }
   }
 
   /// <summary>Default-stage void handler for the event.</summary>
   public class SelfEchoEventReceptor : IReceptor<SelfEchoEvent> {
-    public ValueTask HandleAsync(SelfEchoEvent message, CancellationToken cancellationToken) {
+    public ValueTask HandleAsync(SelfEchoEvent message, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _handlerCount);
       return ValueTask.CompletedTask;
     }
@@ -97,7 +97,7 @@ public class DispatcherOwnedEventSelfEchoTests {
         typeof(TMessage).AssemblyQualifiedName!);
     }
 
-    public object DeserializeMessage(MessageEnvelope<JsonElement> e, string t) => throw new NotImplementedException();
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotImplementedException();
   }
 
   // ========================================

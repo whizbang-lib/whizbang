@@ -27,7 +27,7 @@ public class DispatcherCascadeFlushTests {
   public record CascadeFlushEvent([property: StreamId] Guid EntityId) : IEvent;
 
   public class CascadeFlushCommandHandler : IReceptor<CascadeFlushCommand, CascadeFlushEvent> {
-    public ValueTask<CascadeFlushEvent> HandleAsync(CascadeFlushCommand message, CancellationToken cancellationToken) {
+    public ValueTask<CascadeFlushEvent> HandleAsync(CascadeFlushCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult(new CascadeFlushEvent(message.EntityId));
     }
   }

@@ -55,14 +55,14 @@ public sealed partial class PerspectiveApplyCoordinator(
           _logger, perspectiveName, streamId, intervalsWaited * WarnInterval.TotalSeconds);
       }
     }
-    return new _Handle(semaphore);
+    return new Handle(semaphore);
   }
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Apply lock for perspective {PerspectiveName} / stream {StreamId} still not acquired after {WaitedSeconds}s — the current holder is not completing (a leaked lock from an abandoned apply wedges this key permanently and consumes a drain consumer; #679)")]
   static partial void LogApplyLockSlowAcquisition(ILogger logger, string perspectiveName, Guid streamId, double waitedSeconds);
 
-  private sealed class _Handle(SemaphoreSlim semaphore) : IAsyncDisposable {
+  private sealed class Handle(SemaphoreSlim semaphore) : IAsyncDisposable {
     private int _disposed;
     public ValueTask DisposeAsync() {
       if (Interlocked.Exchange(ref _disposed, 1) == 0) {

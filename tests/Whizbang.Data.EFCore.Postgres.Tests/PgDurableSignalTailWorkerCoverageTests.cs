@@ -152,16 +152,9 @@ public class PgDurableSignalTailWorkerCoverageTests : EFCoreTestBase {
     // first tick.
     var worker = _createTail(Guid.CreateVersion7(), new CountingSink());
 
-    var field = typeof(PgDurableSignalTailWorker).GetField("_wireNameToEntry", BindingFlags.NonPublic | BindingFlags.Instance);
-    await Assert.That(field).IsNotNull()
-      .Because("this test targets PgDurableSignalTailWorker's private wire map field by exact name");
-    field!.SetValue(worker, new Dictionary<string, SignalTypeEntry>(StringComparer.Ordinal));
+    worker.UseWireMap(new Dictionary<string, SignalTypeEntry>(StringComparer.Ordinal));
 
-    var method = typeof(PgDurableSignalTailWorker).GetMethod("_tickOnceAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-    await Assert.That(method).IsNotNull()
-      .Because("this test targets PgDurableSignalTailWorker's private tick method by exact name");
-
-    var task = (Task)method!.Invoke(worker, [null, CancellationToken.None])!;
+    var task = worker.TickOnceAsync(null!, CancellationToken.None);
     await task;
 
     await Assert.That(task.IsCompletedSuccessfully).IsTrue()
@@ -174,7 +167,7 @@ public class PgDurableSignalTailWorkerCoverageTests : EFCoreTestBase {
   //
   // Every existing cancellation test races the CancellationTokenSource against
   // Task.Delay(_tickInterval, stoppingToken) between ticks -- that always lands in the OTHER
-  // OperationCanceledException catch (the one around the delay). These two tests instead hold a
+  // OperationCanceledException handler, the one around the delay. These two tests instead hold a
   // real ACCESS EXCLUSIVE lock on wh_signal_cursors so the worker's own statement is genuinely
   // blocked in Postgres, then cancel while it is waiting -- landing the cancellation inside the
   // statement itself, which is the only way to reach the catch around _initializeCursorAsync /

@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres;
 /// versions is undocumented. Because the value is durable coordination state shared between instances
 /// (and between library versions during a rolling deploy), <b>this algorithm must never change</b>.
 /// </remarks>
-internal static class Fnv1a64 {
+internal static class FnvHash64 {
   private const ulong OFFSET_BASIS = 14695981039346656037UL;
   private const ulong PRIME = 1099511628211UL;
 

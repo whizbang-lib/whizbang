@@ -26,14 +26,14 @@ public class DapperCollectiveQueryCoverageTests {
   public async Task Of_DirectlyEnumerated_ReturnsEmptySequenceAsync() {
     var query = new DapperCollectiveQuery(new Dictionary<Type, string>());
 
-    var result = query.Of<_siblingModel>();
+    var result = query.Of<SiblingModel>();
 
     await Assert.That(result).IsNotNull();
     await Assert.That(result.Count()).IsEqualTo(0)
       .Because("Of<TOther>() is an inert marker for expression-tree construction, not a real data source -- enumerating it directly must be harmless, not a crash or a live query");
   }
 
-  private sealed class _siblingModel {
+  private sealed class SiblingModel {
     public string Name { get; set; } = "";
   }
 }

@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard2")]
 public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>
     new(ctx, JsonContextRegistry.CreateCombinedOptions());
 
   [Test]

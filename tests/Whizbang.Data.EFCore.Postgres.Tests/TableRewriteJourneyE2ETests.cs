@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class TableRewriteJourneyE2ETests : EFCoreTestBase {
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "rewrite-svc";
     public string HostName => "rewrite-host";
@@ -54,13 +54,13 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     return services.BuildServiceProvider();
   }
 
-  private PgDutyElector _electorFor(_pod pod) => new(
+  private PgDutyElector _electorFor(Pod pod) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgDutyElector>.Instance);
 
-  private async Task _joinFleetAsync(_pod pod, CancellationToken ct) {
+  private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, JsonContextRegistry.CreateCombinedOptions());
@@ -156,8 +156,8 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task RequestedRewrite_TwoPodsRaceTheMaintainerDuty_OneExecutes_TheOtherSkipsAsync(CancellationToken cancellationToken) {
-    var podA = new _pod();
-    var podB = new _pod();
+    var podA = new Pod();
+    var podB = new Pod();
     await _joinFleetAsync(podA, cancellationToken);
     await _joinFleetAsync(podB, cancellationToken);
 

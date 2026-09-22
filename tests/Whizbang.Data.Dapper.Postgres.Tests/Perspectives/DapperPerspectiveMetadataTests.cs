@@ -91,10 +91,10 @@ public class DapperPerspectiveMetadataTests : PostgresTestBase {
     await using var reader = await cmd.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
 
-    await Assert.That(reader.IsDBNull(0) ? null : reader.GetString(0)).IsEqualTo("TestOccurred")
+    await Assert.That(await reader.IsDBNullAsync(0) ? null : reader.GetString(0)).IsEqualTo("TestOccurred")
       .Because("the Dapper store must persist the applied event's metadata, not an empty object — "
         + "the metadata-bearing UpsertAsync overload is a default interface method that silently discards it");
-    await Assert.That(reader.IsDBNull(1) ? null : reader.GetString(1)).IsEqualTo("corr-42")
+    await Assert.That(await reader.IsDBNullAsync(1) ? null : reader.GetString(1)).IsEqualTo("corr-42")
       .Because("correlation is lost with the rest of the metadata, not just the timestamp");
   }
 

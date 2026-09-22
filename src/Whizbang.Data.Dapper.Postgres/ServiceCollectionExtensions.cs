@@ -136,8 +136,7 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        options.CommandTimeoutSeconds));
+        sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
@@ -276,8 +275,7 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        options.CommandTimeoutSeconds));
+        sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
@@ -359,8 +357,6 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingletonOverNullDefault<IDeadLetterStore>(sp =>
       new DapperDeadLetterStore(
         connectionString,
-        sp.GetService<ILogger<DapperDeadLetterStore>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DapperDeadLetterStore>.Instance,
         sp.GetService<WorkCoordinatorGate>()));
   }
 }

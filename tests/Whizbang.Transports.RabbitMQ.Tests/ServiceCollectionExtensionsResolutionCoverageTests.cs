@@ -1,6 +1,5 @@
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
@@ -231,17 +230,11 @@ public class ServiceCollectionExtensionsResolutionCoverageTests {
   /// <summary>
   /// Invokes the private static _activeConsumeNamespaceKeys method. The production call site
   /// only runs inside the multi-namespace ITransport factory closure, consulted lazily by
-  /// NamespaceRoutingTransport on first subscribe — reflection reaches the same behavior
+  /// NamespaceRoutingTransport on first subscribe — the internal seam reaches the same behavior
   /// directly with a fake resolver/registry pair.
   /// </summary>
   private static IReadOnlyList<string> _invokeActiveConsumeNamespaceKeys(
       TransportNamespaceResolver? resolver, IReceptorRegistryQuery? registryQuery) {
-    var method = typeof(ServiceCollectionExtensions).GetMethod(
-      "_activeConsumeNamespaceKeys",
-      BindingFlags.NonPublic | BindingFlags.Static)
-      ?? throw new InvalidOperationException(
-        "_activeConsumeNamespaceKeys not found on ServiceCollectionExtensions - was it renamed?");
-
-    return (IReadOnlyList<string>)method.Invoke(null, [resolver, registryQuery])!;
+    return ServiceCollectionExtensions.ActiveConsumeNamespaceKeys(resolver, registryQuery);
   }
 }

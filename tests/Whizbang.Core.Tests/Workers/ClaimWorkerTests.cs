@@ -48,7 +48,7 @@ public class ClaimWorkerTests {
       PerspectiveWork = []
     };
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         CallCount++;
         if (FirstClaimOrder == 0) { FirstClaimOrder = ++_orderCounter; }
@@ -86,8 +86,6 @@ public class ClaimWorkerTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   [Test]
@@ -325,12 +323,12 @@ public class ClaimWorkerTests {
     public List<Guid> Written { get; } = [];
     public TaskCompletionSource SecondWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
       if (Written.Count >= 2) {
         SecondWritten.TrySetResult();
       }
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -347,10 +345,10 @@ public class ClaimWorkerTests {
     public List<Guid> Written { get; } = [];
     public TaskCompletionSource WriteCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
       WriteCalled.TrySetResult();
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -368,9 +366,9 @@ public class ClaimWorkerTests {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
     public List<Guid> Written { get; } = [];
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -387,9 +385,9 @@ public class ClaimWorkerTests {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _inFlight = new();
     public List<Guid> Written { get; } = [];
     public System.Threading.Channels.ChannelReader<Guid> Reader => _ch.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) {
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
       Written.Add(streamId);
-      return _ch.Writer.WriteAsync(streamId, ct);
+      return _ch.Writer.WriteAsync(streamId, cancellationToken);
     }
     public bool TryWrite(Guid streamId) {
       Written.Add(streamId);
@@ -658,16 +656,16 @@ public class ClaimWorkerTests {
   /// A deterministic "ExecuteAsync reached this branch" signal for a branch whose only observable
   /// effect is a log line. Mirrors <c>EventIdSignalLogger</c> in DeadLetterRecoveryWorkerTests.
   /// </remarks>
-  private sealed class EventIdSignalLogger(int eventId) : ILogger<ClaimWorker> {
+  private sealed class EventIdSignalLogger(int expectedEventId) : ILogger<ClaimWorker> {
     private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Seen => _seen.Task;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (id.Id == eventId) { _seen.TrySetResult(); }
+      if (eventId.Id == expectedEventId) { _seen.TrySetResult(); }
     }
   }
 }

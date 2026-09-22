@@ -54,10 +54,11 @@ public sealed class NullSignalBus : ISignalBus, INullDefault {
       where TSignal : ISignal => ValueTask.CompletedTask;
 
   /// <inheritdoc />
-  public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal => NullSubscription.Instance;
+  public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal => NullSignalSubscription.Instance;
+}
 
-  private sealed class NullSubscription : ISignalSubscription {
-    public static NullSubscription Instance { get; } = new();
-    public void Dispose() { }
-  }
+/// <summary>The subscription <see cref="NullSignalBus"/> hands out: nothing was attached, so disposing releases nothing.</summary>
+internal sealed class NullSignalSubscription : ISignalSubscription {
+  public static NullSignalSubscription Instance { get; } = new();
+  public void Dispose() { /* nothing was attached */ }
 }

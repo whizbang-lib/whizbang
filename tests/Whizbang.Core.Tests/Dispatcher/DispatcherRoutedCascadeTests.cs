@@ -825,8 +825,10 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -905,6 +907,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// (these tests use a manually-wired custom dispatcher).
   /// </remarks>
   private sealed class PlaceOrderReceptor {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Receptor shape: the dispatcher invokes it on an instance.")]
     public ValueTask<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>
         HandleAsync(PlaceOrderCommand message, CancellationToken cancellationToken = default) {
       return ValueTask.FromResult((
@@ -931,6 +935,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Uses object[] because the array mixes plain IEvent instances with Routed&lt;T&gt; wrappers.
   /// </remarks>
   private sealed class BatchProcessReceptor {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
     public ValueTask<Routed<object[]>> HandleAsync(
         BatchProcessCommand message, CancellationToken cancellationToken = default) {
       return Route.Local(new object[] {

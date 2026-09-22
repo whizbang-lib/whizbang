@@ -26,7 +26,7 @@ public class PgScheduleOccurrenceStoreCoverageTests {
     var options = new WhizbangNotificationOptions();
     var configuration = new ConfigurationBuilder().Build();
     return new PgScheduleOccurrenceStore(
-      Options.Create(options), configuration, NullLogger<PgScheduleOccurrenceStore>.Instance);
+      Options.Create(options), configuration);
   }
 
   /// <summary>

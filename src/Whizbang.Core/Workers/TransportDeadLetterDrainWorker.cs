@@ -84,7 +84,7 @@ public partial class TransportDeadLetterDrainWorker(
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 

@@ -222,7 +222,7 @@ public class DispatcherCoverageWave4Tests {
   // registration cannot override -- resolving it back out yields a ServiceProviderEngineScope,
   // never the double. So the double is injected by wrapping the provider rather than registering
   // it, which is the only way a test can see the scopes the dispatcher actually opened and closed.
-  private sealed class _scopeFactoryOverrideProvider(IServiceProvider inner, IServiceScopeFactory factory)
+  private sealed class ScopeFactoryOverrideProvider(IServiceProvider inner, IServiceScopeFactory factory)
       : IServiceProvider {
     public object? GetService(Type serviceType) =>
       serviceType == typeof(IServiceScopeFactory) ? factory : inner.GetService(serviceType);
@@ -230,14 +230,14 @@ public class DispatcherCoverageWave4Tests {
 
   private static readonly ConditionalWeakTable<IServiceProvider, TestServiceScopeFactory> _scopeFactories = [];
 
-  private static _scopeFactoryOverrideProvider _buildProvider(IWorkCoordinatorStrategy? strategy = null) {
+  private static ScopeFactoryOverrideProvider _buildProvider(IWorkCoordinatorStrategy? strategy = null) {
     var services = new ServiceCollection();
     if (strategy != null) {
       services.AddSingleton(strategy);
     }
     var inner = services.BuildServiceProvider();
     var factory = new TestServiceScopeFactory(inner);
-    var provider = new _scopeFactoryOverrideProvider(inner, factory);
+    var provider = new ScopeFactoryOverrideProvider(inner, factory);
     _scopeFactories.Add(provider, factory);
     return provider;
   }

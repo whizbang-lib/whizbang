@@ -21,11 +21,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 internal sealed class ScopedEFCoreDeadLetterStore(
     IServiceScopeFactory scopeFactory,
     Type dbContextType,
-    ILogger<EFCoreDeadLetterStore<DbContext>> logger,
     WorkCoordinatorGate? gate) : IDeadLetterStore {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
-  private readonly ILogger<EFCoreDeadLetterStore<DbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
 
   public async Task<Guid?> MoveAsync(
@@ -39,7 +37,7 @@ internal sealed class ScopedEFCoreDeadLetterStore(
       CancellationToken ct = default) {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
-    var inner = new EFCoreDeadLetterStore<DbContext>(dbContext, _logger, _gate);
+    var inner = new EFCoreDeadLetterStore<DbContext>(dbContext, _gate);
     return await inner.MoveAsync(
       deadLetterId, sourceTable, sourceId, failureReason, errorText, instanceId, generation, ct)
       .ConfigureAwait(false);

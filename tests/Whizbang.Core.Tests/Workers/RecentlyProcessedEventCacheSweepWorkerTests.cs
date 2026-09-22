@@ -99,8 +99,6 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
     /// <summary>Completes once the worker has logged that it is disabled and parking.</summary>
     public Task Disabled => _disabled.Task;
 
-    public string Recorded { get { lock (_messages) { return string.Join("|", _messages); } } }
-
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
 

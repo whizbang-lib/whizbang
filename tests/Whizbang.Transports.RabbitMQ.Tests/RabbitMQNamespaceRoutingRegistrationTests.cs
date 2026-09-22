@@ -204,9 +204,7 @@ public class RabbitMQNamespaceRoutingRegistrationTests {
     await using var provider = _offline(services).BuildServiceProvider();
     var strategy = provider.GetRequiredService<Whizbang.Core.Workers.IMessagePublishStrategy>();
 
-    var field = typeof(Whizbang.Core.Workers.TransportPublishStrategy)
-      .GetField("_transportNamespaces", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-    await Assert.That(field!.GetValue(strategy)).IsNotNull();
+    await Assert.That(((Whizbang.Core.Workers.TransportPublishStrategy)strategy).NamespaceResolver).IsNotNull();
   }
 
   [Test]

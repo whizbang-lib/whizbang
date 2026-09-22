@@ -131,14 +131,14 @@ public class MessageBodyStoreContractTests {
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_ProviderNameSurfacesAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
 
     await Assert.That(store.ProviderName).IsEqualTo("test-noop");
   }
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_UploadAndDownloadRoundTripAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
     var body = new byte[] { 1, 2, 3, 4 };
 
     var claim = await store.UploadAsync(body, "application/octet-stream");
@@ -151,7 +151,7 @@ public class MessageBodyStoreContractTests {
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_DeleteWithNullOptionsAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
     var claim = await store.UploadAsync(new byte[] { 0xAA }, "application/octet-stream");
 
     // Must not throw — provider impls MUST tolerate null options for all three operations.
@@ -170,9 +170,9 @@ public class MessageBodyStoreContractTests {
   /// dispatches. Not exported — provider projects (Slice 4) ship the real
   /// in-memory + Azure Blob impls.
   /// </summary>
-  private sealed class _noOpStore : IMessageBodyStore {
+  private sealed class NoOpStore : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
-    public _noOpStore(string providerName) {
+    public NoOpStore(string providerName) {
       ProviderName = providerName;
     }
     public string ProviderName { get; }

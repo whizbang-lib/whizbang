@@ -33,7 +33,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task _setWidthAsync(NpgsqlConnection conn, long width) {
@@ -194,7 +194,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await _seedAsync(conn, stream, e2, TYPE, 7);
     // Deliberately no close: settled max 7 → epoch 0 still open → no frontier advance for this data.
 
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     var digests = await coordinator.ComputeTypeDigestsAsync(null, [TYPE], TimeSpan.FromHours(1));
 
     await Assert.That(digests.Count).IsEqualTo(1);
@@ -221,7 +221,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
     await Assert.That(await _closeAsync(conn)).IsGreaterThanOrEqualTo(1);
 
     await _corruptEpochAsync(conn, TYPE, epochId: 0, lo: 777, hi: 888);
-    var (Lo, Hi) = await _expectedFoldAsync(conn, open);
+    var (Lo, _) = await _expectedFoldAsync(conn, open);
 
     var digests = await coordinator.ComputeTypeDigestsAsync(origin, [TYPE], TimeSpan.FromHours(1));
 
@@ -258,7 +258,7 @@ public class EpochServedTypeDigestSqlTests : EFCoreTestBase {
 
     await Assert.That(result.EpochsDrifted).IsEqualTo(1)
       .Because("the corrupted seal must be DETECTED — non-zero drift here means an unaccounted write path");
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
+    var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     var (healedLo, _) = (await _epochRowForAsync(conn, TYPE, 0))!.Value;
     await Assert.That(healedLo).IsEqualTo(Lo)
       .Because("and HEALED — the refolded seal serves correct answers again");

@@ -67,7 +67,7 @@ public class TypeDefinitionFingerprintSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     const string type = "Whizbang.Tests.IdempotentDefEvent";
 
-    var (definitionId, isNew, previousId) = await _registerAsync(connection, type, _hash("s"), _hash("sc"), 1);
+    var (definitionId, _, _) = await _registerAsync(connection, type, _hash("s"), _hash("sc"), 1);
     var second = await _registerAsync(connection, type, _hash("s"), _hash("sc"), 1);
     await Assert.That(second.definitionId).IsEqualTo(definitionId).Because("Same content hashes = same definition row.");
     await Assert.That(second.isNew).IsFalse().Because("Re-registering an identical definition is a no-op, not new.");
@@ -79,7 +79,7 @@ public class TypeDefinitionFingerprintSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     const string type = "Whizbang.Tests.EvolvingDefEvent";
 
-    var (definitionId, isNew, previousId) = await _registerAsync(connection, type, _hash("settings"), _hash("schemaV1"), 1);
+    var (definitionId, _, _) = await _registerAsync(connection, type, _hash("settings"), _hash("schemaV1"), 1);
     var v2 = await _registerAsync(connection, type, _hash("settings"), _hash("schemaV2"), 2);
 
     await Assert.That(v2.isNew).IsTrue().Because("A changed schema hash is a new definition.");
@@ -94,7 +94,7 @@ public class TypeDefinitionFingerprintSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
     const string type = "Whizbang.Tests.LineageDefEvent";
 
-    var (definitionId, isNew, previousId) = await _registerAsync(connection, type, _hash("s1"), _hash("sc1"), 1);
+    var (definitionId, _, _) = await _registerAsync(connection, type, _hash("s1"), _hash("sc1"), 1);
     var v2 = await _registerAsync(connection, type, _hash("s1"), _hash("sc2"), 2);
 
     await using (var edge = connection.CreateCommand()) {

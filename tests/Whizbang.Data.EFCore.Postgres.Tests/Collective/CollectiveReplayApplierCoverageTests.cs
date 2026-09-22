@@ -27,41 +27,40 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Shard1")]
 public class CollectiveReplayApplierCoverageTests {
 
-  private sealed record _probeModel {
+  private sealed record ProbeModel {
     public Guid Id { get; init; }
     public int Applied { get; init; }
   }
 
-  private sealed record _otherModel {
-    public Guid Id { get; init; }
+  private sealed record OtherModel {
   }
 
-  private sealed record _probeCollectiveEvent : ICollectiveEvent {
+  private sealed record ProbeCollectiveEvent : ICollectiveEvent {
     public CollectiveScope Scope { get; init; } = new TenantCollectiveScope("tenant-a");
   }
 
-  private sealed record _probeEvent : IEvent;
+  private sealed record ProbeEvent : IEvent;
 
-  private sealed class _probeHandler;
+  private sealed class ProbeHandler;
 
-  private sealed class _otherModelExecutor : ICollectiveInMemoryExecutor {
-    public Type ModelType => typeof(_otherModel);
+  private sealed class OtherModelInMemoryExecutor : ICollectiveInMemoryExecutor {
+    public Type ModelType => typeof(OtherModel);
     public object ApplyToRow(object spec, object currentModel, Guid streamId) => currentModel;
   }
 
-  private sealed class _recordingExecutor : ICollectiveInMemoryExecutor {
-    public Type ModelType => typeof(_probeModel);
+  private sealed class RecordingExecutor : ICollectiveInMemoryExecutor {
+    public Type ModelType => typeof(ProbeModel);
     public int Applications { get; private set; }
 
     public object ApplyToRow(object spec, object currentModel, Guid streamId) {
       Applications++;
-      var model = (_probeModel)currentModel;
+      var model = (ProbeModel)currentModel;
       return model with { Applied = model.Applied + 1 };
     }
   }
 
   /// <summary>Inert event store: none of the cases here read from it.</summary>
-  private sealed class _noOpEventStore : IEventStore {
+  private sealed class NoOpEventStore : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -98,14 +97,14 @@ public class CollectiveReplayApplierCoverageTests {
   }
 
   /// <summary>Event-store query over whatever in-memory rows the case supplies (empty by default).</summary>
-  private sealed class _fakeEventStoreQuery(IReadOnlyList<EventStoreRecord>? records = null) : IEventStoreQuery {
+  private sealed class FakeEventStoreQuery(IReadOnlyList<EventStoreRecord>? records = null) : IEventStoreQuery {
     public IQueryable<EventStoreRecord> Query => (records ?? []).AsQueryable();
     public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Query;
     public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Query;
   }
 
   private static List<MessageEnvelope<IEvent>> _oneStreamEvent() =>
-    [new MessageEnvelope<IEvent>(MessageId.New(), new _probeEvent(), [])];
+    [new MessageEnvelope<IEvent>(MessageId.New(), new ProbeEvent(), [])];
 
   // ============================================================
 
@@ -117,10 +116,10 @@ public class CollectiveReplayApplierCoverageTests {
   public async Task InterleaveForReplayAsync_NotInRebuildOrReplayMode_ReturnsStreamEventsUntouchedAsync() {
     var applier = new CollectiveReplayApplier(
       [], new ServiceCollection().BuildServiceProvider(),
-      new _noOpEventStore(), new _fakeEventStoreQuery(), []);
+      new NoOpEventStore(), new FakeEventStoreQuery(), []);
     var streamEvents = _oneStreamEvent();
 
-    var result = await applier.InterleaveForReplayAsync(typeof(_probeModel), streamEvents, CancellationToken.None);
+    var result = await applier.InterleaveForReplayAsync(typeof(ProbeModel), streamEvents, CancellationToken.None);
 
     await Assert.That(result).IsSameReferenceAs(streamEvents)
       .Because("ProcessingModeAccessor.Current defaults to null (live processing) in this test, so "
@@ -135,12 +134,12 @@ public class CollectiveReplayApplierCoverageTests {
   public async Task InterleaveForReplayAsync_NoEntriesRegisteredForTheModel_ReturnsStreamEventsUntouchedAsync() {
     var applier = new CollectiveReplayApplier(
       [], new ServiceCollection().BuildServiceProvider(),
-      new _noOpEventStore(), new _fakeEventStoreQuery(), []);
+      new NoOpEventStore(), new FakeEventStoreQuery(), []);
     var streamEvents = _oneStreamEvent();
 
     ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
     try {
-      var result = await applier.InterleaveForReplayAsync(typeof(_probeModel), streamEvents, CancellationToken.None);
+      var result = await applier.InterleaveForReplayAsync(typeof(ProbeModel), streamEvents, CancellationToken.None);
 
       await Assert.That(result).IsSameReferenceAs(streamEvents)
         .Because("no registered entry targets this model, so there is no collective event type to "
@@ -157,21 +156,21 @@ public class CollectiveReplayApplierCoverageTests {
   [Test]
   public async Task InterleaveForReplayAsync_NoMatchingCollectiveStreamsForTheTenant_ReturnsStreamEventsUntouchedAsync() {
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_probeModel),
-      EventType: typeof(_probeCollectiveEvent),
-      HandlerType: typeof(_probeHandler),
+      ModelType: typeof(ProbeModel),
+      EventType: typeof(ProbeCollectiveEvent),
+      HandlerType: typeof(ProbeHandler),
       MethodName: "Apply",
       ScopeHandling: default,
       SpecKind: default,
       Invoker: (_, _, _) => new object());
     var applier = new CollectiveReplayApplier(
       [entry], new ServiceCollection().BuildServiceProvider(),
-      new _noOpEventStore(), new _fakeEventStoreQuery(records: []), executors: []);
+      new NoOpEventStore(), new FakeEventStoreQuery(records: []), executors: []);
     var streamEvents = _oneStreamEvent();
 
     ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
     try {
-      var result = await applier.InterleaveForReplayAsync(typeof(_probeModel), streamEvents, CancellationToken.None);
+      var result = await applier.InterleaveForReplayAsync(typeof(ProbeModel), streamEvents, CancellationToken.None);
 
       await Assert.That(result).IsSameReferenceAs(streamEvents)
         .Because("an entry is registered for this model, but the event store has zero matching "
@@ -187,23 +186,23 @@ public class CollectiveReplayApplierCoverageTests {
   // executor, or fail, for every model that doesn't happen to be first in the registration list.
   [Test]
   public async Task ApplyInMemory_SkipsNonMatchingExecutorsBeforeFindingTheRightOneAsync() {
-    var recordingExecutor = new _recordingExecutor();
+    var recordingExecutor = new RecordingExecutor();
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_probeModel),
-      EventType: typeof(_probeCollectiveEvent),
-      HandlerType: typeof(_probeHandler),
+      ModelType: typeof(ProbeModel),
+      EventType: typeof(ProbeCollectiveEvent),
+      HandlerType: typeof(ProbeHandler),
       MethodName: "Apply",
       ScopeHandling: default,
       SpecKind: default,
       Invoker: (_, _, _) => new object());
-    var services = new ServiceCollection().AddSingleton<_probeHandler>().BuildServiceProvider();
+    var services = new ServiceCollection().AddSingleton<ProbeHandler>().BuildServiceProvider();
     var applier = new CollectiveReplayApplier(
-      [entry], services, new _noOpEventStore(), new _fakeEventStoreQuery(),
-      [new _otherModelExecutor(), recordingExecutor]);
-    var current = new _probeModel { Id = Guid.CreateVersion7() };
+      [entry], services, new NoOpEventStore(), new FakeEventStoreQuery(),
+      [new OtherModelInMemoryExecutor(), recordingExecutor]);
+    var current = new ProbeModel { Id = Guid.CreateVersion7() };
 
-    var result = (_probeModel)applier.ApplyInMemory(
-      typeof(_probeModel), current, current.Id, new _probeCollectiveEvent());
+    var result = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), current, current.Id, new ProbeCollectiveEvent());
 
     await Assert.That(recordingExecutor.Applications).IsEqualTo(1)
       .Because("the second executor's ModelType matches, and the mismatched first one must not "

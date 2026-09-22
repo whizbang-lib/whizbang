@@ -219,7 +219,9 @@ public class TransportConsumerWorkerDirectedTargetTests {
       transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     public async Task StopAsync() {
-      _cts?.Cancel();
+      if (_cts is not null) {
+        await _cts.CancelAsync();
+      }
       await Task.Yield();
     }
 
@@ -243,7 +245,6 @@ public class TransportConsumerWorkerDirectedTargetTests {
   }
 
   private sealed class StubTransport : ITransport, IDisposable {
-    private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -260,8 +261,6 @@ public class TransportConsumerWorkerDirectedTargetTests {
     public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
       if (_batchHandler != null) {
         await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-      } else if (_handler != null) {
-        await _handler(envelope, envelopeType, CancellationToken.None);
       }
     }
 
@@ -270,14 +269,6 @@ public class TransportConsumerWorkerDirectedTargetTests {
       string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
       _ = (envelope, destination, envelopeType, preSerializedBytes, cancellationToken);
       return Task.CompletedTask;
-    }
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination, CancellationToken cancellationToken = default) {
-      _ = (destination, cancellationToken);
-      _handler = handler;
-      _subscribeSignal.Release();
-      return Task.FromResult<ISubscription>(new StubSubscription());
     }
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -294,21 +285,9 @@ public class TransportConsumerWorkerDirectedTargetTests {
       throw new NotSupportedException();
   }
 
-  private sealed class ConsoleCaptureLogger : Microsoft.Extensions.Logging.ILogger<TransportConsumerWorker> {
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
-    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      Console.WriteLine($"[TCW {logLevel}] {formatter(state, exception)} {exception}");
-    }
-  }
-
   private sealed class StubSubscription : ISubscription {
     public bool IsActive => true;
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
-    public Task UnsubscribeAsync(CancellationToken cancellationToken = default) {
-      _ = cancellationToken;
-      return Task.CompletedTask;
-    }
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs()); }

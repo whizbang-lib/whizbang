@@ -17,14 +17,14 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class CollectiveScopeBaseRoutingTests {
 
-  private sealed record _archiveEvent : CollectiveEventBase {
+  private sealed record ArchiveEvent : CollectiveEventBase {
     public string Note { get; init; } = "";
   }
 
   [Test]
   public async Task CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync() {
     var streamId = TrackedGuid.NewMedo().Value;
-    var evt = new _archiveEvent { StreamId = streamId, Scope = new TenantCollectiveScope("t-1"), Note = "n" };
+    var evt = new ArchiveEvent { StreamId = streamId, Scope = new TenantCollectiveScope("t-1"), Note = "n" };
 
     await Assert.That(evt is IEvent).IsTrue();
     await Assert.That(evt is ICollectiveEvent).IsTrue();

@@ -27,7 +27,6 @@ public class PerspectiveSyncAwaiterTrackerTests {
   // Sample event types for testing
   private sealed record TestEventA;
   private sealed record TestEventB;
-  private sealed record TestEventC;
 
   // ==========================================================================
   // Constructor tests with ISyncEventTracker

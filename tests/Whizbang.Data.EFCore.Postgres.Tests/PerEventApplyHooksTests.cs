@@ -19,20 +19,20 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PerEventApplyHooksTests {
 
-  private sealed class _model {
+  private sealed class Model {
     public string Status { get; set; } = "";
     public int Count { get; set; }
   }
 
-  private sealed class _unrelatedModel;
+  private sealed class UnrelatedModel;
 
-  private sealed class _perEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class PerEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : IApplyHook<TMarker> {
-    public void Configure(IApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
+    public void Configure(IApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
 
   private static ApplyHookContext _ctx(DateTimeOffset? stamp = null) => new() {
-    ModelType = typeof(_model),
+    ModelType = typeof(Model),
     ApplyTimestamp = stamp ?? DateTimeOffset.UnixEpoch,
   };
 
@@ -51,7 +51,7 @@ public class PerEventApplyHooksTests {
   public async Task OverrideTimestamps_SetsUpdatedAt_WithoutBumpAsync() {
     var sentinel = new DateTimeOffset(2099, 1, 2, 3, 4, 5, TimeSpan.Zero);
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<object>(new _perEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
+      .Register<object>(new PerEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
@@ -64,13 +64,13 @@ public class PerEventApplyHooksTests {
   [Test]
   public async Task SetProperty_IsCarried_AndApplyModelSettersMutatesTheObjectAsync() {
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<_model>(new _perEventHook<_model>((b, _) => b.SetProperty(m => m.Status, "Hooked")))
-      .Register<_model>(new _perEventHook<_model>((b, _) => b.SetProperty(m => m.Count, 42)));
+      .Register<Model>(new PerEventHook<Model>((b, _) => b.SetProperty(m => m.Status, "Hooked")))
+      .Register<Model>(new PerEventHook<Model>((b, _) => b.SetProperty(m => m.Count, 42)));
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
     await Assert.That(plan.ModelFieldSetters.Count).IsEqualTo(2);
 
-    var model = new _model { Status = "Original", Count = 1 };
+    var model = new Model { Status = "Original", Count = 1 };
     PerEventApplyHooks.ApplyModelSetters(model, plan.ModelFieldSetters);
 
     await Assert.That(model.Status).IsEqualTo("Hooked");
@@ -80,7 +80,7 @@ public class PerEventApplyHooksTests {
   [Test]
   public async Task UnsupportedStoreColumn_ThrowsAsync() {
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<_model>(new _perEventHook<_model>((b, _) => b.SetColumn("audit_col", "x")));
+      .Register<Model>(new PerEventHook<Model>((b, _) => b.SetColumn("audit_col", "x")));
 
     await Assert.That(() => PerEventApplyHooks.Resolve(registry, _ctx()))
       .Throws<NotSupportedException>()
@@ -90,13 +90,13 @@ public class PerEventApplyHooksTests {
   [Test]
   public async Task NonMatchingMarkerHook_DoesNotContributeSettersAsync() {
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<_unrelatedModel>(new _perEventHook<_unrelatedModel>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, DateTimeOffset.UnixEpoch)));
+      .Register<UnrelatedModel>(new PerEventHook<UnrelatedModel>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, DateTimeOffset.UnixEpoch)));
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
 
     await Assert.That(plan.ModelFieldSetters).IsEmpty()
-      .Because("A hook gated on an unrelated model must not contribute setters for _model.");
+      .Because("A hook gated on an unrelated model must not contribute setters for Model.");
     await Assert.That(plan.BumpVersion).IsTrue()
-      .Because("The default hook still applies to _model.");
+      .Because("The default hook still applies to Model.");
   }
 }

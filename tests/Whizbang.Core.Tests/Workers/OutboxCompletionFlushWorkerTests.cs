@@ -15,12 +15,12 @@ public class OutboxCompletionFlushWorkerTests {
 
   private sealed class CapturingCoordinator : IWorkCoordinator {
     public TaskCompletionSource<IReadOnlyList<Guid>> FirstBatch { get; } = new();
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest req, CancellationToken ct = default) => Task.FromResult(true);
-    public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken = default) {
       FirstBatch.TrySetResult(ids);
       return Task.FromResult(ids.Count);
     }
-    public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken ct = default) {
+    public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
       FirstBatch.TrySetResult(ids);
       return Task.FromResult(ids.Count);
     }
@@ -33,8 +33,6 @@ public class OutboxCompletionFlushWorkerTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   [Test]
@@ -107,7 +105,7 @@ public class OutboxCompletionFlushWorkerTests {
     await worker.EnqueueAsync(TrackedGuid.NewMedo());
 
     // Confirm the flush callback is held back by the gate — coord receives nothing.
-    var racedBefore = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(300, CancellationToken.None));
+    _ = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(300, CancellationToken.None));
 
     // Open gate — flush proceeds.
     gate.MarkReady();
@@ -149,7 +147,7 @@ public class OutboxCompletionFlushWorkerTests {
     // Enqueue lands on the channel but the flush loop never runs.
     await worker.EnqueueAsync(TrackedGuid.NewMedo());
 
-    var raced = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(500, CancellationToken.None));
+    _ = await Task.WhenAny(coord.FirstBatch.Task, Task.Delay(500, CancellationToken.None));
     await Assert.That(coord.FirstBatch.Task.IsCompleted).IsFalse();
 
     await cts.CancelAsync();

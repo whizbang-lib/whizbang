@@ -436,29 +436,6 @@ public class SubscriptionRetryHelperTests {
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      _attemptCount++;
-      _notifyWaiters();
-
-      if (_alwaysFail) {
-        throw new InvalidOperationException("Mock transport always fails");
-      }
-
-      if (_attemptCount <= _failFirstNAttempts) {
-        throw new InvalidOperationException($"Mock transport fails on attempt {_attemptCount}");
-      }
-
-      ISubscription subscription = _returnDisconnectableSubscription
-        ? new DisconnectableMockSubscription()
-        : new MockSubscription();
-
-      return Task.FromResult(subscription);
-    }
-
     public Task PublishAsync(
       IMessageEnvelope envelope,
       TransportDestination destination,
@@ -501,7 +478,10 @@ public class SubscriptionRetryHelperTests {
   }
 
   private sealed class MockSubscription : ISubscription {
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
+      add { /* the mock never disconnects */ }
+      remove { /* nothing was added */ }
+    }
 
     public bool IsActive { get; private set; } = true;
 
@@ -519,14 +499,6 @@ public class SubscriptionRetryHelperTests {
       IsActive = false;
     }
 
-    // Helper to trigger disconnect event for testing
-    public void TriggerDisconnect(string reason, Exception? exception = null, bool applicationInitiated = false) {
-      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
-        Reason = reason,
-        Exception = exception,
-        IsApplicationInitiated = applicationInitiated
-      });
-    }
   }
 
   /// <summary>

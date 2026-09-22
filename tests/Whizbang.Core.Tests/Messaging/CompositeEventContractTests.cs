@@ -24,7 +24,7 @@ public class CompositeEventContractTests {
     // surface as ordinary events — that only works because the interface
     // root is IMessage. A composite that did NOT extend IMessage would
     // need a parallel dispatch surface.
-    ICompositeEvent composite = new _bulkImportComposite([]);
+    ICompositeEvent composite = new BulkImportComposite([]);
 
     await Assert.That(composite is IMessage).IsTrue()
       .Because("ICompositeEvent : IMessage — the dispatcher / outbox / transport ALL constrain on IMessage. The composite-events feature reuses the existing pipeline; it does not introduce a parallel one.");
@@ -36,7 +36,7 @@ public class CompositeEventContractTests {
     // intentionally raising it MUST override; accidental composites
     // that yield millions of inner events get caught at the cap rather
     // than corrupting downstream batched appends.
-    ICompositeEvent composite = new _bulkImportComposite([]);
+    ICompositeEvent composite = new BulkImportComposite([]);
 
     await Assert.That(composite.MaxInnerEventsAllowed).IsEqualTo(10_000)
       .Because("Default cap of 10K matches the W3 plan's '5,000-record bulk import' upper end with 2x headroom — producers raising past 10K should override the property and document why.");
@@ -47,7 +47,7 @@ public class CompositeEventContractTests {
     // Producers with a defensible reason to allow more (e.g., a known
     // 50K-row import pattern) can override the cap on their composite
     // type — proving the property is virtual / default-impl-overridable.
-    ICompositeEvent composite = new _largeBulkComposite([]);
+    ICompositeEvent composite = new LargeBulkComposite([]);
 
     await Assert.That(composite.MaxInnerEventsAllowed).IsEqualTo(50_000)
       .Because("Per-composite overrides MUST be honored so producers with vetted high-volume patterns aren't forced into the default cap.");
@@ -59,18 +59,18 @@ public class CompositeEventContractTests {
     // The order is part of the contract: per resolved design (W3 notes
     // 2026-06-09), inner events are sequential within a composite.
     var inner = new IMessage[] {
-      new _orderCreatedEvent("O-001"),
-      new _orderCreatedEvent("O-002"),
-      new _orderCreatedEvent("O-003"),
+      new OrderCreatedEvent("O-001"),
+      new OrderCreatedEvent("O-002"),
+      new OrderCreatedEvent("O-003"),
     };
-    ICompositeEvent composite = new _bulkImportComposite(inner);
+    ICompositeEvent composite = new BulkImportComposite(inner);
 
     var collected = composite.InnerEvents.ToList();
 
     await Assert.That(collected.Count).IsEqualTo(3);
-    await Assert.That(((_orderCreatedEvent)collected[0]).OrderId).IsEqualTo("O-001");
-    await Assert.That(((_orderCreatedEvent)collected[1]).OrderId).IsEqualTo("O-002");
-    await Assert.That(((_orderCreatedEvent)collected[2]).OrderId).IsEqualTo("O-003");
+    await Assert.That(((OrderCreatedEvent)collected[0]).OrderId).IsEqualTo("O-001");
+    await Assert.That(((OrderCreatedEvent)collected[1]).OrderId).IsEqualTo("O-002");
+    await Assert.That(((OrderCreatedEvent)collected[2]).OrderId).IsEqualTo("O-003");
   }
 
   [Test]
@@ -79,7 +79,7 @@ public class CompositeEventContractTests {
     // in order" — not "must materialize an array first." A producer that
     // builds inner events from a streaming source (DB cursor, large IO)
     // should be able to use yield return.
-    var compositeWithLazyYield = new _lazyComposite(count: 5);
+    var compositeWithLazyYield = new LazyComposite(count: 5);
 
     var enumerated = compositeWithLazyYield.InnerEvents.ToList();
 
@@ -93,19 +93,19 @@ public class CompositeEventContractTests {
   // ============================================================
 
   /// <summary>Bulk import composite — represents a consumer's bulk-import operation that emits N OrderCreatedEvents.</summary>
-  private sealed class _bulkImportComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
+  private sealed class BulkImportComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
   /// <summary>Composite that opts into a 50K cap — proves overrides work.</summary>
-  private sealed class _largeBulkComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
+  private sealed class LargeBulkComposite(IReadOnlyList<IMessage> inner) : ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => inner;
     public int MaxInnerEventsAllowed => 50_000;
   }
 
   /// <summary>Composite that yield-returns inner events lazily without materializing them upfront.</summary>
-  private sealed class _lazyComposite : ICompositeEvent {
-    public _lazyComposite(int count) {
+  private sealed class LazyComposite : ICompositeEvent {
+    public LazyComposite(int count) {
       _count = count;
     }
     private readonly int _count;
@@ -113,11 +113,11 @@ public class CompositeEventContractTests {
     public IEnumerable<IMessage> InnerEvents {
       get {
         for (var i = 0; i < _count; i++) {
-          yield return new _orderCreatedEvent($"L-{i:D3}");
+          yield return new OrderCreatedEvent($"L-{i:D3}");
         }
       }
     }
   }
 
-  private sealed record _orderCreatedEvent(string OrderId) : IEvent;
+  private sealed record OrderCreatedEvent(string OrderId) : IEvent;
 }

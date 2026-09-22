@@ -195,7 +195,7 @@ public record SomeCommand : ICommand {
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
 
     // Assert - Should still generate registry, just with no mappings
-    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "TopicFilterRegistry.g.cs");
+    _ = GeneratorTestHelper.GetGeneratedSource(result, "TopicFilterRegistry.g.cs");
 
     // Generator may skip output if no filters found, or generate empty registry
     // Either is acceptable - just ensure no errors

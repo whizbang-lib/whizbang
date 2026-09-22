@@ -50,7 +50,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   private string? _testDatabaseName;
   private NpgsqlDataSource? _dataSource;
-  private _jobDbContext? _ctx;
+  private JobDbContext? _ctx;
   private string _connectionString = null!;
 
   // ── Scope-only WHERE: tenant filter restricts to scope ────────────────
@@ -69,7 +69,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(jobB2, tenantId: "t-B", status: "Active");
 
     var result = await _buildDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-A"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -101,7 +101,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     var progressCalls = 0;
     var result = await _buildDispatcher(new CollectiveApplyOptions { BatchSize = 2 }).DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-batch"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -135,7 +135,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, @createdAt, @updatedAt, 1);
         """, new {
         id = job,
-        data = JsonSerializer.Serialize(new _jobModel { Status = "Active" }),
+        data = JsonSerializer.Serialize(new JobModel { Status = "Active" }),
         scope = JsonSerializer.Serialize(new PerspectiveScope { TenantId = "t-stamp" }),
         createdAt = stale,
         updatedAt = stale,
@@ -144,7 +144,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     var before = DateTime.UtcNow;
     var result = await _buildDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-stamp"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -198,7 +198,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(late3, tenantId: "t-late", status: "Active");
 
     var result = await _buildDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-late"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -220,7 +220,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   [Test]
   public async Task DispatchAsync_ScopeWithNoRows_AffectsZeroRowsAsync() {
     var result = await _buildDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-empty"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -248,7 +248,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(draftB, tenantId: "t-B", status: "Draft");
 
     var result = await _buildDraftDispatcher(CollectiveScopeHandling.Framework).DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-A"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -271,7 +271,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   public async Task DispatchAsync_CustomHandlerWhere_StillHonorsTenantScopeAsync() {
     // D0 data-safety fix: perspective tables are SHARED multi-tenant. Even under Custom — where the handler
     // owns the cohort predicate — the framework MUST still AND the tenant scope envelope, or a tenant-A event
-    // rewrites tenant-B rows (cross-tenant corruption). The handler declares only its cohort (Status=='Draft');
+    // rewrites tenant-B rows (cross-tenant corruption). The handler declares only its cohort (Status=='Draft') —
     // the framework guarantees the tenant filter.
     var draftA = Guid.NewGuid();
     var draftB = Guid.NewGuid();
@@ -282,7 +282,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(approvedB, tenantId: "t-B", status: "Approved");
 
     var result = await _buildDraftDispatcher(CollectiveScopeHandling.Custom).DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-A"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -304,7 +304,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   [Test]
   public async Task DispatchAsync_CrossPerspectiveCohort_ScopesBySiblingTableAsync() {
     // OrderModel-style split: the cohort's status lives on a SIBLING table (same id). The handler's
-    // Where uses q.Of<_jobStatusModel>().Any(...), which EF funcletizes + translates to a correlated EXISTS
+    // Where uses q.Of<JobStatusModel>().Any(...), which EF funcletizes + translates to a correlated EXISTS
     // in the ExecuteUpdate — proving cross-perspective projection end-to-end on EF Core.
     var eligible = Guid.NewGuid();   // sibling status Draft → in cohort
     var ineligible = Guid.NewGuid(); // sibling status Published → out
@@ -317,7 +317,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobStatusAsync(ineligible, "Published");
 
     var result = await _buildCrossDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-A"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -334,20 +334,20 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("No sibling row → the EXISTS correlation finds nothing.");
   }
 
-  private CollectiveDispatcher _buildCrossDispatcher() {
+  private static CollectiveDispatcher _buildCrossDispatcher() {
     var services = new ServiceCollection();
-    var handler = new _crossPerspective();
+    var handler = new CrossPerspective();
     services.AddSingleton(handler);
 
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_jobModel),
-        EventType: typeof(_archiveJobsCollectiveEvent),
-        HandlerType: typeof(_crossPerspective),
-        MethodName: nameof(_crossPerspective.Archive),
+        ModelType: typeof(JobModel),
+        EventType: typeof(ArchiveJobsCollectiveEvent),
+        HandlerType: typeof(CrossPerspective),
+        MethodName: nameof(CrossPerspective.Archive),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_crossPerspective)h).Archive((_archiveJobsCollectiveEvent)e, q)
+        Invoker: static (h, e, q) => ((CrossPerspective)h).Archive((ArchiveJobsCollectiveEvent)e, q)
       ),
     };
 
@@ -355,21 +355,22 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+      [new EFCoreCollectiveEventExecutor<JobModel>()]);
   }
 
   // Scopes the mutated job table by a status that lives on the sibling status perspective.
-  internal sealed class _crossPerspective {
+  internal sealed class CrossPerspective {
     private static readonly string[] _eligible = ["Draft"];
 
-    public ICollectiveSpec<_jobModel> Archive(_archiveJobsCollectiveEvent e, ICollectiveQuery q) =>
-      new _whereSpec(
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> Archive(ArchiveJobsCollectiveEvent e, ICollectiveQuery q) =>
+      new WhereSpec(
         s => s.SetProperty(j => j.Status, "Archived"),
-        r => q.Of<_jobStatusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
+        r => q.Of<JobStatusModel>().Any(st => st.Id == r.Id && _eligible.Contains(st.Data.Status)));
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
-        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<JobModel>>> Setters,
+        Expression<Func<PerspectiveRow<JobModel>, bool>>? Where) : ICollectiveSpec<JobModel>;
   }
 
   // ── Setup / teardown / DbContext ──────────────────────────────────────
@@ -431,40 +432,36 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  internal sealed class _jobModel {
+  internal sealed class JobModel {
     public string Status { get; set; } = string.Empty;
     public DateTimeOffset? ArchivedAt { get; set; }
   }
 
   [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
-  internal sealed class _jobStatusModel {
+  internal sealed class JobStatusModel {
     public string Status { get; set; } = string.Empty;
   }
 
-  internal sealed class _overlayModel {
+  internal sealed class OverlayModel {
     public Guid Id { get; set; }
     public bool IsActive { get; set; }
     public Guid GlobalTemplateId { get; set; }
     public bool Marked { get; set; }
   }
 
-  private sealed class _jobDbContext(DbContextOptions<_jobDbContext> options) : DbContext(options) {
-    public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
-    public DbSet<PerspectiveRow<_jobStatusModel>> JobStatuses => Set<PerspectiveRow<_jobStatusModel>>();
-    public DbSet<PerspectiveRow<_cellsModel>> CellsRows => Set<PerspectiveRow<_cellsModel>>();
-    public DbSet<PerspectiveRow<_overlayModel>> Overlays => Set<PerspectiveRow<_overlayModel>>();
+  private sealed class JobDbContext(DbContextOptions<JobDbContext> options) : DbContext(options) {
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
-      _mapRow<_jobModel>(modelBuilder, "wh_per_collective_job");
-      _mapRow<_jobStatusModel>(modelBuilder, "wh_per_collective_job_status");
-      _mapRow<_overlayModel>(modelBuilder, "wh_per_collective_overlay");
+      _mapRow<JobModel>(modelBuilder, "wh_per_collective_job");
+      _mapRow<JobStatusModel>(modelBuilder, "wh_per_collective_job_status");
+      _mapRow<OverlayModel>(modelBuilder, "wh_per_collective_overlay");
       // POLYMORPHIC model mapping: Data is a SCALAR jsonb column (Property + HasColumnType), NOT
       // ComplexProperty().ToJson(). This is exactly what a consumer's generator produces for perspective models with
       // [JsonPolymorphic] members (e.g. a tenant-fields model whose field cells are polymorphic). EF Core 10
       // rejects native nested SetProperty(j => j.Data.Sub, …) on this shape — there is no complex
       // sub-property — with "does not represent a valid property to be set".
-      modelBuilder.Entity<PerspectiveRow<_cellsModel>>(e => {
+      modelBuilder.Entity<PerspectiveRow<CellsModel>>(e => {
         e.ToTable("wh_per_collective_cells");
         e.HasKey(x => x.Id);
         e.Property(x => x.Id).HasColumnName("id");
@@ -499,23 +496,23 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   private readonly List<string> _capturedSql = [];
 
-  private _jobDbContext _newContext() {
-    var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
+  private JobDbContext _newContext() {
+    var optionsBuilder = new DbContextOptionsBuilder<JobDbContext>();
     optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions())
-      .AddInterceptors(new _sqlCaptureInterceptor(_capturedSql))
+      .AddInterceptors(new SqlCaptureInterceptor(_capturedSql))
       .ConfigureWarnings(w => w.Ignore(
         Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-    return new _jobDbContext(optionsBuilder.Options);
+    return new JobDbContext(optionsBuilder.Options);
   }
 
   // A production-shaped context with EnableRetryOnFailure (NpgsqlRetryingExecutionStrategy), which forbids a
   // user-initiated BeginTransaction outside strategy.ExecuteAsync.
-  private _jobDbContext _newRetryingContext() {
-    var optionsBuilder = new DbContextOptionsBuilder<_jobDbContext>();
+  private JobDbContext _newRetryingContext() {
+    var optionsBuilder = new DbContextOptionsBuilder<JobDbContext>();
     optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions().EnableRetryOnFailure())
       .ConfigureWarnings(w => w.Ignore(
         Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-    return new _jobDbContext(optionsBuilder.Options);
+    return new JobDbContext(optionsBuilder.Options);
   }
 
   private async Task _initSchemaAsync() {
@@ -579,7 +576,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         (@id, @data::jsonb, '{}'::jsonb, '{}'::jsonb, @createdAt, @updatedAt, 1);
       """, new {
       id,
-      data = JsonSerializer.Serialize(new _jobStatusModel { Status = status }),
+      data = JsonSerializer.Serialize(new JobStatusModel { Status = status }),
       createdAt = DateTime.UtcNow,
       updatedAt = DateTime.UtcNow,
     });
@@ -589,7 +586,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
-    var dataJson = JsonSerializer.Serialize(new _jobModel { Status = status });
+    var dataJson = JsonSerializer.Serialize(new JobModel { Status = status });
     var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
 
     await conn.ExecuteAsync("""
@@ -624,23 +621,23 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return (reader.GetFieldValue<DateTime>(0), reader.GetInt32(1));
+    return (await reader.GetFieldValueAsync<DateTime>(0), reader.GetInt32(1));
   }
 
-  private CollectiveDispatcher _buildDispatcher(CollectiveApplyOptions? applyOptions = null) {
+  private static CollectiveDispatcher _buildDispatcher(CollectiveApplyOptions? applyOptions = null) {
     var services = new ServiceCollection();
-    var handler = new _jobPerspective();
+    var handler = new JobPerspective();
     services.AddSingleton(handler);
 
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_jobModel),
-        EventType: typeof(_archiveJobsCollectiveEvent),
-        HandlerType: typeof(_jobPerspective),
-        MethodName: nameof(_jobPerspective.ArchiveJobs),
+        ModelType: typeof(JobModel),
+        EventType: typeof(ArchiveJobsCollectiveEvent),
+        HandlerType: typeof(JobPerspective),
+        MethodName: nameof(JobPerspective.ArchiveJobs),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((JobPerspective)h).ArchiveJobs((ArchiveJobsCollectiveEvent)e)
       ),
     };
 
@@ -648,35 +645,35 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>(applyOptions)]);
+      [new EFCoreCollectiveEventExecutor<JobModel>(applyOptions)]);
   }
 
   // ── Apply hooks (collective path, EF Core) ────────────────────────────
 
-  private CollectiveDispatcher _buildDispatcherWithHooks(CollectiveApplyHookRegistry hooks) {
+  private static CollectiveDispatcher _buildDispatcherWithHooks(CollectiveApplyHookRegistry hooks) {
     var services = new ServiceCollection();
-    services.AddSingleton(new _jobPerspective());
+    services.AddSingleton(new JobPerspective());
     var entries = new CollectiveApplyEntry[] {
-      new(typeof(_jobModel), typeof(_archiveJobsCollectiveEvent), typeof(_jobPerspective),
-        nameof(_jobPerspective.ArchiveJobs), CollectiveScopeHandling.Framework, CollectiveSpecKind.Linq,
-        static (h, e, _) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)),
+      new(typeof(JobModel), typeof(ArchiveJobsCollectiveEvent), typeof(JobPerspective),
+        nameof(JobPerspective.ArchiveJobs), CollectiveScopeHandling.Framework, CollectiveSpecKind.Linq,
+        static (h, e, _) => ((JobPerspective)h).ArchiveJobs((ArchiveJobsCollectiveEvent)e)),
     };
     return new CollectiveDispatcher(
       services.BuildServiceProvider(), entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>(hookRegistry: hooks)]);
+      [new EFCoreCollectiveEventExecutor<JobModel>(hookRegistry: hooks)]);
   }
 
-  private sealed class _collectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class CollectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : ICollectiveApplyHook<TMarker> {
-    public void Configure(ICollectiveApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
+    public void Configure(ICollectiveApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
 
-  private interface _unrelatedMarker; // a marker _jobModel does NOT implement
+  private interface IUnrelatedMarker; // a marker JobModel does NOT implement
 
-  private static async Task<int> _dispatchArchiveAsync(CollectiveDispatcher dispatcher, _jobDbContext ctx, string tenant) {
+  private static async Task<int> _dispatchArchiveAsync(CollectiveDispatcher dispatcher, JobDbContext ctx, string tenant) {
     var result = await dispatcher.DispatchAsync(
-      new _archiveJobsCollectiveEvent { Scope = new TenantCollectiveScope(tenant), OccurredAt = DateTimeOffset.UtcNow },
+      new ArchiveJobsCollectiveEvent { Scope = new TenantCollectiveScope(tenant), OccurredAt = DateTimeOffset.UtcNow },
       Guid.NewGuid(), ctx, default);
     return result.AffectedRowCount;
   }
@@ -689,8 +686,8 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     // Two hooks both set Status; hook setters append after the spec's Status="Archived", and the last-registered
     // hook wins (nested jsonb_set) — proving accumulation + registration order end-to-end.
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "first")))
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.SetProperty(j => j.Status, "second")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.SetProperty(j => j.Status, "first")))
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.SetProperty(j => j.Status, "second")));
 
     await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
 
@@ -706,7 +703,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     // Override the documented default key: stamp a sentinel updated_at and deliberately DO NOT bump version.
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<object>(new _collectiveHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
+      .Register<object>(new CollectiveHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
@@ -724,7 +721,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(job, tenantId: "t-A", status: "Active");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.RemoveSetter(j => j.Status)));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.RemoveSetter(j => j.Status)));
 
     await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
 
@@ -740,7 +737,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(draft, tenantId: "t-A", status: "Draft");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.AndWhere(j => j.Status == "Active")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.AndWhere(j => j.Status == "Active")));
 
     var affected = await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
 
@@ -761,7 +758,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(draftB, tenantId: "t-B", status: "Draft");
 
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_jobModel>(new _collectiveHook<_jobModel>((b, _) => b.ReplaceWhere(j => j.Status == "Draft")));
+      .Register<JobModel>(new CollectiveHook<JobModel>((b, _) => b.ReplaceWhere(j => j.Status == "Draft")));
 
     var affected = await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
 
@@ -780,31 +777,32 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedJobAsync(job, tenantId: "t-A", status: "Active");
     var sentinel = new DateTimeOffset(1999, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    // A hook gated on a marker _jobModel does NOT implement must not fire — updated_at stays the default stamp.
+    // A hook gated on a marker JobModel does NOT implement must not fire — updated_at stays the default stamp.
     // Registered UNKEYED (appends) so the default whizbang.timestamps hook stays in place and still fires.
     var hooks = WhizbangApplyHooks.CreateCollectiveWithDefaults()
-      .Register<_unrelatedMarker>(new _collectiveHook<_unrelatedMarker>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
+      .Register<IUnrelatedMarker>(new CollectiveHook<IUnrelatedMarker>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, sentinel)));
 
     var before = DateTime.UtcNow.AddSeconds(-5);
     await _dispatchArchiveAsync(_buildDispatcherWithHooks(hooks), _ctx!, "t-A");
 
     var (updatedAt, version) = await _readUpdatedAtVersionAsync(job);
     await Assert.That(updatedAt.Year).IsNotEqualTo(1999)
-      .Because("The _unrelatedMarker hook does not match _jobModel, so its sentinel stamp never applies.");
+      .Because("The IUnrelatedMarker hook does not match JobModel, so its sentinel stamp never applies.");
     await Assert.That(updatedAt).IsGreaterThanOrEqualTo(before)
-      .Because("The default whizbang.timestamps hook still stamps updated_at ~now for _jobModel.");
+      .Because("The default whizbang.timestamps hook still stamps updated_at ~now for JobModel.");
     await Assert.That(version).IsEqualTo(2)
       .Because("Only the default hook fired — it bumped version 1 → 2.");
   }
 
-  internal sealed class _jobPerspective {
-    public ICollectiveSpec<_jobModel> ArchiveJobs(_archiveJobsCollectiveEvent e) =>
-      new _spec(s => s
+  internal sealed class JobPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> ArchiveJobs(ArchiveJobsCollectiveEvent e) =>
+      new Spec(s => s
         .SetProperty(j => j.Status, "Archived")
         .SetProperty(j => j.ArchivedAt, e.OccurredAt));
 
-    private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
-      : ICollectiveSpec<_jobModel>;
+    private sealed record Spec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+      : ICollectiveSpec<JobModel>;
   }
 
   // ── Computed comparison setter: single-active flip on the EF Core driver ───────────────────────────────
@@ -822,7 +820,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedOverlayAsync(unrelated, "t-A", isActive: true, otherGid);
 
     var result = await _buildOverlayDispatcher().DispatchAsync(
-      evt: new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      evt: new SetActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -837,43 +835,45 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("A different global template is outside the Where cohort → untouched.");
   }
 
-  private CollectiveDispatcher _buildOverlayDispatcher() {
+  private static CollectiveDispatcher _buildOverlayDispatcher() {
     var services = new ServiceCollection();
-    services.AddSingleton(new _overlayActivePerspective());
+    services.AddSingleton(new OverlayActivePerspective());
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_overlayModel),
-        EventType: typeof(_setActiveEvent),
-        HandlerType: typeof(_overlayActivePerspective),
-        MethodName: nameof(_overlayActivePerspective.SetActive),
+        ModelType: typeof(OverlayModel),
+        EventType: typeof(SetActiveEvent),
+        HandlerType: typeof(OverlayActivePerspective),
+        MethodName: nameof(OverlayActivePerspective.SetActive),
         ScopeHandling: CollectiveScopeHandling.Custom,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
+        Invoker: static (h, e, _) => ((OverlayActivePerspective)h).SetActive((SetActiveEvent)e)),
     };
     return new CollectiveDispatcher(
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_overlayModel>()]);
+      [new EFCoreCollectiveEventExecutor<OverlayModel>()]);
   }
 
-  internal sealed class _overlayActivePerspective {
-    public ICollectiveSpec<_overlayModel> SetActive(_setActiveEvent e) =>
-      new _whereSpec(
+  internal sealed class OverlayActivePerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<OverlayModel> SetActive(SetActiveEvent e) =>
+      new WhereSpec(
         s => s.SetProperty(o => o.IsActive, o => o.Id == e.OverlayId),
         r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
 
     // A SECOND apply for the SAME (event, model) — proves the dispatcher fans out to multiple
     // [CollectiveApplyFor] methods per (event, model), which a consumer's overlay redesign (apply + clear on the
     // jobs perspective off one event) depends on.
-    public ICollectiveSpec<_overlayModel> MarkAll(_setActiveEvent e) =>
-      new _whereSpec(
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<OverlayModel> MarkAll(SetActiveEvent e) =>
+      new WhereSpec(
         s => s.SetProperty(o => o.Marked, true),
         r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_overlayModel>>> Setters,
-        Expression<Func<PerspectiveRow<_overlayModel>, bool>>? Where) : ICollectiveSpec<_overlayModel>;
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<OverlayModel>>> Setters,
+        Expression<Func<PerspectiveRow<OverlayModel>, bool>>? Where) : ICollectiveSpec<OverlayModel>;
   }
 
   [Test]
@@ -885,22 +885,22 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedOverlayAsync(sibling, "t-A", isActive: true, gid);
 
     var services = new ServiceCollection();
-    services.AddSingleton(new _overlayActivePerspective());
+    services.AddSingleton(new OverlayActivePerspective());
     // TWO entries, same event, same model, different methods.
     var entries = new CollectiveApplyEntry[] {
-      new(typeof(_overlayModel), typeof(_setActiveEvent), typeof(_overlayActivePerspective),
-        nameof(_overlayActivePerspective.SetActive), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
-        static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
-      new(typeof(_overlayModel), typeof(_setActiveEvent), typeof(_overlayActivePerspective),
-        nameof(_overlayActivePerspective.MarkAll), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
-        static (h, e, q) => ((_overlayActivePerspective)h).MarkAll((_setActiveEvent)e)),
+      new(typeof(OverlayModel), typeof(SetActiveEvent), typeof(OverlayActivePerspective),
+        nameof(OverlayActivePerspective.SetActive), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
+        static (h, e, q) => ((OverlayActivePerspective)h).SetActive((SetActiveEvent)e)),
+      new(typeof(OverlayModel), typeof(SetActiveEvent), typeof(OverlayActivePerspective),
+        nameof(OverlayActivePerspective.MarkAll), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
+        static (h, e, q) => ((OverlayActivePerspective)h).MarkAll((SetActiveEvent)e)),
     };
     var dispatcher = new CollectiveDispatcher(
       services.BuildServiceProvider(), entries,
-      [new TenantCollectiveScopeResolver()], [new EFCoreCollectiveEventExecutor<_overlayModel>()]);
+      [new TenantCollectiveScopeResolver()], [new EFCoreCollectiveEventExecutor<OverlayModel>()]);
 
     var result = await dispatcher.DispatchAsync(
-      new _setActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+      new SetActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
       Guid.NewGuid(), _ctx!, default);
 
     await Assert.That(result.HandlerCount).IsEqualTo(2)
@@ -922,7 +922,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
-  internal sealed record _setActiveEvent : ICollectiveEvent {
+  internal sealed record SetActiveEvent : ICollectiveEvent {
     public required Guid OverlayId { get; init; }
     public required Guid GlobalTemplateId { get; init; }
     public required CollectiveScope Scope { get; init; }
@@ -931,7 +931,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   private async Task _seedOverlayAsync(Guid id, string tenantId, bool isActive, Guid globalTemplateId) {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
-    var dataJson = JsonSerializer.Serialize(new _overlayModel { Id = id, IsActive = isActive, GlobalTemplateId = globalTemplateId });
+    var dataJson = JsonSerializer.Serialize(new OverlayModel { Id = id, IsActive = isActive, GlobalTemplateId = globalTemplateId });
     var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
     await conn.ExecuteAsync("""
       INSERT INTO wh_per_collective_overlay (id, data, metadata, scope, created_at, updated_at, version)
@@ -948,20 +948,20 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
-  private CollectiveDispatcher _buildDraftDispatcher(CollectiveScopeHandling handling) {
+  private static CollectiveDispatcher _buildDraftDispatcher(CollectiveScopeHandling handling) {
     var services = new ServiceCollection();
-    var handler = new _archiveDraftPerspective();
+    var handler = new ArchiveDraftPerspective();
     services.AddSingleton(handler);
 
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_jobModel),
-        EventType: typeof(_archiveJobsCollectiveEvent),
-        HandlerType: typeof(_archiveDraftPerspective),
-        MethodName: nameof(_archiveDraftPerspective.ArchiveDrafts),
+        ModelType: typeof(JobModel),
+        EventType: typeof(ArchiveJobsCollectiveEvent),
+        HandlerType: typeof(ArchiveDraftPerspective),
+        MethodName: nameof(ArchiveDraftPerspective.ArchiveDrafts),
         ScopeHandling: handling,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((ArchiveDraftPerspective)h).ArchiveDrafts((ArchiveJobsCollectiveEvent)e)
       ),
     };
 
@@ -969,22 +969,23 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+      [new EFCoreCollectiveEventExecutor<JobModel>()]);
   }
 
   // Projects the cohort onto its own Status column via spec.Where — the per-perspective projection capability.
-  internal sealed class _archiveDraftPerspective {
-    public ICollectiveSpec<_jobModel> ArchiveDrafts(_archiveJobsCollectiveEvent e) =>
-      new _whereSpec(
+  internal sealed class ArchiveDraftPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> ArchiveDrafts(ArchiveJobsCollectiveEvent e) =>
+      new WhereSpec(
         s => s.SetProperty(j => j.Status, "Archived").SetProperty(j => j.ArchivedAt, e.OccurredAt),
         r => r.Data.Status == "Draft");
 
-    private sealed record _whereSpec(
-        Expression<Action<ICollectiveSetters<_jobModel>>> Setters,
-        Expression<Func<PerspectiveRow<_jobModel>, bool>>? Where) : ICollectiveSpec<_jobModel>;
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<JobModel>>> Setters,
+        Expression<Func<PerspectiveRow<JobModel>, bool>>? Where) : ICollectiveSpec<JobModel>;
   }
 
-  internal sealed record _archiveJobsCollectiveEvent : ICollectiveEvent {
+  internal sealed record ArchiveJobsCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public required DateTimeOffset OccurredAt { get; init; }
   }
@@ -1001,7 +1002,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     // First set ArchivedAt to a real value so we can prove the clear nulls it.
     await _buildDispatcher().DispatchAsync(
-      evt: new _archiveJobsCollectiveEvent {
+      evt: new ArchiveJobsCollectiveEvent {
         Scope = new TenantCollectiveScope("t-clear"),
         OccurredAt = DateTimeOffset.UtcNow,
       },
@@ -1013,7 +1014,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     // Now clear ArchivedAt to null via a null-valued collective setter.
     var result = await _buildClearArchivedDispatcher().DispatchAsync(
-      evt: new _clearArchivedCollectiveEvent { Scope = new TenantCollectiveScope("t-clear") },
+      evt: new ClearArchivedCollectiveEvent { Scope = new TenantCollectiveScope("t-clear") },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -1033,20 +1034,20 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return result == DBNull.Value || result is null ? null : (string)result;
   }
 
-  private CollectiveDispatcher _buildClearArchivedDispatcher() {
+  private static CollectiveDispatcher _buildClearArchivedDispatcher() {
     var services = new ServiceCollection();
-    var handler = new _clearArchivedPerspective();
+    var handler = new ClearArchivedPerspective();
     services.AddSingleton(handler);
 
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_jobModel),
-        EventType: typeof(_clearArchivedCollectiveEvent),
-        HandlerType: typeof(_clearArchivedPerspective),
-        MethodName: nameof(_clearArchivedPerspective.ClearArchivedAt),
+        ModelType: typeof(JobModel),
+        EventType: typeof(ClearArchivedCollectiveEvent),
+        HandlerType: typeof(ClearArchivedPerspective),
+        MethodName: nameof(ClearArchivedPerspective.ClearArchivedAt),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_clearArchivedPerspective)h).ClearArchivedAt((_clearArchivedCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((ClearArchivedPerspective)h).ClearArchivedAt((ClearArchivedCollectiveEvent)e)
       ),
     };
 
@@ -1054,18 +1055,19 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_jobModel>()]);
+      [new EFCoreCollectiveEventExecutor<JobModel>()]);
   }
 
-  internal sealed class _clearArchivedPerspective {
-    public ICollectiveSpec<_jobModel> ClearArchivedAt(_clearArchivedCollectiveEvent e) =>
-      new _spec(s => s.SetProperty(j => j.ArchivedAt, (DateTimeOffset?)null));
+  internal sealed class ClearArchivedPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<JobModel> ClearArchivedAt(ClearArchivedCollectiveEvent e) =>
+      new Spec(s => s.SetProperty(j => j.ArchivedAt, (DateTimeOffset?)null));
 
-    private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters)
-      : ICollectiveSpec<_jobModel>;
+    private sealed record Spec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+      : ICollectiveSpec<JobModel>;
   }
 
-  internal sealed record _clearArchivedCollectiveEvent : ICollectiveEvent {
+  internal sealed record ClearArchivedCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
   }
 
@@ -1080,7 +1082,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     await _seedCellsAsync(id, tenantId: "t-cells", tag: "before");
 
     var result = await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-cells"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-cells"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -1107,7 +1109,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     ActivitySource.AddActivityListener(listener);
 
     await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-span"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-span"), Tag = "after" },
       collectiveEventId: collectiveEventId, dbContextOrSession: _ctx!, cancellationToken: default);
 
     Activity? span;
@@ -1127,9 +1129,9 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   private async Task _seedCellsAsync(Guid id, string tenantId, string tag) {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
-    var dataJson = JsonSerializer.Serialize(new _cellsModel {
+    var dataJson = JsonSerializer.Serialize(new CellsModel {
       Tag = tag,
-      Cells = [new _cell { Key = "k1", Value = "v1" }, new _cell { Key = "k2", Value = "v2" }],
+      Cells = [new Cell { Key = "k1", Value = "v1" }, new Cell { Key = "k2", Value = "v2" }],
     });
     var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = tenantId });
     await conn.ExecuteAsync("""
@@ -1148,20 +1150,20 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     return result == DBNull.Value || result is null ? null : (string)result;
   }
 
-  private CollectiveDispatcher _buildSetTagDispatcher(CollectiveApplyOptions? options = null) {
+  private static CollectiveDispatcher _buildSetTagDispatcher(CollectiveApplyOptions? options = null) {
     var services = new ServiceCollection();
-    var handler = new _setTagPerspective();
+    var handler = new SetTagPerspective();
     services.AddSingleton(handler);
 
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_cellsModel),
-        EventType: typeof(_setTagCollectiveEvent),
-        HandlerType: typeof(_setTagPerspective),
-        MethodName: nameof(_setTagPerspective.SetTag),
+        ModelType: typeof(CellsModel),
+        EventType: typeof(SetTagCollectiveEvent),
+        HandlerType: typeof(SetTagPerspective),
+        MethodName: nameof(SetTagPerspective.SetTag),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((SetTagPerspective)h).SetTag((SetTagCollectiveEvent)e)
       ),
     };
 
@@ -1169,7 +1171,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_cellsModel>(options)]);
+      [new EFCoreCollectiveEventExecutor<CellsModel>(options)]);
   }
 
   // ── §3: server-side statement_timeout (SET LOCAL / set_config) bounds the apply ───────────────────
@@ -1181,7 +1183,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _capturedSql.Clear();
 
     await _buildSetTagDispatcher(new CollectiveApplyOptions { StatementTimeoutSeconds = 30 }).DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-timeout"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-timeout"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -1192,15 +1194,16 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("The apply still completes within the timeout.");
   }
 
-  internal sealed class _setTagPerspective {
-    public ICollectiveSpec<_cellsModel> SetTag(_setTagCollectiveEvent e) =>
-      new _spec(s => s.SetProperty(j => j.Tag, e.Tag));
+  internal sealed class SetTagPerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<CellsModel> SetTag(SetTagCollectiveEvent e) =>
+      new Spec(s => s.SetProperty(j => j.Tag, e.Tag));
 
-    private sealed record _spec(Expression<Action<ICollectiveSetters<_cellsModel>>> Setters)
-      : ICollectiveSpec<_cellsModel>;
+    private sealed record Spec(Expression<Action<ICollectiveSetters<CellsModel>>> Setters)
+      : ICollectiveSpec<CellsModel>;
   }
 
-  internal sealed record _setTagCollectiveEvent : ICollectiveEvent {
+  internal sealed record SetTagCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public required string Tag { get; init; }
   }
@@ -1218,7 +1221,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _capturedSql.Clear();
 
     await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-raw"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-raw"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -1246,7 +1249,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _capturedSql.Clear();
 
     await _buildSetTagDispatcher(new CollectiveApplyOptions { BatchSize = 2 }).DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-batch"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-batch"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: _ctx!,
       cancellationToken: default);
@@ -1271,14 +1274,14 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     _capturedSql.Clear();
     await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "a" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "a" },
       collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
     await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsTrue()
       .Because("By default a collective apply serializes per (table, scope) via an exclusive advisory lock.");
 
     _capturedSql.Clear();
     await _buildSetTagDispatcher(new CollectiveApplyOptions { SerializeApplies = false }).DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "b" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-lock"), Tag = "b" },
       collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
     await Assert.That(_capturedSql.Any(c => c.Contains("pg_advisory_xact_lock", StringComparison.OrdinalIgnoreCase))).IsFalse()
       .Because("SerializeApplies = false opts out of the advisory lock.");
@@ -1301,7 +1304,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _capturedSql.Clear();
 
     await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-noindex"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-noindex"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
 
     await Assert.That(_capturedSql.Any(c => c.Contains("CREATE INDEX", StringComparison.OrdinalIgnoreCase))).IsFalse()
@@ -1322,7 +1325,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     await using var retryingCtx = _newRetryingContext();
     await _buildSetTagDispatcher().DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-retry"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-retry"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(),
       dbContextOrSession: retryingCtx,
       cancellationToken: default);
@@ -1345,7 +1348,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     _capturedSql.Clear();
 
     await _buildSetTagDispatcherWithBatchOverride(batchSizeOverride: 2).DispatchAsync(
-      evt: new _setTagCollectiveEvent { Scope = new TenantCollectiveScope("t-knob"), Tag = "after" },
+      evt: new SetTagCollectiveEvent { Scope = new TenantCollectiveScope("t-knob"), Tag = "after" },
       collectiveEventId: Guid.NewGuid(), dbContextOrSession: _ctx!, cancellationToken: default);
 
     foreach (var id in ids) {
@@ -1360,18 +1363,18 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   }
 
   // Global options stay at the framework defaults (BatchSize 1000); the ENTRY carries the per-handler override.
-  private CollectiveDispatcher _buildSetTagDispatcherWithBatchOverride(int batchSizeOverride) {
+  private static CollectiveDispatcher _buildSetTagDispatcherWithBatchOverride(int batchSizeOverride) {
     var services = new ServiceCollection();
-    services.AddSingleton(new _setTagPerspective());
+    services.AddSingleton(new SetTagPerspective());
     var entries = new CollectiveApplyEntry[] {
       new(
-        ModelType: typeof(_cellsModel),
-        EventType: typeof(_setTagCollectiveEvent),
-        HandlerType: typeof(_setTagPerspective),
-        MethodName: nameof(_setTagPerspective.SetTag),
+        ModelType: typeof(CellsModel),
+        EventType: typeof(SetTagCollectiveEvent),
+        HandlerType: typeof(SetTagPerspective),
+        MethodName: nameof(SetTagPerspective.SetTag),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, _) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e),
+        Invoker: static (h, e, _) => ((SetTagPerspective)h).SetTag((SetTagCollectiveEvent)e),
         BatchSizeOverride: batchSizeOverride
       ),
     };
@@ -1379,10 +1382,10 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       services.BuildServiceProvider(),
       entries,
       [new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<_cellsModel>(null)]);
+      [new EFCoreCollectiveEventExecutor<CellsModel>(null)]);
   }
 
-  private sealed class _sqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
+  private sealed class SqlCaptureInterceptor(List<string> captured) : DbCommandInterceptor {
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
         CancellationToken cancellationToken = default) {
@@ -1403,12 +1406,12 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     }
   }
 
-  internal sealed class _cellsModel {
+  internal sealed class CellsModel {
     public string? Tag { get; set; }
-    public List<_cell> Cells { get; set; } = [];
+    public List<Cell> Cells { get; set; } = [];
   }
 
-  internal sealed class _cell {
+  internal sealed class Cell {
     public string Key { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;
   }

@@ -26,7 +26,7 @@ public class TypeDefinitionReconcilerCoverageTests {
   // detection for every type still predating fingerprinting.
   [Test]
   public async Task ReconcileAsync_EntryWithoutFingerprintHashes_IsSkippedButOthersStillRegisterAsync() {
-    var catalog = new _fakeCatalog(
+    var catalog = new FakeCatalog(
       new MessageTypeCatalogEntry(typeof(object), "NoHashEvent", "event", null),
       new MessageTypeCatalogEntry(typeof(object), "HashedEvent", "event", null) {
         SettingsHash = "s1",
@@ -47,13 +47,13 @@ public class TypeDefinitionReconcilerCoverageTests {
   // needs event-versioning attention) reads identically to a purely behavioral/metadata change.
   [Test]
   public async Task ReconcileAsync_SchemaHashChanged_LogsSchemaDriftForThatTypeAsync() {
-    var catalog = new _fakeCatalog(
+    var catalog = new FakeCatalog(
       new MessageTypeCatalogEntry(typeof(object), "DriftEvent", "event", null) {
         SettingsHash = "settings-same",
         SchemaHash = "schema-new"
       });
-    var logger = new _capturingLogger();
-    var reconciler = _reconciler(new _driftCoordinator(), catalog, logger);
+    var logger = new CapturingLogger();
+    var reconciler = _reconciler(new DriftCoordinator(), catalog, logger);
 
     var summary = await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -71,11 +71,11 @@ public class TypeDefinitionReconcilerCoverageTests {
   // of them, not just the malformed one.
   [Test]
   public async Task ReconcileAsync_PerspectiveModelTypeWithNullFullName_IsExcludedFromRetentionSyncAsync() {
-    var poisonType = typeof(_genericPerspectiveModel<>).GetGenericArguments()[0];
+    var poisonType = typeof(GenericPerspectiveModel<>).GetGenericArguments()[0];
     Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(poisonType, 30);
 
-    var coordinator = new _retentionCapturingCoordinator();
-    var reconciler = _reconciler(coordinator, new _fakeCatalog());
+    var coordinator = new RetentionCapturingCoordinator();
+    var reconciler = _reconciler(coordinator, new FakeCatalog());
 
     await reconciler.ReconcileAsync(CancellationToken.None);
 
@@ -100,15 +100,16 @@ public class TypeDefinitionReconcilerCoverageTests {
 
   /// <summary>Never actually constructed — only its unbound generic parameter's `Type` (whose
   /// <c>FullName</c> is null) is registered, standing in for a malformed registry entry.</summary>
-  private sealed class _genericPerspectiveModel<T>;
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "An open generic type is the shape under test; the parameter carries no data by design.")]
+  private sealed class GenericPerspectiveModel<T>;
 
-  private sealed class _fakeCatalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
+  private sealed class FakeCatalog(params MessageTypeCatalogEntry[] entries) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
   }
 
   /// <summary>Reports one prior definition (id 1) and always registers as a NEW definition (id 2)
   /// superseding it, so every catalog entry it processes takes the drift-detected path.</summary>
-  private sealed class _driftCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class DriftCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
     public Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<TypeDefinitionInfo>>([
         new TypeDefinitionInfo(1, "DriftEvent", "settings-same", "schema-old", 0)
@@ -120,7 +121,7 @@ public class TypeDefinitionReconcilerCoverageTests {
       Task.FromResult(new TypeDefinitionRegistration(DefinitionId: 2, IsNew: true, PreviousDefinitionId: 1));
   }
 
-  private sealed class _retentionCapturingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RetentionCapturingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
     public IReadOnlyList<PerspectiveRetentionDeclaration>? CapturedDeclarations { get; private set; }
 
     public Task SyncPerspectiveRetentionAsync(
@@ -130,7 +131,7 @@ public class TypeDefinitionReconcilerCoverageTests {
     }
   }
 
-  private sealed class _capturingLogger : ILogger<TypeDefinitionReconciler> {
+  private sealed class CapturingLogger : ILogger<TypeDefinitionReconciler> {
     public List<(int EventId, string Message)> Entries { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

@@ -282,7 +282,7 @@ public static class ServiceCollectionExtensions {
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
-      var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      _ = sp.GetService<IOutboxRoutingStrategy>();
 
       // Strategy-agnostic command-inbox seam (topology arc phase 7): both built-in
       // command-routing strategies implement ICommandInboxAddressResolver — the default

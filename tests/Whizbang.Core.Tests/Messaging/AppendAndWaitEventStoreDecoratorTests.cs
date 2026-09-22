@@ -172,7 +172,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
     var streamId = Guid.NewGuid();
     var message = new TestEvent("test-data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.ThrowsAsync<OperationCanceledException>(async () => {
       await decorator.AppendAndWaitAsync<TestEvent, FakePerspective>(

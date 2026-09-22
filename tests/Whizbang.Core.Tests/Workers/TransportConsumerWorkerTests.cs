@@ -71,7 +71,7 @@ public class TransportConsumerWorkerTests {
     // Act
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
@@ -137,7 +137,7 @@ public class TransportConsumerWorkerTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should subscribe after readiness check completes");
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -194,7 +194,7 @@ public class TransportConsumerWorkerTests {
         .Because("Each subscription should be paused once");
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -252,7 +252,7 @@ public class TransportConsumerWorkerTests {
         .Because("Each subscription should be resumed once");
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -371,9 +371,8 @@ public class TransportConsumerWorkerTests {
 
 // ===== Test Doubles =====
 
-internal class FakeTransport : ITransport, IDisposable {
+internal sealed class FakeTransport : ITransport, IDisposable {
   private readonly List<FakeSubscription> _subscriptions = [];
-  private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
   private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
   private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -405,19 +404,6 @@ internal class FakeTransport : ITransport, IDisposable {
     CancellationToken cancellationToken = default
   ) => Task.CompletedTask;
 
-  public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-    TransportDestination destination,
-    CancellationToken cancellationToken = default
-  ) {
-    SubscribeCallCount++;
-    _handler = handler;
-    var subscription = new FakeSubscription();
-    _subscriptions.Add(subscription);
-    _subscribeSignal.Release();
-    return Task.FromResult<ISubscription>(subscription);
-  }
-
   public Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
@@ -443,13 +429,11 @@ internal class FakeTransport : ITransport, IDisposable {
   public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
     if (_batchHandler != null) {
       await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-    } else if (_handler != null) {
-      await _handler(envelope, envelopeType, CancellationToken.None);
     }
   }
 }
 
-internal class FakeSubscription : ISubscription {
+internal sealed class FakeSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
   public bool IsDisposed { get; private set; }
   public int DisposeCallCount { get; private set; }
@@ -494,6 +478,28 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
+    string callerMemberName = "",
+    string callerFilePath = "",
+    int callerLineNumber = 0
+  ) {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync(
+    object message,
+    IMessageContext context,
+    Whizbang.Core.Dispatch.DispatchOptions options,
     string callerMemberName = "",
     string callerFilePath = "",
     int callerLineNumber = 0
@@ -550,35 +556,13 @@ internal class FakeDispatcher : IDispatcher {
   ) =>
     throw new NotImplementedException();
 
-  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
-    throw new NotImplementedException();
-
-  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(
-    object message,
-    IMessageContext context,
-    Whizbang.Core.Dispatch.DispatchOptions options,
-    string callerMemberName = "",
-    string callerFilePath = "",
-    int callerLineNumber = 0
-  ) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
   public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
+    throw new NotImplementedException();
+
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
     throw new NotImplementedException();
 
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
@@ -608,7 +592,7 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
     throw new NotImplementedException();
 
-  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
+  public static Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
@@ -703,11 +687,11 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public void QueueInboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status) {
+  public void QueueInboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
     // No-op for tests
   }
 
-  public void QueueInboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status, string errorDetails) {
+  public void QueueInboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
     // No-op for tests
   }
 
@@ -715,11 +699,11 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public void QueueOutboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status) {
+  public void QueueOutboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
     // No-op for tests
   }
 
-  public void QueueOutboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status, string errorDetails) {
+  public void QueueOutboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
     // No-op for tests
   }
 

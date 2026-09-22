@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
   private const int PARTITION_COUNT = 16;
 
-  private async Task _pinStreamAsync(NpgsqlConnection conn, Guid streamId, Guid instanceId) {
+  private static async Task _pinStreamAsync(NpgsqlConnection conn, Guid streamId, Guid instanceId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, created_at, last_activity_at)
@@ -60,7 +60,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task<(DateTimeOffset NextFire, long Count)> _readScheduleAsync(NpgsqlConnection conn, Guid id) {
+  private static async Task<(DateTimeOffset NextFire, long Count)> _readScheduleAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT next_fire_at, occurrence_count FROM wh_schedules WHERE schedule_id = @p";
     cmd.Parameters.AddWithValue("p", id);
@@ -70,7 +70,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     return (next, r.GetInt64(1));
   }
 
-  private async Task<long> _countOutboxAsync(NpgsqlConnection conn, string eventType) {
+  private static async Task<long> _countOutboxAsync(NpgsqlConnection conn, string eventType) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT count(*) FROM wh_outbox WHERE message_type = @t";
     cmd.Parameters.AddWithValue("t", eventType);
@@ -98,21 +98,21 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
-  private async Task<long> _scalarAsync(NpgsqlConnection conn, string sql, Guid p) {
+  private static async Task<long> _scalarAsync(NpgsqlConnection conn, string sql, Guid p) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
     cmd.Parameters.AddWithValue(nameof(p), p);
     return Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L, CultureInfo.InvariantCulture);
   }
 
-  private async Task<(DateTimeOffset? NextFire, short Status, long Count)> _getScheduleAsync(
+  private static async Task<(DateTimeOffset? NextFire, short Status, long Count)> _getScheduleAsync(
       NpgsqlConnection conn, Guid scheduleId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT next_fire_at, status, occurrence_count FROM wh_schedules WHERE schedule_id = @p";
     cmd.Parameters.AddWithValue("p", scheduleId);
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
-    var next = r.IsDBNull(0) ? (DateTimeOffset?)null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(0), DateTimeKind.Utc), TimeSpan.Zero);
+    var next = await r.IsDBNullAsync(0) ? (DateTimeOffset?)null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(0), DateTimeKind.Utc), TimeSpan.Zero);
     return (next, r.GetInt16(1), r.GetInt64(2));
   }
 

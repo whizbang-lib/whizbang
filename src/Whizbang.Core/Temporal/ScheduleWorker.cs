@@ -31,7 +31,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
     IOptions<TemporalOptions> options,
     ILogger<ScheduleWorker> logger,
     ISchemaReadyGate schemaReadyGate,
-    ILogger<ScheduleTimer> timerLogger,
+    ILoggerFactory loggerFactory,
     ISignalBus signalBus,
     TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -44,7 +44,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
     _timer = new ScheduleTimer(timeProvider ?? TimeProvider.System, () => {
       RequestImmediateRun();
       return ValueTask.CompletedTask;
-    }, timerLogger);
+    }, loggerFactory.CreateLogger<ScheduleTimer>());
 
     // Doorbell: a schedule-due signal (arm-on-mutation NOTIFY or the poll-source backstop) wakes the
     // drain immediately instead of waiting for the next backstop tick.

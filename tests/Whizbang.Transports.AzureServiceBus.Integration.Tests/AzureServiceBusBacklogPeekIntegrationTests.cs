@@ -22,7 +22,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -36,31 +36,31 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
   /// <summary>Serves only the depth call; every other admin member throws so a stray use shows up.</summary>
   private sealed class DepthOnlyAdminClient(long depth, Exception? depthThrows = null) : IServiceBusAdminClient {
     public Task<long> GetSubscriptionActiveMessageCountAsync(
-        string topicName, string subscriptionName, CancellationToken ct = default)
+        string topicName, string subscriptionName, CancellationToken cancellationToken = default)
       => depthThrows is not null
         ? Task.FromException<long>(depthThrows)
         : Task.FromResult(depth);
 
-    public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken ct = default)
+    public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default)
       => throw new NotImplementedException();
-    public Task<bool> TopicExistsAsync(string topicName, CancellationToken ct = default)
+    public Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default)
       => Task.FromResult(true);
-    public Task CreateTopicAsync(string topicName, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> SubscriptionExistsAsync(string t, string s, CancellationToken ct = default)
+    public Task CreateTopicAsync(string topicName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<bool> SubscriptionExistsAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default)
       => Task.FromResult(true);
-    public Task CreateSubscriptionAsync(string t, string s, int m, TimeSpan l, CancellationToken ct = default)
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task CreateSubscriptionAsync(string t, string s, bool r, int m, TimeSpan l, CancellationToken ct = default)
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task UpdateSubscriptionLockDurationAsync(string t, string s, TimeSpan l, CancellationToken ct = default)
+    public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task<SubscriptionProperties> GetSubscriptionAsync(string t, string s, CancellationToken ct = default)
+    public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default)
       => throw new NotImplementedException();
-    public Task DeleteSubscriptionAsync(string t, string s, CancellationToken ct = default) => Task.CompletedTask;
-    public IAsyncEnumerable<RuleProperties> GetRulesAsync(string t, string s, CancellationToken ct = default)
+    public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public IAsyncEnumerable<RuleProperties> GetRulesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default)
       => throw new NotImplementedException();
-    public Task DeleteRuleAsync(string t, string s, string r, CancellationToken ct = default) => Task.CompletedTask;
-    public Task CreateRuleAsync(string t, string s, CreateRuleOptions o, CancellationToken ct = default)
+    public Task DeleteRuleAsync(string topicName, string subscriptionName, string ruleName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task CreateRuleAsync(string topicName, string subscriptionName, CreateRuleOptions options, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -117,7 +117,7 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
 
   [Test]
   public async Task PeekBacklogs_WhenTheDepthCallFails_SkipsThatEntityAsync() {
-    // An entity that cannot be read right now is skipped, not reported with a wrong depth;
+    // An entity that cannot be read right now is skipped, not reported with a wrong depth —
     // the next tick retries it.
     var transport = _transport(new DepthOnlyAdminClient(0, new InvalidOperationException("unreadable")));
     transport.LivenessWatchdog!.Track("topic-00", "sub-00-a");

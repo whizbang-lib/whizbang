@@ -73,7 +73,7 @@ public class DispatcherPriorityStampingTests {
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
-  private sealed class _sevenForEverything : IPriorityProducerHook {
+  private sealed class SevenForEverything : IPriorityProducerHook {
     public int Order => 100;   // before the framework default, which keeps an explicit declaration
     public int DeclarePriority(PriorityDeclarationContext context) => 7;
   }
@@ -121,7 +121,7 @@ public class DispatcherPriorityStampingTests {
 
   [Test]
   public async Task Send_WithAHostProducerHook_UsesItsDeclarationAsync() {
-    var (dispatcher, strategy) = _dispatcher(hostHook: new _sevenForEverything());
+    var (dispatcher, strategy) = _dispatcher(hostHook: new SevenForEverything());
 
     await dispatcher.SendAsync(new StampCommand("x"), MessageContext.New());
 

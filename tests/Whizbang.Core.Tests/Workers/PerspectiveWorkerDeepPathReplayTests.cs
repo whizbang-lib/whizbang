@@ -83,8 +83,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
     await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the rewind ran, and processedEvents = pending (prepended) + range-loaded
     await Assert.That(runner.RewindCallCount).IsEqualTo(1);
@@ -141,8 +141,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
     await harness.EnqueueWorkAsync(_rewindWork(streamId), cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
     await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — trigger envelope was found in the up-to-trigger range and prepended
     await Assert.That(runner.RewindCallCount).IsEqualTo(1);
@@ -271,7 +271,7 @@ public class PerspectiveWorkerDeepPathReplayTests {
     }
 
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -320,14 +320,14 @@ public class PerspectiveWorkerDeepPathReplayTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
   }
 
-  private sealed class ReplayRegistry(string perspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry, IEventTypeProvider {
-    public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
-      name == perspectiveName ? runner : null;
+  private sealed class ReplayRegistry(string registeredPerspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
+      perspectiveName == registeredPerspectiveName ? runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo(
-        perspectiveName,
-        $"global::{perspectiveName}",
+        registeredPerspectiveName,
+        $"global::{registeredPerspectiveName}",
         "global::Test.ReplayDeepModel",
         [.. eventTypes.Select(TypeNameFormatter.Format)])];
 
@@ -341,7 +341,7 @@ public class PerspectiveWorkerDeepPathReplayTests {
     public int RewindCallCount => Volatile.Read(ref _rewindCallCount);
     public Type PerspectiveType => typeof(ReplayRunner);
 
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(_completed(streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {

@@ -203,7 +203,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
         }
         return;
-      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && _isDuplicateKeyException(ex)) {
+      } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && IsDuplicateKeyException(ex)) {
         // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
         // Clear the failed change tracker state and retry as an UPDATE.
         context.ChangeTracker.Clear();
@@ -433,7 +433,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <summary>
   /// Detects PostgreSQL unique-constraint violation (23505) inside a DbUpdateException.
   /// </summary>
-  private static bool _isDuplicateKeyException(DbUpdateException ex) {
+  internal static bool IsDuplicateKeyException(DbUpdateException ex) {
     for (var inner = ex.InnerException; inner != null; inner = inner.InnerException) {
       // Npgsql.PostgresException exposes SqlState; check via reflection-free duck typing
       if (inner is Npgsql.PostgresException pg && pg.SqlState == "23505") {

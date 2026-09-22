@@ -49,26 +49,25 @@ public class OutboxDrainWorkerLifecycleFailureTests {
   private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       return ValueTask.CompletedTask;
     }
   }
 
   private sealed class FakePublishStrategy : IMessagePublishStrategy {
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       Task.FromResult(new MessagePublishResult { MessageId = work.MessageId, Success = true, CompletedStatus = MessageProcessingStatus.Published });
   }
 
@@ -88,7 +87,7 @@ public class OutboxDrainWorkerLifecycleFailureTests {
   /// <summary>Receptor invoker whose inline call always throws the configured
   /// exception. Slice 1's RED uses this to simulate the production lifecycle-receptor
   /// fault that produced an empty <c>wh_outbox.error</c>.</summary>
-  private sealed class _ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
+  private sealed class ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) =>
       ValueTask.FromException(toThrow);
   }
@@ -157,7 +156,7 @@ public class OutboxDrainWorkerLifecycleFailureTests {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var work = _outboxWork(messageId, streamId);
     var thrown = new InvalidOperationException("simulated lifecycle fault from production regression test");
-    var throwingInvoker = new _ThrowingReceptorInvoker(thrown);
+    var throwingInvoker = new ThrowingReceptorInvoker(thrown);
 
     await worker.InvokeOutboxLifecycleStageAsync(
       work,

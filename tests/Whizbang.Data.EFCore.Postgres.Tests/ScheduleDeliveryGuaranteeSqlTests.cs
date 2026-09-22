@@ -28,7 +28,7 @@ public class ScheduleDeliveryGuaranteeSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _insertOutboxAsync(NpgsqlConnection conn, Guid messageId, string metadataJson) {
+  private static async Task _insertOutboxAsync(NpgsqlConnection conn, Guid messageId, string metadataJson) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       INSERT INTO wh_outbox (message_id, message_type, event_data, metadata, status, attempts, created_at)
@@ -38,7 +38,7 @@ public class ScheduleDeliveryGuaranteeSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _failAsync(NpgsqlConnection conn, Guid messageId, string error) {
+  private static async Task _failAsync(NpgsqlConnection conn, Guid messageId, string error) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT process_outbox_failures(@f::jsonb, NOW())";
     cmd.Parameters.AddWithValue("f",
@@ -46,7 +46,7 @@ public class ScheduleDeliveryGuaranteeSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task<bool> _isClaimableAsync(NpgsqlConnection conn, Guid messageId) {
+  private static async Task<bool> _isClaimableAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
       SELECT (scheduled_for IS NULL OR scheduled_for <= NOW()) FROM wh_outbox WHERE message_id = @p";
@@ -54,7 +54,7 @@ public class ScheduleDeliveryGuaranteeSqlTests : EFCoreTestBase {
     return (bool)(await cmd.ExecuteScalarAsync() ?? false);
   }
 
-  private async Task<long> _failedRunsAsync(NpgsqlConnection conn, Guid scheduleId) {
+  private static async Task<long> _failedRunsAsync(NpgsqlConnection conn, Guid scheduleId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT count(*) FROM wh_schedule_runs WHERE schedule_id = @p AND status = 1";
     cmd.Parameters.AddWithValue("p", scheduleId);

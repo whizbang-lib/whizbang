@@ -73,8 +73,7 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
     var consumerChannels = new Dictionary<string, FakeChannel>(StringComparer.Ordinal);
     var subscriptionHandles = new List<IDisposable>();
     try {
-      foreach (var subscription in subscriptions) {
-        var exchange = subscription.Topic;
+      foreach (var exchange in subscriptions.Select(subscription => subscription.Topic)) {
         var channel = new FakeChannel { ExistingExchanges = { exchange } };
         var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
         var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
@@ -144,7 +143,7 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
       .Because("the publisher never declares the retired entity either");
 
     // ---------- Delivery: each published message reaches its entity's consumer ----------
-    foreach (var (Exchange, RoutingKey, Body) in publisherChannel.PublishedMessages) {
+    foreach (var (Exchange, RoutingKey, _) in publisherChannel.PublishedMessages) {
       var consumerChannel = consumerChannels[Exchange];
       var consumer = (AsyncEventingBasicConsumer)consumerChannel.LastRegisteredConsumer!;
       var (properties, body) = RabbitTestWire.ValidWireMessage("delivered");

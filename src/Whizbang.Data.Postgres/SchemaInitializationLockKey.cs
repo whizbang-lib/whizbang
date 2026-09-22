@@ -38,6 +38,6 @@ public static class SchemaInitializationLockKey {
   /// <returns>A signed 64-bit key suitable for <c>pg_try_advisory_xact_lock(bigint)</c>.</returns>
   public static long Compute(string? schema) {
     var effectiveSchema = string.IsNullOrEmpty(schema) ? "public" : schema;
-    return Fnv1a64.Compute(KEY_NAMESPACE + effectiveSchema);
+    return FnvHash64.Compute(KEY_NAMESPACE + effectiveSchema);
   }
 }

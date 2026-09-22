@@ -611,7 +611,8 @@ public class LifecycleInvocationHelperTests {
         var currentCount = _invocations.Count;
         for (int i = _invocationWaiters.Count - 1; i >= 0; i--) {
           if (_invocationWaiters[i].Count <= currentCount) {
-            (toSignal ??= []).Add(_invocationWaiters[i].Tcs);
+            toSignal ??= [];
+            toSignal.Add(_invocationWaiters[i].Tcs);
             _invocationWaiters.RemoveAt(i);
           }
         }

@@ -39,10 +39,11 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
       Entries.Add((logLevel, formatter(state, exception)));
     }
 
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   /// <summary>Seeds a wh_event_store row so cursor last_event_id points at a real event.</summary>
@@ -81,9 +82,9 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
       return (null, null, null, null);
     }
     var status = reader.GetInt16(0);
-    var lastEventId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
-    var error = reader.IsDBNull(2) ? null : reader.GetString(2);
-    var rewind = reader.IsDBNull(3) ? (Guid?)null : reader.GetGuid(3);
+    var lastEventId = await reader.IsDBNullAsync(1) ? (Guid?)null : reader.GetGuid(1);
+    var error = await reader.IsDBNullAsync(2) ? null : reader.GetString(2);
+    var rewind = await reader.IsDBNullAsync(3) ? (Guid?)null : reader.GetGuid(3);
     return (status, lastEventId, error, rewind);
   }
 
@@ -175,7 +176,7 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
       new PerspectiveCursorCompletion { StreamId = goodStream, PerspectiveName = PERSPECTIVE_NAME, LastEventId = goodEvent, Status = PerspectiveProcessingStatus.Completed }
     ]);
 
-    var (status, lastEventId, error, rewindTrigger) = await _readCursorAsync(conn, skippedStream, PERSPECTIVE_NAME);
+    var (status, _, _, _) = await _readCursorAsync(conn, skippedStream, PERSPECTIVE_NAME);
     await Assert.That(status).IsNull();
 
     var good = await _readCursorAsync(conn, goodStream, PERSPECTIVE_NAME);
@@ -249,8 +250,8 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
     rewindCheck.Parameters.AddWithValue("persp", PERSPECTIVE_NAME);
     await using var reader = await rewindCheck.ExecuteReaderAsync();
     await Assert.That(await reader.ReadAsync()).IsTrue();
-    await Assert.That(reader.IsDBNull(0)).IsTrue();
-    await Assert.That(reader.IsDBNull(1)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(0)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
   }
 
   [Test]

@@ -25,10 +25,10 @@ namespace Whizbang.Core.Tests.Lifecycle;
 [Category("Core")]
 [Category("Lifecycle")]
 public class LifecycleTrackingStateCoverageTests {
-  private sealed record _probeEvent(string Data) : IEvent;
+  private sealed record ProbeEvent(string Data) : IEvent;
 
   /// <summary>Records every stage it is asked to invoke; must NEVER be called in this scenario.</summary>
-  private sealed class _recordingInvoker : IReceptorInvoker {
+  private sealed class RecordingInvoker : IReceptorInvoker {
     public List<LifecycleStage> Stages { get; } = [];
 
     public ValueTask InvokeAsync(
@@ -46,7 +46,7 @@ public class LifecycleTrackingStateCoverageTests {
   /// initial null-check into the detached branch) and hands out a scope factory whose scopes are
   /// deliberately empty.
   /// </summary>
-  private sealed class _outerProvider(IReceptorInvoker invoker, IServiceScopeFactory scopeFactory) : IServiceProvider {
+  private sealed class OuterProvider(IReceptorInvoker invoker, IServiceScopeFactory scopeFactory) : IServiceProvider {
     public object? GetService(Type serviceType) {
       if (serviceType == typeof(IReceptorInvoker)) {
         return invoker;
@@ -58,25 +58,25 @@ public class LifecycleTrackingStateCoverageTests {
     }
   }
 
-  private sealed class _gapScopeFactory : IServiceScopeFactory {
-    public IServiceScope CreateScope() => new _gapScope();
+  private sealed class GapScopeFactory : IServiceScopeFactory {
+    public IServiceScope CreateScope() => new GapScope();
   }
 
   /// <summary>A freshly-created scope whose provider resolves nothing — the detached-scope gap.</summary>
-  private sealed class _gapScope : IServiceScope {
-    public IServiceProvider ServiceProvider { get; } = new _emptyProvider();
+  private sealed class GapScope : IServiceScope {
+    public IServiceProvider ServiceProvider { get; } = new EmptyProvider();
     public void Dispose() { }
   }
 
-  private sealed class _emptyProvider : IServiceProvider {
+  private sealed class EmptyProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
   }
 
   [Test]
   public async Task DetachedStage_ScopeFactoryProducesAScopeWithNoInvoker_SkipsWithoutInvokingAsync() {
-    var outerInvoker = new _recordingInvoker();
-    var provider = new _outerProvider(outerInvoker, new _gapScopeFactory());
-    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), new _probeEvent("payload"), []);
+    var outerInvoker = new RecordingInvoker();
+    var provider = new OuterProvider(outerInvoker, new GapScopeFactory());
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), new ProbeEvent("payload"), []);
     var tracking = new LifecycleTrackingState(
       eventId: Guid.NewGuid(),
       envelope: envelope,

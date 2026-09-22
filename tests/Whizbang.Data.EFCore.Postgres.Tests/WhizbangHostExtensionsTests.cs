@@ -35,19 +35,7 @@ public class WhizbangHostExtensionsTests {
   private sealed class FakeInitializedContext;
 
   [Before(Test)]
-  public void ResetStaticState() {
-    var initializersField = typeof(DbContextInitializationRegistry)
-        .GetField("_initializers", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var list = (System.Collections.IList)initializersField.GetValue(null)!;
-    list.Clear();
-
-    // The pre-#620 process-wide flag. The guard is now keyed per service provider (a weak table
-    // that fresh hosts never collide in), so this only matters for a build that still carries the
-    // flag — tolerated rather than required.
-    typeof(DbContextInitializationRegistry)
-        .GetField("_initialized", BindingFlags.Static | BindingFlags.NonPublic)
-        ?.SetValue(null, 0);
-  }
+  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
 
   private static IHost _host() => new HostBuilder()
       .ConfigureServices(services => services.AddLogging())

@@ -25,7 +25,7 @@ public class RabbitMqDeadLetterDrainerCoverageTests {
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);
 
-  // The drain loop's catch(Exception) recovery arm (nack + end pass) exists for RECOVERABLE
+  // The drain loop's generic-exception recovery arm (nack + end pass) exists for RECOVERABLE
   // import failures. A canceled import (e.g. host shutdown mid-drain) must rethrow immediately
   // instead of being folded into that arm — otherwise an orderly shutdown would look, from the
   // caller's perspective, like an ordinary import failure, and would nack a message that was

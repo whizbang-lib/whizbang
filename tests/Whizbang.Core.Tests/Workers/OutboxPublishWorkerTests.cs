@@ -45,9 +45,9 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public TaskCompletionSource<Guid> FirstId { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<Guid> AllIds { get; } = [];
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
-      FirstId.TrySetResult(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
+      FirstId.TrySetResult(outboxMessageId);
       return ValueTask.CompletedTask;
     }
   }
@@ -55,7 +55,7 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, MessageFailure f)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       FirstFailure.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -65,7 +65,7 @@ public class OutboxPublishWorkerTests {
   private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
     public TaskCompletionSource<Guid> FirstRenewal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory cat, Guid id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
       All.Add((category, id));
       FirstRenewal.TrySetResult(id);
       return ValueTask.CompletedTask;
@@ -78,8 +78,8 @@ public class OutboxPublishWorkerTests {
     public TaskCompletionSource<OutboxWork> FirstPublished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<OutboxWork> Published { get; } = [];
 
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(ReadyValue);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(ReadyValue);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Add(work);
       FirstPublished.TrySetResult(work);
       return Task.FromResult(new MessagePublishResult {
@@ -87,7 +87,7 @@ public class OutboxPublishWorkerTests {
         Success = !ShouldFailPublish,
         CompletedStatus = ShouldFailPublish ? work.Status : MessageProcessingStatus.Published,
         Error = ShouldFailPublish ? "simulated failure" : null,
-        Reason = ShouldFailPublish ? MessageFailureReason.Unknown : MessageFailureReason.Unknown
+        Reason = MessageFailureReason.Unknown
       });
     }
   }
@@ -97,13 +97,13 @@ public class OutboxPublishWorkerTests {
     public TaskCompletionSource<IReadOnlyList<OutboxWork>> FirstBatch { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<OutboxWork> AllPublished { get; } = [];
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(ReadyValue);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(ReadyValue);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("FakeBulkStrategy: only PublishBatchAsync should be called");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      foreach (var w in works) { AllPublished.Add(w); }
-      FirstBatch.TrySetResult(works);
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      foreach (var w in workItems) { AllPublished.Add(w); }
+      FirstBatch.TrySetResult(workItems);
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,

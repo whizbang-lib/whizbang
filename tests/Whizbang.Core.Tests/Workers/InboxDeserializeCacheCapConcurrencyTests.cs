@@ -91,15 +91,15 @@ public class InboxDeserializeCacheCapConcurrencyTests {
     /// The concurrent dictionary's own contract: it refuses to copy into an array that cannot hold
     /// what it currently has, rather than truncating.
     /// </summary>
-    public void CopyTo(KeyValuePair<Guid, InboxDeserializeCache.Entry>[] array, int index) {
+    public void CopyTo(KeyValuePair<Guid, InboxDeserializeCache.Entry>[] array, int arrayIndex) {
       ArgumentNullException.ThrowIfNull(array);
-      if (array.Length - index < _items.Count) {
+      if (array.Length - arrayIndex < _items.Count) {
         throw new ArgumentException(
-          "The index is equal to or greater than the length of the array, or the number of elements "
-          + "in the dictionary is greater than the available space from index to the end of the "
-          + "destination array.", nameof(index));
+          "The arrayIndex is equal to or greater than the length of the array, or the number of elements "
+          + "in the dictionary is greater than the available space from arrayIndex to the end of the "
+          + "destination array.", nameof(arrayIndex));
       }
-      _items.CopyTo(array, index);
+      _items.CopyTo(array, arrayIndex);
     }
 
     // Enumeration is the safe face and the one the fix has to use: it walks what is there without

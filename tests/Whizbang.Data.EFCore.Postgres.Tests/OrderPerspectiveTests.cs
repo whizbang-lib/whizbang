@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class OrderPerspectiveTests {
   private readonly IWhizbangIdProvider<TestOrderId> _orderIdProvider = TestOrderId.CreateProvider(new Uuid7IdProvider());
 
-  private DbContextOptions<TestDbContext> CreateInMemoryOptions() {
+  private static DbContextOptions<TestDbContext> CreateInMemoryOptions() {
     return new DbContextOptionsBuilder<TestDbContext>()
       .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
       .Options;

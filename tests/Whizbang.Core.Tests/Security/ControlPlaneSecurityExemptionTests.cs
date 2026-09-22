@@ -35,7 +35,7 @@ public class ControlPlaneSecurityExemptionTests {
     DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
   };
 
-  private sealed class _emptyServiceProvider : IServiceProvider {
+  private sealed class EmptyServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
   }
 
@@ -50,7 +50,7 @@ public class ControlPlaneSecurityExemptionTests {
       ToCommitSequence = 5,
     });
 
-    var result = await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("a control-plane signal carries no user scope BY DESIGN — the strict policy must pass it, not storm the logs and silence gap detection.");
@@ -59,11 +59,11 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_DomainMessage_NoScope_StillThrowsAsync() {
     var provider = _strictProvider();
-    var envelope = _unscopedEnvelope(new _plainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var envelope = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
 
     Exception? caught = null;
     try {
-      await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+      await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
     } catch (Exception ex) {
       caught = ex;
     }
@@ -86,7 +86,7 @@ public class ControlPlaneSecurityExemptionTests {
       .Because("the audit worker dispatches capped local rebuilds with no ambient user scope.");
   }
 
-  private sealed record _plainDomainEvent : IEvent {
+  private sealed record PlainDomainEvent : IEvent {
     [Whizbang.Core.StreamId]
     public Guid Sid { get; init; }
   }
@@ -108,7 +108,7 @@ public class ControlPlaneSecurityExemptionTests {
       OriginServiceId = TrackedGuid.NewMedo().Value,
     });
 
-    var result = await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(envelope, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("a repair bundle is a machine-minted control-plane container with no user identity — "
@@ -186,7 +186,7 @@ public class ControlPlaneSecurityExemptionTests {
     };
     var outer = _unscopedEnvelope((object)innerShell);
 
-    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("the wrapper's generic argument names the control-plane message even when no payload "
@@ -202,7 +202,7 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_NestedEnvelopeShellCarryingDomainMessage_StillThrowsAsync() {
     var provider = _strictProvider();
-    var innerShell = new MessageEnvelope<_plainDomainEvent> {
+    var innerShell = new MessageEnvelope<PlainDomainEvent> {
       MessageId = MessageId.New(),
       Payload = null!,
       Hops = [],
@@ -215,7 +215,7 @@ public class ControlPlaneSecurityExemptionTests {
 
     Exception? caught = null;
     try {
-      await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+      await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
     } catch (Exception ex) {
       caught = ex;
     }
@@ -234,7 +234,7 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_SubclassedEnvelopeShell_ResolvesThroughTheBaseTypeAsync() {
     var provider = _strictProvider();
-    var innerShell = new _derivedEnvelope {
+    var innerShell = new DerivedEnvelope {
       MessageId = MessageId.New(),
       Payload = null!,
       Hops = [],
@@ -245,7 +245,7 @@ public class ControlPlaneSecurityExemptionTests {
     };
     var outer = _unscopedEnvelope((object)innerShell);
 
-    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("the message type sits on the base envelope; a resolver that only inspects the "
@@ -260,11 +260,11 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_NonGenericEnvelopeShell_FailsClosedAsync() {
     var provider = _strictProvider();
-    var outer = _unscopedEnvelope((object)new _nonGenericEnvelope());
+    var outer = _unscopedEnvelope((object)new NonGenericEnvelope());
 
     Exception? caught = null;
     try {
-      await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+      await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
     } catch (Exception ex) {
       caught = ex;
     }
@@ -275,10 +275,10 @@ public class ControlPlaneSecurityExemptionTests {
   }
 
   /// <summary>Consumer-style subclass: the message type lives on the base, not here.</summary>
-  private sealed class _derivedEnvelope : MessageEnvelope<RedeliveryComposite>;
+  private sealed class DerivedEnvelope : MessageEnvelope<RedeliveryComposite>;
 
   /// <summary>An envelope with no message-type argument at all.</summary>
-  private sealed class _nonGenericEnvelope : IMessageEnvelope {
+  private sealed class NonGenericEnvelope : IMessageEnvelope {
     public int Version => 1;
     public MessageDispatchContext DispatchContext { get; } = new() {
       Mode = Whizbang.Core.Dispatch.DispatchModes.Local,
@@ -325,7 +325,7 @@ public class ControlPlaneSecurityExemptionTests {
     });
     var outer = _unscopedEnvelope((object)inner);
 
-    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("the marker is on the INNER payload — an exemption that only inspects the outer "
@@ -341,12 +341,12 @@ public class ControlPlaneSecurityExemptionTests {
   [Test]
   public async Task StrictPolicy_NestedEnvelopeCarryingDomainMessage_StillThrowsAsync() {
     var provider = _strictProvider();
-    var inner = _unscopedEnvelope(new _plainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var inner = _unscopedEnvelope(new PlainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
     var outer = _unscopedEnvelope((object)inner);
 
     Exception? caught = null;
     try {
-      await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+      await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
     } catch (Exception ex) {
       caught = ex;
     }
@@ -374,7 +374,7 @@ public class ControlPlaneSecurityExemptionTests {
     var middle = _unscopedEnvelope((object)innermost);
     var outer = _unscopedEnvelope((object)middle);
 
-    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+    var result = await provider.EstablishContextAsync(outer, new EmptyServiceProvider());
 
     await Assert.That(result).IsNull()
       .Because("peeling exactly one layer would leave the same defect one level deeper — the "

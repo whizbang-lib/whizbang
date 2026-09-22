@@ -354,7 +354,7 @@ public class ImmediateDetachedDrainerTests {
     drainer.Enqueue(_createEnvelope(new TestMessage("test")));
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(

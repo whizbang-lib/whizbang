@@ -51,23 +51,18 @@ public class TransportConsumerWorkerDropGateTests {
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
       _firstBatchSubscribe.TrySetResult();
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
-    public void Dispose() { }
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
       if (_batchHandler is null) {
@@ -76,7 +71,7 @@ public class TransportConsumerWorkerDropGateTests {
       await _batchHandler(batch, CancellationToken.None);
     }
 
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -177,7 +172,7 @@ public class TransportConsumerWorkerDropGateTests {
       new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
     ]);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
       .Because("Drop gate must skip storage entirely for messages with no local consumer.");
@@ -248,7 +243,7 @@ public class TransportConsumerWorkerDropGateTests {
       new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
     ]);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
       .Because("Drop gate must consult the runtime registry too — when a runtime receptor exists for the inner type, the message must NOT be dropped even when compile-time HasAnyConsumer reports false.");
@@ -305,7 +300,7 @@ public class TransportConsumerWorkerDropGateTests {
       new TransportMessage(_makeEnvelope(), WRAPPER_ENVELOPE_TYPE),
     ]);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
       .Because("All 3 messages must reach StoreInboxMessagesAsync when the registry reports a consumer.");
@@ -382,7 +377,7 @@ public class TransportConsumerWorkerDropGateTests {
       new TransportMessage(_makeEnvelope(), compositeEnvelopeType),
     ]);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(3)
       .Because("The no-consumer gate must exempt composites — nothing consumes the composite type itself, " +

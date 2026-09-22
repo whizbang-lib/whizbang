@@ -79,21 +79,13 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
   private sealed class CascadeTrackingTestDispatcher(
     IServiceProvider serviceProvider,
     IScopedEventTracker? tracker = null,
-    IStreamIdExtractor? streamIdExtractor = null,
-    Func<object, (object message, DispatchModes mode)>? cascadeResult = null) : Core.Dispatcher(
+    IStreamIdExtractor? streamIdExtractor = null) : Core.Dispatcher(
         serviceProvider,
         new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
         streamIdExtractor: streamIdExtractor,
         scopedEventTracker: tracker) {
-    private readonly Func<object, (object message, DispatchModes mode)>? _cascadeResult = cascadeResult;
     private readonly List<object> _localInvocations = [];
     private readonly Lock _lock = new();
-
-    public List<object> GetLocalInvocations() {
-      lock (_lock) {
-        return [.. _localInvocations];
-      }
-    }
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle CascadeTrackingCommand -> Routed<CascadeTrackingEvent>

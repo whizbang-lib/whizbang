@@ -156,7 +156,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act — flush with no event subscriber
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — should succeed
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -578,7 +578,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       _flushSignal.Release();
@@ -603,7 +603,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       _flushSignal.Release();
       return Task.CompletedTask;
@@ -623,7 +623,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   private sealed class BatchFullCoverageThrowingCoordinator : IWorkCoordinator {
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
@@ -635,7 +635,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());

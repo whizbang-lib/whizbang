@@ -111,7 +111,7 @@ public class TableStatisticsCollectorTests {
                + "is indistinguishable from a lean table");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   #region Test Fakes

@@ -36,8 +36,6 @@ namespace Whizbang.Core.Workers;
 /// <docs>internals/stream-affinity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerStreamSerializerTests.cs</tests>
 public sealed class PerStreamSerializer<T> : IAsyncDisposable {
-  private static readonly Guid _defaultStreamKey = Guid.Empty;
-
   private readonly Func<T, Guid?> _streamIdSelector;
   private readonly Func<T, CancellationToken, Task> _processor;
   private readonly PerStreamSerializerOptions _options;
@@ -76,7 +74,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     _logger = logger;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
-      _ => _ = _runIdleSweepAsync(),
+      state => _ = _runIdleSweepAsync(),
       state: null,
       dueTime: _options.IdleSweepInterval,
       period: _options.IdleSweepInterval);
@@ -91,7 +89,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   /// </summary>
   public async ValueTask EnqueueAsync(T item, CancellationToken cancellationToken = default) {
     ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-    var key = _streamIdSelector(item) ?? _defaultStreamKey;
+    var key = _streamIdSelector(item) ?? Guid.Empty;
     var stream = _streams.GetOrAdd(key, k => _createStreamChannel(k));
     stream.LastActivity = _timeProvider.GetUtcNow();
     await stream.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);

@@ -465,14 +465,14 @@ public class WorkCoordinatorFlushHelperTests {
     public InboxMessage[] LastStoredInbox { get; private set; } = [];
     public int LastStoredPartitionCount { get; private set; }
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreOutboxCallCount++;
       LastStoredOutbox = messages;
       LastStoredPartitionCount = partitionCount;
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       StoreInboxCallCount++;
       LastStoredInbox = messages;
       LastStoredPartitionCount = partitionCount;

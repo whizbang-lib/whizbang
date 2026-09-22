@@ -104,10 +104,9 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     foreach (var streamId in streamIds) {
       await foreach (var envelope in _eventStore
           .ReadPolymorphicAsync(streamId, null, collectiveTypes, cancellationToken)
+          .Where(e => e.Payload is ICollectiveEvent)
           .ConfigureAwait(false)) {
-        if (envelope.Payload is ICollectiveEvent) {
-          merged.Add(envelope);
-        }
+        merged.Add(envelope);
       }
     }
     return [.. merged.OrderByMessageId()];
@@ -134,7 +133,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
         continue;
       }
       var handler = _services.GetRequiredService(entry.HandlerType);
-      var spec = entry.Invoker(handler, evt, _NoReplayQuery.Instance);
+      var spec = entry.Invoker(handler, evt, NoReplayQuery.Instance);
       model = executor.ApplyToRow(spec, model, streamId);
     }
     return model;
@@ -168,8 +167,8 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
 
   // A collective apply reaching replay is guaranteed self-referential by WHIZ106, so it never queries siblings.
   // If one does, fail loudly rather than silently produce a wrong rebuild.
-  private sealed class _NoReplayQuery : ICollectiveQuery {
-    public static readonly _NoReplayQuery Instance = new();
+  private sealed class NoReplayQuery : ICollectiveQuery {
+    public static readonly NoReplayQuery Instance = new();
     public IQueryable<PerspectiveRow<TOther>> Of<TOther>() where TOther : class =>
       throw new NotSupportedException(
         "A collective apply reached the in-memory replay path but called ICollectiveQuery.Of<>() — an apply-time " +

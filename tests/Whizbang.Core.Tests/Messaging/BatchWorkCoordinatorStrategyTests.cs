@@ -364,7 +364,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - Manual flush should work immediately
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -501,7 +501,7 @@ public class BatchWorkCoordinatorStrategyTests {
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var instanceProvider = new BatchFakeInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
 
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: fakeCoordinator,
@@ -584,7 +584,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task Constructor_WithLogger_LogsStrategyStartedAsync() {
     // Arrange & Act - values chosen to be unmistakable in the rendered line.
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: new BatchFakeWorkCoordinator(),
       instanceProvider: new BatchFakeInstanceProvider(),
@@ -618,7 +618,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueOutboxMessage_WithLogger_LogsQueuedMessageAsync() {
     // Arrange
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: new BatchFakeWorkCoordinator(),
       instanceProvider: new BatchFakeInstanceProvider(),
@@ -658,7 +658,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueInboxMessage_WithLogger_LogsQueuedMessageAsync() {
     // Arrange
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: new BatchFakeWorkCoordinator(),
       instanceProvider: new BatchFakeInstanceProvider(),
@@ -761,7 +761,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task DisposeAsync_WithLogger_LogsDisposingAndDisposedAsync() {
     // Arrange
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: new BatchFakeWorkCoordinator(),
       instanceProvider: new BatchFakeInstanceProvider(),
@@ -795,7 +795,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task DisposeAsync_WithLogger_UnflushedOperations_LogsWarningAsync() {
     // Arrange
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: new BatchFakeWorkCoordinator(),
       instanceProvider: new BatchFakeInstanceProvider(),
@@ -843,7 +843,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task DisposeAsync_WithLogger_FlushError_LogsErrorAsync() {
     // Arrange
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
       coordinator: throwingCoordinator,
@@ -1013,7 +1013,7 @@ public class BatchWorkCoordinatorStrategyTests {
     // this log line: the queued messages are gone from the buffer, nothing was written, and the
     // caller that queued them was told nothing. If the catch stopped logging, a service would
     // drop outbox work silently for as long as the failure lasted.
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
 
     var sut = new BatchWorkCoordinatorStrategy(
@@ -1092,7 +1092,7 @@ public class BatchWorkCoordinatorStrategyTests {
     // Same silent-drop exposure as the batch-size path, on the trigger that fires on LOW traffic --
     // the one a quiet service lives on, and therefore the one whose failures are least likely to be
     // noticed any other way.
-    var logger = new _batchCapturingLogger();
+    var logger = new BatchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
 
     var sut = new BatchWorkCoordinatorStrategy(
@@ -1184,7 +1184,7 @@ public class BatchWorkCoordinatorStrategyTests {
       // Act & Assert - Accept both TaskCanceledException and OperationCanceledException
       // since cancellation may manifest as either type depending on runtime/instrumentation timing
       using var cts = new CancellationTokenSource();
-      cts.Cancel();
+      await cts.CancelAsync();
       Exception? caught = null;
       try {
         await sut.FlushAndGetBatchAsync(WorkBatchOptions.None, cts.Token);
@@ -1234,7 +1234,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
       // Release the slow coordinator
       slowCoordinator.ReleaseProcessing();
-      var firstResult = await firstFlush;
+      _ = await firstFlush;
 
       // Assert - second flush returns empty because first was in progress
       await Assert.That(secondResult.OutboxWork).Count().IsEqualTo(0);
@@ -1369,7 +1369,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert - coordinator resolved through scope
       await Assert.That(scopeFactory.ScopeCreationCount).IsGreaterThanOrEqualTo(1);
@@ -1601,7 +1601,7 @@ public class BatchWorkCoordinatorStrategyTests {
       await Assert.That(firstFlushCount).IsGreaterThanOrEqualTo(1);
 
       // Second flush - queues should be empty
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(firstFlushCount)
         .Because("Second flush should be empty (no further store calls)");
     } finally {
@@ -1860,7 +1860,7 @@ public class BatchWorkCoordinatorStrategyTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -1906,7 +1906,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       TotalOutboxMessagesReceived += messages.Length;
@@ -1933,7 +1933,7 @@ public class BatchWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       _flushSignal.Release();
@@ -1968,7 +1968,7 @@ public class BatchWorkCoordinatorStrategyTests {
   private sealed class BatchThrowingWorkCoordinator : IWorkCoordinator {
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("Simulated flush error");
     }
@@ -1981,7 +1981,7 @@ public class BatchWorkCoordinatorStrategyTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -2005,12 +2005,12 @@ public class BatchWorkCoordinatorStrategyTests {
     }
 
     public void ReleaseProcessing() {
-      try { _releaseProcessing.Release(); } catch (SemaphoreFullException) { }
+      try { _releaseProcessing.Release(); } catch (SemaphoreFullException) { /* the assertion decides the outcome, not this failure */ }
     }
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       _processingStarted.Release();
       await _releaseProcessing.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
@@ -2024,7 +2024,7 @@ public class BatchWorkCoordinatorStrategyTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -2087,7 +2087,7 @@ public class BatchWorkCoordinatorStrategyTests {
   /// out of the buffer, the fault that ended a shutdown flush), and the event id alone does not
   /// pin whether that value is actually in the line an operator reads.
   /// </remarks>
-  private sealed class _batchCapturingLogger : ILogger<BatchWorkCoordinatorStrategy> {
+  private sealed class BatchCapturingLogger : ILogger<BatchWorkCoordinatorStrategy> {
     private readonly List<(int EventId, LogLevel Level, string Message, Exception? Exception)> _entries = [];
     private readonly Dictionary<int, TaskCompletionSource> _waiters = [];
 

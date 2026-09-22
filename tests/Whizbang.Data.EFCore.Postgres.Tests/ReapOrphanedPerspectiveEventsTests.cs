@@ -148,7 +148,7 @@ public class ReapOrphanedPerspectiveEventsTests : EFCoreTestBase {
     await using var cmd = c.CreateCommand();
     cmd.CommandText = "SELECT 1 FROM perform_maintenance()";
     await using var r = await cmd.ExecuteReaderAsync();
-    while (await r.ReadAsync()) { }
+    while (await r.ReadAsync()) { /* drain */ }
   }
 
   [Test]

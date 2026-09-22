@@ -162,10 +162,7 @@ public class SecurityContextHelperTests {
       .Because("Value set in helper after yield doesn't flow to sibling calls");
   }
 
-  private static async ValueTask _setContextAfterYieldAsync(IScopeContext context) {
-    await Task.Yield();
-    ScopeContextAccessor.CurrentContext = context;
-  }
+  private static ValueTask _setContextAfterYieldAsync(IScopeContext context) => _setCurrentContextAfterAwaitHelperAsync(context);
 
   private static async ValueTask _readContextAsync(Action<IScopeContext?> callback) {
     await Task.Yield();
@@ -1382,25 +1379,6 @@ public class SecurityContextHelperTests {
     return services.BuildServiceProvider();
   }
 
-  private static ServiceProvider _createServiceProviderWithBothAccessors(
-      SecurityExtraction extraction,
-      ScopeContextAccessor scopeAccessor,
-      MessageContextAccessor messageContextAccessor) {
-    var services = new ServiceCollection();
-    services.TryAddWhizbangDefaults();
-
-    var provider = new DefaultMessageSecurityContextProvider(
-      extractors: [new TestExtractor(100, extraction)],
-      callbacks: [],
-      options: new MessageSecurityOptions { AllowAnonymous = true }
-    );
-    services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
-    services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
-
-    return services.BuildServiceProvider();
-  }
-
   private static MessageEnvelope<TMessage> _createTestEnvelope<TMessage>(
       TMessage payload,
       DateTimeOffset? timestamp = null) where TMessage : notnull {
@@ -1630,7 +1608,7 @@ public class SecurityContextHelperTests {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddLogging();
-    var sp = services.BuildServiceProvider();
+    _ = services.BuildServiceProvider();
 
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { TenantId = "explicit-t", UserId = "explicit-u" },

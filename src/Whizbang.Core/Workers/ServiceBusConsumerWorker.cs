@@ -33,7 +33,6 @@ namespace Whizbang.Core.Workers;
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
-  JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
   // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
@@ -69,7 +68,6 @@ public partial class ServiceBusConsumerWorker(
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
@@ -557,6 +555,13 @@ public partial class ServiceBusConsumerWorker(
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid messageId);
 
+  [LoggerMessage(
+    EventId = 24,
+    Level = LogLevel.Error,
+    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
+  )]
+  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
+
   /// <summary>
   /// Checks if the given message type is an event type that has NO associated perspectives.
   /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
@@ -883,13 +888,6 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBus created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
   )]
   static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
-
-  [LoggerMessage(
-    EventId = 24,
-    Level = LogLevel.Error,
-    Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
-  )]
-  private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
 
   [LoggerMessage(
     EventId = 25,

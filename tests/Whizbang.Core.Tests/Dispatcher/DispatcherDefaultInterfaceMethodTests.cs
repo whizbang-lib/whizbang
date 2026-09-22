@@ -42,6 +42,23 @@ public class DispatcherDefaultInterfaceMethodTests {
     public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options)
         => throw new NotImplementedException();
 
+    public Task<IDeliveryReceipt> SendAsync(
+        object message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
+        => throw new NotImplementedException();
+
+    public Task<IDeliveryReceipt> SendAsync(
+        object message,
+        IMessageContext context,
+        DispatchOptions options,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
+        => throw new NotImplementedException();
+
     public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull
         => throw new NotImplementedException();
 
@@ -58,6 +75,40 @@ public class DispatcherDefaultInterfaceMethodTests {
         => throw new NotImplementedException();
 
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options)
+        => throw new NotImplementedException();
+
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(
+        TMessage message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
+        where TMessage : notnull
+        => throw new NotImplementedException();
+
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(
+        object message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
+        => throw new NotImplementedException();
+
+    public ValueTask LocalInvokeAsync<TMessage>(
+        TMessage message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
+        where TMessage : notnull
+        => throw new NotImplementedException();
+
+    public ValueTask LocalInvokeAsync(
+        object message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
         => throw new NotImplementedException();
 
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message)
@@ -77,6 +128,14 @@ public class DispatcherDefaultInterfaceMethodTests {
         => throw new NotImplementedException();
 
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options)
+        => throw new NotImplementedException();
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+        object message,
+        IMessageContext context,
+        string callerMemberName = "",
+        string callerFilePath = "",
+        int callerLineNumber = 0)
         => throw new NotImplementedException();
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData)
@@ -116,64 +175,6 @@ public class DispatcherDefaultInterfaceMethodTests {
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages)
         => throw new NotImplementedException();
 
-    public Task<IDeliveryReceipt> SendAsync(
-        object message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        => throw new NotImplementedException();
-
-    public Task<IDeliveryReceipt> SendAsync(
-        object message,
-        IMessageContext context,
-        DispatchOptions options,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        => throw new NotImplementedException();
-
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(
-        TMessage message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        where TMessage : notnull
-        => throw new NotImplementedException();
-
-    public ValueTask<TResult> LocalInvokeAsync<TResult>(
-        object message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        => throw new NotImplementedException();
-
-    public ValueTask LocalInvokeAsync<TMessage>(
-        TMessage message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        where TMessage : notnull
-        => throw new NotImplementedException();
-
-    public ValueTask LocalInvokeAsync(
-        object message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        => throw new NotImplementedException();
-
-    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
-        object message,
-        IMessageContext context,
-        string callerMemberName = "",
-        string callerFilePath = "",
-        int callerLineNumber = 0)
-        => throw new NotImplementedException();
   }
 
   // The three timeout-based overloads below are [Obsolete]; CS0618 is escalated to

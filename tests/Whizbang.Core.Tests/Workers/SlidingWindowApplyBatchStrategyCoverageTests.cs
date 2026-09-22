@@ -20,7 +20,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
 
   /// <summary>Captures error-level messages — used to prove a shutdown-forced cancellation of an
   /// in-flight flush is never mistaken for a flush failure.</summary>
-  private sealed class _recordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+  private sealed class RecordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
     private readonly Lock _lock = new();
     private readonly List<string> _errors = [];
 
@@ -50,7 +50,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
   public async Task FlushAndStopAsync_CallerTokenFiresWhileFlushIsHung_ForceCancelsWithoutLoggingFailureAsync(
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
 
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: async (_, _, ct) => {
@@ -77,7 +77,7 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
     // own hard-cancel — rather than this call ever throwing out to us.
     await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    // Give the drain task's own catch (now unblocked by the forced cancellation) a moment to run
+    // Give the drain task's own exception handler, now unblocked by the forced cancellation, a moment to run
     // — it either returns quietly or, if regressed, logs a spurious failure.
     await Task.Delay(200, testToken);
 

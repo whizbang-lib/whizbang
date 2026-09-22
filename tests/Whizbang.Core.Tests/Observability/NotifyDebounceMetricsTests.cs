@@ -98,12 +98,8 @@ public class NotifyDebounceMetricsTests {
   }
 
   private static string _payloadKind(ReadOnlySpan<KeyValuePair<string, object?>> tags) {
-    foreach (var t in tags) {
-      if (string.Equals(t.Key, "payload_kind", StringComparison.Ordinal)) {
-        return t.Value?.ToString() ?? "";
-      }
-    }
-    return "";
+    var match = tags.ToArray().FirstOrDefault(t => string.Equals(t.Key, "payload_kind", StringComparison.Ordinal));
+    return match.Value?.ToString() ?? "";
   }
 
   [Test]

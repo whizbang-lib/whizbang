@@ -33,14 +33,14 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task LocalGaps_ReportAndDispatchCappedRebuildsAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [
         new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 },
         new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "ItemsPerspective", EventCount = 3 },
       ]
     };
-    var dispatcher = new _captureDispatcher();
-    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRebuildsPerAudit = 1 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -57,11 +57,11 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task ReportOnly_ReportsGapsWithoutRebuildingAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
-    var dispatcher = new _captureDispatcher();
-    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -74,14 +74,14 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task KnownOrigins_GetDirectedManifestRequestsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     var originA = TrackedGuid.NewMedo().Value;
     var originB = TrackedGuid.NewMedo().Value;
     tracker.RecordCheckpoint(originA, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     tracker.RecordCheckpoint(originB, "origin-b", DateTimeOffset.UtcNow);
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -110,14 +110,14 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task ClaimDenied_SkipsTheWholeCycleAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }],
       AuditClaimResult = false,
     };
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, dispatcher, transport, new StreamIntegrityOptions(), tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -133,11 +133,11 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task ClaimGranted_RunsAndPassesHalfTheIntervalAsWindowAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { AuditIntervalMinutes = 60 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -155,11 +155,11 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task DefaultCycle_RequestsTypeLevelTableManifests_NoVerifyAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -174,11 +174,11 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task SweepCycle_ForcesRecomputeAndVerifiesDigestTableAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -194,11 +194,11 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task SweepDisabled_NeverVerifiesAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -217,10 +217,10 @@ public class IntegrityAuditWorkerTests {
     // Manifest answers trust seals without re-verifying (the whole point of the epochs); the
     // sweep is therefore the ONE place a bad seal gets caught. A sweep that verified only the
     // digest table would leave every epoch-served answer trusting rows nothing ever re-checks.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -231,10 +231,10 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task SteadyCycle_NeverVerifiesEpochsAsync() {
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -249,12 +249,12 @@ public class IntegrityAuditWorkerTests {
     // — otherwise the full-store recompute runs on BOTH cadences, and the counter lands it at
     // arbitrary load times, which is exactly what the idle-time cron exists to end. The counter
     // remains only as the fallback for hosts without the temporal engine.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sweepState = new IntegritySweepScheduleState { CronActive = true };
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, sweepState: sweepState);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -269,11 +269,11 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task RunSweepOnceAsync_ForcesTheFullSweep_RegardlessOfTheCounterAsync() {
     // The entry point the scheduled occurrence's receptor calls at the configured idle hour.
-    var coordinator = new _auditCoordinator();
+    var coordinator = new AuditCoordinator();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 0 }, tracker,
       sweepState: new IntegritySweepScheduleState { CronActive = true });
 
@@ -293,11 +293,11 @@ public class IntegrityAuditWorkerTests {
   public async Task DefaultCycle_AsksWindowed_FromTheStoredSealAsync() {
     // The seal is the consumer's "verified through here" watermark per origin. Asking from it is
     // what stops every audit from re-shipping and re-verifying history that already proved clean.
-    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var coordinator = new AuditCoordinator { SealedThrough = 123 };
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new StreamIntegrityOptions(), tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -312,11 +312,11 @@ public class IntegrityAuditWorkerTests {
   public async Task SweepCycle_AsksFullHistory_NotWindowedAsync() {
     // The sweep is trust-but-verify: it exists to catch exactly the state the seals assume is
     // fine. A windowed sweep would only re-verify what the seals already cover — circular trust.
-    var coordinator = new _auditCoordinator { SealedThrough = 123 };
+    var coordinator = new AuditCoordinator { SealedThrough = 123 };
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport,
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport,
       new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -355,12 +355,12 @@ public class IntegrityAuditWorkerTests {
     });
     listener.Start();
 
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [new PerspectiveCoverageGap { StreamId = TrackedGuid.NewMedo().Value, PerspectiveName = "OrdersPerspective", EventCount = 7 }]
     };
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1 }, tracker, metrics);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -383,15 +383,15 @@ public class IntegrityAuditWorkerTests {
     // must be bounded — an unbounded report loop flooded a live consumer's dispatcher at startup
     // and crashlooped the pod (probe timeout). Detection is still complete: the summary names the
     // total; the remainder re-audits next cycle after repairs shrink it.
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       Gaps = [.. Enumerable.Range(0, 500).Select(_ => new PerspectiveCoverageGap {
         StreamId = TrackedGuid.NewMedo().Value,
         PerspectiveName = "FloodedPerspective",
         EventCount = 2,
       })]
     };
-    var dispatcher = new _captureDispatcher();
-    var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 100 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -404,8 +404,8 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   public async Task CoverageGapQuery_IsBoundedByTheReportCapAsync() {
-    var coordinator = new _auditCoordinator();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var coordinator = new AuditCoordinator();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 42 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
@@ -497,7 +497,7 @@ public class IntegrityAuditWorkerTests {
   [Test]
   public async Task DigestDrift_IsCountedByKindSoHealingIsAttributableAsync() {
     var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       DigestResult = new DigestVerificationResult {
         BucketsChecked = 7,
         DriftUpdated = 2,
@@ -505,8 +505,8 @@ public class IntegrityAuditWorkerTests {
         DriftAdded = 3,
       },
     };
-    var logger = new _messageLogger();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
       logger: logger);
 
@@ -524,7 +524,7 @@ public class IntegrityAuditWorkerTests {
     // silence, the other is "something was wrong and I fixed it". Reporting a clean sweep through
     // the drift counters would show permanent healing activity against a healthy system.
     var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       DigestResult = new DigestVerificationResult {
         BucketsChecked = 5,
         DriftUpdated = 0,
@@ -532,8 +532,8 @@ public class IntegrityAuditWorkerTests {
         DriftAdded = 0,
       },
     };
-    var logger = new _messageLogger();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
       logger: logger);
 
@@ -551,9 +551,9 @@ public class IntegrityAuditWorkerTests {
     // fold above them. Collapsing the two would tell an operator the wrong thing about which
     // level of the digest is disagreeing.
     var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(4, 2) };
-    var logger = new _messageLogger();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var coordinator = new AuditCoordinator { EpochResult = new EpochVerificationResult(4, 2) };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
       logger: logger);
 
@@ -571,9 +571,9 @@ public class IntegrityAuditWorkerTests {
     // working, the second is evidence it is not running. Only a non-zero checked count separates
     // them, which is why this branch is guarded on EpochsChecked rather than on drift alone.
     var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
-    var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(6, 0) };
-    var logger = new _messageLogger();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+    var coordinator = new AuditCoordinator { EpochResult = new EpochVerificationResult(6, 0) };
+    var logger = new MessageLogger();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
       logger: logger);
 
@@ -585,7 +585,7 @@ public class IntegrityAuditWorkerTests {
   }
 
   /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
-  private sealed class _messageLogger : ILogger<IntegrityAuditWorker> {
+  private sealed class MessageLogger : ILogger<IntegrityAuditWorker> {
     private readonly List<string> _messages = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -599,7 +599,7 @@ public class IntegrityAuditWorkerTests {
   }
 
   private static IntegrityAuditWorker _buildWorker(
-      _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
+      AuditCoordinator coordinator, CaptureDispatcher dispatcher, CaptureTransport transport,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
@@ -614,8 +614,8 @@ public class IntegrityAuditWorkerTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker ?? new IntegrityGapTracker());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     var consumerOptions = new TransportConsumerOptions();
@@ -629,11 +629,11 @@ public class IntegrityAuditWorkerTests {
       logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(AuditProbeEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -646,7 +646,7 @@ public class IntegrityAuditWorkerTests {
     };
   }
 
-  private sealed class _auditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class AuditCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<PerspectiveCoverageGap> Gaps { get; init; } = [];
     public int VerifyCalls { get; private set; }
     public int? LastMaxGaps { get; private set; }
@@ -697,7 +697,7 @@ public class IntegrityAuditWorkerTests {
     }
   }
 
-  private sealed class _captureDispatcher : FakeDispatcher, IDispatcher {
+  private sealed class CaptureDispatcher : FakeDispatcher, IDispatcher {
     public List<object> Published { get; } = [];
     public List<object> Sent { get; } = [];
 
@@ -712,7 +712,7 @@ public class IntegrityAuditWorkerTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -745,16 +745,16 @@ public class IntegrityAuditWorkerTests {
   /// Completes when a chosen <c>EventId</c> is logged — the deterministic "ExecuteAsync reached
   /// this branch" signal for a worker whose branch has no other observable effect.
   /// </summary>
-  private sealed class _eventIdSignalLogger(int eventId) : ILogger<IntegrityAuditWorker> {
+  private sealed class EventIdSignalLogger(int expectedEventId) : ILogger<IntegrityAuditWorker> {
     private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Seen => _seen.Task;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (id.Id == eventId) { _seen.TrySetResult(); }
+      if (eventId.Id == expectedEventId) { _seen.TrySetResult(); }
     }
   }
 
@@ -763,7 +763,7 @@ public class IntegrityAuditWorkerTests {
   /// "the worker is parked at the barrier" signal; the infinite delay then observes the stopping
   /// token exactly as the real gate's wait does.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -781,10 +781,10 @@ public class IntegrityAuditWorkerTests {
   public async Task ExecuteAsync_AuditDisabled_ParksWithoutAuditingAsync(CancellationToken testToken) {
     // Disabled means disabled: the worker still runs as a hosted service (so the host's service
     // list is the same either way) but must never reach the coordinator.
-    var coordinator = new _auditCoordinator();
-    var logger = new _eventIdSignalLogger(81);  // LogDisabled — the disabled branch's first act
+    var coordinator = new AuditCoordinator();
+    var logger = new EventIdSignalLogger(81);  // LogDisabled — the disabled branch's first act
     var worker = _buildWorker(
-      coordinator, new _captureDispatcher(), new _captureTransport(),
+      coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { AuditEnabled = false },
       gate: _readyGate(), logger: logger);
 
@@ -814,10 +814,10 @@ public class IntegrityAuditWorkerTests {
   public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The audit reads integrity
     // tables that do not exist yet, so it must return rather than run or fault.
-    var coordinator = new _auditCoordinator();
-    var gate = new _blockingGate();
+    var coordinator = new AuditCoordinator();
+    var gate = new BlockingGate();
     var worker = _buildWorker(
-      coordinator, new _captureDispatcher(), new _captureTransport(),
+      coordinator, new CaptureDispatcher(), new CaptureTransport(),
       new StreamIntegrityOptions { AuditEnabled = true },
       gate: gate);
 

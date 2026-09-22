@@ -35,8 +35,8 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task FirstBoot_BaselinesWholeCatalog_NoBackfillAsync() {
-    var coordinator = new _registryCoordinator();   // empty registry = first boot
-    var transport = new _captureTransport();
+    var coordinator = new RegistryCoordinator();   // empty registry = first boot
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -48,9 +48,9 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task Expansion_BroadcastsStateOnlyBackfillAndMarksRequestedAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;   // prior boot
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -78,9 +78,9 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task Disabled_RecordsPendingWithoutRequestingAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport,
       new StreamIntegrityOptions { BackfillOnSubscriptionGrowth = false });
 
@@ -94,7 +94,7 @@ public class SubscriptionExpansionWorkerTests {
 
   [Test]
   public async Task MissingTransport_LeavesPendingForNextBootAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
     var worker = _buildWorker(coordinator, transport: null);
 
@@ -111,7 +111,7 @@ public class SubscriptionExpansionWorkerTests {
     // must cost the pass, not the process: the expansion stays recorded and is re-detected next
     // boot, and the audit phases surface anything still pending. Faulting here would take a
     // healthy service out of rotation over a transient read.
-    var coordinator = new _registryCoordinator { FailReads = true };
+    var coordinator = new RegistryCoordinator { FailReads = true };
     var worker = _buildWorker(coordinator, transport: null);
 
     using var cts = new CancellationTokenSource();
@@ -131,8 +131,8 @@ public class SubscriptionExpansionWorkerTests {
     // A host that fails during migration stops everything it built. This worker reads registry
     // tables that may not exist yet, so it waits on the schema gate -- and a shutdown arriving
     // during that wait must not be reported as a reconcile failure.
-    var coordinator = new _registryCoordinator();
-    var gate = new _blockingGate();
+    var coordinator = new RegistryCoordinator();
+    var gate = new BlockingGate();
     var worker = _buildWorker(coordinator, transport: null, gate: gate);
 
     using var cts = new CancellationTokenSource();
@@ -156,7 +156,7 @@ public class SubscriptionExpansionWorkerTests {
   }
 
   /// <summary>A gate that never opens, and reports when the worker began waiting on it.</summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _waitEntered =
       new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -173,16 +173,16 @@ public class SubscriptionExpansionWorkerTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static SubscriptionExpansionWorker _buildWorker(
-      _registryCoordinator coordinator, _captureTransport? transport, StreamIntegrityOptions? options = null,
+      RegistryCoordinator coordinator, CaptureTransport? transport, StreamIntegrityOptions? options = null,
       ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
     }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("expanded-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanded-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -194,11 +194,11 @@ public class SubscriptionExpansionWorkerTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(ExpandedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -212,7 +212,7 @@ public class SubscriptionExpansionWorkerTests {
   }
 
   /// <summary>In-memory consumed-type registry with the production status semantics.</summary>
-  private sealed class _registryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
 
     /// <summary>Set to make the registry read throw, as a database outage at startup would.</summary>
@@ -242,7 +242,7 @@ public class SubscriptionExpansionWorkerTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

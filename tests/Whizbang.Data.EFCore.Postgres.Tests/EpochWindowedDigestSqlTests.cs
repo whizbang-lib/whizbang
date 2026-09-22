@@ -40,7 +40,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task _setWidthAsync(NpgsqlConnection conn, long width) {
@@ -175,7 +175,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
     await _corruptEpochAsync(conn, TYPE, 0, lo: 111, hi: 222);
     await _corruptEpochAsync(conn, TYPE, 1, lo: 333, hi: 444);
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e250);
+    var (Lo, _) = await _expectedFoldAsync(conn, e250);
 
     var result = await coordinator.ComputeTypeDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 0, untilSequence: null, TimeSpan.FromHours(1));
@@ -226,7 +226,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
     await _corruptEpochAsync(conn, TYPE, 0, lo: 111, hi: 222);
     await _corruptEpochAsync(conn, TYPE, 1, lo: 333, hi: 444);
-    var (Lo, Hi) = await _expectedFoldAsync(conn, e10, e150);
+    var (Lo, _) = await _expectedFoldAsync(conn, e10, e150);
 
     var result = await coordinator.ComputeTypeDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 6, untilSequence: 151, TimeSpan.FromHours(1));
@@ -317,7 +317,7 @@ public class EpochWindowedDigestSqlTests : EFCoreTestBase {
     await _seedAsync(conn, stream, inside, TYPE, 20);
     await _seedAsync(conn, stream, above, TYPE, 30);
 
-    var (Lo, Hi) = await _expectedFoldAsync(conn, inside);
+    var (Lo, _) = await _expectedFoldAsync(conn, inside);
     var result = await coordinator.ComputeStreamDigestsWindowedAsync(
       null, [TYPE], sinceSequence: 15, untilSequence: 25, resumeAfterStreamId: null,
       maxDigests: 100, TimeSpan.FromHours(1));

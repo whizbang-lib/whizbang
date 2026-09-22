@@ -116,7 +116,7 @@ public class MutationEndpointLifecycleTests {
     var endpoint = new CancellationAwareMutationEndpoint();
     var command = new CancellableCommand();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

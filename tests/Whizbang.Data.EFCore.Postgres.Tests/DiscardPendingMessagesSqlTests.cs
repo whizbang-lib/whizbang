@@ -67,7 +67,7 @@ public class DiscardPendingMessagesSqlTests : EFCoreTestBase {
     return (long)(await cmd.ExecuteScalarAsync())! > 0;
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx)
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx)
     => new(ctx, new JsonSerializerOptions());
 
   [Test]

@@ -17,7 +17,7 @@ public class SchemaReadyHealthCheckTests {
   private sealed class FakeGate(bool ready) : ISchemaReadyGate {
     public bool IsReady { get; private set; } = ready;
     public void MarkReady() => IsReady = true;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) =>
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
       IsReady ? Task.CompletedTask : Task.Delay(Timeout.Infinite, cancellationToken);
   }
 

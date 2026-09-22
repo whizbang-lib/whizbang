@@ -30,22 +30,22 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard2")]
 public class IntegritySweepSchedulingTests {
 
-  private sealed class _captureScheduleManager : IScheduleManager {
+  private sealed class CaptureScheduleManager : IScheduleManager {
     public ScheduleDefinition? Created;
-    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken ct = default) {
+    public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
       Created = definition;
       return Task.FromResult(new ScheduleHandle(TrackedGuid.NewMedo().Value, DateTimeOffset.UtcNow, WasCreated: true));
     }
-    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }
 
   /// <summary>Captures the receptor's log lines so "the guard returned" is observable — the firing
   /// line is emitted only once a runner has been resolved.</summary>
-  private sealed class _recordingLogger : ILogger<ScheduledIntegritySweepReceptor> {
+  private sealed class RecordingLogger : ILogger<ScheduledIntegritySweepReceptor> {
     public List<string> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -55,7 +55,7 @@ public class IntegritySweepSchedulingTests {
       Entries.Add(formatter(state, exception));
   }
 
-  private sealed class _runner : IIntegritySweepRunner {
+  private sealed class Runner : IIntegritySweepRunner {
     public int Runs;
     public Task RunSweepOnceAsync(CancellationToken cancellationToken) {
       Runs++;
@@ -63,7 +63,7 @@ public class IntegritySweepSchedulingTests {
     }
   }
 
-  private sealed class _instanceProvider(string name) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string name) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => name;
     public string HostName => "test-host";
@@ -78,7 +78,7 @@ public class IntegritySweepSchedulingTests {
 
   /// <summary>Records what <see cref="ScheduledIntegritySweepReceptorRegistrar"/> registered and
   /// where — the whole contract of a runtime-registered receptor is which stages it reaches.</summary>
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       Registered.Add((typeof(TMessage), stage));
@@ -88,14 +88,14 @@ public class IntegritySweepSchedulingTests {
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
-  private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, _captureScheduleManager Manager)
+  private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, CaptureScheduleManager Manager)
       _build(string? cron, bool withManager = true, string serviceName = "auditor-svc") {
     var services = new ServiceCollection();
-    var manager = new _captureScheduleManager();
+    var manager = new CaptureScheduleManager();
     if (withManager) {
       services.AddSingleton<IScheduleManager>(manager);
     }
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider(serviceName));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider(serviceName));
     var state = new IntegritySweepScheduleState();
     services.AddSingleton(state);
     var sp = services.BuildServiceProvider();
@@ -176,7 +176,7 @@ public class IntegritySweepSchedulingTests {
 
   [Test]
   public async Task SweepReceptor_RunsTheSweep_WhenTheOccurrenceFiresAsync() {
-    var runner = new _runner();
+    var runner = new Runner();
     var services = new ServiceCollection();
     services.AddSingleton<IIntegritySweepRunner>(runner);
     var sp = services.BuildServiceProvider();
@@ -192,7 +192,7 @@ public class IntegritySweepSchedulingTests {
   [Test]
   public async Task SweepReceptor_NoRunnerRegistered_IsANoOpAsync() {
     var sp = new ServiceCollection().BuildServiceProvider();
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
     var receptor = new ScheduledIntegritySweepReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
@@ -208,7 +208,7 @@ public class IntegritySweepSchedulingTests {
 
   [Test]
   public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var services = new ServiceCollection();
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();

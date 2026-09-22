@@ -120,8 +120,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       }, cts.Token);
       await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
       await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
-      cts.Cancel();
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { } catch (JsonException) { }
+      await cts.CancelAsync();
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (JsonException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
       var announced = logger.Collector.GetSnapshot().Where(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID).ToList();
       await Assert.That(announced).Count().IsEqualTo(1);

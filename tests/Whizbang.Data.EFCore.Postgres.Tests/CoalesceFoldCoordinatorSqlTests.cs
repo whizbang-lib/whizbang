@@ -108,7 +108,7 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await signaling.FoldCompleted.Task.WaitAsync(TimeSpan.FromSeconds(15));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     // ONE composite row: immediately shippable, transport-only, carrying all three inners.
@@ -119,8 +119,8 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
         WHERE message_type LIKE '%CoalescedEventsComposite%'";
       await using var reader = await read.ExecuteReaderAsync();
       await Assert.That(await reader.ReadAsync()).IsTrue().Because("the fold must insert the composite row");
-      await Assert.That(reader.IsDBNull(1)).IsTrue();
-      await Assert.That(reader.IsDBNull(2)).IsTrue();
+      await Assert.That(await reader.IsDBNullAsync(1)).IsTrue();
+      await Assert.That(await reader.IsDBNullAsync(2)).IsTrue();
       await Assert.That(reader.GetBoolean(3)).IsFalse();
       var envelope = JsonDocument.Parse(reader.GetString(4));
       var innerIds = envelope.RootElement.GetProperty("p").GetProperty("InnerEventIds")
@@ -283,13 +283,13 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => inner.StoreInboxMessagesAsync(messages, partitionCount, cancellationToken);
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 

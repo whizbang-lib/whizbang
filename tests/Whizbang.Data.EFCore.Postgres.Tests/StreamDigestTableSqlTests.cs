@@ -305,10 +305,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var connection = await _openAsync(dbContext);
 
     var streamId = Guid.NewGuid();
-    var messages = string.Join(",\n", new[] {
+    var messages = string.Join(",\n",
       _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0),
-      _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0)
-    });
+      _outboxMessage(Guid.NewGuid(), streamId, "Whizbang.Tests.DigestReclassifyEvent", flags: 0));
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     var seeded = await _digestRowAsync(connection, streamId);
@@ -337,13 +336,12 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var keptStream = Guid.NewGuid();
     var tenantStream = Guid.NewGuid();
     var ephemeralStream = Guid.NewGuid();
-    var messages = string.Join(",\n", new[] {
+    var messages = string.Join(",\n",
       _outboxMessage(Guid.NewGuid(), closedStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), closedStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), keptStream, "Whizbang.Tests.DigestSweepEvent", flags: 0),
       _outboxMessage(Guid.NewGuid(), tenantStream, "Whizbang.Tests.DigestSweepTenantEvent", flags: 0, scopeJson: """{"t":"tenant-9"}"""),
-      _outboxMessage(Guid.NewGuid(), ephemeralStream, "Whizbang.Tests.DigestSweepEphemeralEvent", flags: 8)
-    });
+      _outboxMessage(Guid.NewGuid(), ephemeralStream, "Whizbang.Tests.DigestSweepEphemeralEvent", flags: 8));
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     await using (var close = connection.CreateCommand()) {
@@ -506,7 +504,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(result.TotalDrift).IsEqualTo(3);
 
     // Healed: corrupted now matches the recompute; phantom gone; missing added.
-    var (Lo, Hi) = await _expectedDigestAsync(connection, e1);
+    var (Lo, _) = await _expectedDigestAsync(connection, e1);
     var healed = await _digestRowAsync(connection, corruptedStream);
     await Assert.That(healed!.Value.Lo).IsEqualTo(Lo);
     await Assert.That(healed.Value.Count).IsEqualTo(1);

@@ -48,8 +48,8 @@ public class AzureServiceBusHealthCheckTests {
   [Test]
   public async Task CheckHealthAsync_WithException_ReturnsUnhealthyAsync() {
     // Arrange - Use a throwing health check to simulate exception
-    var transport = new FakeTransport();
-    var healthCheck = new ThrowingHealthCheck(transport);
+    _ = new FakeTransport();
+    var healthCheck = new ThrowingHealthCheck();
     var context = new HealthCheckContext();
 
     // Act
@@ -75,8 +75,8 @@ public class AzureServiceBusHealthCheckTests {
     var transport = new TestAzureServiceBusTransport();
     var healthCheck = new AzureServiceBusHealthCheck(transport);
     var context = new HealthCheckContext();
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act - Even with canceled token, health check should complete (it's synchronous)
     var result = await healthCheck.CheckHealthAsync(context, cts.Token);
@@ -88,8 +88,8 @@ public class AzureServiceBusHealthCheckTests {
   [Test]
   public async Task CheckHealthAsync_IncludesExceptionInUnhealthyResultAsync() {
     // Arrange
-    var transport = new FakeTransport();
-    var healthCheck = new ThrowingHealthCheck(transport);
+    _ = new FakeTransport();
+    var healthCheck = new ThrowingHealthCheck();
     var context = new HealthCheckContext();
 
     // Act
@@ -145,10 +145,6 @@ internal sealed class FakeTransport : ITransport {
     throw new NotImplementedException();
   }
 
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
   public Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
@@ -167,8 +163,7 @@ internal sealed class FakeTransport : ITransport {
 /// Test helper class that simulates an exception during health check.
 /// Mimics AzureServiceBusHealthCheck's try-catch behavior.
 /// </summary>
-internal sealed class ThrowingHealthCheck(ITransport transport) : IHealthCheck {
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+internal sealed class ThrowingHealthCheck : IHealthCheck {
 
   public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {
     try {

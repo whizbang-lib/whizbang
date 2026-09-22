@@ -88,7 +88,7 @@ public class CountOutstandingWorkSqlTests : EFCoreTestBase {
     await _seedInboxAsync(conn, mine, 3, "-5 minutes", processed: false);   // lapsed-> must not count
     await _seedInboxAsync(conn, theirs, 9, "5 minutes", processed: false);  // not mine
 
-    var (Inbox, Outbox, Perspective) = await _countAsync(conn, mine);
+    var (Inbox, _, _) = await _countAsync(conn, mine);
 
     await Assert.That(Inbox).IsEqualTo(7)
       .Because("only rows this instance holds under a LIVE lease and has not finished are "

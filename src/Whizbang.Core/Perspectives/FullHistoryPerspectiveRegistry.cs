@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -29,11 +30,6 @@ public static class FullHistoryPerspectiveRegistry {
   /// <summary>Whether any registered perspective name in <paramref name="perspectiveNames"/> is full-history.</summary>
   public static bool AnyFullHistory(IEnumerable<string> perspectiveNames) {
     ArgumentNullException.ThrowIfNull(perspectiveNames);
-    foreach (var name in perspectiveNames) {
-      if (IsFullHistory(name)) {
-        return true;
-      }
-    }
-    return false;
+    return perspectiveNames.Any(IsFullHistory);
   }
 }

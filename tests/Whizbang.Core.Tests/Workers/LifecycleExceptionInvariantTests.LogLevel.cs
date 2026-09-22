@@ -38,10 +38,10 @@ public partial class LifecycleExceptionInvariantTests {
     var logger = new FakeLogger<InboxDispatchWorker>();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new _FakeServiceInstanceProvider(),
-      inboxChannelWriter: new _FakeInboxChannelWriter(),
-      handlerCommitChannel: new _FakeHandlerCommitChannel(),
-      failureChannel: new _FakeFailureChannel(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: new FakeFailureChannel(),
       schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
@@ -78,7 +78,7 @@ public partial class LifecycleExceptionInvariantTests {
 
     await worker.InvokeInboxLifecycleStageAsync(
       work, envelope, scope,
-      new _ThrowingReceptorInvoker(thrown),
+      new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 

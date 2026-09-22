@@ -108,7 +108,7 @@ public sealed class SymbolResolver(string docsBaseUrl) {
 
     // Build merged result
     var name = registryEntry?.Type ?? symbolName;
-    var kind = _determineKind(registryEntry, feedEntry);
+    var kind = _determineKind(registryEntry);
     var docsUrl = _buildDocsUrl(registryEntry, feedEntry, docsEntry);
     var docsTitle = feedEntry?.Title;
     var sourceFile = _nonEmpty(registryEntry?.FilePath) ?? feedEntry?.File ?? docsEntry?.File;
@@ -153,24 +153,13 @@ public sealed class SymbolResolver(string docsBaseUrl) {
   }
 
   private MessageRegistryEntry? _findRegistryEntry(string symbolName) {
-    // Exact match first
-    foreach (var entry in _registryData) {
-      if (string.Equals(entry.Type, symbolName, StringComparison.Ordinal)) {
-        return entry;
-      }
-    }
-
-    // EndsWith match for partial names (e.g., "CreateOrderCommand" matches "Whizbang.Core.CreateOrderCommand")
-    foreach (var entry in _registryData) {
-      if (entry.Type.EndsWith("." + symbolName, StringComparison.Ordinal)) {
-        return entry;
-      }
-    }
-
-    return null;
+    // Exact match first, then an EndsWith match for partial names (e.g., "CreateOrderCommand" matches
+    // "Whizbang.Core.CreateOrderCommand")
+    return _registryData.FirstOrDefault(entry => string.Equals(entry.Type, symbolName, StringComparison.Ordinal))
+      ?? _registryData.FirstOrDefault(entry => entry.Type.EndsWith("." + symbolName, StringComparison.Ordinal));
   }
 
-  private static string _determineKind(MessageRegistryEntry? registry, VscodeFeedEntry? feed) {
+  private static string _determineKind(MessageRegistryEntry? registry) {
     if (registry is not null) {
       if (registry.IsCommand) {
         return "command";
@@ -184,7 +173,7 @@ public sealed class SymbolResolver(string docsBaseUrl) {
     }
 
     // Feed and code-docs entries are generic types
-    return feed is not null ? "type" : "type";
+    return "type";
   }
 
   private string? _buildDocsUrl(

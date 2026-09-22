@@ -14,12 +14,10 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// <code-under-test>src/Whizbang.Transports.RabbitMQ/RabbitMqFleetDeadLetterDrainer.cs</code-under-test>
 public class RabbitMqFleetDeadLetterDrainerCoverageTests {
 
-  private sealed class _recordingDrainer(string name) : ITransportDeadLetterDrainer {
-    public int Invocations;
+  private sealed class RecordingDrainer(string name) : ITransportDeadLetterDrainer {
     public int ReturnPerDrain { get; init; } = 1;
     public string TransportName => $"rmq:{name}";
     public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
-      Invocations++;
       return Task.FromResult(Math.Min(ReturnPerDrain, maxCount));
     }
   }
@@ -68,10 +66,10 @@ public class RabbitMqFleetDeadLetterDrainerCoverageTests {
   [Test]
   public async Task DrainDeadLetterQueueAsync_BudgetExhaustedMidPass_StopsWithoutVisitingRemainingQueuesAsync() {
     var queues = new List<string> { "a.dlq", "b.dlq", "c.dlq", "d.dlq" };
-    var made = new Dictionary<string, _recordingDrainer>();
+    var made = new Dictionary<string, RecordingDrainer>();
     var fleet = new RabbitMqFleetDeadLetterDrainer(
       () => queues,
-      name => { var d = new _recordingDrainer(name) { ReturnPerDrain = 5 }; made[name] = d; return d; });
+      name => { var d = new RecordingDrainer(name) { ReturnPerDrain = 5 }; made[name] = d; return d; });
 
     var drained = await fleet.DrainDeadLetterQueueAsync(10);
 

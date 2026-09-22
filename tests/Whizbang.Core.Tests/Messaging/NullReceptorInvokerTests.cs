@@ -23,14 +23,14 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
 public class NullReceptorInvokerTests {
 
-  private sealed record _NoOpMessage : IMessage;
+  private sealed record NoOpMessage : IMessage;
 
   [Test]
   public async Task InvokeAsync_WithEnvelope_CompletesSilentlyAsync() {
     var invoker = new NullReceptorInvoker();
-    var envelope = new MessageEnvelope<_NoOpMessage> {
+    var envelope = new MessageEnvelope<NoOpMessage> {
       MessageId = MessageId.New(),
-      Payload = new _NoOpMessage(),
+      Payload = new NoOpMessage(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     };
@@ -47,14 +47,14 @@ public class NullReceptorInvokerTests {
   [Test]
   public async Task InvokeAsync_WithCancellationToken_IgnoresIt_AndCompletesAsync() {
     var invoker = new NullReceptorInvoker();
-    var envelope = new MessageEnvelope<_NoOpMessage> {
+    var envelope = new MessageEnvelope<NoOpMessage> {
       MessageId = MessageId.New(),
-      Payload = new _NoOpMessage(),
+      Payload = new NoOpMessage(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     };
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Even with a pre-canceled token, the no-op invoker doesn't observe it
     // — it never awaits anything cancellable.
@@ -69,9 +69,9 @@ public class NullReceptorInvokerTests {
   [Test]
   public async Task InvokeAsync_ForEveryLifecycleStage_CompletesAsync() {
     var invoker = new NullReceptorInvoker();
-    var envelope = new MessageEnvelope<_NoOpMessage> {
+    var envelope = new MessageEnvelope<NoOpMessage> {
       MessageId = MessageId.New(),
-      Payload = new _NoOpMessage(),
+      Payload = new NoOpMessage(),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     };

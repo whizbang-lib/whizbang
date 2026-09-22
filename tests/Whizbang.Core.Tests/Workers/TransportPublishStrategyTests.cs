@@ -45,7 +45,6 @@ public class TransportPublishStrategyTests {
 
     public Task<Exception?> PublishResult { get; set; } = Task.FromResult<Exception?>(null);
 
-    public OutboxWork? LastPublishedWork { get; }
     public IMessageEnvelope? LastPublishedEnvelope { get; private set; }
     public TransportDestination? LastPublishedDestination { get; private set; }
 
@@ -57,10 +56,6 @@ public class TransportPublishStrategyTests {
       if (exception != null) {
         throw exception;
       }
-    }
-
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
-      throw new NotImplementedException();
     }
 
     public Task<ISubscription> SubscribeBatchAsync(
@@ -106,10 +101,6 @@ public class TransportPublishStrategyTests {
       return [.. items.Select(i => new BulkPublishItemResult { MessageId = i.MessageId, Success = true })];
     }
 
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
-      throw new NotImplementedException();
-    }
-
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
       TransportDestination destination,
@@ -127,7 +118,7 @@ public class TransportPublishStrategyTests {
   [Test]
   public async Task Constructor_NullTransport_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Act & Assert
@@ -140,7 +131,7 @@ public class TransportPublishStrategyTests {
   public async Task Constructor_NullReadinessCheck_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     // Act & Assert
     await Assert.That(() => new TransportPublishStrategy(transport: transport, readinessCheck: null!, loggerFactory: NullLoggerFactory.Instance))
@@ -1498,7 +1489,7 @@ public class TransportPublishStrategyTests {
       namespaceRouting: new NamespaceOutboxStrategy(options),
       loggerFactory: NullLoggerFactory.Instance);
 
-    // Framework system commands ride the Command kind at every production call site;
+    // Framework system commands ride the Command kind at every production call site,
     // the strategy-internal classification must send them to the broadcast inbox — a
     // per-namespace inbox for whizbang.core.* would have no subscriber, ever.
     var work = _createCommandOutboxWork(

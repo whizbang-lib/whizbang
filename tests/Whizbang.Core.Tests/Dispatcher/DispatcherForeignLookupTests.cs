@@ -25,7 +25,7 @@ public class DispatcherForeignLookupTests {
 
   /// <summary>A host dispatcher whose OWN tables know nothing — every lookup returns null,
   /// exactly what a generated dispatcher answers for another assembly's types.</summary>
-  private sealed class _blindDispatcher(IServiceProvider sp) : Core.Dispatcher(
+  private sealed class BlindDispatcher(IServiceProvider sp) : Core.Dispatcher(
       sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType)
       => null;
@@ -46,10 +46,9 @@ public class DispatcherForeignLookupTests {
   }
 
   /// <summary>What a foreign assembly's generated dispatcher contributes: its own tables.</summary>
-  private sealed class _foreignAssemblyLookup(string name) : IReceptorLookup {
+  private sealed class ForeignAssemblyLookup() : IReceptorLookup {
     private int _invoked;
     private int _published;
-    public string Name => name;
     public int Invoked => Volatile.Read(ref _invoked);
     public int Published => Volatile.Read(ref _published);
 
@@ -102,9 +101,9 @@ public class DispatcherForeignLookupTests {
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Send_WhenOnlyAForeignAssemblyKnowsTheReceptor_InvokesItAsync(CancellationToken cancellationToken) {
-    var foreign = new _foreignAssemblyLookup("contracts-assembly");
+    var foreign = new ForeignAssemblyLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     _ = await dispatcher.SendAsync(new ForeignCommand(Guid.NewGuid()));
 
@@ -120,10 +119,10 @@ public class DispatcherForeignLookupTests {
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Publish_FansOutToEveryForeignAssemblysReceptorsAsync(CancellationToken cancellationToken) {
-    var contracts = new _foreignAssemblyLookup("contracts-assembly");
-    var billing = new _foreignAssemblyLookup("billing-assembly");
+    var contracts = new ForeignAssemblyLookup();
+    var billing = new ForeignAssemblyLookup();
     await using var sp = _buildHost(contracts, billing);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await dispatcher.PublishAsync(new ForeignEvent(Guid.NewGuid()));
 
@@ -140,7 +139,7 @@ public class DispatcherForeignLookupTests {
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task Send_WithNoLookupAnywhere_KeepsTodaysBehaviourAsync(CancellationToken cancellationToken) {
     await using var sp = _buildHost();
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await Assert.ThrowsAsync<ReceptorNotFoundException>(async () =>
       await dispatcher.SendAsync(new ForeignCommand(Guid.NewGuid())));
@@ -162,7 +161,7 @@ public class DispatcherForeignLookupTests {
   private sealed record VoidSyncCommand(Guid Id);
 
   /// <summary>A foreign assembly whose receptors span every shape the dispatcher can resolve.</summary>
-  private sealed class _allShapesLookup : IReceptorLookup {
+  private sealed class AllShapesLookup : IReceptorLookup {
     private int _asyncVoid;
     private int _sync;
     private int _syncVoid;
@@ -171,8 +170,7 @@ public class DispatcherForeignLookupTests {
     public int AsyncVoidInvoked => Volatile.Read(ref _asyncVoid);
     public int SyncInvoked => Volatile.Read(ref _sync);
     public int SyncVoidInvoked => Volatile.Read(ref _syncVoid);
-    public int AnyInvoked => Volatile.Read(ref _any);
-    public DispatchModes? RoutingFor { get; set; }
+    public DispatchModes? RoutingFor { get; }
 
     public ReceptorInvoker<TResult>? LookupReceptorInvoker<TResult>(object message, Type messageType) => null;
 
@@ -225,9 +223,9 @@ public class DispatcherForeignLookupTests {
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignAsyncVoidReceptorAsync(CancellationToken cancellationToken) {
-    var foreign = new _allShapesLookup();
+    var foreign = new AllShapesLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
 
@@ -245,9 +243,9 @@ public class DispatcherForeignLookupTests {
   public async Task LocalInvoke_ResolvesAForeignSyncReceptorAsync(CancellationToken cancellationToken) {
     // Sync is the fallback the dispatcher tries only after the async table answers null, so the
     // foreign consultation has to happen on that second pass as well.
-    var foreign = new _allShapesLookup();
+    var foreign = new AllShapesLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     _ = await dispatcher.LocalInvokeAsync<string>(new SyncQuery(Guid.NewGuid()));
 
@@ -261,9 +259,9 @@ public class DispatcherForeignLookupTests {
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task LocalInvoke_ResolvesAForeignSyncVoidReceptorAsync(CancellationToken cancellationToken) {
-    var foreign = new _allShapesLookup();
+    var foreign = new AllShapesLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await dispatcher.LocalInvokeAsync(new VoidSyncCommand(Guid.NewGuid()));
 
@@ -280,9 +278,9 @@ public class DispatcherForeignLookupTests {
   public async Task ForeignLookup_IsConsultedOnlyWhenTheOwnTableAnswersNullAsync(CancellationToken cancellationToken) {
     // The fallback is additive: an assembly that can answer for itself must never hand the
     // message to a foreign assembly, or a publish would double-deliver.
-    var foreign = new _allShapesLookup();
+    var foreign = new AllShapesLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _knowsVoidCommandDispatcher(sp);
+    var dispatcher = new KnowsVoidCommandDispatcher(sp);
 
     await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
 
@@ -300,10 +298,10 @@ public class DispatcherForeignLookupTests {
   public async Task ForeignLookup_TakesTheFirstAssemblyThatAnswersForASendAsync(CancellationToken cancellationToken) {
     // Sends have exactly one handler by definition, so the scan stops at the first match rather
     // than fanning out the way a publish does.
-    var first = new _allShapesLookup();
-    var second = new _allShapesLookup();
+    var first = new AllShapesLookup();
+    var second = new AllShapesLookup();
     await using var sp = _buildHost(first, second);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
 
@@ -319,10 +317,10 @@ public class DispatcherForeignLookupTests {
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ForeignLookup_SkipsAnAssemblyThatDoesNotKnowTheTypeAsync(CancellationToken cancellationToken) {
     // The scan has to keep walking past assemblies that answer null, not stop at the first one.
-    var stranger = new _foreignAssemblyLookup("unrelated-assembly");
-    var owner = new _allShapesLookup();
+    var stranger = new ForeignAssemblyLookup();
+    var owner = new AllShapesLookup();
     await using var sp = _buildHost(stranger, owner);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
 
@@ -338,16 +336,16 @@ public class DispatcherForeignLookupTests {
   public async Task UnknownMessage_StillThrowsAfterEveryForeignLookupAnswersNullAsync(CancellationToken cancellationToken) {
     // The scan must terminate in the same ReceptorNotFoundException as before — a message nobody
     // handles has to stay a loud error, not become a silent no-op once lookups are registered.
-    var foreign = new _allShapesLookup();
+    var foreign = new AllShapesLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     await Assert.ThrowsAsync<ReceptorNotFoundException>(async () =>
       await dispatcher.LocalInvokeAsync(new ForeignCommand(Guid.NewGuid())));
   }
 
   /// <summary>A host dispatcher whose own table answers for <see cref="VoidCommand"/>.</summary>
-  private sealed class _knowsVoidCommandDispatcher(IServiceProvider sp) : Core.Dispatcher(
+  private sealed class KnowsVoidCommandDispatcher(IServiceProvider sp) : Core.Dispatcher(
       sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     private int _own;
     public int OwnInvoked => Volatile.Read(ref _own);
@@ -386,7 +384,7 @@ public class DispatcherForeignLookupTests {
   /// cascade. Only the "any" invoker answers, which is the shape the dispatcher falls back to
   /// after both the async and sync tables miss.
   /// </summary>
-  private sealed class _rpcExtractionLookup : IReceptorLookup {
+  private sealed class RpcExtractionLookup : IReceptorLookup {
     private int _anyLookups;
     private int _routingLookups;
 
@@ -430,9 +428,9 @@ public class DispatcherForeignLookupTests {
     // consult foreign assemblies; this one did not, so a receptor in another assembly using the
     // composite return shape was unreachable -- the caller got ReceptorNotFoundException for a
     // receptor that plainly exists, which is issue #491 in the one form still uncovered.
-    var foreign = new _rpcExtractionLookup();
+    var foreign = new RpcExtractionLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     var response = await dispatcher.LocalInvokeAsync<RpcResponse>(new RpcCommand(Guid.NewGuid()));
 
@@ -455,9 +453,9 @@ public class DispatcherForeignLookupTests {
     // For a foreign receptor the declaration lives in the other assembly's table, so skipping
     // the foreign consultation silently routes its cascade by the ambient default instead --
     // a receptor that declared Outbox would have its events handled locally and lose durability.
-    var foreign = new _rpcExtractionLookup();
+    var foreign = new RpcExtractionLookup();
     await using var sp = _buildHost(foreign);
-    var dispatcher = new _blindDispatcher(sp);
+    var dispatcher = new BlindDispatcher(sp);
 
     _ = await dispatcher.LocalInvokeAsync<RpcResponse>(new RpcCommand(Guid.NewGuid()));
 

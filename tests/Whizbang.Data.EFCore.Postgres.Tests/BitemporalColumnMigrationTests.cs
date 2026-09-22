@@ -30,7 +30,7 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
   private const string LEGACY_TABLE = "wh_per_bitemporal_legacy";
 
   /// <summary>Creates a table in the PRE-migration shape, with no sys_ columns.</summary>
-  private async Task _createLegacyTableAsync(NpgsqlConnection conn) {
+  private static async Task _createLegacyTableAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {LEGACY_TABLE};
       CREATE TABLE {LEGACY_TABLE} (
@@ -80,8 +80,8 @@ public class BitemporalColumnMigrationTests : EFCoreTestBase {
       return (null, null);
     }
     return (
-      reader.IsDBNull(0) ? null : reader.GetDateTime(0),
-      reader.IsDBNull(1) ? null : reader.GetDateTime(1));
+      await reader.IsDBNullAsync(0) ? null : reader.GetDateTime(0),
+      await reader.IsDBNullAsync(1) ? null : reader.GetDateTime(1));
   }
 
   [Test]

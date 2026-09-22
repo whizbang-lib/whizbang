@@ -179,7 +179,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // minted a fresh correlation while scope survived — the asymmetric boundary bug.
       messageContextAccessor.Current = establishedContext;
       var initiatingAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      initiatingAccessor?.InitiatingContext = establishedContext;
+      if (initiatingAccessor is not null) {
+        initiatingAccessor.InitiatingContext = establishedContext;
+      }
     }
 
     // Extract both trace context and scope from envelope hops.
@@ -398,7 +400,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     if (securityContext is not null) {
       var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
-      accessor?.Current = securityContext;
+      if (accessor is not null) {
+        accessor.Current = securityContext;
+      }
     }
 
     return securityContext;
@@ -461,7 +465,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Set on accessor so GetSecurityFromAmbient() can find it
     var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
-    accessor?.Current = immutableScope;
+    if (accessor is not null) {
+      accessor.Current = immutableScope;
+    }
 
     // Invoke security callbacks so a consumer's security callback sets its tenant context
     var callbacks = _scopedProvider.GetServices<ISecurityContextCallback>();
@@ -572,21 +578,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       await _firingObserver.OnReceptorFiringAsync(receptor.ReceptorId, ctx.Stage, messageId, ctx.Envelope, cancellationToken).ConfigureAwait(false);
     }
     var stopwatch = Stopwatch.StartNew();
-    bool isError = false;
-    string? exceptionTypeName = null;
-    Exception? capturedException = null;
 
-    try {
-      await _invokeReceptorBodyAsync(receptor, ctx, receptorActivity, stopwatch, cancellationToken).ConfigureAwait(false);
-    } catch (Exception ex) {
-      isError = true;
-      exceptionTypeName = TypeNameFormatter.DisplayName(ex.GetType());
-      capturedException = ex;
-      receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      receptorActivity?.SetTag("exception.type", exceptionTypeName);
-      receptorActivity?.SetTag("exception.message", ex.Message);
-      throw;
-    } finally {
+    // The fired notification goes out on both paths; the failure path carries the exception with it.
+    async ValueTask RecordFiredAsync(bool isError, string? exceptionTypeName, Exception? capturedException) {
       stopwatch.Stop();
       var fireFields = new ReceptorFireLogFields(
         messageId,
@@ -600,6 +594,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         capturedException);
       await _notifyReceptorFiredAsync(receptor, ctx, fireFields, cancellationToken).ConfigureAwait(false);
     }
+
+    try {
+      await _invokeReceptorBodyAsync(receptor, ctx, receptorActivity, stopwatch, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) {
+      var exceptionTypeName = TypeNameFormatter.DisplayName(ex.GetType());
+      receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      receptorActivity?.SetTag("exception.type", exceptionTypeName);
+      receptorActivity?.SetTag("exception.message", ex.Message);
+      await RecordFiredAsync(isError: true, exceptionTypeName, ex).ConfigureAwait(false);
+      throw;
+    }
+    await RecordFiredAsync(isError: false, exceptionTypeName: null, capturedException: null).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -711,7 +717,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
     var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
-    lifecycleContextAccessor?.Current = lifecycleContext;
+    if (lifecycleContextAccessor is not null) {
+      lifecycleContextAccessor.Current = lifecycleContext;
+    }
   }
 
   /// <summary>

@@ -54,20 +54,20 @@ public partial class LifecycleExceptionInvariantTests {
 
   // --- shared fakes ---
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
+  private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
+  private sealed class ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) =>
       ValueTask.FromException(toThrow);
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -88,41 +88,40 @@ public partial class LifecycleExceptionInvariantTests {
   // here proves the helper is symmetric. Lock it explicitly so a future
   // refactor splitting Pre/Post can't regress one half silently.
 
-  private sealed class _FakeOutboxDrainChannel : IOutboxDrainChannel {
+  private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
-  private sealed class _NoOpOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class NoOpOutboxCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _NoOpOutboxPublishStrategy : IMessagePublishStrategy {
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+  private sealed class NoOpOutboxPublishStrategy : IMessagePublishStrategy {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       Task.FromResult(new MessagePublishResult { MessageId = work.MessageId, Success = true, CompletedStatus = MessageProcessingStatus.Published });
   }
 
   [Test]
   public async Task OutboxDrainWorker_PostOutboxLifecycleThrows_EnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
+    var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new _FakeServiceInstanceProvider(),
-      drainChannel: new _FakeOutboxDrainChannel(),
-      completionChannel: new _NoOpOutboxCompletionChannel(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new NoOpOutboxCompletionChannel(),
       failureChannel: failure,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
-      publishStrategy: new _NoOpOutboxPublishStrategy(),
+      publishStrategy: new NoOpOutboxPublishStrategy(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
@@ -149,7 +148,7 @@ public partial class LifecycleExceptionInvariantTests {
     var thrown = new InvalidOperationException("simulated PostOutbox lifecycle fault");
 
     await worker.InvokeOutboxLifecycleStageAsync(
-      work, envelope, new _ThrowingReceptorInvoker(thrown),
+      work, envelope, new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PostOutboxDetached, LifecycleStage.PostOutboxInline,
       "PostOutbox", CancellationToken.None);
 
@@ -167,12 +166,12 @@ public partial class LifecycleExceptionInvariantTests {
   // InboxDispatchWorker — Pre/Post Inbox stages (production audit hole)
   // ============================================================
   // Pre-Slice-7 audit, InboxDispatchWorker.cs:497 had the SAME silent-swallow
-  // shape as the production OutboxDrainWorker.cs bug — catch (Exception ex) {
+  // shape as the production OutboxDrainWorker.cs bug — the generic exception handler
   // LogLifecycleError(...); } with no failure-channel enqueue. Inbox-side
   // lifecycle exceptions retried forever silently, wh_inbox.error stayed empty.
   // Slice 7's GREEN mirrors Slice 1's fix to the inbox path.
 
-  private sealed class _FakeInboxChannelWriter : IInboxChannelWriter {
+  private sealed class FakeInboxChannelWriter : IInboxChannelWriter {
     private readonly System.Threading.Channels.Channel<InboxWork> _channel = System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
@@ -185,21 +184,21 @@ public partial class LifecycleExceptionInvariantTests {
     public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
   }
 
-  private sealed class _FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   [Test]
   public async Task InboxDispatchWorker_PreInboxLifecycleThrows_EnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
+    var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new _FakeServiceInstanceProvider(),
-      inboxChannelWriter: new _FakeInboxChannelWriter(),
-      handlerCommitChannel: new _FakeHandlerCommitChannel(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
       schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
@@ -234,7 +233,7 @@ public partial class LifecycleExceptionInvariantTests {
 
     await worker.InvokeInboxLifecycleStageAsync(
       work, envelope, scope,
-      new _ThrowingReceptorInvoker(thrown),
+      new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 
@@ -252,15 +251,15 @@ public partial class LifecycleExceptionInvariantTests {
 
   [Test]
   public async Task InboxDispatchWorker_PostInboxLifecycleThrows_EnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
+    var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new _FakeServiceInstanceProvider(),
-      inboxChannelWriter: new _FakeInboxChannelWriter(),
-      handlerCommitChannel: new _FakeHandlerCommitChannel(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
       schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
@@ -295,7 +294,7 @@ public partial class LifecycleExceptionInvariantTests {
 
     await worker.InvokeInboxLifecycleStageAsync(
       work, envelope, scope,
-      new _ThrowingReceptorInvoker(thrown),
+      new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
       "PostInbox", CancellationToken.None);
 

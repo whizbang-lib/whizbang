@@ -44,8 +44,8 @@ public class TracingCorrelationTests {
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
 
     // Act - Create activities from different sources
-    using (WhizbangActivitySource.Tracing.StartActivity("TracingSpan")) { }
-    using (WhizbangActivitySource.Execution.StartActivity("ExecutionSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("TracingSpan")) { /* the scope's start and end are the behavior under test */ }
+    using (WhizbangActivitySource.Execution.StartActivity("ExecutionSpan")) { /* the scope's start and end are the behavior under test */ }
 
     // Assert - Only Tracing span should be captured
     await Assert.That(collector.Count).IsEqualTo(1);
@@ -58,8 +58,8 @@ public class TracingCorrelationTests {
     using var collector = new InMemorySpanCollector();
 
     // Act - Create activities from different sources
-    using (WhizbangActivitySource.Tracing.StartActivity("TracingSpan")) { }
-    using (WhizbangActivitySource.Execution.StartActivity("ExecutionSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("TracingSpan")) { /* the scope's start and end are the behavior under test */ }
+    using (WhizbangActivitySource.Execution.StartActivity("ExecutionSpan")) { /* the scope's start and end are the behavior under test */ }
 
     // Assert - Both spans should be captured
     await Assert.That(collector.Count).IsEqualTo(2);
@@ -73,7 +73,7 @@ public class TracingCorrelationTests {
     // Act - Create nested activities
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("ParentSpan")) {
       using var child = WhizbangActivitySource.Tracing.StartActivity("ChildSpan");
-      using (WhizbangActivitySource.Tracing.StartActivity("GrandchildSpan")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("GrandchildSpan")) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Assert
@@ -91,7 +91,7 @@ public class TracingCorrelationTests {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("ParentSpan")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("ChildSpan")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("ChildSpan")) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Act & Assert - Fluent API should work
@@ -111,7 +111,7 @@ public class TracingCorrelationTests {
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
 
     // Create a span with no parent
-    using (WhizbangActivitySource.Tracing.StartActivity("RootSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("RootSpan")) { /* the scope's start and end are the behavior under test */ }
 
     // Assert - No orphaned spans with a simple root span
     await Assert.That(() => collector.AssertNoOrphanedSpans()).ThrowsNothing();
@@ -122,7 +122,7 @@ public class TracingCorrelationTests {
     // Arrange - Create properly linked spans
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("Child")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child")) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Assert - No orphans when properly linked
@@ -152,7 +152,7 @@ public class TracingCorrelationTests {
   public async Task TraceTree_FromSnapshot_DeserializesFromJsonAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("OriginalSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("OriginalSpan")) { /* the scope's start and end are the behavior under test */ }
 
     var originalTree = collector.BuildTree();
     var json = originalTree.ToSnapshot();
@@ -169,7 +169,7 @@ public class TracingCorrelationTests {
   public async Task TraceSnapshotComparer_MatchesIdenticalTreesAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { /* the scope's start and end are the behavior under test */ }
 
     var tree = collector.BuildTree();
     var json = tree.ToSnapshot();
@@ -187,11 +187,11 @@ public class TracingCorrelationTests {
   public async Task TraceSnapshotComparer_DetectsNameMismatchAsync() {
     // Arrange
     using var collector1 = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("ActualSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("ActualSpan")) { /* the scope's start and end are the behavior under test */ }
     var actualTree = collector1.BuildTree();
 
     using var collector2 = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("ExpectedSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("ExpectedSpan")) { /* the scope's start and end are the behavior under test */ }
     var expectedTree = collector2.BuildTree();
 
     // Act
@@ -208,14 +208,14 @@ public class TracingCorrelationTests {
     // Arrange
     using var collector1 = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { }
-      using (WhizbangActivitySource.Tracing.StartActivity("Child2")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { /* the scope's start and end are the behavior under test */ }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child2")) { /* the scope's start and end are the behavior under test */ }
     }
     var actualTree = collector1.BuildTree();
 
     using var collector2 = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { /* the scope's start and end are the behavior under test */ }
     }
     var expectedTree = collector2.BuildTree();
 
@@ -234,7 +234,7 @@ public class TracingCorrelationTests {
   public async Task TraceAssertionExtensions_AssertHasSpan_WorksAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { /* the scope's start and end are the behavior under test */ }
 
     // Act & Assert
     await Assert.That(() => collector.AssertHasSpan("TestSpan")).ThrowsNothing();
@@ -245,7 +245,7 @@ public class TracingCorrelationTests {
   public async Task TraceAssertionExtensions_GetSingleRoot_WorksAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("RootSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("RootSpan")) { /* the scope's start and end are the behavior under test */ }
 
     // Act
     var root = collector.GetSingleRoot();
@@ -281,9 +281,9 @@ public class TracingCorrelationTests {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { /* the scope's start and end are the behavior under test */ }
       using var child2 = WhizbangActivitySource.Tracing.StartActivity("Child2");
-      using (WhizbangActivitySource.Tracing.StartActivity("Grandchild")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Grandchild")) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Act
@@ -297,7 +297,7 @@ public class TracingCorrelationTests {
   public async Task InMemorySpanCollector_Clear_RemovesAllSpansAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { }
+    using (WhizbangActivitySource.Tracing.StartActivity("TestSpan")) { /* the scope's start and end are the behavior under test */ }
     await Assert.That(collector.Count).IsEqualTo(1);
 
     // Act
@@ -312,8 +312,8 @@ public class TracingCorrelationTests {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
     using (var parent = WhizbangActivitySource.Tracing.StartActivity("Parent")) {
-      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { }
-      using (WhizbangActivitySource.Tracing.StartActivity("Child2")) { }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child1")) { /* the scope's start and end are the behavior under test */ }
+      using (WhizbangActivitySource.Tracing.StartActivity("Child2")) { /* the scope's start and end are the behavior under test */ }
     }
 
     // Act

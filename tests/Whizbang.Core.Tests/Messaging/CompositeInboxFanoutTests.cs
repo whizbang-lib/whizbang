@@ -44,7 +44,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_YieldsOneChildInboxMessagePerInnerAsync() {
     var streamId = Guid.NewGuid();
-    var composite = new _testComposite(new _innerEvent("J-001"), new _innerEvent("J-002"), new _innerEvent("J-003"));
+    var composite = new TestComposite(new InnerEvent("J-001"), new InnerEvent("J-002"), new InnerEvent("J-003"));
     var source = _sourceEnvelope(streamId);
     var sp = _provider();
 
@@ -53,13 +53,13 @@ public class CompositeInboxFanoutTests {
     await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
     await Assert.That(result.Children.Count).IsEqualTo(3);
     // Each child's MessageType is the concrete inner event's assembly-qualified name.
-    await Assert.That(result.Children.All(c => c.MessageType.Contains("_innerEvent", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(result.Children.All(c => c.MessageType.Contains("InnerEvent", StringComparison.Ordinal))).IsTrue();
   }
 
   [Test]
   public async Task TryExpand_ChildrenInheritCompositeStreamIdFromHopsAsync() {
     var streamId = Guid.NewGuid();
-    var composite = new _testComposite(new _innerEvent("X"));
+    var composite = new TestComposite(new InnerEvent("X"));
     var source = _sourceEnvelope(streamId);
     var sp = _provider();
 
@@ -72,7 +72,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task TryExpand_AssignsFreshDistinctMessageIdsPerChildAsync() {
-    var composite = new _testComposite(new _innerEvent("A"), new _innerEvent("B"));
+    var composite = new TestComposite(new InnerEvent("A"), new InnerEvent("B"));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -183,7 +183,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task TryExpand_ChildrenAreMarkedAsEventsAsync() {
-    var composite = new _testComposite(new _innerEvent("E"));
+    var composite = new TestComposite(new InnerEvent("E"));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -197,7 +197,7 @@ public class CompositeInboxFanoutTests {
   public async Task TryExpand_ChildrenCarryCompositeLineage_CausationIsCompositeMessageIdAsync() {
     // Each child's creation hop must point back to the parent composite so "these events came from
     // composite X" is queryable off the event-store rows (Hops[0].CausationId / CausationType).
-    var composite = new _testComposite(new _innerEvent("J-1"), new _innerEvent("J-2"));
+    var composite = new TestComposite(new InnerEvent("J-1"), new InnerEvent("J-2"));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -208,7 +208,7 @@ public class CompositeInboxFanoutTests {
       var hop0 = child.Metadata!.Hops[0];
       await Assert.That(hop0.CausationId).IsEqualTo(source.MessageId)
         .Because("the child's creation hop is caused by the composite — CausationId is the composite's MessageId.");
-      await Assert.That(hop0.CausationType).IsEqualTo(nameof(_testComposite))
+      await Assert.That(hop0.CausationType).IsEqualTo(nameof(TestComposite))
         .Because("CausationType records that the cause was this composite type.");
     }
     // All children of one composite share the same causation → groupable as one batch.
@@ -218,7 +218,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task TryExpand_ChildrenCarryNoRebroadcastFlagAsync() {
-    var composite = new _testComposite(new _innerEvent("J-1"), new _innerEvent("J-2"));
+    var composite = new TestComposite(new InnerEvent("J-1"), new InnerEvent("J-2"));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -234,7 +234,7 @@ public class CompositeInboxFanoutTests {
     // a locally-emitted collective event would: its child inbox row needs EventFlags.Collective or
     // the inbox emit chain never routes it to the collective sink. NoRebroadcast must still be
     // present — deriving the inner event's real flags never replaces the fan-out containment marker.
-    var composite = new _testComposite(new _collectiveInnerEvent(new TenantCollectiveScope("tenant-1"), []));
+    var composite = new TestComposite(new CollectiveInnerEvent(new TenantCollectiveScope("tenant-1"), []));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -249,8 +249,8 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task TryExpand_OverCap_ReturnsCapExceededAsync() {
-    var inners = Enumerable.Range(0, 11).Select(i => new _innerEvent($"i-{i}")).ToArray();
-    var composite = new _testComposite(inners) { MaxInnerEventsAllowedOverride = 10 };
+    var inners = Enumerable.Range(0, 11).Select(i => new InnerEvent($"i-{i}")).ToArray();
+    var composite = new TestComposite(inners) { MaxInnerEventsAllowedOverride = 10 };
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -264,7 +264,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task TryExpand_NullInner_Atomic_ReturnsFailedAsync() {
-    var composite = new _nullYieldingComposite { AtomicityOverride = FanoutAtomicity.Atomic };
+    var composite = new NullYieldingComposite { AtomicityOverride = FanoutAtomicity.Atomic };
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -278,7 +278,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_NullInner_Independent_DropsBadChildAndKeepsRestAsync() {
     // Independent (default): a null inner is dropped; the valid inner still fans out.
-    var composite = new _mixedNullComposite();
+    var composite = new MixedNullComposite();
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
 
@@ -293,8 +293,8 @@ public class CompositeInboxFanoutTests {
   public async Task TryExpand_NullInner_Independent_LogsTheDroppedChildAsync() {
     // Independent mode drops a bad child, but the drop must be LOGGED — a partial fan-out that
     // silently reports Expanded is invisible message loss (the swallow-audit finding).
-    var captured = new _capturingLogger();
-    var composite = new _mixedNullComposite();
+    var captured = new CapturingLogger();
+    var composite = new MixedNullComposite();
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _providerWithLogger(captured);
 
@@ -309,10 +309,10 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_ReplacementInner_FansOutTheReplacementSetAsync() {
     // A pre-fanout ReplaceWith directive supplies the children to fan out instead of InnerEvents.
-    var composite = new _testComposite(new _innerEvent("original"));
+    var composite = new TestComposite(new InnerEvent("original"));
     var source = _sourceEnvelope(Guid.NewGuid());
     var sp = _provider();
-    var replacement = new IMessage[] { new _innerEvent("R-1"), new _innerEvent("R-2") };
+    var replacement = new IMessage[] { new InnerEvent("R-1"), new InnerEvent("R-2") };
 
     var result = CompositeInboxFanout.TryExpand(composite, source, sp, replacement);
 
@@ -558,7 +558,7 @@ public class CompositeInboxFanoutTests {
   /// <summary>A fan-out never re-decides the number: every child carries the composite's, on the envelope and the row.</summary>
   [Test]
   public async Task TryExpand_ChildrenCarryTheCompositesPriorityAsync() {
-    var composite = new _testComposite(new _innerEvent("J-001"), new _innerEvent("J-002"));
+    var composite = new TestComposite(new InnerEvent("J-001"), new InnerEvent("J-002"));
     var source = _sourceEnvelope(Guid.NewGuid());
     source.Priority = 250;
 
@@ -573,25 +573,25 @@ public class CompositeInboxFanoutTests {
 
   private static ServiceProvider _provider() =>
     new ServiceCollection()
-      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
+      .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
       .BuildServiceProvider();
 
-  private static ServiceProvider _providerWithLogger(_capturingLogger captured) =>
+  private static ServiceProvider _providerWithLogger(CapturingLogger captured) =>
     new ServiceCollection()
-      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
-      .AddLogging(b => b.AddProvider(new _capturingLoggerProvider(captured)))
+      .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
+      .AddLogging(b => b.AddProvider(new CapturingLoggerProvider(captured)))
       .BuildServiceProvider();
 
   /// <summary>Captures log entries emitted during fan-out for assertions.</summary>
-  private sealed class _capturingLogger {
+  private sealed class CapturingLogger {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
   }
 
-  private sealed class _capturingLoggerProvider(_capturingLogger captured) : ILoggerProvider {
-    public ILogger CreateLogger(string categoryName) => new _sink(captured);
+  private sealed class CapturingLoggerProvider(CapturingLogger captured) : ILoggerProvider {
+    public ILogger CreateLogger(string categoryName) => new Sink(captured);
     public void Dispose() { }
 
-    private sealed class _sink(_capturingLogger captured) : ILogger {
+    private sealed class Sink(CapturingLogger captured) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
       public bool IsEnabled(LogLevel logLevel) => true;
       public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
@@ -673,7 +673,7 @@ public class CompositeInboxFanoutTests {
   /// Minimal serializer: records the payload's runtime AQN as MessageType and produces a JsonElement
   /// envelope. The real serializer is tested elsewhere — this isolates fan-out orchestration.
   /// </summary>
-  private sealed class _fakeSerializer : IEnvelopeSerializer {
+  private sealed class FakeSerializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var payloadType = envelope.Payload!.GetType();
       var aqn = payloadType.AssemblyQualifiedName!;
@@ -693,10 +693,10 @@ public class CompositeInboxFanoutTests {
       throw new NotSupportedException();
   }
 
-  private sealed record _innerEvent(string Id) : IEvent;
-  private sealed record _collectiveInnerEvent(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record InnerEvent(string Id) : IEvent;
+  private sealed record CollectiveInnerEvent(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
-  private sealed class _nullYieldingComposite : ICompositeEvent {
+  private sealed class NullYieldingComposite : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10;
     public FanoutAtomicity AtomicityOverride { get; init; } = FanoutAtomicity.Independent;
     public FanoutAtomicity Atomicity => AtomicityOverride;
@@ -707,19 +707,19 @@ public class CompositeInboxFanoutTests {
     }
   }
 
-  private sealed class _mixedNullComposite : ICompositeEvent {
+  private sealed class MixedNullComposite : ICompositeEvent {
     public int MaxInnerEventsAllowed => 10;
     // Default Atomicity (Independent) via the interface default-impl.
     public IEnumerable<IMessage> InnerEvents {
       get {
         yield return null!;
-        yield return new _innerEvent("good");
+        yield return new InnerEvent("good");
       }
     }
   }
 
-  private sealed class _testComposite : ICompositeEvent {
-    public _testComposite(params IEvent[] inner) {
+  private sealed class TestComposite : ICompositeEvent {
+    public TestComposite(params IEvent[] inner) {
       _inner = inner;
     }
     private readonly IEvent[] _inner;
@@ -735,25 +735,25 @@ public class CompositeInboxFanoutTests {
   // because the payload is still an undeserialized JsonElement at the gate.
   // ---------------------------------------------------------------------------------------------
 
-  private sealed class _compositeMarker;
-  private sealed class _plainMarker;
+  private sealed class CompositeMarker;
+  private sealed class PlainMarker;
 
-  private sealed class _markerCatalog : IMessageTypeCatalog {
+  private sealed class MarkerCatalog : IMessageTypeCatalog {
     private static readonly IReadOnlyList<MessageTypeCatalogEntry> _entries = [
-      new(typeof(_compositeMarker), TypeNameFormatter.FormatClrTypeName(typeof(_compositeMarker)), "event", null) { IsComposite = true },
-      new(typeof(_plainMarker), TypeNameFormatter.FormatClrTypeName(typeof(_plainMarker)), "event", null),
+      new(typeof(CompositeMarker), TypeNameFormatter.FormatClrTypeName(typeof(CompositeMarker)), "event", null) { IsComposite = true },
+      new(typeof(PlainMarker), TypeNameFormatter.FormatClrTypeName(typeof(PlainMarker)), "event", null),
     ];
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => _entries;
   }
 
-  private static EventMarkerResolver _markerResolver() => new(new _markerCatalog());
+  private static EventMarkerResolver _markerResolver() => new(new MarkerCatalog());
 
   /// <summary>The assembly-qualified wire form the receive gates hand to the lookup.</summary>
   private static string _wireName(Type type) => type.AssemblyQualifiedName!;
 
   [Test]
   public async Task IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync() {
-    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), _markerResolver());
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(CompositeMarker)), _markerResolver());
 
     await Assert.That(isComposite).IsTrue()
       .Because("A composite must be recognisable at the receive boundary from its wire type name alone — " +
@@ -762,7 +762,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task IsCompositeWireType_CatalogStampsPlainEvent_ReturnsFalseAsync() {
-    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_plainMarker)), _markerResolver());
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(PlainMarker)), _markerResolver());
 
     await Assert.That(isComposite).IsFalse()
       .Because("Ordinary events must stay subject to the no-consumer gate — exempting them would refill the inbox " +
@@ -779,7 +779,7 @@ public class CompositeInboxFanoutTests {
 
   [Test]
   public async Task IsCompositeWireType_NoMarkerResolver_ReturnsFalseAsync() {
-    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(_compositeMarker)), markerResolver: null);
+    var isComposite = CompositeInboxFanout.IsCompositeWireType(_wireName(typeof(CompositeMarker)), markerResolver: null);
 
     await Assert.That(isComposite).IsFalse()
       .Because("Without a catalog there is nothing to consult; the caller keeps its pre-existing behaviour rather than guessing.");
@@ -813,8 +813,8 @@ public class CompositeInboxFanoutTests {
   // would silently re-mint the unpaired children under fresh ids and duplicate them downstream.
   // ---------------------------------------------------------------------------------------------
 
-  private sealed class _identityComposite : IIdentityPreservingComposite {
-    public _identityComposite(IReadOnlyList<Guid> ids, params IMessage?[] inner) {
+  private sealed class IdentityComposite : IIdentityPreservingComposite {
+    public IdentityComposite(IReadOnlyList<Guid> ids, params IMessage?[] inner) {
       InnerEventIds = ids;
       _inner = inner;
     }
@@ -829,7 +829,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_IdentityComposite_PairsChildrenWithTheOriginalIdsAsync() {
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b"));
+    var composite = new IdentityComposite(ids, new InnerEvent("a"), new InnerEvent("b"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
 
@@ -843,8 +843,8 @@ public class CompositeInboxFanoutTests {
     // Three events, two ids: the third has no identity to inherit. Expanding two and dropping
     // one would lose an event; expanding all three would re-mint the last under a fresh id.
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(
-      ids, new _innerEvent("a"), new _innerEvent("b"), new _innerEvent("c"));
+    var composite = new IdentityComposite(
+      ids, new InnerEvent("a"), new InnerEvent("b"), new InnerEvent("c"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
 
@@ -856,7 +856,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_IdentityComposite_WithMoreInnersThanCommitSequences_FailsAsync() {
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b")) {
+    var composite = new IdentityComposite(ids, new InnerEvent("a"), new InnerEvent("b")) {
       InnerCommitSequencesOverride = [1L],
     };
 
@@ -871,7 +871,7 @@ public class CompositeInboxFanoutTests {
     // A plain composite drops a null inner and carries on. An identity-preserving one cannot:
     // dropping shifts every later event onto the wrong id.
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(ids, null, new _innerEvent("b"));
+    var composite = new IdentityComposite(ids, null, new InnerEvent("b"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
 
@@ -883,7 +883,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_IdentityComposite_CarriesTheCommitSequencesThroughAsync() {
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b")) {
+    var composite = new IdentityComposite(ids, new InnerEvent("a"), new InnerEvent("b")) {
       InnerCommitSequencesOverride = [10L, 20L],
     };
 
@@ -898,7 +898,7 @@ public class CompositeInboxFanoutTests {
     // The reverse mismatch: two ids, one event. Nothing is mis-paired yet, but an id with no
     // event means the redelivery is incomplete, and expanding it would quietly drop one.
     var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
-    var composite = new _identityComposite(ids, new _innerEvent("only"));
+    var composite = new IdentityComposite(ids, new InnerEvent("only"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
 
@@ -910,7 +910,7 @@ public class CompositeInboxFanoutTests {
   [Test]
   public async Task TryExpand_IdentityComposite_WithFewerInnersThanCommitSequences_FailsAsync() {
     var ids = new[] { Guid.NewGuid() };
-    var composite = new _identityComposite(ids, new _innerEvent("only")) {
+    var composite = new IdentityComposite(ids, new InnerEvent("only")) {
       InnerCommitSequencesOverride = [1L, 2L],
     };
 

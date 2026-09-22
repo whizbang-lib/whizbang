@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Lenses")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
 public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
 
   #region Constructor Tests
@@ -575,9 +576,6 @@ public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
   /// Simple Customer model for testing multiple model types.
   /// </summary>
   private sealed record Customer {
-    public required Guid CustomerId { get; init; }
-    public required string Name { get; init; }
-    public required string Email { get; init; }
   }
 
   #endregion

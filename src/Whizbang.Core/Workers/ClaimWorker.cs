@@ -182,7 +182,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       _perspectiveSignalSub = _signalBus.Subscribe<WorkPerspectiveAvailableSignal>(_wakeOnSignal);
     }
 
-    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path);
+    // Subscribe to the listener for orphan+deadletter wake categories (still legacy path) —
     // outbox/inbox/perspective now come via the bus above.
     _notificationListener.OnSignal += _onSignal;
 
@@ -602,7 +602,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       await _perspectiveChannel.WriteAsync(pw, ct);
     }
     // Per-stream-drain emit: signal the drainer workers with stream_ids. The coordinator
-    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us;
+    // populates WorkBatch.OutboxStreamIds / InboxStreamIds / PerspectiveStreamIds for us —
     // we just forward every stream_id every poll. We deliberately do NOT consult IsInFlight
     // here — Phase H step 6 slice 5 / Part B introduced an IsInFlight write-time filter that
     // turned out to be unrecoverable in production: a drain task that hung past its try/finally
@@ -793,7 +793,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     var maxAcquireRows = _acquireRowBound(maxStreams);
 
     // Stealing (#725) is a last resort, never a first move. Only after this instance's own residue
-    // has come back empty twice running does it reach for unowned rows assigned to other residues;
+    // has come back empty twice running does it reach for unowned rows assigned to other residues —
     // a live sibling's owned streams are never touched (the store enforces that). Under normal load
     // the residues stay disjoint and ownership stays stable.
     var allowSteal = Volatile.Read(ref _consecutiveInboxEmptyClaims) >= STEAL_AFTER_EMPTY_CLAIMS;

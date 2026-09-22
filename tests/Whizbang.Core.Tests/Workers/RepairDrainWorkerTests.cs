@@ -205,10 +205,10 @@ public class RepairDrainWorkerTests {
 
   // ── ExecuteAsync: the paced loop itself ───────────────────────────────────
 
-  private static (RepairDrainWorker Worker, _drainCoordinator Coordinator) _buildForLoop(
+  private static (RepairDrainWorker Worker, DrainCoordinator Coordinator) _buildForLoop(
       StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate) {
-    var coordinator = new _drainCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new DrainCoordinator();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     // The drain only claims for origins whose request topic it has learned; without one the
     // tick is inert by design, and the loop would look broken when it is merely idle.
@@ -219,7 +219,7 @@ public class RepairDrainWorkerTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -284,7 +284,7 @@ public class RepairDrainWorkerTests {
     // never invokes the delegate at all. A bare "StopAsync did not throw" would then pass for a
     // worker that never ran, never parked, and never exercised the catch this test is about.
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
-    var gate = new _blockingGate();
+    var gate = new BlockingGate();
     var (worker, coordinator) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
       clock,
@@ -337,10 +337,10 @@ public class RepairDrainWorkerTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
-  private static (RepairDrainWorker Worker, _drainCoordinator Coordinator, _captureTransport Transport, IntegrityGapTracker Tracker) _build(
+  private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
       StreamIntegrityOptions options, Guid origin, bool learnTopic) {
-    var coordinator = new _drainCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new DrainCoordinator();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     if (learnTopic) {
       tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -353,7 +353,7 @@ public class RepairDrainWorkerTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -377,7 +377,7 @@ public class RepairDrainWorkerTests {
   /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
   /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -390,7 +390,7 @@ public class RepairDrainWorkerTests {
     }
   }
 
-  private sealed class _drainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class DrainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<IntegrityRepairDrainItem> Eligible { get; } = [];
     public List<(IReadOnlyList<Guid> Origins, int Limit)> ClaimCalls { get; } = [];
     /// <summary>Completes on the first claim so a test can wait on the effect, not on a clock.</summary>
@@ -409,7 +409,7 @@ public class RepairDrainWorkerTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public int FailFirst { get; set; }
     /// <summary>Thrown in place of the throttle timeout, for the cancellation contract.</summary>
@@ -430,10 +430,9 @@ public class RepairDrainWorkerTests {
     }
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";

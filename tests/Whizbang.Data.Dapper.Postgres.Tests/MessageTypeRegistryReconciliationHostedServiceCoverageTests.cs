@@ -24,9 +24,9 @@ public class MessageTypeRegistryReconciliationHostedServiceCoverageTests {
   // shutdown, instead of exiting quietly with the populator correctly never invoked.
   [Test]
   public async Task ExecuteAsync_SchemaGateWaitCanceled_ReturnsWithoutInvokingPopulateAsync() {
-    var catalog = new _stubCatalog();
-    var populator = new _spyPopulator();
-    var gate = new _canceledSchemaReadyGate();
+    var catalog = new StubCatalog();
+    var populator = new SpyPopulator();
+    var gate = new CanceledSchemaReadyGate();
     var sut = new MessageTypeRegistryReconciliationHostedService(
       NullLogger<MessageTypeRegistryReconciliationHostedService>.Instance,
       catalog,
@@ -42,11 +42,11 @@ public class MessageTypeRegistryReconciliationHostedServiceCoverageTests {
              + "nothing may run when the wait itself was cut short");
   }
 
-  private sealed class _stubCatalog : IMessageTypeCatalog {
+  private sealed class StubCatalog : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [];
   }
 
-  private sealed class _spyPopulator : IMessageTypeRegistryPopulator {
+  private sealed class SpyPopulator : IMessageTypeRegistryPopulator {
     public int PopulateAsyncCallCount { get; private set; }
 
     public Task PopulateAsync(CancellationToken cancellationToken = default) {
@@ -58,7 +58,7 @@ public class MessageTypeRegistryReconciliationHostedServiceCoverageTests {
   /// <summary>Always reports "not ready" and always fails its wait with a cancellation, regardless
   /// of the token passed in -- so the catch under test fires deterministically, with no dependency
   /// on racing a real CancellationTokenSource.</summary>
-  private sealed class _canceledSchemaReadyGate : ISchemaReadyGate {
+  private sealed class CanceledSchemaReadyGate : ISchemaReadyGate {
     public bool IsReady => false;
     public void MarkReady() { }
 

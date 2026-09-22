@@ -125,7 +125,7 @@ public sealed partial class OutboxPublishWorker(
     if (!_options.Enabled || !_publishStrategy.IsConfigured) {
       if (!_publishStrategy.IsConfigured) { LogNoTransportRegistered(_logger); }
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
       return;
     }
@@ -487,9 +487,9 @@ public sealed partial class OutboxPublishWorker(
       return (tracking, typedEnvelope);
     }
 
-    var tracingOptions = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
-    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, LIFECYCLE_PRE_OUTBOX_ASYNC, tracingOptions, stoppingToken);
-    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, LIFECYCLE_PRE_OUTBOX_INLINE, tracingOptions, stoppingToken);
+    var lifecycleTracing = new LifecycleTracingOptions(enableLifecycleSpans, traceContext);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxDetached, work.Attempts, LIFECYCLE_PRE_OUTBOX_ASYNC, lifecycleTracing, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, typedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, LIFECYCLE_PRE_OUTBOX_INLINE, lifecycleTracing, stoppingToken);
     return (null, typedEnvelope);
   }
 

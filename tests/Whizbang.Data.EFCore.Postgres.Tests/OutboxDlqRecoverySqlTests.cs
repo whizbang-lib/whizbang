@@ -114,9 +114,9 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       throw new InvalidOperationException("missing DLQ row");
     }
-    var recoveredAt = reader.IsDBNull(1) ? (DateTimeOffset?)null : reader.GetFieldValue<DateTimeOffset>(1);
-    var generations = reader.IsDBNull(2) ? [] : reader.GetFieldValue<string[]>(2);
-    var fingerprint = reader.IsDBNull(3) ? null : reader.GetString(3);
+    var recoveredAt = await reader.IsDBNullAsync(1) ? (DateTimeOffset?)null : await reader.GetFieldValueAsync<DateTimeOffset>(1);
+    var generations = await reader.IsDBNullAsync(2) ? [] : await reader.GetFieldValueAsync<string[]>(2);
+    var fingerprint = await reader.IsDBNullAsync(3) ? null : reader.GetString(3);
     return (reader.GetInt32(0), recoveredAt, generations, fingerprint);
   }
 

@@ -572,8 +572,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     return (_clamp(stalledDelay, min, max), nextStallCount, false);
   }
 
-  private static TimeSpan _clamp(TimeSpan value, TimeSpan min, TimeSpan max) =>
-    value < min ? min : value > max ? max : value;
+  private static TimeSpan _clamp(TimeSpan value, TimeSpan min, TimeSpan max) {
+    if (value < min) {
+      return min;
+    }
+    return value > max ? max : value;
+  }
 
   /// <summary>
   /// Emits the saga's terminal completion event exactly once — routes

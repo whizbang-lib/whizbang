@@ -149,7 +149,7 @@ public class DispatcherPublishTests {
     SyncDecisionContext? capturedContext = null;
 
     // Act
-    var syncResult = await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<VoidPerspectiveCommand, FakePerspective>(
+    _ = await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<VoidPerspectiveCommand, FakePerspective>(
       command, onDecisionMade: ctx => capturedContext = ctx);
 
     await Assert.That(capturedContext).IsNotNull();

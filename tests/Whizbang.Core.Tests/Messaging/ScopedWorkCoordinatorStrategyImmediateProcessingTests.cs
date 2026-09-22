@@ -26,7 +26,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Deleted: FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync.
-  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush;
+  // Asserted result.OutboxWork.Count == 2 against the legacy claim-during-flush —
   // ExecuteFlushAsync returns empty WorkBatch post-Phase-H. The "no writes to channel"
   // invariant is still locked in WorkCoordinatorFlushHelperTests via SignalCount.
 
@@ -180,7 +180,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new System.NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -219,7 +219,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

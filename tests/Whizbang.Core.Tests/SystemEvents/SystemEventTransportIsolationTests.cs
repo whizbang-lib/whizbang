@@ -132,18 +132,5 @@ public class SystemEventTransportIsolationTests {
     return !options.LocalOnly;
   }
 
-  private static bool _shouldReceiveSystemEventFromInbox(Type eventType, SystemEventOptions options) {
-    // Only system events are affected by this logic
-    if (!typeof(ISystemEvent).IsAssignableFrom(eventType)) {
-      return true; // Domain events always received
-    }
-
-    // Check if this system event type is enabled
-    if (!options.IsEnabled(eventType)) {
-      return false; // Not enabled, don't receive
-    }
-
-    // LocalOnly prevents receiving
-    return !options.LocalOnly;
-  }
+  private static bool _shouldReceiveSystemEventFromInbox(Type eventType, SystemEventOptions options) => _shouldPublishSystemEventToOutbox(eventType, options);
 }

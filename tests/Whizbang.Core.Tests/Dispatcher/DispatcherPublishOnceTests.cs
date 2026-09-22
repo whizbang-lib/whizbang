@@ -40,11 +40,12 @@ public class DispatcherPublishOnceTests {
   /// <see cref="PublishOnceTestEvent"/>. Tests assert against this counter
   /// to prove the dispatcher proceeded past the claim and through PublishAsync.
   /// </summary>
-  internal static int FireCount;
+  private static int _fireCount;
+  internal static int FireCount => _fireCount;
 
   public class PublishOnceTestEventReceptor : IReceptor<PublishOnceTestEvent> {
-    public ValueTask HandleAsync(PublishOnceTestEvent message, CancellationToken cancellationToken) {
-      Interlocked.Increment(ref FireCount);
+    public ValueTask HandleAsync(PublishOnceTestEvent message, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _fireCount);
       return ValueTask.CompletedTask;
     }
   }
@@ -69,7 +70,7 @@ public class DispatcherPublishOnceTests {
 
   [Before(Test)]
   public Task ResetCounterAsync() {
-    Interlocked.Exchange(ref FireCount, 0);
+    Interlocked.Exchange(ref _fireCount, 0);
     return Task.CompletedTask;
   }
 
@@ -169,7 +170,7 @@ public class DispatcherPublishOnceTests {
   public async Task PublishOnceAsync_CanceledToken_ThrowsAsync() {
     var dispatcher = _createDispatcher(new InMemoryClaimedEmissionStore());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(() => dispatcher.PublishOnceAsync("k", new PublishOnceTestEvent(Guid.NewGuid()), cts.Token))
       .ThrowsExactly<OperationCanceledException>();

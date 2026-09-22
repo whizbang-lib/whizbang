@@ -223,7 +223,7 @@ public class MetadataConverterTests {
 
     // Act
     _converter.Write(writer, null, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -239,7 +239,7 @@ public class MetadataConverterTests {
 
     // Act
     _converter.Write(writer, dictionary, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -257,7 +257,7 @@ public class MetadataConverterTests {
 
     // Act
     _converter.Write(writer, dictionary, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -278,7 +278,7 @@ public class MetadataConverterTests {
 
     // Act
     _converter.Write(writer, dictionary, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -309,7 +309,7 @@ public class MetadataConverterTests {
     await using var stream = new MemoryStream();
     await using var writer = new Utf8JsonWriter(stream);
     _converter.Write(writer, original, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Act - Read
     var reader = new Utf8JsonReader(stream.ToArray());
@@ -334,7 +334,7 @@ public class MetadataConverterTests {
     await using var stream = new MemoryStream();
     await using var writer = new Utf8JsonWriter(stream);
     _converter.Write(writer, null, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Act - Read null
     var reader = new Utf8JsonReader(stream.ToArray());

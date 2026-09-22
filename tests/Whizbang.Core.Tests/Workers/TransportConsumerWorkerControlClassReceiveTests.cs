@@ -327,7 +327,7 @@ public class TransportConsumerWorkerControlClassReceiveTests {
       return Task.FromResult<ISubscription>(new NopSubscription());
     }
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull => throw new NotImplementedException();
 

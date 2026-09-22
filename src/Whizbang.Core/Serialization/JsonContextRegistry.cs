@@ -33,15 +33,15 @@ public static class JsonContextRegistry {
   /// scopes it to that profile only. Higher <paramref name="Priority"/> is consulted first; equal
   /// priorities preserve registration order via <paramref name="Seq"/>.
   /// </summary>
-  private readonly record struct _resolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
+  private readonly record struct ResolverEntry(IJsonTypeInfoResolver Resolver, int Priority, SerializationProfile? Profile, long Seq);
 
-  private readonly record struct _converterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
+  private readonly record struct ConverterEntry(JsonConverter Converter, int Priority, SerializationProfile? Profile, long Seq);
 
   /// <summary>
   /// Thread-safe collection of registered resolvers with priority + profile.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
+  private static readonly ConcurrentQueue<ResolverEntry> _resolvers = new();
 
   /// <summary>A per-type metadata customization and the profile it applies to.</summary>
   /// <remarks>
@@ -61,7 +61,7 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentQueue<_converterEntry> _converters = new();
+  private static readonly ConcurrentQueue<ConverterEntry> _converters = new();
 
   /// <summary>
   /// Per-type customizations applied to the resolved metadata, scoped by profile.
@@ -107,7 +107,7 @@ public static class JsonContextRegistry {
   public static void RegisterContext(IJsonTypeInfoResolver resolver, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(resolver);
 
-    _resolvers.Enqueue(new _resolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _resolvers.Enqueue(new ResolverEntry(resolver, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -134,7 +134,7 @@ public static class JsonContextRegistry {
   public static void RegisterConverter(JsonConverter converter, int priority, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(converter);
 
-    _converters.Enqueue(new _converterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
+    _converters.Enqueue(new ConverterEntry(converter, priority, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>
@@ -242,7 +242,7 @@ public static class JsonContextRegistry {
     // typeinfo for the interface bases themselves, so without this any nested IMessage/IEvent/ICommand
     // member fails to (de)serialize. The base resolvers handle every concrete type.
     var combinedResolver = JsonTypeInfoResolver.Combine(
-      [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
+      [new PolymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
 
     combinedResolver = WithRegisteredModifiers(combinedResolver, profile);
     var options = new JsonSerializerOptions {
@@ -563,7 +563,7 @@ public static class JsonContextRegistry {
   /// resolves each lazily at serialize time against the already-cached base typeinfo.</para>
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:MessageEnvelope_CompositePayload_RoundTripsWithInnerEventsIntactAsync</tests>
-  private sealed class _polymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
+  private sealed class PolymorphicBaseTypeInfoResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       // Explicit generic dispatch over the three known polymorphic base interfaces keeps this
       // AOT-safe (no MakeGenericMethod / reflection).

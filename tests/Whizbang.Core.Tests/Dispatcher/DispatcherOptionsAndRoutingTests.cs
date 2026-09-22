@@ -80,7 +80,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -95,7 +95,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var command = new TestCommand("test data");
     var context = MessageContext.New();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -146,7 +146,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert

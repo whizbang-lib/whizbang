@@ -42,6 +42,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
+[global::System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "The type parameter is the key the source generator and the container resolve on; the interface is a marker by design.")]
 public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
   // Marker interface - no methods required
   // Specific event handling enforced by IPerspectiveWithActionsFor<TModel, TEvent> variants

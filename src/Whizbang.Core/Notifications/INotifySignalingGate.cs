@@ -85,7 +85,7 @@ public sealed class NullNotifySignalingGate : INotifySignalingGate, INullDefault
   /// <inheritdoc />
   public string? LastFailureReason => "No notification driver is registered; work is polled rather than signaled.";
   /// <inheritdoc />
-  public event Action<bool>? OnAvailabilityChanged { add { } remove { } }
+  public event Action<bool>? OnAvailabilityChanged { add { /* the null default has no listeners to notify */ } remove { /* the null default has no listeners to notify */ } }
   /// <inheritdoc />
   public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
 }

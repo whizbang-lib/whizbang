@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class WorkFlusherTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
-  public record _testEvent([StreamId] string Data) : IEvent;
+  public record TestEvent([StreamId] string Data) : IEvent;
 
   // ========================================
   // Strategy-specific IWorkFlusher Tests
@@ -206,9 +206,9 @@ public class WorkFlusherTests {
   private OutboxMessage _createOutboxMessage() {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -241,7 +241,7 @@ public class WorkFlusherTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -261,7 +261,7 @@ public class WorkFlusherTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastCancellationToken = cancellationToken;
       return Task.CompletedTask;

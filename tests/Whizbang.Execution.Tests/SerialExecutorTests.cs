@@ -230,9 +230,11 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var tcs3 = new TaskCompletionSource<int>();
 
     // Act - Start 3 async operations
-    var task1 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs1.Task, context).AsTask();
-    var task2 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs2.Task, context).AsTask();
-    var task3 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs3.Task, context).AsTask();
+    Task<int> Start(TaskCompletionSource<int> tcs) =>
+      executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs.Task, context).AsTask();
+    var task1 = Start(tcs1);
+    var task2 = Start(tcs2);
+    var task3 = Start(tcs3);
 
     await Task.Delay(50); // Let tasks queue
 
@@ -336,18 +338,19 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var context = CreateTestContext();
 
     var blockingTcs = new TaskCompletionSource<int>();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var handlerCalled = 0;
 
     // Act - Queue blocking work first to fill the channel
-    var blockingTask = executor.ExecuteAsync<int>(
+    async Task<int> StartBlockingTask() => await executor.ExecuteAsync<int>(
       envelope,
       async (_, _) => await blockingTcs.Task,
       context
-    ).AsTask();
+    );
+    var blockingTask = StartBlockingTask();
 
     // Queue work with cancellation token (will queue successfully)
-    var cancellableTask = executor.ExecuteAsync<int>(
+    _ = executor.ExecuteAsync<int>(
       envelope,
       (_, _) => {
         Interlocked.Increment(ref handlerCalled);
@@ -361,7 +364,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     await Task.Delay(100);
 
     // Cancel AFTER work is queued but BEFORE worker processes it
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Unblock worker to process the canceled work (should skip it via line 165)
     blockingTcs.SetResult(1);
@@ -547,8 +550,9 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var handlerCalled = 0;
 
     // Occupy the worker so the next item stays queued.
-    var blockingTask = executor.ExecuteAsync<int>(
-      envelope, async (env, ctx) => await blocking.Task, context, CancellationToken.None).AsTask();
+    async Task<int> StartBlockingTask() => await executor.ExecuteAsync<int>(
+      envelope, async (env, ctx) => await blocking.Task, context, CancellationToken.None);
+    var blockingTask = StartBlockingTask();
 
     var queued = executor.ExecuteAsync<int>(
       envelope,

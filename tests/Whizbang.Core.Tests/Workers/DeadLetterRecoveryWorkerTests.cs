@@ -105,7 +105,7 @@ public class DeadLetterRecoveryWorkerTests {
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
     public ServiceBacklog? Backlog { get; set; }
-    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default) {
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
       if (CountServiceBacklogShouldThrow) { throw new InvalidOperationException("simulated backlog-count failure"); }
       return ValueTask.FromResult(Backlog);
     }
@@ -124,10 +124,6 @@ public class DeadLetterRecoveryWorkerTests {
       => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
-      => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
-      => Task.CompletedTask;
 
     // Campaign surface (P1) — inert defaults; campaign behavior is locked by
     // DeadLetterCanaryCampaignTests with its dedicated scripted fake.
@@ -165,7 +161,7 @@ public class DeadLetterRecoveryWorkerTests {
   }
 
   private sealed class ImmediateSchemaGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public void MarkReady() { }
     public bool IsReady => true;
   }
@@ -186,7 +182,7 @@ public class DeadLetterRecoveryWorkerTests {
       add { _onSignal += value; SubscriberCount++; }
       remove { _onSignal -= value; SubscriberCount--; }
     }
-    public event Action<bool>? OnHealthChanged { add { } remove { } }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
 
     private Action<Whizbang.Core.Notifications.WorkSignalCategory>? _onSignal;
 
@@ -648,16 +644,16 @@ public class DeadLetterRecoveryWorkerTests {
 
   /// <summary>Completes when a chosen <c>EventId</c> is logged — a deterministic "ExecuteAsync
   /// reached this branch" signal for a branch whose only effect is a log line.</summary>
-  private sealed class EventIdSignalLogger(int eventId) : ILogger<DeadLetterRecoveryWorker> {
+  private sealed class EventIdSignalLogger(int expectedEventId) : ILogger<DeadLetterRecoveryWorker> {
     private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Seen => _seen.Task;
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (id.Id == eventId) { _seen.TrySetResult(); }
+      if (eventId.Id == expectedEventId) { _seen.TrySetResult(); }
     }
   }
 
@@ -1276,7 +1272,7 @@ public class DeadLetterRecoveryWorkerTests {
       await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(10), testToken);
     } finally {
       await cts.CancelAsync();
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     }
 
     await Assert.That(svc.FetchedBatchSizes.Count).IsGreaterThanOrEqualTo(2)

@@ -244,7 +244,7 @@ public class CoalesceShipWorkerTests {
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
     await Assert.That(coordinator.ReleasedGroups).IsEmpty();
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -260,7 +260,7 @@ public class CoalesceShipWorkerTests {
 
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -287,7 +287,7 @@ public class CoalesceShipWorkerTests {
     await worker.StartAsync(cts.Token);
     await firstStats.WaitAsync(TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.StatsCalls).IsGreaterThanOrEqualTo(1);
@@ -301,7 +301,7 @@ public class CoalesceShipWorkerTests {
   private static List<OutboxMessage> _mixedSingles() =>
     [_single("test-topic", WorkPriority.BACKGROUND), _single("test-topic", WorkPriority.INTERACTIVE), _single("test-topic", WorkPriority.BACKGROUND)];
 
-  private async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
+  private static async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
     var (worker, coordinator, _) = _build(configureBinding);
     coordinator.Stats = [_stats("record-digest", count: singles.Count, oldestAge: 40, newestAge: 20)];
     coordinator.PendingSingles["record-digest"] = [.. singles];
@@ -359,7 +359,7 @@ public class CoalesceShipWorkerTests {
 
   #region Helpers
 
-  private (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
+  private static (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
       Action<CoalescePolicyOptions> configureBinding) {
     var time = new FakeTimeProvider(_testNow);
     var coordinator = new FakeCoalesceCoordinator();
@@ -564,13 +564,13 @@ public class CoalesceShipWorkerTests {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -632,17 +632,17 @@ public class CoalesceShipWorkerTests {
     }
 
     // The rest of IWorkCoordinator is default-implemented; only the abstract members need bodies.
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -672,7 +672,7 @@ public class CoalesceShipWorkerTests {
     await worker.StartAsync(cts.Token);
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.ReleaseAttempts).IsGreaterThanOrEqualTo(1)
@@ -705,7 +705,7 @@ public class CoalesceShipWorkerTests {
     }
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(3)
@@ -729,7 +729,7 @@ public class CoalesceShipWorkerTests {
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = worker.ExecuteTask;
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(executeTask!.IsCompleted).IsTrue();

@@ -161,11 +161,11 @@ public partial class InboxDescriptorDefersToTheCutoverTests {
     var ensure = _ensureScript();
 
     var offenders = new List<string>();
-    foreach (Match index in EnsureCreatesInboxIndex().Matches(ensure)) {
-      var name = index.Groups[1].Value;
+    foreach (var groups in EnsureCreatesInboxIndex().Matches(ensure).Select(index => index.Groups)) {
+      var name = groups[1].Value;
       // The key list and the partial index's predicate both pin the index to the column: an index
       // keyed on a surviving column but filtered on a dropped one is just as broken.
-      var referenced = index.Groups[2].Value + " " + index.Groups[3].Value;
+      var referenced = groups[2].Value + " " + groups[3].Value;
       var named = dropped
         .Where(c => Regex.IsMatch(referenced, $"(?<![_A-Za-z0-9]){Regex.Escape(c)}(?![_A-Za-z0-9])"))
         .ToList();

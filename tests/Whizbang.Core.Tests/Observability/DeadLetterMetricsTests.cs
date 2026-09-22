@@ -34,7 +34,7 @@ public class DeadLetterMetricsTests {
     };
     listener.Start();
 
-    var _ = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    _ = new DeadLetterMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(observed).Contains("whizbang.dead_letters.added");
     await Assert.That(observed).Contains("whizbang.dead_letters.recovered");

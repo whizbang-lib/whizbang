@@ -44,7 +44,6 @@ public class ClaimWorkerLifecycleTests {
   /// <summary>A listener whose signals a test can raise, and which counts live subscribers.</summary>
   private sealed class ControllableListener : IWorkNotificationListener {
     private Action<WorkSignalCategory>? _onSignal;
-    private Action<bool>? _onHealth;
 
     public bool IsHealthy => true;
     public DateTimeOffset? LastSignalAt => null;
@@ -55,8 +54,8 @@ public class ClaimWorkerLifecycleTests {
     }
 
     public event Action<bool>? OnHealthChanged {
-      add { _onHealth += value; HealthSubscribers++; }
-      remove { _onHealth -= value; HealthSubscribers--; }
+      add { ArgumentNullException.ThrowIfNull(value); HealthSubscribers++; }
+      remove { ArgumentNullException.ThrowIfNull(value); HealthSubscribers--; }
     }
 
     public int SignalSubscribers { get; private set; }
@@ -118,7 +117,7 @@ public class ClaimWorkerLifecycleTests {
       lock (_operationLock) { _operations.Add(operation); }
     }
 
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       _record("register");
       HeartbeatAttempted.TrySetResult();
       return HeartbeatThrows
@@ -126,7 +125,7 @@ public class ClaimWorkerLifecycleTests {
         : Task.FromResult(true);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       _record("claim");
       Interlocked.Increment(ref _claimCount);
       ClaimAttempted.TrySetResult();
@@ -137,17 +136,17 @@ public class ClaimWorkerLifecycleTests {
       });
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 

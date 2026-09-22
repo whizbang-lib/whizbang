@@ -98,7 +98,8 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     // Bounded: a freshly created buffer carries a fresh LastActivity, so it cannot be evicted
     // for idleness before the retry writes to it. The cap is a backstop, not the mechanism.
     const int maxAttempts = 3;
-    for (var attempt = 1; ; attempt++) {
+    var attempt = 1;
+    while (true) {
       var buffer = _streams.GetOrAdd(streamId, k => _createStreamBuffer(k));
       buffer.LastActivity = _timeProvider.GetUtcNow();
       try {
@@ -107,6 +108,7 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
       } catch (ChannelClosedException) when (attempt < maxAttempts) {
         _ = _streams.TryRemove(KeyValuePair.Create(streamId, buffer));
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        attempt++;
       }
     }
   }

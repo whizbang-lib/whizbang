@@ -42,7 +42,7 @@ public class EffectiveExpiryLadderTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _createTableAsync(NpgsqlConnection conn) {
+  private static async Task _createTableAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (

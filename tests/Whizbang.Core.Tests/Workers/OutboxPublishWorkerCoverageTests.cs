@@ -53,9 +53,9 @@ public class OutboxPublishWorkerCoverageTests {
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public TaskCompletionSource<Guid> FirstId { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<Guid> AllIds { get; } = [];
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
-      FirstId.TrySetResult(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
+      FirstId.TrySetResult(outboxMessageId);
       return ValueTask.CompletedTask;
     }
   }
@@ -63,7 +63,7 @@ public class OutboxPublishWorkerCoverageTests {
   private sealed class FakeFailureChannel : IFailureChannel {
     public TaskCompletionSource<MessageFailure> FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ConcurrentBag<(WorkCategory Cat, MessageFailure Failure)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       FirstFailure.TrySetResult(failure);
       return ValueTask.CompletedTask;
@@ -72,7 +72,7 @@ public class OutboxPublishWorkerCoverageTests {
 
   private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
     public ConcurrentBag<(WorkCategory Cat, Guid Id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
       All.Add((category, id));
       return ValueTask.CompletedTask;
     }
@@ -82,8 +82,8 @@ public class OutboxPublishWorkerCoverageTests {
     public bool ReadyValue { get; set; } = true;
     public ConcurrentBag<OutboxWork> Published { get; } = [];
 
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(ReadyValue);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(ReadyValue);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       Published.Add(work);
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
@@ -97,11 +97,11 @@ public class OutboxPublishWorkerCoverageTests {
 
   private sealed class FakeBulkStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct)
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
       => throw new InvalidOperationException("FakeBulkStrategy: only PublishBatchAsync should be called");
-    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> works, CancellationToken ct) {
-      var results = works.Select(w => new MessagePublishResult {
+    public Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(IReadOnlyList<OutboxWork> workItems, CancellationToken cancellationToken) {
+      var results = workItems.Select(w => new MessagePublishResult {
         MessageId = w.MessageId,
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,
@@ -114,8 +114,8 @@ public class OutboxPublishWorkerCoverageTests {
   /// <summary>Always throws from PublishAsync — exercises the singular loop's exception catch,
   /// as opposed to a strategy that merely returns a failed <see cref="MessagePublishResult"/>.</summary>
   private sealed class FakeThrowingStrategy : IMessagePublishStrategy {
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("publish exploded");
   }
 

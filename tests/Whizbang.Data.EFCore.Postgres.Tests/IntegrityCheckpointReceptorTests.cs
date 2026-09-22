@@ -229,7 +229,7 @@ public class IntegrityCheckpointReceptorTests {
 
   [Test]
   public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var services = new ServiceCollection();
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
@@ -242,7 +242,7 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(registry.Registered.All(r => r.Msg == typeof(IntegrityCheckpoint))).IsTrue();
   }
 
-  private sealed class _captureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
+  private sealed class CaptureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
     public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
@@ -306,10 +306,10 @@ public class IntegrityCheckpointReceptorTests {
   public async Task SameWindowReconfirmed_WarnsOnceThenLogsQuietlyAsync() {
     // #667 half 2: an origin that keeps checkpointing the same watermark re-registers the
     // same deficit every cycle, and each re-confirmation logged a fresh WARNING — hundreds
-    // of identical lines for one condition. The first confirmation of a window warns;
+    // of identical lines for one condition. The first confirmation of a window warns —
     // re-confirmations of the SAME window log at Debug (the condition is already surfaced
     // and stays countable on the meter).
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var policy = new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings {
       RecountBackoffAfterUnchanged = 99,   // keep recounts flowing — the governor is not under test
     });
@@ -334,10 +334,10 @@ public class IntegrityCheckpointReceptorTests {
 
   // ── fixture ─────────────────────────────────────────────────────────────
 
-  private sealed class _fixtureState {
-    public required _verifyCoordinator Coordinator { get; init; }
-    public required _captureDispatcher Dispatcher { get; init; }
-    public required _captureTransport Transport { get; init; }
+  private sealed class FixtureState {
+    public required VerifyCoordinator Coordinator { get; init; }
+    public required CaptureDispatcher Dispatcher { get; init; }
+    public required CaptureTransport Transport { get; init; }
     public required IntegrityCheckpointReceptor Receptor { get; init; }
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
   }
@@ -349,7 +349,7 @@ public class IntegrityCheckpointReceptorTests {
     // distinction it carried (a service deliberately withholding repair while it drains reads the
     // same as one with repair disabled) now lives on the deferral line itself, so the operator
     // reading the deferral knows both facts from the one line that does fire.
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger: logger);
     fx.Coordinator.Counts = _ => [];
     fx.Coordinator.Backlog = new ServiceBacklog {
@@ -370,14 +370,14 @@ public class IntegrityCheckpointReceptorTests {
       .Because("the separate withheld line sat behind the deferral's continue and could never fire; it is folded, not kept");
   }
 
-  private static _fixtureState _fixture(
+  private static FixtureState _fixture(
       StreamIntegrityOptions? options = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegrityRepairPolicy? policy = null,
       Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null) {
-    var coordinator = new _verifyCoordinator();
-    var dispatcher = new _captureDispatcher();
-    var transport = new _captureTransport();
+    var coordinator = new VerifyCoordinator();
+    var dispatcher = new CaptureDispatcher();
+    var transport = new CaptureTransport();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
@@ -390,15 +390,15 @@ public class IntegrityCheckpointReceptorTests {
     // static fallback is process-wide, which would leak state between parallel tests.
     services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     // See IntegrityManifestReceptorTests: publishing is opt-in; these exercise that path.
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
     var sp = services.BuildServiceProvider();
-    return new _fixtureState {
+    return new FixtureState {
       Coordinator = coordinator,
       Dispatcher = dispatcher,
       Transport = transport,
@@ -473,30 +473,34 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   private static IntegrityCheckpoint _checkpoint(
-      _fixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
-      IReadOnlyList<string>? tenantScopes = null) => new() {
-        CheckpointStreamId = fx.OriginId,
-        OriginServiceId = fx.OriginId,
-        OriginServiceName = "origin-svc",
-        RequestTopic = requestTopic,
-        FromCommitSequence = from,
-        ToCommitSequence = to,
-        Buckets = emptyBuckets
-      ? []
-      : tenantScopes is not null
-        // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
-        // count grows past anything a batch size bounds — the shape that has to stay capped.
-        ? [.. tenantScopes.Select(t => new CheckpointBucket { TenantScope = t, EventType = _verifiedType, Count = count })]
-        : [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }],
-      };
+      FixtureState fx, long from, long to, int count, bool emptyBuckets = false, string? requestTopic = null,
+      IReadOnlyList<string>? tenantScopes = null) {
+    List<CheckpointBucket> buckets = [];
+    if (!emptyBuckets && tenantScopes is not null) {
+      // Pendings are keyed by (tenant, event type), so a multi-tenant window is how the confirmed-gap
+      // count grows past anything a batch size bounds — the shape that has to stay capped.
+      buckets = [.. tenantScopes.Select(t => new CheckpointBucket { TenantScope = t, EventType = _verifiedType, Count = count })];
+    } else if (!emptyBuckets) {
+      buckets = [new CheckpointBucket { TenantScope = "tenant-a", EventType = _verifiedType, Count = count }];
+    }
+    return new() {
+      CheckpointStreamId = fx.OriginId,
+      OriginServiceId = fx.OriginId,
+      OriginServiceName = "origin-svc",
+      RequestTopic = requestTopic,
+      FromCommitSequence = from,
+      ToCommitSequence = to,
+      Buckets = buckets,
+    };
+  }
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(VerifiedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -509,7 +513,7 @@ public class IntegrityCheckpointReceptorTests {
     };
   }
 
-  private sealed class _verifyCoordinator : IWorkCoordinator {
+  private sealed class VerifyCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
     public ServiceBacklog? Backlog { get; set; }
@@ -524,21 +528,19 @@ public class IntegrityCheckpointReceptorTests {
       Guid originServiceId, long fromCommitSequence, long toCommitSequence, CancellationToken cancellationToken = default) =>
       Task.FromResult(Counts((originServiceId, fromCommitSequence, toCommitSequence)));
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -553,7 +555,7 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       Registered.Add((typeof(TMessage), stage));
@@ -564,12 +566,12 @@ public class IntegrityCheckpointReceptorTests {
   }
 
   /// <summary>Captures PublishAsync payloads; every other dispatcher member is unused here.</summary>
-  private sealed class _captureDispatcher : IDispatcher {
+  private sealed class CaptureDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
 
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => PublishAsync(eventData);
@@ -595,7 +597,6 @@ public class IntegrityCheckpointReceptorTests {
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
@@ -605,7 +606,7 @@ public class IntegrityCheckpointReceptorTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
 
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;

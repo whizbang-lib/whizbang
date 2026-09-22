@@ -76,7 +76,7 @@ public class PerspectiveSyncSignalerTests {
   public async Task LocalSyncSignaler_HandlerThrows_LogsWarningAndStillNotifiesOthersAsync() {
     // A throwing handler must not block the others — but the drop must be logged, not silent
     // (a dropped signal can leave a sync waiter blocked until its poll/timeout).
-    var captured = new _capturingLogger<LocalSyncSignaler>();
+    var captured = new CapturingLogger<LocalSyncSignaler>();
     using var signaler = new LocalSyncSignaler(captured);
     var perspectiveType = typeof(TestPerspective);
     var goodRan = false;
@@ -92,7 +92,7 @@ public class PerspectiveSyncSignalerTests {
       .Because("a dropped handler exception must be logged, not silently swallowed");
   }
 
-  private sealed class _capturingLogger<T> : ILogger<T> {
+  private sealed class CapturingLogger<T> : ILogger<T> {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

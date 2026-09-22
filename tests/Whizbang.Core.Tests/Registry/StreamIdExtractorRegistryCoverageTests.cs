@@ -35,9 +35,9 @@ public class StreamIdExtractorRegistryCoverageTests {
     // whether ANY extractor is registered at all — if this drifted from the real registration
     // count, that diagnostic would mislead exactly the person trying to use it.
     AssemblyRegistry<IStreamIdExtractor>.ClearForTesting();
-    StreamIdExtractorRegistry.Register(new _noopExtractor());
-    StreamIdExtractorRegistry.Register(new _noopExtractor());
-    StreamIdExtractorRegistry.Register(new _noopExtractor());
+    StreamIdExtractorRegistry.Register(new NoopExtractor());
+    StreamIdExtractorRegistry.Register(new NoopExtractor());
+    StreamIdExtractorRegistry.Register(new NoopExtractor());
 
     await Assert.That(StreamIdExtractorRegistry.Count).IsEqualTo(3);
   }
@@ -49,7 +49,7 @@ public class StreamIdExtractorRegistryCoverageTests {
     await Assert.That(StreamIdExtractorRegistry.Count).IsEqualTo(0);
   }
 
-  private sealed class _noopExtractor : IStreamIdExtractor {
+  private sealed class NoopExtractor : IStreamIdExtractor {
     public Guid? ExtractStreamId(object message, Type messageType) => null;
     public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) => (false, false);
     public bool SetStreamId(object message, Guid streamId) => false;

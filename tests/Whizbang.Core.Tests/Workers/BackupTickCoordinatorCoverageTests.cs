@@ -25,7 +25,7 @@ public class BackupTickCoordinatorCoverageTests {
   /// <see cref="Entered"/> first, so a test can wait on evidence the coordinator's own body reached
   /// the barrier instead of on <c>StartAsync</c> returning (which, since .NET 10, only means the
   /// thread-pool work item was queued).</summary>
-  private sealed class _canceledSchemaGate : ISchemaReadyGate {
+  private sealed class CanceledSchemaGate : ISchemaReadyGate {
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsReady => false;
     public void MarkReady() { }
@@ -38,7 +38,7 @@ public class BackupTickCoordinatorCoverageTests {
   /// <summary>Always reports a small, constant idle time so the ASLEEP branch never transitions
   /// to POLLING; signals once its getter has been read a second time, proving the sleep-then-loop
   /// cycle actually ran instead of the coordinator exiting or hanging on the first pass.</summary>
-  private sealed class _alwaysIdleTracker : IIdleActivityTracker {
+  private sealed class AlwaysIdleTracker : IIdleActivityTracker {
     private int _reads;
     public TaskCompletionSource SecondReadSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void Touch(string source) { }
@@ -68,7 +68,7 @@ public class BackupTickCoordinatorCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_SchemaGateCanceledDuringStartup_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
-    var gate = new _canceledSchemaGate();
+    var gate = new CanceledSchemaGate();
     var registry = new BackupTickRegistry();
     var ticked = 0;
     registry.Register("backstop", _ => { Interlocked.Increment(ref ticked); return Task.CompletedTask; }, () => true);
@@ -108,7 +108,7 @@ public class BackupTickCoordinatorCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_Asleep_SleepsThenReChecksIdleTimeAsync(CancellationToken testToken) {
-    var tracker = new _alwaysIdleTracker();
+    var tracker = new AlwaysIdleTracker();
     var coordinator = new BackupTickCoordinator(
       tracker: tracker,
       registry: new BackupTickRegistry(),

@@ -937,7 +937,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     await using (var flush = connection.CreateCommand()) {
@@ -959,7 +959,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       .Because("emit_chain MUST be idempotent against pre-emitted events — its internal NOT EXISTS check + ON CONFLICT DO NOTHING guarantee no duplicate wh_event_store rows. This is the lock-in invariant that lets v0.684 ship the cheaper guard safely.");
   }
 
-  private async Task<_InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
+  private async Task<InnerCallCounts> _runClaimWorkAndCountInnerCallsAsync(
       int seedOutbox, int seedInbox, int seedPerspective, int seedReceptor) {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -1057,7 +1057,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
         )";
       call.Parameters.AddWithValue("id", instanceId);
       await using var reader = await call.ExecuteReaderAsync();
-      while (await reader.ReadAsync()) { }
+      while (await reader.ReadAsync()) { /* drain */ }
     }
 
     // pg_stat_user_functions is populated by the async stats collector — without an
@@ -1067,7 +1067,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await flush.ExecuteNonQueryAsync();
     }
 
-    return new _InnerCallCounts(
+    return new InnerCallCounts(
       OutboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_outbox'"),
       InboxCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_inbox'"),
       PerspectiveCalls: await _scalarLongAsync(connection, "SELECT COALESCE(SUM(calls), 0) FROM pg_stat_user_functions WHERE funcname = 'claim_orphaned_perspective_events'"),
@@ -1082,7 +1082,7 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     return result is null or DBNull ? 0L : Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
   }
 
-  private readonly record struct _InnerCallCounts(
+  private readonly record struct InnerCallCounts(
     long OutboxCalls,
     long InboxCalls,
     long PerspectiveCalls,

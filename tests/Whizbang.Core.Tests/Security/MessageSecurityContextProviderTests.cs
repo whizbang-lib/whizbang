@@ -366,7 +366,7 @@ public class MessageSecurityContextProviderTests {
     var envelope = _createTestEnvelope(new TestMessage("test"));
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () =>

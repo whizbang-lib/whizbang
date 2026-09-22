@@ -106,7 +106,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     if (!await r.ReadAsync()) {
       return (0, null);
     }
-    return (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetGuid(1));
+    return (r.GetInt32(0), await r.IsDBNullAsync(1) ? null : r.GetGuid(1));
   }
 
   [Test]

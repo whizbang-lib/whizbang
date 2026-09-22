@@ -14,14 +14,14 @@ namespace Whizbang.Core.Tests.Health;
 /// noisy dependency into a failed probe for every other, healthy component too.
 /// </summary>
 public class WhizbangHealthAggregatorCoverageTests {
-  private sealed class _throwingSource(string component, Exception toThrow) : IWhizbangHealthSource {
+  private sealed class ThrowingSource(string component, Exception toThrow) : IWhizbangHealthSource {
     public string Component { get; } = component;
     public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) => throw toThrow;
   }
 
   [Test]
   public async Task EvaluateAsync_SourceThrowsOperationCanceledException_NotFromTheCallerToken_ReportsFaultedAsync() {
-    var source = new _throwingSource("flaky", new OperationCanceledException("source's own internal cancellation"));
+    var source = new ThrowingSource("flaky", new OperationCanceledException("source's own internal cancellation"));
     var aggregator = new WhizbangHealthAggregator([source], new WhizbangHealthOptions());
 
     // CancellationToken.None is never canceled, so the source's OperationCanceledException cannot be
@@ -38,7 +38,7 @@ public class WhizbangHealthAggregatorCoverageTests {
 
   [Test]
   public async Task EvaluateAsync_SourceThrowsUnexpectedException_ReportsFaultedWithExceptionTypeNameAsync() {
-    var source = new _throwingSource("flaky", new InvalidOperationException("boom"));
+    var source = new ThrowingSource("flaky", new InvalidOperationException("boom"));
     var aggregator = new WhizbangHealthAggregator([source], new WhizbangHealthOptions());
 
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);

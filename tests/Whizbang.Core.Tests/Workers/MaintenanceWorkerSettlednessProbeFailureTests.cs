@@ -71,7 +71,7 @@ public class MaintenanceWorkerSettlednessProbeFailureTests {
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
       => throw probeFailure;
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       SweepCount++;
       return Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
     }

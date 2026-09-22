@@ -92,18 +92,6 @@ public class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public async Task<int> Pooled_IntTypeAsync() {
-    var source = PooledSourcePool<int>.Rent();
-    source.Reset();
-    source.SetResult(42);
-    var valueTask = new ValueTask<int>(source, source.Token);
-    var result = await valueTask;
-    source.Reset();
-    PooledSourcePool<int>.Return(source);
-    return result;
-  }
-
-  [Benchmark]
   public async Task<string> Pooled_StringTypeAsync() {
     var source = PooledSourcePool<string>.Rent();
     source.Reset();
@@ -214,10 +202,10 @@ public class PoolingBenchmarks {
   // ============================================================================
 
   public struct LargeStruct {
-    public int Value;
-    public long Timestamp;
-    public string Data;
-    public Guid Id;
+    public int Value { get; set; }
+    public long Timestamp { get; set; }
+    public string Data { get; set; }
+    public Guid Id { get; set; }
   }
 
   public record ProcessingResult {

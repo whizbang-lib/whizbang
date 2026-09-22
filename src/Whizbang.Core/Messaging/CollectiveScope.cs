@@ -42,4 +42,7 @@ namespace Whizbang.Core.Messaging;
 public abstract record CollectiveScope : ICollectiveScope {
   /// <inheritdoc/>
   public abstract string ScopeKind { get; }
+
+  /// <summary>The discriminator, which is also what a scope reads as in logs and diagnostics.</summary>
+  public override string ToString() => ScopeKind;
 }

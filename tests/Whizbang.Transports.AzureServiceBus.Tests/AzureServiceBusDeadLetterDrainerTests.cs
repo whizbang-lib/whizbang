@@ -484,6 +484,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
     public List<BrokerDeadLetterImport> Received { get; } = [];
     public Queue<object> PlannedOutcomes { get; } = new();
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The method is handed to the drainer as its importer delegate, whose shape includes the token.")]
     public Task<bool> ImportAsync(BrokerDeadLetterImport import, CancellationToken ct) {
       Received.Add(import);
       if (PlannedOutcomes.Count == 0) {

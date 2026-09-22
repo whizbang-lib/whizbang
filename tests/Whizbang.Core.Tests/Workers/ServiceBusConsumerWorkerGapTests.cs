@@ -569,12 +569,11 @@ public class ServiceBusConsumerWorkerGapTests {
       services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     }
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
+    _ = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
 
     return new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: scopeFactory,
-      jsonOptions: jsonOptions,
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -621,15 +620,6 @@ public class ServiceBusConsumerWorkerGapTests {
     };
   }
 
-  private static MessageEnvelope<SbcGapTestEvent> _createTypedEnvelope(MessageId messageId) {
-    return new MessageEnvelope<SbcGapTestEvent> {
-      MessageId = messageId,
-      Payload = new SbcGapTestEvent { Data = "typed-payload" },
-      Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-  }
-
   // ========================================
   // Test Doubles
   // ========================================
@@ -641,13 +631,6 @@ public class ServiceBusConsumerWorkerGapTests {
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default) {
-      return Task.FromResult<ISubscription>(new GapSubscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -661,7 +644,7 @@ public class ServiceBusConsumerWorkerGapTests {
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
       string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
       TransportDestination destination, CancellationToken cancellationToken = default)
       where TRequest : notnull where TResponse : notnull =>
       throw new NotImplementedException();
@@ -697,10 +680,10 @@ public class ServiceBusConsumerWorkerGapTests {
     public void QueueInboxMessage(InboxMessage message) {
       CapturedInboxMessages.Add(message);
     }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -750,8 +733,8 @@ public class ServiceBusConsumerWorkerGapTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

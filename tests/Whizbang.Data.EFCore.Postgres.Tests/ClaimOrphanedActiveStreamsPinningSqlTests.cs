@@ -313,8 +313,8 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       throw new InvalidOperationException($"No wh_active_streams row for {streamId}");
     }
-    var owner = reader.IsDBNull(0) ? (Guid?)null : reader.GetGuid(0);
-    var lastActivity = reader.GetFieldValue<DateTimeOffset>(1);
+    var owner = await reader.IsDBNullAsync(0) ? (Guid?)null : reader.GetGuid(0);
+    var lastActivity = await reader.GetFieldValueAsync<DateTimeOffset>(1);
     return (owner, lastActivity);
   }
 

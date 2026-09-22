@@ -51,7 +51,7 @@ public class PinnedIdAttributeTests {
     var attributes = type.GetCustomAttributes(typeof(PinnedIdAttribute), false);
 
     await Assert.That(attributes).IsNotEmpty();
-    var attr = attributes.First() as PinnedIdAttribute;
+    var attr = attributes[0] as PinnedIdAttribute;
     await Assert.That(attr).IsNotNull();
     await Assert.That(attr!.Id).IsEqualTo("11111111-2222-3333-4444-555555555555");
   }
@@ -62,7 +62,7 @@ public class PinnedIdAttributeTests {
     var attributes = type.GetCustomAttributes(typeof(PinnedIdAttribute), false);
 
     await Assert.That(attributes).IsNotEmpty();
-    var attr = attributes.First() as PinnedIdAttribute;
+    var attr = attributes[0] as PinnedIdAttribute;
     await Assert.That(attr).IsNotNull();
     await Assert.That(attr!.Id).IsEqualTo("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   }

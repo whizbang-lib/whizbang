@@ -29,7 +29,7 @@ public class CollectiveSettersRewriterCoverageTests {
   public async Task CollectAssignments_SpecBodyCallsAnUnrelatedMethod_ProducesZeroAssignmentsAsync() {
     // ToString() is callable on any interface-typed reference (forwarded from object) but is not a
     // SetProperty call the visitor's method-shape guard recognizes.
-    Expression<Action<ICollectiveSetters<_probeModel>>> source = s => s.ToString();
+    Expression<Action<ICollectiveSetters<ProbeModel>>> source = s => Console.WriteLine(s);
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
       .ThrowsExactly<InvalidOperationException>()
@@ -44,7 +44,7 @@ public class CollectiveSettersRewriterCoverageTests {
   // completely legal spec would fail to resolve which property it compares against.
   [Test]
   public async Task CollectAssignments_ComputedComparisonAgainstNarrowerProperty_StripsTheWideningConversionAsync() {
-    Expression<Action<ICollectiveSetters<_probeModel>>> source =
+    Expression<Action<ICollectiveSetters<ProbeModel>>> source =
       s => s.SetProperty(j => j.IsActive, j => j.ViewCount == 5L);
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(source);
@@ -68,17 +68,17 @@ public class CollectiveSettersRewriterCoverageTests {
   // than a NullReferenceException deep inside a pattern match or a silently wrong property.
   [Test]
   public async Task CollectAssignments_SelectorArgumentIsNotActuallyALambda_NamesTheProblemAsync() {
-    var sParam = Expression.Parameter(typeof(ICollectiveSetters<_probeModel>), "s");
-    var setProperty = typeof(ICollectiveSetters<_probeModel>)
+    var sParam = Expression.Parameter(typeof(ICollectiveSetters<ProbeModel>), "s");
+    var setProperty = typeof(ICollectiveSetters<ProbeModel>)
       .GetMethods()
       .Single(m => m.Name == "SetProperty" && m.GetParameters()[1].ParameterType.IsGenericParameter)
       .MakeGenericMethod(typeof(int));
     // A ConstantExpression whose declared Type exactly matches the selector parameter's Expression<>
     // type — so it passes Expression.Call's argument-type check without being wrapped — but whose
     // node shape is not a lambda at all.
-    var notActuallyALambda = Expression.Constant(null, typeof(Expression<Func<_probeModel, int>>));
+    var notActuallyALambda = Expression.Constant(null, typeof(Expression<Func<ProbeModel, int>>));
     var call = Expression.Call(sParam, setProperty, notActuallyALambda, Expression.Constant(0));
-    var source = Expression.Lambda<Action<ICollectiveSetters<_probeModel>>>(call, sParam);
+    var source = Expression.Lambda<Action<ICollectiveSetters<ProbeModel>>>(call, sParam);
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
       .ThrowsExactly<InvalidOperationException>()
@@ -86,8 +86,8 @@ public class CollectiveSettersRewriterCoverageTests {
              + "to, so the failure has to say so explicitly instead of matching nothing silently");
   }
 
-  private sealed class _probeModel {
-    public int ViewCount { get; set; }
-    public bool IsActive { get; set; }
+  private sealed class ProbeModel {
+    public int ViewCount { get; }
+    public bool IsActive { get; }
   }
 }

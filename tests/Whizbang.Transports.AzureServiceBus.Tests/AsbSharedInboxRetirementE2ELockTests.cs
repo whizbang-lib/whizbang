@@ -76,8 +76,7 @@ public class AsbSharedInboxRetirementE2ELockTests {
     var deliveriesByTopic = new Dictionary<string, int>(StringComparer.Ordinal);
     var subscriptionHandles = new List<IDisposable>();
     try {
-      foreach (var subscription in subscriptions) {
-        var topic = subscription.Topic;
+      foreach (var topic in subscriptions.Select(subscription => subscription.Topic)) {
         subscriptionHandles.Add(await consumerTransport.SubscribeAsync(
           (_, _, _) => {
             lock (deliveriesByTopic) {

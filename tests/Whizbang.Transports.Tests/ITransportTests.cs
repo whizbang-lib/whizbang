@@ -68,8 +68,8 @@ public class ITransportTests {
     var transport = _createTestTransport();
     var envelope = _createTestEnvelope();
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
@@ -100,7 +100,7 @@ public class ITransportTests {
     var transport = _createTestTransport();
     var requestEnvelope = _createTestEnvelope();
     var destination = new TransportDestination("test-service");
-    var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
+    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

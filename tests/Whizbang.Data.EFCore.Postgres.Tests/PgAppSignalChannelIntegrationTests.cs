@@ -80,8 +80,8 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
 
     // Notifications dispatch on the listener's connection only when it reads from the wire.
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-    var waitTask = listenerConn.WaitAsync(cts.Token);
-    var raced = await Task.WhenAny(receivedPayload.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    _ = listenerConn.WaitAsync(cts.Token);
+    _ = await Task.WhenAny(receivedPayload.Task, Task.Delay(TimeSpan.FromSeconds(15)));
 
     await Assert.That(receivedPayload.Task.IsCompleted).IsTrue()
       .Because("PgAppSignalChannel.PublishAsync must emit pg_notify on the wh_app_<topic> channel reachable from any LISTENing connection");

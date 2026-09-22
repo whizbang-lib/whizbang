@@ -63,13 +63,31 @@ public class TransportDeadLetterDrainWorkerTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
+  private static TransportDeadLetterDrainWorker _buildWorker(
+      TransportDeadLetterDrainWorkerOptions opts,
+      ILogger<TransportDeadLetterDrainWorker> logger,
+      params ITransportDeadLetterDrainer[] drainers) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    foreach (var d in drainers) {
+      services.AddSingleton(d);
+    }
+    var provider = services.BuildServiceProvider();
+    return new TransportDeadLetterDrainWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(opts),
+      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
+      logger: logger,
+      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+  }
+
   [Test]
   [Timeout(30000)]
   public async Task WhenDisabled_TheWorkerParksAndDrainsNothingAsync(CancellationToken ct) {
     // A BackgroundService that returns on its own reads to the host as a crashed worker. Parking
     // keeps a deliberately-disabled drain distinguishable from one that fell over.
-    var drainer = new _recordingDrainer();
-    var log = new _recordingLogger();
+    var drainer = new RecordingDrainer();
+    var log = new RecordingLogger();
     var worker = _buildWorker(
       new TransportDeadLetterDrainWorkerOptions { Enabled = false }, log, drainer);
 
@@ -98,8 +116,8 @@ public class TransportDeadLetterDrainWorkerTests {
     var services = new ServiceCollection();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
-    var gate = new _blockingGate();
-    var log = new _recordingLogger();
+    var gate = new BlockingGate();
+    var log = new RecordingLogger();
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true }),
@@ -125,8 +143,8 @@ public class TransportDeadLetterDrainWorkerTests {
   public async Task ADrainerThatThrows_DoesNotStopTheCycleAsync(CancellationToken ct) {
     // A transport whose DLQ drain dies stops recovering dead-lettered messages entirely, silently,
     // for the life of the process. One broker being unreachable must cost that tick only.
-    var drainer = new _recordingDrainer { Throws = true };
-    var log = new _recordingLogger();
+    var drainer = new RecordingDrainer { Throws = true };
+    var log = new RecordingLogger();
     var worker = _buildWorker(
       new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 0 },
       log, drainer);
@@ -149,8 +167,8 @@ public class TransportDeadLetterDrainWorkerTests {
     // comment there names -- a scope that cannot be created, so no drainer is ever reached. It is
     // the more dangerous one: nothing drains at all, and without this catch the worker would exit
     // and take the whole DLQ recovery path with it for the life of the process.
-    var scopeFactory = new _failingScopeFactory();
-    var log = new _recordingLogger();
+    var scopeFactory = new FailingScopeFactory();
+    var log = new RecordingLogger();
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: scopeFactory,
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions {
@@ -181,8 +199,8 @@ public class TransportDeadLetterDrainWorkerTests {
     // Cancellation lands while a drain is in flight, which is where the loop spends its time.
     // DrainOnceAsync rethrows cancellation rather than treating it as a drainer error, and the
     // loop must break on it -- otherwise every shutdown logs a cycle failure and retries.
-    var drainer = new _recordingDrainer { BlocksUntilCancelled = true };
-    var log = new _recordingLogger();
+    var drainer = new RecordingDrainer { BlocksUntilCancelled = true };
+    var log = new RecordingLogger();
     var worker = _buildWorker(
       new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 0 },
       log, drainer);
@@ -200,12 +218,6 @@ public class TransportDeadLetterDrainWorkerTests {
              + "operators that drain errors are routine");
   }
 
-
-  private sealed class _throwingDrainer : ITransportDeadLetterDrainer {
-    public string TransportName => "throwing";
-    public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default)
-      => throw new InvalidOperationException("broker unreachable");
-  }
 
   [Test]
   public async Task NoDrainersRegistered_NoOpAsync() {
@@ -293,7 +305,7 @@ public class TransportDeadLetterDrainWorkerTests {
     await Assert.That(d.TransportName).IsEqualTo("asb:my-topic/my-sub");
   }
 
-  private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<TransportDeadLetterDrainWorker> {
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<TransportDeadLetterDrainWorker> {
     private readonly List<int> _events = [];
     private readonly TaskCompletionSource _disabled = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -326,7 +338,7 @@ public class TransportDeadLetterDrainWorkerTests {
     var services = new ServiceCollection();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 500 }),
@@ -370,26 +382,8 @@ public class TransportDeadLetterDrainWorkerTests {
   private const int CYCLE_ERROR_EVENT_ID = 4;
   private const int DISABLED_EVENT_ID = 2;
 
-  private static TransportDeadLetterDrainWorker _buildWorker(
-      TransportDeadLetterDrainWorkerOptions opts,
-      ILogger<TransportDeadLetterDrainWorker> logger,
-      params ITransportDeadLetterDrainer[] drainers) {
-    var services = new ServiceCollection();
-    services.AddLogging();
-    foreach (var d in drainers) {
-      services.AddSingleton(d);
-    }
-    var provider = services.BuildServiceProvider();
-    return new TransportDeadLetterDrainWorker(
-      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(opts),
-      whizbangMetrics: new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()),
-      logger: logger,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
-  }
-
   /// <summary>A drainer that reports when it has been asked to work, and how often.</summary>
-  private sealed class _recordingDrainer : ITransportDeadLetterDrainer {
+  private sealed class RecordingDrainer : ITransportDeadLetterDrainer {
     private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _calls;
@@ -422,7 +416,7 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   /// <summary>A scope factory that cannot produce a scope -- the aggregate failure case.</summary>
-  private sealed class _failingScopeFactory : IServiceScopeFactory {
+  private sealed class FailingScopeFactory : IServiceScopeFactory {
     private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _attempts;
 
@@ -438,7 +432,7 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   /// <summary>A schema gate that never opens, and reports when the worker began waiting.</summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task WaitEntered => _waitEntered.Task;

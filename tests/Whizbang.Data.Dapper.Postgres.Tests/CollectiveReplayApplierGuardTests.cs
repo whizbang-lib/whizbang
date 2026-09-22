@@ -37,11 +37,9 @@ public class CollectiveReplayApplierGuardTests {
   }
 
   private sealed record OtherModel {
-    public Guid Id { get; init; }
   }
 
   private sealed record ProbeCollectiveEvent : ICollectiveEvent {
-    public Guid Id { get; init; }
     public CollectiveScope Scope { get; init; } = new TenantCollectiveScope("tenant-a");
   }
 
@@ -57,15 +55,6 @@ public class CollectiveReplayApplierGuardTests {
       Applications++;
       var model = (ProbeModel)currentModel;
       return model with { Applied = model.Applied + 1 };
-    }
-  }
-
-  /// <summary>Captures the query handed to the apply so the replay guard can be exercised.</summary>
-  private sealed class QueryCapturingHandler {
-    public ICollectiveQuery? Seen { get; private set; }
-    public object Invoke(ICollectiveEvent evt, ICollectiveQuery query) {
-      Seen = query;
-      return new object();
     }
   }
 

@@ -46,7 +46,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     if (!await reader.ReadAsync(ct)) {
       return null;
     }
-    return (reader.IsDBNull(0) ? null : reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    return (await reader.IsDBNullAsync(0, ct) ? null : reader.GetString(0), await reader.IsDBNullAsync(1, ct) ? null : reader.GetString(1));
   }
 
   private async Task _ageAsync(Guid id, TimeSpan age, CancellationToken ct) {

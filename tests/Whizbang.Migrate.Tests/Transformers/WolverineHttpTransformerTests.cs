@@ -9,7 +9,7 @@ namespace Whizbang.Migrate.Tests.Transformers;
 /// This transformer deletes routing attributes. That is necessary -- they will not compile once
 /// the Wolverine package is gone -- but it means a silent bug here removes a service's HTTP
 /// endpoint and leaves nothing behind saying so. The endpoint would simply stop existing, with a
-/// clean build. So the tests treat the TODO comment and the warning as load-bearing output, not
+/// clean build. So the tests treat the to-do comment and the warning as load-bearing output, not
 /// cosmetic: they are the only trace that a route once lived there.
 /// </remarks>
 /// <tests>Whizbang.Migrate/Transformers/WolverineHttpTransformer.cs:*</tests>
@@ -46,7 +46,7 @@ public class WolverineHttpTransformerTests {
   [Test]
   public async Task TransformAsync_RouteAttribute_IsRemovedSoTheFileCompilesAsync() {
     // The attribute cannot survive: without the Wolverine package it is an unresolved type. This
-    // is the transformer's one destructive act, and the reason the TODO below has to exist.
+    // is the transformer's one destructive act, and the reason the to-do below has to exist.
     var transformer = new WolverineHttpTransformer();
 
     var result = await transformer.TransformAsync(ORDER_ENDPOINT, "OrderEndpoints.cs");
@@ -189,7 +189,7 @@ public class WolverineHttpTransformerTests {
 
   [Test]
   public async Task TransformAsync_AttributeWithNoRoute_FallsBackToRootAsync() {
-    // A parameterless attribute still needs some route in the TODO, or the reminder reads as
+    // A parameterless attribute still needs some route in the to-do, or the reminder reads as
     // though the endpoint had no path at all.
     var transformer = new WolverineHttpTransformer();
     const string source = """

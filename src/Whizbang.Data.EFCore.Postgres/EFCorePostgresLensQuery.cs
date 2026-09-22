@@ -30,6 +30,9 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
     where TModel : class {
 
   private readonly DbContext _context;
+
+  /// <summary>The context this query reads through; the registration tests assert each query gets its own.</summary>
+  internal DbContext Context => _context;
   private readonly IScopeContextAccessor _scopeContextAccessor;
   private readonly QueryScope _defaultQueryScope;
 
@@ -229,6 +232,9 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
     where T2 : class {
 
   private readonly DbContext _context;
+
+  /// <summary>The context this query reads through; the registration tests assert each query gets its own.</summary>
+  internal DbContext Context => _context;
   private readonly IScopeContextAccessor _scopeContextAccessor;
   private readonly QueryScope _defaultQueryScope;
   private bool _disposed;

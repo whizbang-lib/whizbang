@@ -50,7 +50,7 @@ public class TableStatisticsCollectorBranchTests {
   public async Task ProviderRegistered_PopulatesMetricsThenWaitsAsync() {
     // Happy path: provider returns sizes + depths, both land on the metrics
     // before the collector enters its 30s Task.Delay.
-    var fakeProvider = new _RecordingProvider {
+    var fakeProvider = new RecordingProvider {
       SizesToReturn = new Dictionary<string, long> { ["wh_outbox"] = 4096, ["wh_inbox"] = 8192 },
       DepthsToReturn = new Dictionary<string, long> { ["outbox"] = 3, ["inbox"] = 7 },
     };
@@ -71,7 +71,7 @@ public class TableStatisticsCollectorBranchTests {
     // exits its Task.Delay and we don't sit through 30s.
     await fakeProvider.SizesCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
     await fakeProvider.DepthsCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fakeProvider.SizesCallCount).IsGreaterThanOrEqualTo(1);
@@ -83,7 +83,7 @@ public class TableStatisticsCollectorBranchTests {
     // Generic exception in the provider should be logged and the loop should
     // continue to the Task.Delay. Cancel the token after the first throw so
     // the test exits promptly instead of waiting 30s for the next tick.
-    var fakeProvider = new _RecordingProvider {
+    var fakeProvider = new RecordingProvider {
       ThrowOnNextCall = new InvalidOperationException("simulated db error"),
     };
     var services = new ServiceCollection();
@@ -98,7 +98,7 @@ public class TableStatisticsCollectorBranchTests {
     await worker.StartAsync(cts.Token);
 
     await fakeProvider.SizesCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fakeProvider.SizesCallCount).IsEqualTo(1);
@@ -106,7 +106,7 @@ public class TableStatisticsCollectorBranchTests {
 
   // ---------------- fakes ----------------
 
-  private sealed class _RecordingProvider : ITableStatisticsProvider {
+  private sealed class RecordingProvider : ITableStatisticsProvider {
     public IReadOnlyDictionary<string, long> SizesToReturn { get; set; } = new Dictionary<string, long>();
     public IReadOnlyDictionary<string, long> DepthsToReturn { get; set; } = new Dictionary<string, long>();
     public Exception? ThrowOnNextCall { get; set; }

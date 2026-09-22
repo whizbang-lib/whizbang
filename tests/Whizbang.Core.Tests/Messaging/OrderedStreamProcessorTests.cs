@@ -338,7 +338,7 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var processedCount = 0;
 
     var messages = new List<InboxWork> {
@@ -375,7 +375,7 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(parallelizeStreams: false, logger: NullLogger<OrderedStreamProcessor>.Instance);
     var streamId = _idProvider.NewGuid();
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
     var processedCount = 0;
 
     var messages = new List<OutboxWork> {
@@ -648,7 +648,7 @@ public class OrderedStreamProcessorTests {
 
   // ========================================
   // Logger-path coverage tests
-  // These drive the `if (_logger != null)` branches and the static log
+  // These drive the the _logger != null guard branches and the static log
   // helper methods (inbox/outbox success + failure loggers) that the
   // logger-less tests above never reach.
   // ========================================
@@ -915,9 +915,10 @@ public class OrderedStreamProcessorTests {
       Messages.Add(formatter(state, exception));
     }
 
-    private sealed class NullScope : IDisposable {
-      public static NullScope Instance { get; } = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static NullScope Instance { get; } = new();
+    public void Dispose() { }
   }
 }

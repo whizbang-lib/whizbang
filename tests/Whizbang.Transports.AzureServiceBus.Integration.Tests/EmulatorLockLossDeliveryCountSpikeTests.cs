@@ -49,7 +49,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(240_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class EmulatorLockLossDeliveryCountSpikeTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   private const string SESSION_TOPIC = "topic-spike-session";
   private const string PLAIN_TOPIC = "topic-spike-plain";
@@ -72,7 +72,7 @@ public sealed class EmulatorLockLossDeliveryCountSpikeTests(ServiceBusEmulatorFi
 
   /// <summary>Accepts the spike session, retrying until the previous holder's lock is
   /// released (bounded; accept-failure is the signal the lock is still held).</summary>
-  private async Task<ServiceBusSessionReceiver> _acceptSessionWhenReleasedAsync(
+  private static async Task<ServiceBusSessionReceiver> _acceptSessionWhenReleasedAsync(
       ServiceBusClient client, string sessionId, CancellationToken ct) {
     var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60);
     while (true) {

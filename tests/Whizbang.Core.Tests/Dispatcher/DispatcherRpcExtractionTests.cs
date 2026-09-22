@@ -284,7 +284,7 @@ public class DispatcherRpcExtractionTests {
     var command = new CreateOrder(orderId, 100m);
 
     // Act
-    var confirmation = await dispatcher.LocalInvokeAsync<OrderConfirmation>(command);
+    _ = await dispatcher.LocalInvokeAsync<OrderConfirmation>(command);
 
     // Assert - The extracted response (OrderConfirmation) should NOT be in cascaded events
     // Only InventoryReserved should cascade

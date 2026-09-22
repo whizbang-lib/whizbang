@@ -53,23 +53,18 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
         string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination, CancellationToken cancellationToken = default)
-      => Task.FromResult<ISubscription>(new _NopSubscription());
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
       _firstBatchSubscribe.TrySetResult();
-      return Task.FromResult<ISubscription>(new _NopSubscription());
+      return Task.FromResult<ISubscription>(new NopSubscription());
     }
-    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
         TransportDestination destination, CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull
       => throw new NotImplementedException();
-    public void Dispose() { }
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
       if (_batchHandler is null) {
@@ -78,7 +73,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       await _batchHandler(batch, CancellationToken.None);
     }
 
-    private sealed class _NopSubscription : ISubscription {
+    private sealed class NopSubscription : ISubscription {
       public bool IsActive { get; private set; } = true;
 #pragma warning disable CS0067
       public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -199,7 +194,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       }
       await transport.SimulateBatchReceivedAsync(batch);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
         .Because("100 messages in one transport batch must produce exactly ONE StoreInboxMessagesAsync call.");
@@ -239,7 +234,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         new TransportMessage(_makeEnvelope(), CONSUMED_ENVELOPE_TYPE),
       ]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
         .Because("Even with drops mixed in, the surviving messages still bulk-insert as one call.");
@@ -269,7 +264,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         new TransportMessage(_makeEnvelope(), DROPPED_ENVELOPE_TYPE),
       ]);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0)
         .Because("All-dropped batch must skip the bulk-insert call entirely.");
@@ -338,7 +333,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     }
     await transport.SimulateBatchReceivedAsync(batch);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     var perBatchDelta = countingFactory.CreateScopeCallCount - preBatchScopeCount;
     await Assert.That(perBatchDelta).IsEqualTo(1)
@@ -372,7 +367,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       }
       await transport.SimulateBatchReceivedAsync(batch2);
 
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(2)
         .Because("Two transport batches must produce two StoreInboxMessagesAsync calls.");

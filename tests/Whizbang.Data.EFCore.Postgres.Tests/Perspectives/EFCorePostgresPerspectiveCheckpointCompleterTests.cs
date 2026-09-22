@@ -20,7 +20,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
   private const string PERSPECTIVE_NAME = "Whizbang.Tests.CheckpointCompleterPerspective";
 
   /// <summary>Captures emitted entries so the log-branch tests can assert they fired.</summary>
-  private sealed class RecordingLogger<T>(bool debugEnabled)
+  private sealed class RecordingLogger(bool debugEnabled)
       : ILogger<EFCorePostgresPerspectiveCheckpointCompleter> {
     public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
 
@@ -31,11 +31,11 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
         LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter)
       => Entries.Add((logLevel, formatter(state, exception), exception));
+  }
 
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   /// <summary>
@@ -84,7 +84,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
     // The early return matters: opening a transaction per empty rebuild batch would be
     // pure overhead on streams with nothing to checkpoint.
     await using var ctx = CreateDbContext();
-    var logger = new RecordingLogger<EFCorePostgresPerspectiveCheckpointCompleter>(debugEnabled: true);
+    var logger = new RecordingLogger(debugEnabled: true);
     var completer = new EFCorePostgresPerspectiveCheckpointCompleter(ctx, logger);
 
     await completer.CompleteAsync([]);
@@ -156,7 +156,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
     // Guid.Empty means the perspective processed nothing for that stream. Writing it
     // would move the cursor to a value no event carries, stranding the stream.
     await using var ctx = CreateDbContext();
-    var logger = new RecordingLogger<EFCorePostgresPerspectiveCheckpointCompleter>(debugEnabled: true);
+    var logger = new RecordingLogger(debugEnabled: true);
     var completer = new EFCorePostgresPerspectiveCheckpointCompleter(ctx, logger);
     var streamId = Guid.CreateVersion7();
 
@@ -176,7 +176,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
   [Test]
   public async Task CompleteAsync_MixedBatch_PersistsTheRealOnesAndCountsTheSkipsAsync() {
     await using var ctx = CreateDbContext();
-    var logger = new RecordingLogger<EFCorePostgresPerspectiveCheckpointCompleter>(debugEnabled: false);
+    var logger = new RecordingLogger(debugEnabled: false);
     var completer = new EFCorePostgresPerspectiveCheckpointCompleter(ctx, logger);
     var (persisted, eventId) = await _seedStreamWithEventAsync();
     var skipped = Guid.CreateVersion7();
@@ -227,7 +227,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
   [Test]
   public async Task CompleteAsync_WithDebugEnabled_LogsEachUpsertAsync() {
     await using var ctx = CreateDbContext();
-    var logger = new RecordingLogger<EFCorePostgresPerspectiveCheckpointCompleter>(debugEnabled: true);
+    var logger = new RecordingLogger(debugEnabled: true);
     var completer = new EFCorePostgresPerspectiveCheckpointCompleter(ctx, logger);
     var (streamId, eventId) = await _seedStreamWithEventAsync();
 
@@ -244,7 +244,7 @@ public class EFCorePostgresPerspectiveCheckpointCompleterTests : EFCoreTestBase 
     // partial batch committed, log the failure with the count it got through, and rethrow —
     // swallowing it would let rebuild believe the stream was checkpointed.
     await using var ctx = CreateDbContext();
-    var logger = new RecordingLogger<EFCorePostgresPerspectiveCheckpointCompleter>(debugEnabled: false);
+    var logger = new RecordingLogger(debugEnabled: false);
     var completer = new EFCorePostgresPerspectiveCheckpointCompleter(ctx, logger);
     var (goodStream, goodEvent) = await _seedStreamWithEventAsync();
     var orphanStream = Guid.CreateVersion7();

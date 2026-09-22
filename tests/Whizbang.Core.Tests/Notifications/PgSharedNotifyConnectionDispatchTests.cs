@@ -47,28 +47,10 @@ public class PgSharedNotifyConnectionDispatchTests {
   }
 
   private static void _invokeDispatch(PgSharedNotifyConnection conn, string channel, string payload) {
-    // Reach into the private dispatch handler via reflection. The handler IS the unit
-    // under test for slice 33.3 — testing it through Npgsql's Notification event would
-    // require a real conn. The behavior under test (route by channel, swallow throws,
-    // continue dispatch) is pure registry/handler logic.
-    //
-    // NpgsqlNotificationEventArgs (Npgsql 10) takes an internal NpgsqlReadBuffer — we
-    // skip the constructor with GetUninitializedObject + set the backing fields directly.
-    // Brittle if Npgsql renames its backing fields, but that's the tradeoff for unit-
-    // testing the dispatch handler without a real conn.
-    var argsType = typeof(global::Npgsql.NpgsqlNotificationEventArgs);
-    var evArgs = (global::Npgsql.NpgsqlNotificationEventArgs)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(argsType);
-    var channelField = argsType.GetField("<Channel>k__BackingField",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    var payloadField = argsType.GetField("<Payload>k__BackingField",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    channelField.SetValue(evArgs, channel);
-    payloadField.SetValue(evArgs, payload);
-
-    var method = typeof(PgSharedNotifyConnection).GetMethod(
-      "_dispatchNotification",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    method.Invoke(conn, [null, evArgs]);
+    // The dispatch path IS the unit under test for slice 33.3 — reaching it through Npgsql's
+    // Notification event would require a real conn. The behavior under test (route by channel,
+    // swallow throws, continue dispatch) is pure registry/handler logic.
+    conn.DispatchNotification(channel, payload);
   }
 
   [Test]

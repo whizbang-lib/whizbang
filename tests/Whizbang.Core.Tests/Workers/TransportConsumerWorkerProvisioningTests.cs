@@ -52,7 +52,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -92,7 +92,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -127,7 +127,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -167,7 +167,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -206,7 +206,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -311,16 +311,6 @@ public class TransportConsumerWorkerProvisioningTests {
       return Task.CompletedTask;
     }
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      callOrder?.Record("subscribe");
-      _firstSubscribe.TrySetResult();
-      return Task.FromResult<ISubscription>(new NoOpSubscription());
-    }
-
     public Task PublishAsync(
         IMessageEnvelope envelope,
         TransportDestination destination,
@@ -342,7 +332,7 @@ public class TransportConsumerWorkerProvisioningTests {
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
-        IMessageEnvelope envelope,
+        IMessageEnvelope requestEnvelope,
         TransportDestination destination,
         CancellationToken cancellationToken = default)
         where TRequest : notnull

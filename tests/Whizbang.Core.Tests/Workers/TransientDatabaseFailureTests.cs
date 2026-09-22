@@ -90,7 +90,7 @@ public class TransientDatabaseFailureTests {
   public async Task AnAggregateOfFailuresThatAreNotTheDatabases_IsNotTransientAsync() {
     var aggregate = new AggregateException(
       new InvalidOperationException("one defect"),
-      new ArgumentOutOfRangeException("another"));
+      new ArgumentException("another defect"));
 
     var found = TransientDatabaseFailure.TryClassify(aggregate, out var failure);
 

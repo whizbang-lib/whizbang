@@ -133,7 +133,7 @@ public static class WorkerPipelineExtensions {
     });
 
     // Offload managed-resource health: a REAL probe when an offload store is registered — the store's
-    // IMessageBodyStore.CheckConnectivityAsync (a blob service round-trip; in-memory is always reachable);
+    // IMessageBodyStore.CheckConnectivityAsync (a blob service round-trip, in-memory is always reachable) —
     // assumed-healthy when no offload is configured. RequiredWhenRunning, one source either way.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => {
       var lifecycle = sp.GetRequiredService<IWhizbangLifecycleState>();
@@ -189,7 +189,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.LoggingStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.LoggingStartupStepObserver(
-        (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
+        sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
           ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.MetricsStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
@@ -445,7 +445,7 @@ public static class WorkerPipelineExtensions {
     // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
     // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
     // fire on a session-enabled entity, because a lock lost to connection death does not increment
-    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision;
+    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision —
     // it stays an optional injected dependency at each consumption point, so a custom transport or
     // a test double that never resolves it is unaffected (the IMessageDiscardPolicy idiom).
     services.AddOptions<Whizbang.Core.Routing.PoisonMessageOptions>();
@@ -954,7 +954,7 @@ public static class WorkerPipelineExtensions {
 
     // Receive-boundary inbox batcher — half A of pump-then-process. Mirror of the outbox
     // registration above. Flush callback resolves IWorkCoordinator from a fresh DI scope
-    // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher;
+    // per batch and calls StoreInboxMessagesAsync. Default is the sliding-window batcher —
     // override via the AddWhizbangInboxStrategy generic extension for the immediate
     // passthrough or a custom implementation.
     services.TryAddSingleton<InboxBulkFlushCallback>(_buildInboxFlushCallback);

@@ -1,3 +1,4 @@
+using System.Linq;
 namespace Whizbang.Testing.Containers;
 
 /// <summary>
@@ -22,8 +23,8 @@ public static class DockerExecutable {
   ];
 
   private static readonly string[] _wellKnownWindowsPaths = [
-    @"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
-    @"C:\ProgramData\DockerDesktop\version-bin\docker.exe",
+    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Docker", "Docker", "resources", "bin", "docker.exe"),
+    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "DockerDesktop", "version-bin", "docker.exe"),
   ];
 
   /// <summary>
@@ -65,12 +66,6 @@ public static class DockerExecutable {
     }
 
     var candidates = OperatingSystem.IsWindows() ? _wellKnownWindowsPaths : _wellKnownUnixPaths;
-    foreach (var candidate in candidates) {
-      if (File.Exists(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
+    return candidates.FirstOrDefault(File.Exists);
   }
 }

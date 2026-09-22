@@ -27,7 +27,7 @@ namespace Whizbang.Data.Tests;
 /// Whizbang.Data.Postgres implements, so divergence between the two stores on any of these edge
 /// cases is the bug worth catching.
 /// </summary>
-public class DapperSqliteEventStoreCoverageTests : IDisposable {
+public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -108,8 +108,8 @@ public class DapperSqliteEventStoreCoverageTests : IDisposable {
 
   [Test]
   public async Task ReadPolymorphicAsync_MessageIdTypeUnresolvable_SkipsTheRowAsync() {
-    // FINDING, not an endorsed invariant: _tryDeserializeMessageId's "if (messageIdTypeInfo ==
-    // null) return null;" (DapperSqliteEventStore.cs) means a MessageId resolver misconfiguration
+    // FINDING, not an endorsed invariant: _tryDeserializeMessageId's early null return when the
+    // MessageId type info is missing (DapperSqliteEventStore.cs) means a MessageId resolver misconfiguration
     // silently drops the event from ReadPolymorphicAsync's results -- no exception, no log, no
     // trace. Unlike the Hops-list case (optional, best-effort trace metadata by the method's own
     // doc comment), MessageId is the event's own identity, not something safe to degrade quietly.

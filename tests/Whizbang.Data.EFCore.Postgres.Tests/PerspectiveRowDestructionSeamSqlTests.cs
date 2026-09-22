@@ -25,7 +25,7 @@ public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
   private const string TABLE = "wh_per_seam_guarded";
   private const string CLR_TYPE = "TestApp.SeamGuardedModel";
 
-  private IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 

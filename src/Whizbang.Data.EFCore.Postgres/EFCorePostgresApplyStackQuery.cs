@@ -123,10 +123,10 @@ public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         signatures.Add(new ApplyPathSignature(
-          reader.GetFieldValue<string[]>(0),
+          await reader.GetFieldValueAsync<string[]>(0),
           reader.GetInt64(1),
-          _asUtc(reader.GetFieldValue<DateTime>(2)),
-          _asUtc(reader.GetFieldValue<DateTime>(3))));
+          _asUtc(await reader.GetFieldValueAsync<DateTime>(2)),
+          _asUtc(await reader.GetFieldValueAsync<DateTime>(3))));
       }
       return (IReadOnlyList<ApplyPathSignature>)signatures;
     }, cancellationToken).ConfigureAwait(false);

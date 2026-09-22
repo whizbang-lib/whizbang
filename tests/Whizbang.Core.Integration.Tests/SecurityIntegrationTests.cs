@@ -508,7 +508,7 @@ public class SecurityIntegrationTests {
 
       // OLD behavior: Set CurrentContext but don't clear InitiatingContext
       ScopeContextAccessor.CurrentContext = explicitSystemContext;
-      // NOT clearing: ScopeContextAccessor.CurrentInitiatingContext = null;
+      // NOT clearing: ScopeContextAccessor.CurrentInitiatingContext = null —
 
       // Act - Read CurrentContext (this is what GetSecurityFromAmbient uses)
       // The getter reads InitiatingContext.ScopeContext FIRST, then falls back to _current
@@ -704,7 +704,7 @@ public class SecurityIntegrationTests {
 
       // OLD BEHAVIOR (the bug): Set plain ScopeContext directly
       // This is what happened before the fix when PerspectiveWorker used envelope.GetCurrentScope() directly
-      var accessor = new ScopeContextAccessor {
+      _ = new ScopeContextAccessor {
         Current = plainScope
       };
 
@@ -926,22 +926,8 @@ public class SecurityIntegrationTests {
       .Because("IMessageContextAccessor should be registered in service provider");
 
     // Capture values INSIDE the same sync context as EstablishFullContextAsync
-    IMessageContext? capturedMessageContext = null;
-    IScopeContext? capturedScopeContext = null;
-    IMessageContext? capturedStaticMessage = null;
-    IScopeContext? capturedStaticScope = null;
-
     // Act: Call EstablishFullContextAsync and capture values immediately after
     await SecurityContextHelper.EstablishFullContextAsync(envelope, serviceProvider);
-
-    // Capture SYNCHRONOUSLY right after the await
-    var messageContextAccessor = serviceProvider.GetRequiredService<IMessageContextAccessor>();
-    var scopeContextAccessor = serviceProvider.GetRequiredService<IScopeContextAccessor>();
-
-    capturedMessageContext = messageContextAccessor.Current;
-    capturedScopeContext = scopeContextAccessor.Current;
-    capturedStaticMessage = MessageContextAccessor.CurrentContext;
-    capturedStaticScope = ScopeContextAccessor.CurrentContext;
 
     // FIRST: Check if callback was invoked - this proves the code path was executed
     await Assert.That(callbackInvoked).IsTrue()

@@ -142,7 +142,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     tracker.TrackEmittedEvent(streamId, typeof(TestEvent), Guid.NewGuid());
 
     // Act
-    var result = await decorator.AppendAndWaitAsync(
+    _ = await decorator.AppendAndWaitAsync(
         streamId,
         message,
         TimeSpan.FromSeconds(5),
@@ -178,7 +178,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     SyncDecisionContext? capturedDecision = null;
 
     // Act - NO events tracked
-    var result = await decorator.AppendAndWaitAsync(
+    _ = await decorator.AppendAndWaitAsync(
         streamId,
         message,
         TimeSpan.FromSeconds(5),
@@ -214,7 +214,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     tracker.TrackEmittedEvent(streamId, typeof(TestEvent), Guid.NewGuid());
 
     // Act
-    var result = await decorator.AppendAndWaitAsync(
+    _ = await decorator.AppendAndWaitAsync(
         streamId,
         message,
         TimeSpan.FromMilliseconds(10),
@@ -252,7 +252,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
     tracker.TrackEmittedEvent(stream2, typeof(TestEvent), Guid.NewGuid());
 
     // Act
-    var result = await decorator.AppendAndWaitAsync(
+    _ = await decorator.AppendAndWaitAsync(
         stream1,
         message,
         TimeSpan.FromSeconds(5),
@@ -316,7 +316,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
       tracker.TrackEmittedEvent(streamId, typeof(TestEvent), Guid.NewGuid());
 
       // Act
-      var result = await decorator.AppendAndWaitAsync(
+      _ = await decorator.AppendAndWaitAsync(
           streamId,
           message,
           TimeSpan.FromSeconds(5),

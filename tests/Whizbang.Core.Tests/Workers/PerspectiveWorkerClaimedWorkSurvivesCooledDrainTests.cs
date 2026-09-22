@@ -52,7 +52,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var cooledEventId = Guid.NewGuid();
     var cooledWorkId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(signaledStream, cooledEventId, cooledWorkId)],
       drainEnvelopes: [_envelope(cooledEventId, new ProbeEvent("cooled"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -78,7 +78,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var cooledEventId = Guid.NewGuid();
     var cooledWorkId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(stream, cooledEventId, cooledWorkId)],
       drainEnvelopes: [_envelope(cooledEventId, new ProbeEvent("cooled"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -100,7 +100,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     var stream = Guid.NewGuid();
     var freshEventId = Guid.NewGuid();
 
-    var f = _Fixture.Create(
+    var f = FakeFixture.Create(
       drainRows: [_row(stream, freshEventId, Guid.NewGuid())],
       drainEnvelopes: [_envelope(freshEventId, new ProbeEvent("fresh"))],
       claimedStreamEvents: [_envelope(Guid.NewGuid(), new ProbeEvent("claimed"))],
@@ -144,12 +144,12 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private sealed class _Fixture {
+  private sealed class FakeFixture {
     public required PerspectiveWorker Worker { get; init; }
     public required PerspectiveWorkerTestHarness Harness { get; init; }
     public required CountingRegistry Registry { get; init; }
 
-    public static _Fixture Create(
+    public static FakeFixture Create(
         List<StreamEventData> drainRows,
         List<MessageEnvelope<IEvent>> drainEnvelopes,
         List<MessageEnvelope<IEvent>> claimedStreamEvents,
@@ -181,7 +181,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
       var worker = new PerspectiveWorker(
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        // One consumer loop so the claimed item and the drain signal are read into the SAME batch;
+        // One consumer loop so the claimed item and the drain signal are read into the SAME batch —
         // the defect lives in how one batch reconciles its two sources.
         options: Options.Create(new PerspectiveWorkerOptions {
           PollingIntervalMilliseconds = 50,
@@ -219,7 +219,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
           MaxConcurrentDrainConsumers = 1
         })).Value));
 
-      return new _Fixture { Worker = worker, Harness = harness, Registry = registry };
+      return new FakeFixture { Worker = worker, Harness = harness, Registry = registry };
     }
 
     /// <summary>Starts the worker, waits for the first batch that carried work, and stops it.</summary>
@@ -262,7 +262,7 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
@@ -311,26 +311,26 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
     private sealed class Runner(CountingRegistry owner) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string name, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
         owner._count(streamId);
-        return Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = name, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed, PerspectiveType = typeof(object) });
+        return Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = Guid.NewGuid(), Status = PerspectiveProcessingStatus.Completed, PerspectiveType = typeof(object) });
       }
 
-      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string name, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+      public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         owner._count(streamId);
         return Task.FromResult(new PerspectiveCursorCompletion {
           StreamId = streamId,
-          PerspectiveName = name,
+          PerspectiveName = perspectiveName,
           LastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.NewGuid(),
           Status = PerspectiveProcessingStatus.Completed,
           PerspectiveType = typeof(object)
         });
       }
 
-      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string name, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-        RunAsync(streamId, name, null, cancellationToken);
+      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
 
-      public Task BootstrapSnapshotAsync(Guid streamId, string name, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+      public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
   }
 

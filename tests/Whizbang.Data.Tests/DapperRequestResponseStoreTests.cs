@@ -9,7 +9,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from RequestResponseStoreContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests, IDisposable {
+public sealed class DapperRequestResponseStoreTests : RequestResponseStoreContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]

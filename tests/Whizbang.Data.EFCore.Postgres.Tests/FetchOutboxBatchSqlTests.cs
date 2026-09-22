@@ -306,10 +306,10 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
     while (await reader.ReadAsync()) {
       rows.Add(new OutboxBatchRow {
         MessageId = reader.GetGuid(0),
-        StreamId = reader.IsDBNull(1) ? null : reader.GetGuid(1),
-        Destination = reader.IsDBNull(2) ? null : reader.GetString(2),
+        StreamId = await reader.IsDBNullAsync(1) ? null : reader.GetGuid(1),
+        Destination = await reader.IsDBNullAsync(2) ? null : reader.GetString(2),
         MessageType = reader.GetString(3),
-        EnvelopeType = reader.IsDBNull(4) ? null : reader.GetString(4)
+        EnvelopeType = await reader.IsDBNullAsync(4) ? null : reader.GetString(4)
       });
     }
     return rows;

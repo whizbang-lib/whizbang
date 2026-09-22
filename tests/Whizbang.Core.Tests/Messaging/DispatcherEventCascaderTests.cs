@@ -101,8 +101,8 @@ public class DispatcherEventCascaderTests {
     // Arrange
     var (cascader, _) = _createCascader();
     var testEvent = new TestCascadeEvent { Id = "test-123" };
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(() => cascader.CascadeFromResultAsync(testEvent, null, cancellationToken: cts.Token))
@@ -225,11 +225,6 @@ public class DispatcherEventCascaderTests {
 
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
       throw new NotImplementedException();
-
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) {
-      CascadedMessages.Add(message);
-      return Task.CompletedTask;
-    }
 
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);

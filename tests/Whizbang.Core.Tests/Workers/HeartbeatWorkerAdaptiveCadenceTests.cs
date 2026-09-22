@@ -71,7 +71,7 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
 
   [Test]
   public async Task LockTransitionsHeldToNotHeld_NextResolveReturnsFastCadenceAsync() {
-    var lockSource = new _toggleableLockSource(initialHeld: true);
+    var lockSource = new ToggleableLockSource(initialHeld: true);
     var worker = _newWorker(opts => {
       opts.IntervalSeconds = 5;
       opts.SlowIntervalSeconds = 60;
@@ -88,7 +88,7 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
 
   [Test]
   public async Task LockTransitionsNotHeldToHeld_NextResolveReturnsSlowCadenceAsync() {
-    var lockSource = new _toggleableLockSource(initialHeld: false);
+    var lockSource = new ToggleableLockSource(initialHeld: false);
     var worker = _newWorker(opts => {
       opts.IntervalSeconds = 5;
       opts.SlowIntervalSeconds = 60;
@@ -119,7 +119,7 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       source = lockSource;
     }
     if (source is null && aliveLockHeld is not null) {
-      source = new _toggleableLockSource(aliveLockHeld.Value);
+      source = new ToggleableLockSource(aliveLockHeld.Value);
     }
 
     var services = new ServiceCollection();
@@ -129,7 +129,7 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-      schemaReadyGate: new _stubSchemaReadyGate(),
+      schemaReadyGate: new StubSchemaReadyGate(),
       options: Options.Create(opts),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
@@ -139,14 +139,14 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       signalBus: NullSignalBus.Instance);
   }
 
-  private sealed class _toggleableLockSource : IInstanceAliveLockSource {
-    public _toggleableLockSource(bool initialHeld) {
+  private sealed class ToggleableLockSource : IInstanceAliveLockSource {
+    public ToggleableLockSource(bool initialHeld) {
       IsAliveLockHeld = initialHeld;
     }
     public bool IsAliveLockHeld { get; set; }
   }
 
-  private sealed class _stubSchemaReadyGate : ISchemaReadyGate {
+  private sealed class StubSchemaReadyGate : ISchemaReadyGate {
     public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public bool IsReady => true;
     public void MarkReady() { }

@@ -43,7 +43,7 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class StartupPipelineResilienceTests {
 
-  private sealed class _grant : IDutyGrant {
+  private sealed class Grant : IDutyGrant {
     public string Duty => "test-duty";
     public DateTimeOffset AcquiredAt { get; } = DateTimeOffset.UtcNow;
     public bool Released { get; private set; }
@@ -54,7 +54,7 @@ public class StartupPipelineResilienceTests {
     }
   }
 
-  private sealed class _step(string name, string capability, NonHolderBehavior nonHolder = NonHolderBehavior.Await)
+  private sealed class Step(string name, string capability, NonHolderBehavior nonHolder = NonHolderBehavior.Await)
       : IStartupStep {
     private int _executions;
     public int Executions => Volatile.Read(ref _executions);
@@ -70,7 +70,7 @@ public class StartupPipelineResilienceTests {
   }
 
   /// <summary>Throws a transient failure on the first N attempts, then grants — a blip, not an outage.</summary>
-  private sealed class _throwsThenGrantsElector(int throwCount) : IDutyElector {
+  private sealed class ThrowsThenGrantsElector(int throwCount) : IDutyElector {
     private int _attempts;
     public int Attempts => Volatile.Read(ref _attempts);
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
@@ -78,12 +78,12 @@ public class StartupPipelineResilienceTests {
       if (attempt <= throwCount) {
         throw new TimeoutException("Timeout during reading attempt");
       }
-      return Task.FromResult(DutyAttempt.Granted(new _grant()));
+      return Task.FromResult(DutyAttempt.Granted(new Grant()));
     }
   }
 
   /// <summary>Throws forever — a standing outage, not a blip.</summary>
-  private sealed class _alwaysThrowsElector : IDutyElector {
+  private sealed class AlwaysThrowsElector : IDutyElector {
     private int _attempts;
     public int Attempts => Volatile.Read(ref _attempts);
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
@@ -94,8 +94,8 @@ public class StartupPipelineResilienceTests {
 
   [Test]
   public async Task DutyAcquisition_ThatFailsTransiently_IsRetriedRatherThanUnwindingTheRunAsync() {
-    var elector = new _throwsThenGrantsElector(throwCount: 2);
-    var step = new _step("Migrate", "migrator");
+    var elector = new ThrowsThenGrantsElector(throwCount: 2);
+    var step = new Step("Migrate", "migrator");
     var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
@@ -115,8 +115,8 @@ public class StartupPipelineResilienceTests {
   [Timeout(30_000)]
   public async Task DutyAcquisition_ThatFailsPersistently_FailsTheStepBoundedlyInsteadOfHangingAsync(
       CancellationToken cancellationToken) {
-    var elector = new _alwaysThrowsElector();
-    var step = new _step("Migrate", "migrator");
+    var elector = new AlwaysThrowsElector();
+    var step = new Step("Migrate", "migrator");
     var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(5),
     };
@@ -137,8 +137,8 @@ public class StartupPipelineResilienceTests {
 
   [Test]
   public async Task DutyAcquisition_ThatFailsTransientlyUnderSkip_DoesNotBlockAsync() {
-    var elector = new _alwaysThrowsElector();
-    var step = new _step("Rewrite", "maintainer", NonHolderBehavior.Skip);
+    var elector = new AlwaysThrowsElector();
+    var step = new Step("Rewrite", "maintainer", NonHolderBehavior.Skip);
     var runner = new StartupPipelineRunner(steps: [step], dutyElector: elector, observers: []) {
       DutyRetryInterval = TimeSpan.FromMilliseconds(10),
     };
@@ -162,7 +162,7 @@ public class StartupPipelineResilienceTests {
   [Test]
   public async Task Worker_WhenTheRunThrows_DoesNotPropagateAndStopTheHostAsync() {
     // A step depending on a name nothing declares cannot be ordered.
-    var unorderable = new _unorderableStep();
+    var unorderable = new UnorderableStep();
     var runner = new StartupPipelineRunner(steps: [unorderable], observers: [], dutyElector: NullDutyElector.Instance);
     var worker = new StartupPipelineWorker(runner, logger: NullLogger<StartupPipelineWorker>.Instance);
 
@@ -188,7 +188,7 @@ public class StartupPipelineResilienceTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
-  private sealed class _unorderableStep : IStartupStep {
+  private sealed class UnorderableStep : IStartupStep {
     public StartupStepDescriptor Descriptor { get; } = new() {
       Name = "Dependent",
       DependsOn = ["NoSuchStepWasEverDeclared"],

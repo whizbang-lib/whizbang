@@ -223,7 +223,7 @@ public class TagOptionsTests {
   private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -231,7 +231,7 @@ public class TagOptionsTests {
   private sealed class TestNotificationHook2 : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -239,7 +239,7 @@ public class TagOptionsTests {
   private sealed class TestTelemetryHook : IMessageTagHook<TelemetryTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TelemetryTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -247,7 +247,7 @@ public class TagOptionsTests {
   private sealed class TestMetricHook : IMessageTagHook<MetricTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MetricTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
@@ -255,7 +255,7 @@ public class TagOptionsTests {
   private sealed class TestUniversalHook : IMessageTagHook<MessageTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<MessageTagAttribute> _,
-        CancellationToken __) {
+        CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }

@@ -32,7 +32,7 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   private sealed class SgLeaderModel;
   private sealed class SgFollowerModel;
 
-  private IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 

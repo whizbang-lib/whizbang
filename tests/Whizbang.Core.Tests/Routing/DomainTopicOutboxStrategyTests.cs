@@ -22,7 +22,7 @@ public class DomainTopicOutboxStrategyTests {
   // (Compiler can't see _ on private types, so use real identifiers.)
   private sealed class TenantCreatedEvent;
 
-  private sealed class _StubTopicResolver(string topic) : ITopicRoutingStrategy {
+  private sealed class StubTopicResolver(string topic) : ITopicRoutingStrategy {
     public string LastMessageTypeName { get; private set; } = "";
     public string ResolveTopic(Type messageType, string baseTopic, IReadOnlyDictionary<string, object>? context = null) {
       LastMessageTypeName = messageType.FullName ?? "";
@@ -54,7 +54,7 @@ public class DomainTopicOutboxStrategyTests {
 
   [Test]
   public async Task GetDestination_DelegatesTopicResolutionToResolverAsync() {
-    var resolver = new _StubTopicResolver("custom.topic");
+    var resolver = new StubTopicResolver("custom.topic");
     var strategy = new DomainTopicOutboxStrategy(resolver);
 
     var destination = strategy.GetDestination(
@@ -68,7 +68,7 @@ public class DomainTopicOutboxStrategyTests {
 
   [Test]
   public async Task GetDestination_RoutingKeyIsLowercaseTypeNameAsync() {
-    var resolver = new _StubTopicResolver("any");
+    var resolver = new StubTopicResolver("any");
     var strategy = new DomainTopicOutboxStrategy(resolver);
 
     var destination = strategy.GetDestination(
@@ -83,7 +83,7 @@ public class DomainTopicOutboxStrategyTests {
 
   [Test]
   public async Task GetDestination_NullMessageType_ThrowsArgumentNullExceptionAsync() {
-    var strategy = new DomainTopicOutboxStrategy(new _StubTopicResolver("t"));
+    var strategy = new DomainTopicOutboxStrategy(new StubTopicResolver("t"));
 
     await Assert.That(() => strategy.GetDestination(null!, new HashSet<string>(), MessageKind.Event))
       .Throws<ArgumentNullException>();
@@ -91,7 +91,7 @@ public class DomainTopicOutboxStrategyTests {
 
   [Test]
   public async Task GetDestination_NullOwnedDomains_ThrowsArgumentNullExceptionAsync() {
-    var strategy = new DomainTopicOutboxStrategy(new _StubTopicResolver("t"));
+    var strategy = new DomainTopicOutboxStrategy(new StubTopicResolver("t"));
 
     await Assert.That(() => strategy.GetDestination(typeof(TenantCreatedEvent), null!, MessageKind.Event))
       .Throws<ArgumentNullException>();
@@ -101,7 +101,7 @@ public class DomainTopicOutboxStrategyTests {
   public async Task GetDestination_DoesNotCareAboutOwnedDomainsContentAsync() {
     // The outbox strategy returns a destination regardless of ownership —
     // it's an outbound strategy, not a routing filter.
-    var resolver = new _StubTopicResolver("t");
+    var resolver = new StubTopicResolver("t");
     var strategy = new DomainTopicOutboxStrategy(resolver);
 
     var d1 = strategy.GetDestination(typeof(TenantCreatedEvent), new HashSet<string>(), MessageKind.Event);

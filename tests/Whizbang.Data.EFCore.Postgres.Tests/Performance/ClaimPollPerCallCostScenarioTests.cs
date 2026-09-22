@@ -105,7 +105,7 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// Fills to one stream depth and measures the polls. Each depth gets its own fill, so the
   /// measurements differ in depth and in nothing else.
   /// </summary>
-  private async Task<DepthMeasure> _measureAtDepthAsync(
+  private static async Task<DepthMeasure> _measureAtDepthAsync(
       NpgsqlConnection conn, WorkCostRecorder recorder, int depth, CancellationToken cancellationToken) {
     var poller = await _fillAtDepthAsync(conn, depth);
     // The first poll after a fill does the one-time bookkeeping a steady state does not repeat.

@@ -101,7 +101,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
       new TransportMessage(envelope2, envelopeType)
     ]);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert — both messages stored via StoreInboxMessagesAsync
     await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(2)
@@ -140,7 +140,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     // Act
     await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert — NO inline processing. Processing deferred to WorkCoordinatorPublisherWorker.
     await Assert.That(workStrategy.InboxCompletionCount).IsEqualTo(0)
@@ -169,7 +169,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
-    services.Configure<RoutingOptions>(opts => opts.OwnDomains([ownedNamespace]));
+    services.Configure<RoutingOptions>(opts => opts.OwnDomains(ownedNamespace));
     var sp = services.BuildServiceProvider();
 
     var worker = new TransportConsumerWorker(
@@ -206,7 +206,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     // Act
     await transport.SimulateBatchReceivedAsync([new TransportMessage(selfEchoEnvelope, envelopeType)]);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert — self-echo should be discarded before inbox insert
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
@@ -252,7 +252,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
       new TransportMessage(goodEnvelope, "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core"),
       new TransportMessage(badEnvelope, null) // null envelope type → serialization error
     ]);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert — good message should still be processed
     await Assert.That(noOpCoordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
@@ -295,7 +295,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     // Act
     await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert — message queued but no completions (duplicate detected, processing skipped)
     await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1);
@@ -494,21 +494,21 @@ public class TransportConsumerWorkerBatchHandlerTests {
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }
     public int InboxCompletionCount { get; private set; }
-    public Action? OnCompletionQueued { get; set; }
+    public Action? OnCompletionQueued { get; }
 
     public void QueueInboxMessage(InboxMessage message) {
       QueuedInboxCount++;
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) {
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
       InboxCompletionCount++;
       OnCompletionQueued?.Invoke();
     }
 
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);

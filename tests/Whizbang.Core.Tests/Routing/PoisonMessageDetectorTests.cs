@@ -441,8 +441,9 @@ internal sealed class RecordingLogger<T> : ILogger<T> {
   public int Count(LogLevel level, string fragment) =>
     Entries.Count(e => e.Level == level && e.Message.Contains(fragment, StringComparison.OrdinalIgnoreCase));
 
-  private sealed class NullScope : IDisposable {
-    internal static readonly NullScope Instance = new();
-    public void Dispose() { }
-  }
+}
+
+internal sealed class NullScope : IDisposable {
+  internal static readonly NullScope Instance = new();
+  public void Dispose() { }
 }

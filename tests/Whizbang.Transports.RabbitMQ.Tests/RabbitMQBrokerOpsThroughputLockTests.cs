@@ -101,7 +101,7 @@ public class RabbitMQBrokerOpsThroughputLockTests {
 
     var sends = publisherChannel.PublishedMessages.Count;
     await Assert.That(sends).IsEqualTo(N).Because("one publish per command — no fan-out on the publish side");
-    foreach (var (Exchange, RoutingKey, Body) in publisherChannel.PublishedMessages) {
+    foreach (var (Exchange, _, _) in publisherChannel.PublishedMessages) {
       await Assert.That(Exchange).IsEqualTo(flippedEntity);
     }
 

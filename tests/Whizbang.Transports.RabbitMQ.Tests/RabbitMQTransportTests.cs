@@ -86,7 +86,7 @@ public class RabbitMQTransportTests {
       cancellationToken: CancellationToken.None);
 
     await Assert.That(fakeChannel.PublishedMessages.Count).IsEqualTo(1);
-    var (Exchange, RoutingKey, Body) = fakeChannel.PublishedMessages[0];
+    var (_, _, Body) = fakeChannel.PublishedMessages[0];
     await Assert.That(Body.ToArray()).IsEquivalentTo(sentinel)
       .Because("The hint MUST be used as-is — re-serializing the envelope here would defeat the upstream hook chain (size measurement, body-offload claim envelope substitution).");
   }
@@ -423,7 +423,7 @@ public class RabbitMQTransportTests {
     var destination = new TransportDestination("inbox", "#", metadata);
 
     // Act
-    var subscription = await transport.SubscribeAsync(
+    _ = await transport.SubscribeAsync(
       async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
@@ -493,7 +493,7 @@ public class RabbitMQTransportTests {
     var destination = new TransportDestination("inbox", "#", metadata);
 
     // Act
-    var subscription = await transport.SubscribeAsync(
+    _ = await transport.SubscribeAsync(
       async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
@@ -529,14 +529,14 @@ public class RabbitMQTransportTests {
     var destination = new TransportDestination("events.inventory", "#", metadata);
 
     // Act - Subscribe twice (simulating two service instances)
-    var subscription1 = await transport.SubscribeAsync(
+    _ = await transport.SubscribeAsync(
       async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );
 
     var firstQueueName = fakeChannel.LastDeclaredQueueName;
 
-    var subscription2 = await transport.SubscribeAsync(
+    _ = await transport.SubscribeAsync(
       async (_, envelopeType, ct) => await Task.CompletedTask,
       destination
     );

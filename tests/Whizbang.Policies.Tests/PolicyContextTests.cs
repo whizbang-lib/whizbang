@@ -32,8 +32,6 @@ public class PolicyContextTests {
     }
   }
 
-  private sealed record OrderCreated(Guid OrderId, DateTimeOffset CreatedAt);
-
   // Test types for [StreamId] attribute tests (must be public for generator)
   public record CreateProduct {
     [StreamId]
@@ -502,7 +500,7 @@ public class PolicyContextTests {
     // Arrange - an extractor that resolves the [StreamId] value for the message.
     // Covers the happy path: extractor returns a value, GetAggregateId returns it.
     // A fake extractor is used instead of the source-generated composite because the
-    // composite only registers extractors for types in assemblies that ran the generator;
+    // composite only registers extractors for types in assemblies that ran the generator —
     // this test-assembly type is not in that set, so the composite would return null.
     var expectedId = Guid.NewGuid();
     var services = new ServiceCollection();

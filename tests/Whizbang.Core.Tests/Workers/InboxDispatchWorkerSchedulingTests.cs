@@ -56,11 +56,11 @@ public class InboxDispatchWorkerSchedulingTests {
   }
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) => ValueTask.CompletedTask;
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class AllStagesReceptorRegistry : IReceptorRegistryQuery {
@@ -72,7 +72,7 @@ public class InboxDispatchWorkerSchedulingTests {
   private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType) => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
@@ -80,7 +80,7 @@ public class InboxDispatchWorkerSchedulingTests {
     private int _count;
     public int CallCount => Volatile.Read(ref _count);
     public ValueTask<IScopeContext?> EstablishContextAsync(
-        IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken ct = default) {
+        IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _count);
       return ValueTask.FromResult<IScopeContext?>(null);
     }
@@ -189,7 +189,7 @@ public class InboxDispatchWorkerSchedulingTests {
                "TaskCreationOptions.LongRunning spawns a dedicated OS thread per message, " +
                "dominating per-message dispatch cost on busy services.");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   [Test]
@@ -235,6 +235,6 @@ public class InboxDispatchWorkerSchedulingTests {
                "NOT re-establish — that work is pure overhead and (in production) competes " +
                "for DB connections with the actual dispatch path.");
 
-    try { await worker.StopAsync(CancellationToken.None); } catch { }
+    try { await worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

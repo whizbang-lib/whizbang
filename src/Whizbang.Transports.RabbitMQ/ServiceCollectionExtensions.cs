@@ -149,7 +149,7 @@ public static class ServiceCollectionExtensions {
         var connection = connectionRetry.CreateConnectionWithRetryAsync(factory).GetAwaiter().GetResult();
 
         // Wire up connection state monitoring for runtime reconnection visibility
-        _wireUpConnectionStateMonitoring(connection, logger);
+        WireUpConnectionStateMonitoring(connection, logger);
 
         return connection;
       });
@@ -286,7 +286,7 @@ public static class ServiceCollectionExtensions {
       var registryQuery = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistryQuery>();
 
       return new NamespaceRoutingTransport(
-        transport, peers, () => _activeConsumeNamespaceKeys(resolver, registryQuery));
+        transport, peers, () => ActiveConsumeNamespaceKeys(resolver, registryQuery));
     });
 
     // Register transport readiness check
@@ -320,7 +320,7 @@ public static class ServiceCollectionExtensions {
 
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
-      var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      _ = sp.GetService<IOutboxRoutingStrategy>();
 
       // Strategy-agnostic command-inbox seam (topology arc phase 7): both built-in
       // command-routing strategies implement ICommandInboxAddressResolver — the default
@@ -381,7 +381,7 @@ public static class ServiceCollectionExtensions {
   /// handled message types resolve to. A namespace this service only PUBLISHES to is never
   /// subscribed, so it costs zero broker entities.
   /// </summary>
-  private static IReadOnlyList<string> _activeConsumeNamespaceKeys(
+  internal static IReadOnlyList<string> ActiveConsumeNamespaceKeys(
     Whizbang.Core.Tags.TransportNamespaceResolver? resolver,
     Whizbang.Core.Messaging.IReceptorRegistryQuery? registryQuery
   ) {
@@ -398,7 +398,7 @@ public static class ServiceCollectionExtensions {
   /// RabbitMQ's automatic recovery handles reconnection; this provides logging for observability.
   /// </summary>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Connection events are infrequent - high-performance logging not justified")]
-  private static void _wireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
+  internal static void WireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
     if (logger == null) {
       return;
     }

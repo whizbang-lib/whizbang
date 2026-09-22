@@ -37,6 +37,7 @@ public class InstanceProviderWiringTests {
   }
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields", Justification = "Reads field metadata across the assembly to enforce a structural rule; nothing is invoked or assigned.")]
   public async Task NoTypeStoresTheInstanceProviderInANullableFieldAsync() {
     var assembly = typeof(IServiceInstanceProvider).Assembly;
     var offenders = new List<string>();

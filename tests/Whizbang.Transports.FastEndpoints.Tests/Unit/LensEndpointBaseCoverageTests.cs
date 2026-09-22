@@ -21,9 +21,9 @@ public class LensEndpointBaseCoverageTests {
   // instead of just ignoring the blank and applying the two real fields.
   [Test]
   public async Task ParseSortExpression_WithWhitespaceOnlySegment_SkipsItButKeepsTheRealFieldsAsync() {
-    var endpoint = new TestLensEndpoint();
+    _ = new TestLensEndpoint();
 
-    var sorts = endpoint.TestParseSortExpression("name, ,status");
+    var sorts = TestLensEndpoint.TestParseSortExpression("name, ,status");
 
     await Assert.That(sorts.Count).IsEqualTo(2)
       .Because("the whitespace-only middle segment trims to empty and must be skipped, not turned into a bogus SortExpression");

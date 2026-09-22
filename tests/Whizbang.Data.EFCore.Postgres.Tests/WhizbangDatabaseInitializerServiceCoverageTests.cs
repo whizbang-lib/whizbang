@@ -47,8 +47,8 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
   // line.
   [Test]
   public async Task TryRecomputePartitionsAsync_RowsRecomputed_LogsThePartitionRecomputeAsync() {
-    var logger = new _CapturingLogger();
-    var coordinator = new _SucceedingCoordinator(new PartitionRecomputeResult {
+    var logger = new CapturingLogger();
+    var coordinator = new SucceedingCoordinator(new PartitionRecomputeResult {
       InboxRowsRecomputed = 3,
       OutboxRowsRecomputed = 0,
       ActiveStreamsRowsRecomputed = 5,
@@ -80,7 +80,7 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      new _NoOpRunner(),
+      new NoOpRunner(),
       new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions { PartitionCount = partitionCount }),
       Options.Create(new SchemaInitializationOptions()),
@@ -89,12 +89,12 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
   }
 
   /// <summary>Runner that completes immediately; StartAsync/StopAsync are not under test here.</summary>
-  private sealed class _NoOpRunner : ISchemaInitializationRunner {
+  private sealed class NoOpRunner : ISchemaInitializationRunner {
     public Task RunAsync(CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   /// <summary>Captures the fully-formatted messages emitted through the source-generated LoggerMessage methods.</summary>
-  private sealed class _CapturingLogger : ILogger<WhizbangDatabaseInitializerService> {
+  private sealed class CapturingLogger : ILogger<WhizbangDatabaseInitializerService> {
     public List<string> Entries { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -112,7 +112,7 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
   }
 
   /// <summary>Coordinator whose partition recompute returns a supplied result; the rest is unused here.</summary>
-  private sealed class _SucceedingCoordinator(PartitionRecomputeResult result) : IWorkCoordinator {
+  private sealed class SucceedingCoordinator(PartitionRecomputeResult result) : IWorkCoordinator {
     public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
         int partitionCount, CancellationToken cancellationToken = default)
       => Task.FromResult(result);
@@ -124,7 +124,7 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
         PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task StoreInboxMessagesAsync(
-        InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());

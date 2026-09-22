@@ -1095,7 +1095,7 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(status & 32768).IsEqualTo(32768); // Failed flag set
 
-    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting;
+    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting —
     // process_outbox_failures records the error + releases the lease without bumping
     // attempts. The initial attempts=0 stays 0 until a subsequent claim_orphaned_outbox
     // re-claims this row.
@@ -1693,27 +1693,6 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(count).IsEqualTo(1);
   }
-
-  // Helper record types for query results
-  private sealed record WorkBatchRow(
-    int? instance_rank,
-    int? active_instance_count,
-    string source,
-    Guid work_id,
-    Guid? work_stream_id,
-    int? partition_number,
-    string? destination,
-    string? message_type,
-    string? envelope_type,
-    string? message_data,
-    string? metadata,
-    int status,
-    int attempts,
-    bool is_newly_stored,
-    bool is_orphaned,
-    string? error,
-    int? failure_reason,
-    string? perspective_name);
 
   /// <summary>
   /// claim_work short-circuits and returns before it ranks when every queue is empty, so a test

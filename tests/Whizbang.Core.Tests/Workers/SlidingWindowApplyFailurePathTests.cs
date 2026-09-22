@@ -71,7 +71,7 @@ public class SlidingWindowApplyFailurePathTests {
     // Shutdown arriving mid-flush is not a flush failure, and must not be logged as one — every
     // deploy would otherwise file an error per in-flight stream.
     var flushed = new ConcurrentQueue<Guid>();
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
       options: _fastWindow(),
@@ -121,7 +121,7 @@ public class SlidingWindowApplyFailurePathTests {
   }
 
   /// <summary>Captures error-level lines so "shutdown was not logged as a failure" is checkable.</summary>
-  private sealed class _recordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+  private sealed class RecordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
     private readonly List<string> _errors = [];
     private readonly Lock _lock = new();
 

@@ -125,7 +125,7 @@ public class PerspectiveRegistryKeyTests : EFCoreTestBase {
     if (!await reader.ReadAsync()) {
       return (false, null);
     }
-    return (reader.GetBoolean(0), reader.IsDBNull(1) ? null : reader.GetInt32(1));
+    return (reader.GetBoolean(0), await reader.IsDBNullAsync(1) ? null : reader.GetInt32(1));
   }
 
   private sealed class EmptyCatalog : IMessageTypeCatalog {
@@ -155,7 +155,7 @@ public class PerspectiveRegistryKeyTests : EFCoreTestBase {
       Task.FromResult(new List<StreamEventData>());
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>

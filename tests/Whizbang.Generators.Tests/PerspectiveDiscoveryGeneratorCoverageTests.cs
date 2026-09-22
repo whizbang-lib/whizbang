@@ -82,7 +82,7 @@ public class PerspectiveDiscoveryGeneratorCoverageTests {
   // A perspective that stays OPEN over its event type hands the validator an
   // ITypeParameterSymbol, not a named type — there is no declaration to look for [StreamId] on, and
   // no way to know at generation time which concrete events will be substituted. The guard has to
-  // record that as a validation error (PerspectiveDiscoveryGenerator.cs:206-207) rather than cast;
+  // record that as a validation error (PerspectiveDiscoveryGenerator.cs:206-207) rather than cast —
   // without it the whole perspective-registration pass throws and EVERY perspective in the assembly
   // loses its registration, not just the open-generic one. The error is what tells the author the
   // open perspective cannot be stream-keyed — silently accepting it would register a perspective

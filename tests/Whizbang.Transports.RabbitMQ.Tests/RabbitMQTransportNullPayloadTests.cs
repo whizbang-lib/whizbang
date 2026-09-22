@@ -203,8 +203,7 @@ public class RabbitMQTransportNullPayloadTests {
   /// Returns true if the message should be rejected (sent to dead letter).
   /// </summary>
   private static bool _simulateTransportNullCheck(IMessageEnvelope envelope) {
-    // This mirrors the fix in RabbitMQTransport._deserializeMessage:
-    // if (envelope.Payload is null) { ... return null; }
+    // This mirrors the fix in RabbitMQTransport._deserializeMessage: a null payload returns null.
     return envelope.Payload is null;
   }
 

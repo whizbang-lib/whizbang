@@ -34,7 +34,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -73,7 +73,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -106,13 +105,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       // (the DistinctMessageIdAwaiter lesson applied at this seam). Snapshot before
       // enumerating: the worker appends concurrently.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.ToArray().Any(m => m.MessageId == envelope.MessageId.Value),
+        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert
       await Assert.That(processed).IsTrue();
 
-      var inbox = capturedInboxMessages.ToArray().First(m => m.MessageId == envelope.MessageId.Value);
+      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
       // TestMessage does not implement IEvent, so isEvent is false
       await Assert.That(inbox.IsEvent).IsFalse();
     } finally {
@@ -142,7 +141,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: new TestConsumerLogger(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -210,7 +208,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -277,7 +274,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -341,7 +337,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -390,7 +385,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -443,7 +437,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -496,7 +489,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -565,7 +557,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -717,10 +708,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       _capturedMessages.Add(message);
     }
 
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -770,10 +761,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       _pendingMessage = message;
     }
 
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -826,10 +817,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   private sealed class NoOpWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);

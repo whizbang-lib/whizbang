@@ -29,8 +29,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// <code-under-test>src/Whizbang.Core/SystemEvents/SystemEventEmitter.cs</code-under-test>
 [Category("SystemEvents")]
 public class SystemEventEmitterPriorityTests {
-  private sealed record _auditedEvent : IEvent { public string Name { get; init; } = ""; }
-  private sealed record _auditedCommand(string Name);
+  private sealed record AuditedEvent : IEvent { public string Name { get; init; } = ""; }
+  private sealed record AuditedCommand(string Name);
 
   [Test]
   public async Task EmitEventAudited_TheAuditEnvelopeIsOnTheAuditBandAsync() {
@@ -48,7 +48,7 @@ public class SystemEventEmitterPriorityTests {
   public async Task EmitCommandAudited_TheAuditEnvelopeIsOnTheAuditBandAsync() {
     var (emitter, store) = _build();
 
-    await emitter.EmitCommandAuditedAsync(new _auditedCommand("c"), "ok", "TestReceptor", context: null);
+    await emitter.EmitCommandAuditedAsync(new AuditedCommand("c"), "ok", "TestReceptor", context: null);
 
     await Assert.That(store.Envelopes.Single().Priority).IsEqualTo(WorkPriority.IDLE)
       .Because("command audits share the emit path with event audits; one construction site, one band");
@@ -67,7 +67,7 @@ public class SystemEventEmitterPriorityTests {
   public async Task WhenTheApplicationChoosesAnotherBand_TheEmitterFollowsItAsync() {
     var options = Options.Create(new SystemEventOptions { AuditPriority = WorkPriority.BACKGROUND }
       .EnableEventAudit().EnableCommandAudit());
-    var store = new _captureStore();
+    var store = new CaptureStore();
     var emitter = new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _source());
@@ -88,15 +88,15 @@ public class SystemEventEmitterPriorityTests {
       .Because("the emitter does not dispatch, so inheritance never runs for it; the ambient parent must not leak into a hand-built envelope");
   }
 
-  private static (SystemEventEmitter Emitter, _captureStore Store) _build() {
-    var store = new _captureStore();
+  private static (SystemEventEmitter Emitter, CaptureStore Store) _build() {
+    var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit().EnableCommandAudit());
     return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
   }
 
-  private static MessageEnvelope<_auditedEvent> _source() => new() {
+  private static MessageEnvelope<AuditedEvent> _source() => new() {
     MessageId = MessageId.New(),
-    Payload = new _auditedEvent { Name = "x" },
+    Payload = new AuditedEvent { Name = "x" },
     Hops = [new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
@@ -105,7 +105,7 @@ public class SystemEventEmitterPriorityTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
   };
 
-  private sealed class _captureStore : IEventStore {
+  private sealed class CaptureStore : IEventStore {
     /// <summary>Every system event envelope appended, whatever its payload type, through the envelope's own number.</summary>
     public List<IMessageEnvelope> Envelopes { get; } = [];
 

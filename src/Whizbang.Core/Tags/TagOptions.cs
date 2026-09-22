@@ -430,11 +430,5 @@ public sealed class TagOptions {
   /// <param name="tag">The tag string the routing binds to.</param>
   /// <param name="transportNamespaceKey">The TransportNamespace key to bind.</param>
   /// <returns>This options instance for chaining.</returns>
-  internal TagOptions UseRouteNamespaceBinding(string tag, string transportNamespaceKey) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
-    ArgumentException.ThrowIfNullOrWhiteSpace(transportNamespaceKey);
-
-    _routeNamespaceBindings[tag] = transportNamespaceKey;
-    return this;
-  }
+  internal TagOptions UseRouteNamespaceBinding(string tag, string transportNamespaceKey) => RouteNamespace(tag, transportNamespaceKey);
 }

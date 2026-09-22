@@ -18,13 +18,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Shard1")]
 public class CollectiveInMemoryEvaluatorCoverageTests {
 
-  private sealed class _model {
-    public Guid Id { get; set; }
+  private sealed class Model {
     public bool IsActive { get; set; }
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _spec(Expression<Action<ICollectiveSetters<_model>>> Setters) : ICollectiveSpec<_model>;
+  private sealed record Spec(Expression<Action<ICollectiveSetters<Model>>> Setters) : ICollectiveSpec<Model>;
 
   // A replay/rebuild fold re-applies this same spec in memory to keep a rebuilt row consistent
   // with the live SQL apply path. If the boxing-Convert selector shape stopped unwrapping to the
@@ -33,10 +32,10 @@ public class CollectiveInMemoryEvaluatorCoverageTests {
   // diverge from the live one with no error raised anywhere.
   [Test]
   public async Task Apply_SelectorWithBoxingConvert_UnwrapsToTheUnderlyingPropertyAsync() {
-    var spec = new _spec(Setters: s => s.SetProperty<object>(o => o.IsActive, true));
-    var model = new _model { IsActive = false };
+    var spec = new Spec(Setters: s => s.SetProperty<object>(o => o.IsActive, true));
+    var model = new Model { IsActive = false };
 
-    CollectiveInMemoryEvaluator<_model>.Apply(spec, model);
+    CollectiveInMemoryEvaluator<Model>.Apply(spec, model);
 
     await Assert.That(model.IsActive).IsTrue()
       .Because("the Convert(box) node the compiler inserts for a bool selector bound to SetProperty<object> must be unwrapped to reach the real IsActive property");
@@ -48,10 +47,10 @@ public class CollectiveInMemoryEvaluatorCoverageTests {
   // cast exception deep inside Flush — instead of failing clearly at the point of misuse.
   [Test]
   public async Task Apply_SelectorNotADirectTopLevelProperty_ThrowsNotSupportedAsync() {
-    var spec = new _spec(Setters: s => s.SetProperty(o => o.Name.Length, 5));
-    var model = new _model { Name = "abc" };
+    var spec = new Spec(Setters: s => s.SetProperty(o => o.Name.Length, 5));
+    var model = new Model { Name = "abc" };
 
-    await Assert.That(() => CollectiveInMemoryEvaluator<_model>.Apply(spec, model))
+    await Assert.That(() => CollectiveInMemoryEvaluator<Model>.Apply(spec, model))
       .Throws<NotSupportedException>()
       .Because("o.Name.Length is a member access whose Expression is another MemberExpression, not the row parameter — not replayable in-memory");
   }

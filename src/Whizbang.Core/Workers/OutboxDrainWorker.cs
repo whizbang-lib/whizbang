@@ -196,7 +196,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     if (!_options.Enabled || !_publishStrategy.IsConfigured) {
       if (!_publishStrategy.IsConfigured) { LogNoTransportRegistered(_logger); }
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
       return;
     }
@@ -408,7 +408,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var started = System.Diagnostics.Stopwatch.GetTimestamp();
     var completed = 0;
     try {
-      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed), ct)
+      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed))
         .ConfigureAwait(false);
     } finally {
       // Ship the remainder even when the cycle threw. Rows already accumulated have been claimed
@@ -426,7 +426,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         QueuedItems: batch.Count,
         Contended: false,
         Elapsed: System.Diagnostics.Stopwatch.GetElapsedTime(started),
-        // Completions, not depth. Depth is what was WAITING and says nothing about what got done;
+        // Completions, not depth. Depth is what was WAITING and says nothing about what got done —
         // a governor tuning on depth/time would be acting on a number that is not throughput.
         CompletedItems: Volatile.Read(ref completed)));
     }
@@ -436,8 +436,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private Task _drainBatchAsync(
       IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work,
       ParallelOptions parallelOpts,
-      Action onStreamCompleted,
-      CancellationToken ct) {
+      Action onStreamCompleted) {
     return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
         await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
@@ -795,7 +794,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       try {
         // Capture the Task inside the try so a SYNCHRONOUS throw from PublishBatchAsync —
         // e.g., a strategy that validates inputs and throws before returning — flows into
-        // the existing catch (Exception ex) failure path instead of escaping uncaught.
+        // the existing generic-exception failure path instead of escaping uncaught.
         publishTask = _publishStrategy.PublishBatchAsync(works, ct);
         results = publishTimeoutSeconds > 0
           ? await publishTask.WaitAsync(TimeSpan.FromSeconds(publishTimeoutSeconds), ct)
@@ -815,12 +814,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             TaskScheduler.Default);
         }
         LogPublishTimedOut(_logger, works.Count, publishTimeoutSeconds);
-        foreach (var work in works) {
-          var row = rowsByMessageId[work.MessageId];
+        foreach (var (messageId, destination) in works.Select(w => (w.MessageId, w.Destination))) {
+          var row = rowsByMessageId[messageId];
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-            MessageId = work.MessageId,
+            MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
-            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={work.Destination}",
+            Error = $"Publish timed out after {publishTimeoutSeconds}s — SDK call did not return for destination={destination}",
             Reason = MessageFailureReason.TransportException,
           }, ct);
         }
@@ -828,11 +827,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       } catch (Exception ex) {
         // Whole-batch failure: route every row to the failure channel so the next
         // claim_orphaned_* cycle re-leases them. Lifecycle scopes are disposed in finally.
-        foreach (var work in works) {
-          LogPublishFailed(_logger, work.MessageId, ex);
-          var row = rowsByMessageId[work.MessageId];
+        foreach (var messageId in works.Select(work => work.MessageId)) {
+          LogPublishFailed(_logger, messageId, ex);
+          var row = rowsByMessageId[messageId];
           await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-            MessageId = work.MessageId,
+            MessageId = messageId,
             CompletedStatus = (MessageProcessingStatus)row.Status,
             Error = ex.Message,
             Reason = MessageFailureReason.Unknown,

@@ -89,7 +89,6 @@ public class DispatcherUncoveredPathsTests {
     private readonly Func<object, ValueTask<object?>>? _anyInvoker = anyInvoker;
     private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
     private readonly DispatchModes? _defaultRouting = defaultRouting;
-    private readonly IReceptorRegistry? _receptorRegistryOverride = receptorRegistry;
     private readonly Type? _handleMessageType = handleMessageType ?? typeof(TestCommand);
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
@@ -246,7 +245,7 @@ public class DispatcherUncoveredPathsTests {
     /// <summary>Every set of event ids the dispatcher actually waited on, in order.</summary>
     public List<IReadOnlyList<Guid>> WaitCalls { get; } = [];
 
-    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken ct = default) {
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       WaitCalls.Add(eventIds);
       return Task.FromResult(_shouldComplete);
     }
@@ -665,7 +664,7 @@ public class DispatcherUncoveredPathsTests {
 
     // Act & Assert
     await Assert.That(async () =>
-        await dispatcher.SendAsync((object)routed, context, options))
+        await dispatcher.SendAsync(routed, context, options))
       .ThrowsExactly<ArgumentException>();
   }
 
@@ -1440,7 +1439,7 @@ public class DispatcherUncoveredPathsTests {
     var dispatcher = _createDispatcher();
     var testEvent = new TestEvent(Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1482,7 +1481,7 @@ public class DispatcherUncoveredPathsTests {
       voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("void-trace-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert

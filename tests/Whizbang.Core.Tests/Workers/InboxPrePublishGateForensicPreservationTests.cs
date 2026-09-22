@@ -55,7 +55,7 @@ public class InboxPrePublishGateForensicPreservationTests {
 
   // --- fakes ---
 
-  private sealed class _FakeInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -68,7 +68,7 @@ public class InboxPrePublishGateForensicPreservationTests {
     };
   }
 
-  private sealed class _FakeInboxChannelWriter : IInboxChannelWriter {
+  private sealed class FakeInboxChannelWriter : IInboxChannelWriter {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
@@ -81,28 +81,28 @@ public class InboxPrePublishGateForensicPreservationTests {
     public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
   }
 
-  private sealed class _FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeFailureChannel : IFailureChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeGenerationProvider : IGenerationProvider {
+  private sealed class FakeGenerationProvider : IGenerationProvider {
     public string GetGeneration() => "test-gen";
   }
 
-  private sealed record _MoveCall(string SourceTable, Guid SourceId, MessageFailureReason FailureReason, string? ErrorText);
+  private sealed record MoveCall(string SourceTable, Guid SourceId, MessageFailureReason FailureReason, string? ErrorText);
 
-  private sealed class _CapturingDeadLetterStore : IDeadLetterStore {
-    public ConcurrentBag<_MoveCall> Moves { get; } = [];
-    public TaskCompletionSource<_MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private sealed class CapturingDeadLetterStore : IDeadLetterStore {
+    public ConcurrentBag<MoveCall> Moves { get; } = [];
+    public TaskCompletionSource<MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<Guid?> MoveAsync(
         Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText,
         Guid instanceId, string generation, CancellationToken ct = default) {
-      var call = new _MoveCall(sourceTable, sourceId, failureReason, errorText);
+      var call = new MoveCall(sourceTable, sourceId, failureReason, errorText);
       Moves.Add(call);
       FirstMove.TrySetResult(call);
       return Task.FromResult<Guid?>(deadLetterId);
@@ -129,16 +129,16 @@ public class InboxPrePublishGateForensicPreservationTests {
     };
   }
 
-  private static InboxDispatchWorker _worker(_CapturingDeadLetterStore store, IGenerationProvider gen) {
+  private static InboxDispatchWorker _worker(CapturingDeadLetterStore store, IGenerationProvider gen) {
     var sp = new ServiceCollection().BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new _FakeInstanceProvider(),
-      inboxChannelWriter: new _FakeInboxChannelWriter(),
-      handlerCommitChannel: new _FakeHandlerCommitChannel(),
-      failureChannel: new _FakeFailureChannel(),
+      instanceProvider: new FakeInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: new FakeFailureChannel(),
       schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 10 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
@@ -167,8 +167,8 @@ public class InboxPrePublishGateForensicPreservationTests {
   public async Task PrePublishGate_ControlPlaneMessage_IsDroppedNotStoredAsync() {
     var work = _work(attempts: 11, rowError: "transport unavailable",
       messageType: TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));
-    var dlqStore = new _CapturingDeadLetterStore();
-    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+    var dlqStore = new CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new FakeGenerationProvider());
 
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
@@ -185,8 +185,8 @@ public class InboxPrePublishGateForensicPreservationTests {
   public async Task PrePublishGate_DomainMessage_IsStillStoredAsync() {
     var work = _work(attempts: 11, rowError: "receptor threw",
       messageType: "Contracts.Orders.OrderPlacedEvent, Contracts");
-    var dlqStore = new _CapturingDeadLetterStore();
-    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+    var dlqStore = new CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new FakeGenerationProvider());
 
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
@@ -213,8 +213,8 @@ public class InboxPrePublishGateForensicPreservationTests {
       """;
 
     var work = _work(attempts: 11, rowError: realStack);
-    var dlqStore = new _CapturingDeadLetterStore();
-    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+    var dlqStore = new CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new FakeGenerationProvider());
 
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
@@ -242,8 +242,8 @@ public class InboxPrePublishGateForensicPreservationTests {
   [Test]
   public async Task PrePublishGate_WorkErrorIsNull_FallsBackToMetaMessageAsync() {
     var work = _work(attempts: 11, rowError: null);
-    var dlqStore = new _CapturingDeadLetterStore();
-    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+    var dlqStore = new CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new FakeGenerationProvider());
 
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
@@ -266,8 +266,8 @@ public class InboxPrePublishGateForensicPreservationTests {
   [Test]
   public async Task PrePublishGate_WorkErrorIsWhitespace_FallsBackToMetaMessageAsync() {
     var work = _work(attempts: 15, rowError: "   ");
-    var dlqStore = new _CapturingDeadLetterStore();
-    var worker = _worker(dlqStore, new _FakeGenerationProvider());
+    var dlqStore = new CapturingDeadLetterStore();
+    var worker = _worker(dlqStore, new FakeGenerationProvider());
 
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 

@@ -28,9 +28,9 @@ public class SubscriptionExpansionWorkerPriorityTests {
 
   [Test]
   public async Task Expansion_TheBackfillRequestIsBackgroundAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -42,9 +42,9 @@ public class SubscriptionExpansionWorkerPriorityTests {
 
   [Test]
   public async Task Expansion_InsideAnInteractiveHandling_TheRequestStaysBackgroundAsync() {
-    var coordinator = new _registryCoordinator();
+    var coordinator = new RegistryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var worker = _buildWorker(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
@@ -56,13 +56,13 @@ public class SubscriptionExpansionWorkerPriorityTests {
   }
 
   private static SubscriptionExpansionWorker _buildWorker(
-      _registryCoordinator coordinator, _captureTransport transport, StreamIntegrityOptions options) {
+      RegistryCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions options) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("expanded-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("expanded-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -76,11 +76,11 @@ public class SubscriptionExpansionWorkerPriorityTests {
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(SubscriptionExpansionWorkerTests.ExpandedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -93,7 +93,7 @@ public class SubscriptionExpansionWorkerPriorityTests {
     };
   }
 
-  private sealed class _registryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RegistryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
     public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
@@ -114,7 +114,7 @@ public class SubscriptionExpansionWorkerPriorityTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

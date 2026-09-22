@@ -173,8 +173,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — batch span exists for THIS worker instance with the batch-size tag set
     var instanceIdString = instanceProvider.InstanceId.ToString();
@@ -280,8 +280,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await processedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await invoker.WaitForStageAsync(LifecycleStage.PostLifecycleInline, TimeSpan.FromSeconds(10));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — the hook payload reflects the processed batch
     await Assert.That(processedEvent).IsNotNull();
@@ -381,8 +381,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       PartitionNumber = 1
     }, cts.Token);
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — bootstrap ran exactly once, under a "bootstrap" lock that was released
     await Assert.That(runner.BootstrapCallCount).IsEqualTo(1)
@@ -467,8 +467,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PartitionNumber = 1
       }, cts.Token);
       await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-      cts.Cancel();
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { } catch (InvalidOperationException) { }
+      await cts.CancelAsync();
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (InvalidOperationException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
       // Assert — the sync tracker was told the failed event is done for this perspective
       await Assert.That(syncTracker.MarkedEventIds).Contains(eventId)
@@ -484,7 +484,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
   [Test]
   public async Task Worker_PrePerspectiveLifecycleThrows_ReportsFailureForGroupAsync() {
-    // Arrange — lifecycle coordinator whose BeginTracking throws during PrePerspective;
+    // Arrange — lifecycle coordinator whose BeginTracking throws during PrePerspective —
     // the group's catch must route the error to the failure path.
     void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is InvalidOperationException ioe && ioe.Message == "begin-tracking failed") {
@@ -558,8 +558,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PartitionNumber = 1
       }, cts.Token);
       await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
-      cts.Cancel();
-      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { } catch (InvalidOperationException) { }
+      await cts.CancelAsync();
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ } catch (InvalidOperationException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
       // Assert — failure reported, runner never invoked (PrePerspective threw first)
       await Assert.That(coordinator.Failures.Count).IsGreaterThanOrEqualTo(1);
@@ -652,8 +652,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
     await lifecycle.AllThrowsObserved.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — both events got a PostAllPerspectives attempt despite the first throwing
     await Assert.That(lifecycle.PostAllAdvanceAttempts).IsEqualTo(2)
@@ -793,8 +793,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — processing survived the signal burst and StopAsync detached the handler
     await Assert.That(coordinator.Completions.Count).IsGreaterThanOrEqualTo(1);
@@ -902,8 +902,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
       .Because("the one signal must reach the iteration the loop is actually awaiting");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   /// <summary>
@@ -984,8 +984,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(worker.PendingWakeWaiters).IsEqualTo(1)
       .Because("six iterations must leave exactly the one live waiter, never six");
 
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     await Assert.That(worker.PendingWakeWaiters).IsEqualTo(0)
       .Because("cancellation must clear the parked waiter");
   }
@@ -1141,10 +1141,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public Task FirstFailure => _firstFailure.Task;
 
     /// <summary>Thrown by the next cursor read only, then cleared: one failed batch, then service.</summary>
-    public Exception? NextCursorException {
-      get => Volatile.Read(ref _nextCursorException);
-      set => Volatile.Write(ref _nextCursorException, value);
-    }
+    public void SetNextCursorException(Exception? failure) => Volatile.Write(ref _nextCursorException, failure);
     private Exception? _nextCursorException;
 
     /// <summary>The perspective streams each lease release named, in order.</summary>
@@ -1176,7 +1173,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1199,14 +1196,14 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }
   }
 
-  private sealed class SingleRunnerRegistry(string perspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
-    public IPerspectiveRunner? GetRunner(string name, IServiceProvider serviceProvider) =>
-      name == perspectiveName ? runner : null;
+  private sealed class SingleRunnerRegistry(string registeredPerspectiveName, IPerspectiveRunner runner, IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
+      perspectiveName == registeredPerspectiveName ? runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
       [new PerspectiveRegistrationInfo(
-        perspectiveName,
-        $"global::{perspectiveName}",
+        registeredPerspectiveName,
+        $"global::{registeredPerspectiveName}",
         "global::Test.DeepModel",
         [.. eventTypes.Select(TypeNameFormatter.Format)])];
 
@@ -1223,7 +1220,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public int BootstrapCallCount => Volatile.Read(ref _bootstrapCallCount);
     public Type PerspectiveType => typeof(RecordingRunner);
 
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _runCallCount);
       if (RunException is not null) {
         throw RunException;
@@ -1498,8 +1495,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }
 
     public event Action<bool>? OnHealthChanged {
-      add { }
-      remove { }
+      add { /* the fake never raises this event */ }
+      remove { /* the fake never raises this event */ }
     }
 
     public void Raise(WorkSignalCategory category) => _onSignal?.Invoke(category);

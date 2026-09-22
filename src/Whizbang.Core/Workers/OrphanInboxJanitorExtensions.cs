@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 
@@ -35,21 +36,12 @@ public static class OrphanInboxJanitorExtensions {
   }
 
   private static HashSet<Type> _snapshotReceptorMessageTypes(IServiceCollection services) {
-    var seen = new HashSet<Type>();
-    foreach (var sd in services) {
-      var st = sd.ServiceType;
-      if (!st.IsGenericType) {
-        continue;
-      }
-      var def = st.GetGenericTypeDefinition();
-      if (def != typeof(IReceptor<>) && def != typeof(IReceptor<,>)) {
-        continue;
-      }
-      var args = st.GetGenericArguments();
-      if (args.Length > 0) {
-        seen.Add(args[0]);
-      }
-    }
-    return seen;
+    return services
+      .Select(sd => sd.ServiceType)
+      .Where(st => st.IsGenericType && st.GetGenericTypeDefinition() is var def && (def == typeof(IReceptor<>) || def == typeof(IReceptor<,>)))
+      .Select(st => st.GetGenericArguments())
+      .Where(args => args.Length > 0)
+      .Select(args => args[0])
+      .ToHashSet();
   }
 }

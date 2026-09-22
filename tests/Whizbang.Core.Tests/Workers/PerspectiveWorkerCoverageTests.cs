@@ -205,7 +205,7 @@ public class PerspectiveWorkerCoverageTests {
     using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await startedSignal.Task.WaitAsync(timeoutCts.Token);
 
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(startedSignal.Task.IsCompleted).IsTrue()
@@ -501,7 +501,7 @@ public class PerspectiveWorkerCoverageTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    // Assert - Worker processed batch without crash (logged warning about missing registry/runner);
+    // Assert - Worker processed batch without crash (logged warning about missing registry/runner) —
     // empty-poll counter advancing proves the consumer loop ran.
     await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
@@ -575,7 +575,7 @@ public class PerspectiveWorkerCoverageTests {
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    // Assert - Worker continued processing without crash;
+    // Assert - Worker continued processing without crash —
     // empty-poll counter advancing proves the consumer loop ran.
     await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
   }
@@ -664,7 +664,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    using var logger = new _CapturingLogger();
+    using var logger = new CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -709,7 +709,7 @@ public class PerspectiveWorkerCoverageTests {
     await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(logger.Entries.Count(e => e.EventId == REGISTRY_NOT_AVAILABLE_EVENT_ID)).IsEqualTo(1)
@@ -736,7 +736,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    using var logger = new _CapturingLogger();
+    using var logger = new CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -778,7 +778,7 @@ public class PerspectiveWorkerCoverageTests {
     await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(logger.Entries.Count(e => e.EventId == NO_PERSPECTIVES_REGISTERED_EVENT_ID)).IsEqualTo(1)
@@ -804,7 +804,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
-    using var logger = new _CapturingLogger();
+    using var logger = new CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -843,10 +843,10 @@ public class PerspectiveWorkerCoverageTests {
     await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert - the header plus one line per registered perspective. This inventory is what an
-    // operator reads to confirm the perspectives they expect are actually wired on this host;
+    // operator reads to confirm the perspectives they expect are actually wired on this host —
     // the per-perspective line is also the only place the event types behind each one are named.
     var registered = registry.GetRegisteredPerspectives();
     await Assert.That(logger.Entries.Count(e => e.EventId == REGISTERED_PERSPECTIVES_HEADER_EVENT_ID)).IsEqualTo(1)
@@ -934,7 +934,7 @@ public class PerspectiveWorkerCoverageTests {
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     // StopAsync cancels the worker AND waits for ExecuteAsync to complete
     // (unlike cts.Cancel() + await workerTask, which is a no-op since StartAsync returns Task.CompletedTask)
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(syncSignaler.SignalCount).IsGreaterThanOrEqualTo(1)
@@ -1015,7 +1015,7 @@ public class PerspectiveWorkerCoverageTests {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(syncEventTracker.MarkProcessedByPerspectiveCallCount).IsGreaterThanOrEqualTo(1)
@@ -1100,7 +1100,7 @@ public class PerspectiveWorkerCoverageTests {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(tagProcessor.ProcessTagsCallCount).IsGreaterThanOrEqualTo(1)
@@ -1197,7 +1197,7 @@ public class PerspectiveWorkerCoverageTests {
     // Also drain detached tasks inside LifecycleTrackingState (PostLifecycleDetached fires via Task.Run there)
     var lifecycleCoordinator = (Whizbang.Core.Lifecycle.LifecycleCoordinator)serviceProvider.GetRequiredService<Whizbang.Core.Lifecycle.ILifecycleCoordinator>();
     await lifecycleCoordinator.DrainAllDetachedAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert — PostLifecycle stages MUST fire through the real worker code path
     await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleDetached)).IsTrue()
@@ -1793,7 +1793,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_BlockingRewindScan_KeepsRepollingAcrossMultipleNonEmptyRoundsAsync() {
     // Arrange
-    var coordinator = new _RewindLoopCoordinator();
+    var coordinator = new RewindLoopCoordinator();
     const string perspectiveName = "Test.Perspectives.RewindPerspective";
     coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
     coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
@@ -1852,7 +1852,7 @@ public class PerspectiveWorkerCoverageTests {
       .Because("the blocking scan must keep re-querying across every non-empty round, not stop after the first repoll");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 
   #endregion
@@ -1894,7 +1894,7 @@ public class PerspectiveWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var harness = new PerspectiveWorkerTestHarness();
-    var capturingLogger = new _CapturingLogger();
+    var capturingLogger = new CapturingLogger();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -1934,7 +1934,7 @@ public class PerspectiveWorkerCoverageTests {
     }
     await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(capturingLogger.Entries.Count(e => e.EventId == 23)).IsGreaterThanOrEqualTo(1)
@@ -1969,7 +1969,7 @@ public class PerspectiveWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var harness = new PerspectiveWorkerTestHarness();
-    var capturingLogger = new _CapturingLogger();
+    var capturingLogger = new CapturingLogger();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -2008,7 +2008,7 @@ public class PerspectiveWorkerCoverageTests {
     }
     await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     // Assert
     await Assert.That(capturingLogger.Entries.Count(e => e.EventId == 23)).IsGreaterThanOrEqualTo(1)
@@ -2178,7 +2178,7 @@ public class PerspectiveWorkerCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -2291,7 +2291,7 @@ public class PerspectiveWorkerCoverageTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -2313,7 +2313,7 @@ public class PerspectiveWorkerCoverageTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
@@ -2336,7 +2336,7 @@ public class PerspectiveWorkerCoverageTests {
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken = default) {
       throw new InvalidOperationException("Perspective run failed");
     }
 
@@ -2524,10 +2524,6 @@ public class PerspectiveWorkerCoverageTests {
     private readonly List<LifecycleStage> _firedStages = [];
     private readonly TaskCompletionSource _postLifecycleFired = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public IReadOnlyList<LifecycleStage> FiredStages {
-      get { lock (_lock) { return [.. _firedStages]; } }
-    }
-
     public bool HasFired(LifecycleStage stage) {
       lock (_lock) { return _firedStages.Contains(stage); }
     }
@@ -2573,7 +2569,7 @@ public class PerspectiveWorkerCoverageTests {
   /// <see cref="GetCursorsRequiringRewindAsync"/>, driven by a queue so a test can script
   /// multiple successive startup-scan repoll rounds.
   /// </summary>
-  private sealed class _RewindLoopCoordinator : IWorkCoordinator, IDisposable {
+  private sealed class RewindLoopCoordinator : IWorkCoordinator, IDisposable {
     private readonly Queue<IReadOnlyList<RewindCursorInfo>> _results = new();
     private readonly SemaphoreSlim _querySignal = new(0, int.MaxValue);
 
@@ -2599,7 +2595,7 @@ public class PerspectiveWorkerCoverageTests {
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
@@ -2612,7 +2608,7 @@ public class PerspectiveWorkerCoverageTests {
   /// helper actually executed, rather than inferring it from side effects that can stay green
   /// for the wrong reason (see the vacuity-trap note on the tests that use this).
   /// </summary>
-  private sealed class _CapturingLogger : ILogger<PerspectiveWorker>, IDisposable {
+  private sealed class CapturingLogger : ILogger<PerspectiveWorker>, IDisposable {
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
 
     public void Dispose() => _signal.Dispose();

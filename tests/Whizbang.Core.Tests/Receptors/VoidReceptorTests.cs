@@ -152,7 +152,7 @@ public class VoidReceptorTests : DiagnosticTestBase {
     var receptor = new SendEmailReceptor();
     var command = new SendEmailCommand("user@example.com", "Test", "Message");
     using var cts = new CancellationTokenSource();
-    cts.Cancel(); // Cancel immediately
+    await cts.CancelAsync(); // Cancel immediately
 
     // Act & Assert
     await Assert.That(async () => await receptor.HandleAsync(command, cts.Token))

@@ -74,7 +74,7 @@ public class PerspectiveCursorCacheCoverageTests {
     clock.Advance(TimeSpan.FromMinutes(16));
     cache.Set(Guid.NewGuid(), "TestPerspective", Guid.NewGuid());
 
-    // Assert - reaching this line at all proves _raiseEvicted did not throw with a null handler;
+    // Assert - reaching this line at all proves _raiseEvicted did not throw with a null handler —
     // the removed entry proves the sweep actually ran the eviction (not merely returned early).
     await Assert.That(cache.TryGet(staleStream, "TestPerspective", out _)).IsFalse()
       .Because("the stale stream's entry must be gone once the activity-triggered sweep completes, proving the no-subscriber path in _raiseEvicted ran to completion instead of throwing");

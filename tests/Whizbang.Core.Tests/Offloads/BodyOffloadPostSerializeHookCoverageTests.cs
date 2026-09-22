@@ -47,14 +47,14 @@ public class BodyOffloadPostSerializeHookCoverageTests {
   [Test]
   public async Task RunAsync_LedgerInsertThrows_LogsWarningWithStorageKeyAndProviderAsync() {
     var services = new ServiceCollection();
-    var store = new _capturingStore("memory");
+    var store = new CapturingStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => store);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(opts => {
       opts.ProviderName = "memory";
       opts.SizeThresholdBytes = 100;
     });
-    services.AddSingleton<Whizbang.Core.Messaging.IWorkCoordinator>(new _throwingCoordinator());
-    var logger = new _capturingLogger();
+    services.AddSingleton<Whizbang.Core.Messaging.IWorkCoordinator>(new ThrowingCoordinator());
+    var logger = new CapturingLogger();
     services.AddSingleton<ILogger<BodyOffloadPostSerializeHook>>(logger);
     var sp = services.BuildServiceProvider();
     var hook = new BodyOffloadPostSerializeHook(
@@ -81,7 +81,7 @@ public class BodyOffloadPostSerializeHookCoverageTests {
   public async Task RunAsync_ProviderNameWithEscapableCharacters_RoundTripsThroughMetadataAsync() {
     var weirdProviderName = "back\\slash\"quote\nnewline\rcr\ttab\u0001ctrl";
     var services = new ServiceCollection();
-    var store = new _capturingStore(weirdProviderName);
+    var store = new CapturingStore(weirdProviderName);
     services.AddKeyedSingleton<IMessageBodyStore>(weirdProviderName, (_, _) => store);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(opts => {
       opts.ProviderName = weirdProviderName;
@@ -103,10 +103,10 @@ public class BodyOffloadPostSerializeHookCoverageTests {
   }
 
   private static PostSerializeContext _buildContext(byte[] bytes) {
-    var envelope = new MessageEnvelope<_testPayload> {
+    var envelope = new MessageEnvelope<TestPayload> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = new _testPayload("x"),
+      Payload = new TestPayload("x"),
       Hops = [
         new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }
       ]
@@ -123,10 +123,10 @@ public class BodyOffloadPostSerializeHookCoverageTests {
     );
   }
 
-  private sealed record _testPayload(string Content);
+  private sealed record TestPayload(string Content);
 
   /// <summary>Records the storage key minted for the last upload, for warning-message assertions.</summary>
-  private sealed class _capturingStore(string providerName) : IMessageBodyStore {
+  private sealed class CapturingStore(string providerName) : IMessageBodyStore {
     public string ProviderName { get; } = providerName;
     public string? LastStorageKey { get; private set; }
 
@@ -159,7 +159,7 @@ public class BodyOffloadPostSerializeHookCoverageTests {
   }
 
   /// <summary>Every other member is the NoOp base — only the ledger insert is overridden, to fail.</summary>
-  private sealed class _throwingCoordinator
+  private sealed class ThrowingCoordinator
       : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
     public Task RecordOffloadClaimAsync(
         string storageKey, string providerName, CancellationToken cancellationToken = default) {
@@ -167,7 +167,7 @@ public class BodyOffloadPostSerializeHookCoverageTests {
     }
   }
 
-  private sealed class _capturingLogger : ILogger<BodyOffloadPostSerializeHook> {
+  private sealed class CapturingLogger : ILogger<BodyOffloadPostSerializeHook> {
     public List<string> Warnings { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

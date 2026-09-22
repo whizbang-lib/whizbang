@@ -976,7 +976,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = registration!.SourceText.ToString();
 
-    // Should try {Name}-init connection string first (convention-based PgBouncer bypass)
+    // Should try the name-init connection string first, the convention-based PgBouncer bypass —
     await Assert.That(sourceText).Contains("-init");
     await Assert.That(sourceText).Contains("GetConnectionString");
 

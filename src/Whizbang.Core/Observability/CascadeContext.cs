@@ -209,10 +209,14 @@ public sealed record CascadeContext {
   public static (CorrelationId Correlation, MessageId Causation) ResolveInheritedIdentity(IMessageEnvelope? sourceEnvelope) {
     var parent = MessageContextAccessor.CurrentContext ?? ScopeContextAccessor.CurrentInitiatingContext;
 
-    var correlation =
-        sourceEnvelope?.GetCorrelationId() is { } hopCorrelation && hopCorrelation.Value != Guid.Empty ? hopCorrelation
-      : parent is not null && parent.CorrelationId.Value != Guid.Empty ? parent.CorrelationId
-      : CorrelationId.New();
+    CorrelationId correlation;
+    if (sourceEnvelope?.GetCorrelationId() is { } hopCorrelation && hopCorrelation.Value != Guid.Empty) {
+      correlation = hopCorrelation;
+    } else if (parent is not null && parent.CorrelationId.Value != Guid.Empty) {
+      correlation = parent.CorrelationId;
+    } else {
+      correlation = CorrelationId.New();
+    }
 
     var causation =
         sourceEnvelope?.GetCausationId()

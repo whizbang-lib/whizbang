@@ -43,7 +43,7 @@ public class NotifyDebounceStatsCollectorTests {
 
   [Test]
   public async Task ProviderRegistered_PopulatesMetrics_ThenWaitsAsync() {
-    var fake = new _RecordingProvider {
+    var fake = new RecordingProvider {
       ToReturn = [
         new NotifyDebounceKindStats("inbox", 10, 2, 50, 0),
         new NotifyDebounceKindStats("outbox", 3, 40, 7000, 9),
@@ -63,7 +63,7 @@ public class NotifyDebounceStatsCollectorTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await fake.Called.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fake.CallCount).IsGreaterThanOrEqualTo(1);
@@ -75,7 +75,7 @@ public class NotifyDebounceStatsCollectorTests {
 
   [Test]
   public async Task ProviderThrows_LogsAndContinuesLoopAsync() {
-    var fake = new _RecordingProvider { ThrowOnNextCall = new InvalidOperationException("simulated db error") };
+    var fake = new RecordingProvider { ThrowOnNextCall = new InvalidOperationException("simulated db error") };
     var services = new ServiceCollection();
     services.AddSingleton<INotifyDebounceStatsProvider>(fake);
     var sp = services.BuildServiceProvider();
@@ -88,7 +88,7 @@ public class NotifyDebounceStatsCollectorTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await fake.Called.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(fake.CallCount).IsEqualTo(1)
@@ -100,12 +100,12 @@ public class NotifyDebounceStatsCollectorTests {
     // The gate exists because the state table arrives with a migration. A collector that fell
     // through the gate on shutdown would issue its first query against a schema that may not
     // exist yet -- and log an error for it -- while the host is already tearing down.
-    var fake = new _RecordingProvider();
+    var fake = new RecordingProvider();
     var services = new ServiceCollection();
     services.AddSingleton<INotifyDebounceStatsProvider>(fake);
     var sp = services.BuildServiceProvider();
 
-    var gate = new _BlockingGate();
+    var gate = new BlockingGate();
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
@@ -138,7 +138,7 @@ public class NotifyDebounceStatsCollectorTests {
     // ObjectDisposedException here means the host's service provider is gone -- every later
     // cycle would throw the same way. The generic handler would log a warning every 15 seconds
     // for the remaining life of the process; the dedicated break is what stops that.
-    var fake = new _RecordingProvider { ThrowOnNextCall = new ObjectDisposedException("root provider") };
+    var fake = new RecordingProvider { ThrowOnNextCall = new ObjectDisposedException("root provider") };
     var services = new ServiceCollection();
     services.AddSingleton<INotifyDebounceStatsProvider>(fake);
     var sp = services.BuildServiceProvider();
@@ -161,7 +161,7 @@ public class NotifyDebounceStatsCollectorTests {
   // ---------------- fakes ----------------
 
   /// <summary>A gate that never opens, and reports when a waiter has actually reached it.</summary>
-  private sealed class _BlockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _waitCount;
 
@@ -177,7 +177,7 @@ public class NotifyDebounceStatsCollectorTests {
     }
   }
 
-  private sealed class _RecordingProvider : INotifyDebounceStatsProvider {
+  private sealed class RecordingProvider : INotifyDebounceStatsProvider {
     public IReadOnlyList<NotifyDebounceKindStats> ToReturn { get; set; } = [];
     public Exception? ThrowOnNextCall { get; set; }
     public int CallCount { get; private set; }

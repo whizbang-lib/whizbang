@@ -61,10 +61,10 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("v", (object?)expectedVersion ?? DBNull.Value);
     await using var r = await cmd.ExecuteReaderAsync();
     _ = await r.ReadAsync();
-    return (r.GetBoolean(0), r.IsDBNull(1) ? null : r.GetInt64(1));
+    return (r.GetBoolean(0), await r.IsDBNullAsync(1) ? null : r.GetInt64(1));
   }
 
-  private async Task<(short Status, long Version, long Count)> _readAsync(NpgsqlConnection conn, Guid scheduleId) {
+  private static async Task<(short Status, long Version, long Count)> _readAsync(NpgsqlConnection conn, Guid scheduleId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT status, version, occurrence_count FROM wh_schedules WHERE schedule_id = @id";
     cmd.Parameters.AddWithValue("id", scheduleId);

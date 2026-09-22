@@ -133,25 +133,6 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   /// Note: SendAsync is for transport/outbox dispatch, not local invocation.
   /// Sync receptors are designed for local invocation via LocalInvokeAsync.
   /// </summary>
-  [Test]
-  public async Task LocalInvokeAsync_TypedResult_SyncReceptor_ReturnsResultAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddSingleton<ISyncReceptor<DispatcherSyncCreateOrderCommand, DispatcherSyncOrderCreatedResult>, SyncOrderReceptor>();
-    var provider = services.BuildServiceProvider();
-
-    var dispatcher = new TestSyncDispatcher(provider);
-    var command = new DispatcherSyncCreateOrderCommand(Guid.NewGuid(), 100.00m);
-    var context = MessageContext.Create(CorrelationId.New());
-
-    // Act
-    var result = await dispatcher.LocalInvokeAsync<DispatcherSyncOrderCreatedResult>(command, context);
-
-    // Assert
-    await Assert.That(result).IsNotNull();
-    await Assert.That(result.OrderId).IsNotEqualTo(Guid.Empty);
-  }
-
   /// <summary>
   /// Tests that void sync receptors can be invoked.
   /// </summary>

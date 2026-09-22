@@ -16,11 +16,9 @@ namespace Whizbang.Data.EFCore.Postgres;
     "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   TDbContext dbContext,
-  ILogger<EFCoreDeadLetterRecoveryService<TDbContext>> logger,
   WorkCoordinatorGate? gate = null
 ) : IDeadLetterRecoveryService where TDbContext : DbContext {
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-  private readonly ILogger<EFCoreDeadLetterRecoveryService<TDbContext>> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly WorkCoordinatorGate? _gate = gate;
 
   // The DLQ functions are created in the service schema (__SCHEMA__.<fn>, migration 051). Callers
@@ -49,15 +47,15 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
         DeadLetterId: reader.GetGuid(0),
         SourceTable: reader.GetString(1),
         SourceId: reader.GetGuid(2),
-        StreamId: reader.IsDBNull(3) ? null : reader.GetGuid(3),
+        StreamId: await reader.IsDBNullAsync(3, ct) ? null : reader.GetGuid(3),
         MessageType: reader.GetString(4),
         FailureReason: (MessageFailureReason)reader.GetInt32(5),
         AttemptsWhenDlq: reader.GetInt32(6),
-        DeadLetteredAt: reader.GetFieldValue<DateTimeOffset>(7),
+        DeadLetteredAt: await reader.GetFieldValueAsync<DateTimeOffset>(7),
         RecoveryStatus: (DeadLetterRecoveryStatus)reader.GetInt32(8),
         RecoveryAttempts: reader.GetInt32(9),
         Generation: reader.GetString(10),
-        ErrorFingerprint: reader.IsDBNull(11) ? null : reader.GetString(11)));
+        ErrorFingerprint: await reader.IsDBNullAsync(11, ct) ? null : reader.GetString(11)));
     }
     return results;
   }

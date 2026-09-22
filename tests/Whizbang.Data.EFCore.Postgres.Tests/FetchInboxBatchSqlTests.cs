@@ -219,7 +219,7 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
     while (await reader.ReadAsync()) {
       rows.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
-        StreamId = reader.IsDBNull(1) ? null : reader.GetGuid(1),
+        StreamId = await reader.IsDBNullAsync(1) ? null : reader.GetGuid(1),
         HandlerName = reader.GetString(2),
         MessageType = reader.GetString(3)
       });

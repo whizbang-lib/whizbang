@@ -35,8 +35,9 @@ public class MessageDiscardPolicyTests {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Add((logLevel, formatter(state, exception)));
     }
-    private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
   }
+
+  private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
 
   private static (MessageDiscardPolicy Policy, TestRegistry Registry, RecordingLogger<MessageDiscardPolicy> Logger, Meter Meter)
     _newPolicy() {

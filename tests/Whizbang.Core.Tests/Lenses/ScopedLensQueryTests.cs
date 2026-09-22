@@ -39,7 +39,7 @@ public class ScopedLensQueryTests {
 
     // Mock ILensQuery<TestModel> - scoped (takes ScopeTracker to trigger scope tracking)
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModel(expectedModel);
       return mockQuery;
@@ -87,7 +87,7 @@ public class ScopedLensQueryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModels(expectedItems);
       return mockQuery;
@@ -138,7 +138,7 @@ public class ScopedLensQueryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModels(expectedItems);
       return mockQuery;
@@ -192,7 +192,7 @@ public class ScopedLensQueryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
+      _ = sp.GetRequiredService<ScopeTracker>(); // Force tracker instantiation
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModel(model1);
       return mockQuery;
@@ -265,7 +265,7 @@ public class ScopedLensQueryTests {
     });
 
     services.AddScoped<ILensQuery<TestModel>>(sp => {
-      var tracker = sp.GetRequiredService<ScopeTracker>();
+      _ = sp.GetRequiredService<ScopeTracker>();
       var mockQuery = new MockLensQuery<TestModel>();
       mockQuery.SetModels(expectedItems);
       return mockQuery;

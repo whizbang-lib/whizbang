@@ -629,7 +629,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(dispatcher).DoesNotContain("999");
 
     // Scope to GetReceptorDefaultRouting: the generic message-routing sections elsewhere in the
-    // file legitimately contain "if (messageType == typeof(...CacheInvalidated))" for dispatch —
+    // file legitimately contains the dispatch type check for CacheInvalidated —
     // only the default-routing lookup itself must have no entry for this message type.
     var routingMethodStart = dispatcher!.IndexOf("GetReceptorDefaultRouting(Type messageType)", StringComparison.Ordinal);
     var routingMethodEnd = dispatcher.IndexOf("LookupReceptorInvoker<TResult>", routingMethodStart, StringComparison.Ordinal);

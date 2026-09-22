@@ -157,7 +157,7 @@ public class RestMutationEndpointGeneratorTests {
 
   // The attribute is matched by a PREFIX on its display string, so anything in
   // Whizbang.Transports.Mutations whose name starts with "CommandEndpointAttribute" reaches the
-  // type-argument extraction. Only the two-argument generic form carries TCommand and TResult;
+  // type-argument extraction. Only the two-argument generic form carries TCommand and TResult —
   // reading the type arguments off any other shape would throw inside the generator, and a
   // generator that throws takes the consumer's whole build down with it.
   [Test]

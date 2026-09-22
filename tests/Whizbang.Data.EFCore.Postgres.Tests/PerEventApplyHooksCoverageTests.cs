@@ -22,17 +22,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PerEventApplyHooksCoverageTests {
 
-  private sealed class _model {
-    public int Count { get; set; }
+  private sealed class Model {
+    public int Count { get; }
   }
 
-  private sealed class _perEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
+  private sealed class PerEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : IApplyHook<TMarker> {
-    public void Configure(IApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
+    public void Configure(IApplyHookBuilder<TMarker> builder, ApplyHookContext context) => body(builder, context);
   }
 
   private static ApplyHookContext _ctx(DateTimeOffset? stamp = null) => new() {
-    ModelType = typeof(_model),
+    ModelType = typeof(Model),
     ApplyTimestamp = stamp ?? DateTimeOffset.UnixEpoch,
   };
 
@@ -46,7 +46,7 @@ public class PerEventApplyHooksCoverageTests {
     // builder body across both paths (a documented, intended pattern) would either crash the
     // per-event write or corrupt the row with a mutation nobody asked for.
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<_model>(new _perEventHook<_model>((b, _) => b.RemoveSetter(m => m.Count)));
+      .Register<Model>(new PerEventHook<Model>((b, _) => b.RemoveSetter(m => m.Count)));
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
 
@@ -64,7 +64,7 @@ public class PerEventApplyHooksCoverageTests {
     // at all) must not crash the fold and must not accidentally invent a timestamp -- a wrong stamp
     // here is a silently corrupted "last changed" time that outlives the request that caused it.
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<object>(new _perEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, null)),
+      .Register<object>(new PerEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, null)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
@@ -81,7 +81,7 @@ public class PerEventApplyHooksCoverageTests {
     // ambient time zone happens to be downstream, silently shifting that row's recency ordering.
     var naive = new DateTime(2030, 5, 6, 7, 8, 9, DateTimeKind.Unspecified);
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<object>(new _perEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, naive)),
+      .Register<object>(new PerEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, naive)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
@@ -96,7 +96,7 @@ public class PerEventApplyHooksCoverageTests {
     // wrong variable) must fail loudly at apply time rather than get silently coerced -- a bad
     // timestamp reaching the row is far worse than a startup-time exception pointing at the hook.
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<object>(new _perEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, 12345)),
+      .Register<object>(new PerEventHook<object>((b, _) => b.SetColumn(ApplyHookColumns.UPDATED_AT, 12345)),
         key: WhizbangApplyHookKeys.TIMESTAMPS);
 
     await Assert.That(() => PerEventApplyHooks.Resolve(registry, _ctx()))
@@ -118,10 +118,10 @@ public class PerEventApplyHooksCoverageTests {
     // that Convert, the hook would silently fail to compile a setter and the property would never be
     // mutated -- the row persists with stale data and no error anywhere.
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<_model>(new _perEventHook<_model>((b, _) => b.SetProperty<object>(m => m.Count, 42)));
+      .Register<Model>(new PerEventHook<Model>((b, _) => b.SetProperty<object>(m => m.Count, 42)));
 
     var plan = PerEventApplyHooks.Resolve(registry, _ctx());
-    var model = new _model();
+    var model = new Model();
     PerEventApplyHooks.ApplyModelSetters(model, plan.ModelFieldSetters);
 
     await Assert.That(model.Count).IsEqualTo(42)
@@ -135,17 +135,17 @@ public class PerEventApplyHooksCoverageTests {
     // defense-in-depth for a SetPropertyOp constructed directly (bypassing the builder) -- if this
     // check silently no-opped instead of throwing, a malformed op would compile no setter and the
     // property it claimed to set would quietly stay unchanged.
-    var param = Expression.Parameter(typeof(_model), "m");
+    var param = Expression.Parameter(typeof(Model), "m");
     var body = Expression.Convert(Expression.Constant(1), typeof(object));
-    var badSelector = Expression.Lambda<Func<_model, object>>(body, param);
+    var badSelector = Expression.Lambda<Func<Model, object>>(body, param);
     var badOp = new SetPropertyOp(badSelector, "Bogus", 42, typeof(int));
 
-    await Assert.That(() => PerEventApplyHooks.ApplyModelSetters(new _model(), [badOp]))
+    await Assert.That(() => PerEventApplyHooks.ApplyModelSetters(new Model(), [badOp]))
       .Throws<NotSupportedException>()
       .Because("a selector that isn't a top-level property access must fail loudly rather than "
              + "silently compile no setter");
 
-    await Assert.That(() => PerEventApplyHooks.ApplyModelSetters(new _model(), [badOp]))
+    await Assert.That(() => PerEventApplyHooks.ApplyModelSetters(new Model(), [badOp]))
       .Throws<NotSupportedException>()
       .WithMessageContaining("Bogus");
   }

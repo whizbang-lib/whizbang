@@ -34,8 +34,8 @@ public class DispatcherConcurrentOutboxTests {
   // ========================================
 
   public class BlockingTestEventReceptor : IReceptor<BlockingTestEvent> {
-    internal static TaskCompletionSource? Gate;
-    internal static bool WasInvoked;
+    internal static TaskCompletionSource? Gate { get; set; }
+    internal static bool WasInvoked { get; set; }
 
     public async ValueTask HandleAsync(BlockingTestEvent message, CancellationToken cancellationToken = default) {
       WasInvoked = true;
@@ -46,7 +46,7 @@ public class DispatcherConcurrentOutboxTests {
   }
 
   public class ThrowingTestEventReceptor : IReceptor<ThrowingTestEvent> {
-    internal static Exception? ExceptionToThrow;
+    internal static Exception? ExceptionToThrow { get; set; }
 
     public ValueTask HandleAsync(ThrowingTestEvent message, CancellationToken cancellationToken = default) {
       if (ExceptionToThrow != null) {

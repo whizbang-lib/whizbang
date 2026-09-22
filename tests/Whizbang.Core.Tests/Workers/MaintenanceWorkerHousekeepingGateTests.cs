@@ -36,7 +36,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
       => ValueTask.FromResult(backlog);
 
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) {
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       SweepCount++;
       return throwOnSweep
         ? throw new InvalidOperationException("sweep failed")
@@ -52,8 +52,6 @@ public class MaintenanceWorkerHousekeepingGateTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   private static (MaintenanceWorker Worker, GateFakeCoordinator Coord) _build(
@@ -130,7 +128,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     var (worker, _) = _build(new ServiceBacklog(), housekeeping, throwOnSweep: true);
 
-    try { await worker.RunMaintenanceOnceAsync(CancellationToken.None); } catch (InvalidOperationException) { }
+    try { await worker.RunMaintenanceOnceAsync(CancellationToken.None); } catch (InvalidOperationException) { /* the assertion decides the outcome, not this failure */ }
 
     var after = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, new ServiceBacklog());
     await Assert.That(after.Granted).IsTrue()

@@ -1045,8 +1045,8 @@ public class DispatcherSecurityBuilderTests {
     var traceStore = new InMemoryTraceStore();
     var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
 
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     var command = new DispatcherSecurityBuilderTestCommand("test-data");
 

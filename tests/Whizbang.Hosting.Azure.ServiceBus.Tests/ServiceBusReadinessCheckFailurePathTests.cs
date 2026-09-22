@@ -78,7 +78,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
     var client = new TestServiceBusClient(isHealthy: true);
     using var check = new ServiceBusReadinessCheck(transport, client, NullLogger<ServiceBusReadinessCheck>.Instance);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // The not-initialized early return happens BEFORE the lock wait — the
     // only point that observes the token — so this returns false instead of
@@ -230,10 +230,6 @@ internal sealed class UninitializedAfterFirstReadTransport : ITransport {
   }
 
   public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

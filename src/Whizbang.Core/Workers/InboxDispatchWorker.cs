@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -172,7 +173,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
       return;
     }
@@ -1021,14 +1022,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return true;
     }
     var normalized = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-    foreach (var perspective in registry.GetRegisteredPerspectives()) {
-      foreach (var eventType in perspective.EventTypes) {
-        if (string.Equals(normalized, EventTypeMatchingHelper.NormalizeTypeName(eventType), StringComparison.Ordinal)) {
-          return false;
-        }
-      }
-    }
-    return true;
+    return !registry.GetRegisteredPerspectives().Any(perspective => perspective.EventTypes
+      .Any(eventType => string.Equals(normalized, EventTypeMatchingHelper.NormalizeTypeName(eventType), StringComparison.Ordinal)));
   }
 
   // ============================================================

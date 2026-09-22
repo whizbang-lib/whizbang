@@ -519,7 +519,7 @@ public class PerspectiveWorkerStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -572,7 +572,7 @@ public class PerspectiveWorkerStrategyTests {
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken = default) {
       if (ShouldThrow) {
         throw new InvalidOperationException("Test exception");
       }

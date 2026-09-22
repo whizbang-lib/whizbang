@@ -482,7 +482,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   [Test]
   [NotInParallel]
   public async Task LocalInvokeAsync_VoidWithTracing_InvokerThrows_RecordsErrorMetricAsync() {
-    // Arrange - DispatcherMetrics registered + trace store forces the tracing path;
+    // Arrange - DispatcherMetrics registered + trace store forces the tracing path —
     // a throwing receptor must record an error measurement and rethrow
     var errorCount = 0L;
     var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
@@ -611,7 +611,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
   [Test]
   public async Task SendAsync_CascadedOwnedCommandRoutedOutbox_IsDowngradedToLocalAsync() {
-    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing;
+    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing —
     // owned commands must stay local (no transport), so the outbox cascade never fires
     var dispatcher = new SweepRoutedDispatcher(
       _buildProvider(ownedDomains: _parentOwnedDomains),
@@ -675,7 +675,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
   [Test]
   public async Task SendAsync_CascadedEventWithoutIHasStreamId_InheritsStreamIdViaSetStreamIdAsync() {
-    // Arrange - cascaded event does NOT implement IHasStreamId and its own StreamId is empty;
+    // Arrange - cascaded event does NOT implement IHasStreamId and its own StreamId is empty —
     // the source command has one → the generated-setter fallback (SetStreamId) must be used
     var sourceStreamId = Guid.NewGuid();
     var cascaded = new SweepNoStreamPropEvent(Guid.NewGuid());

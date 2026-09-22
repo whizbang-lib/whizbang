@@ -227,6 +227,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// Test 7: InitializeSchema (sync) executes infrastructure SQL only
   /// </summary>
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
   public async Task InitializeSchema_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync() {
     // Arrange
     var initializer = new PostgresSchemaInitializer(_testConnectionString);
@@ -251,9 +252,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Test 7: InitializeSchema (sync) executes infrastructure SQL only
+  /// </summary>
+  /// <summary>
   /// Test 8: InitializeSchema (sync) executes both infrastructure and perspective SQL
   /// </summary>
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
   public async Task InitializeSchema_WithPerspectiveSql_ExecutesBothSchemasAsync() {
     // Arrange
     const string perspectiveSql = @"

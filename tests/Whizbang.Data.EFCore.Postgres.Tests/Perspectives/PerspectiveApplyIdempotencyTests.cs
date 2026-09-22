@@ -59,7 +59,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     return (IPerspectiveRunner)ctor.Invoke([
       sp,
       logger,
-      (IEventStore)eventStore,
+      eventStore,
       (IPerspectiveStore<ActionTestModel>)perspectiveStore,
       sp.GetRequiredService<IServiceScopeFactory>(),
       null, // tracingOptions
@@ -266,7 +266,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var streamId = Guid.NewGuid();
     var innerStore = new InMemoryEventStore();
     var stampingMap = new Dictionary<Guid, long?>();
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stampingMap);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stampingMap);
 
     var createdId = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent {
       StreamId = streamId,
@@ -427,7 +427,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stamping = new Dictionary<Guid, long?> {
       [firstId.Value] = 200_000L
     };
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
@@ -503,7 +503,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var stamping = new Dictionary<Guid, long?> {
       [firstId.Value] = 234000L
     };
-    var stampingStore = new _CommitSequenceStampingEventStore(innerStore, stamping);
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
 
     await using (var ctx = CreateDbContext()) {
       var ps = new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "action_test");
@@ -595,7 +595,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       Value = 5
     });
     const long expectedCommitSequence = 571800L;
-    var stampingStore = new _CommitSequenceStampingEventStore(
+    var stampingStore = new CommitSequenceStampingEventStore(
       innerStore, new Dictionary<Guid, long?> { [checkpointId.Value] = expectedCommitSequence });
 
     await using var storeCtx = CreateDbContext();
@@ -604,7 +604,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     // Pre-seed the row so BootstrapSnapshotAsync finds something to snapshot.
     await perspectiveStore.UpsertAsync(streamId, new ActionTestModel { Id = streamId, Name = "x", Value = 1 });
 
-    var recording = new _RecordingSnapshotStore();
+    var recording = new RecordingSnapshotStore();
     var snapshotOpts = Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Perspectives.PerspectiveSnapshotOptions {
       Enabled = true,
       SnapshotEveryNEvents = 1,
@@ -630,34 +630,34 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   /// <see cref="IEventStore.GetCommitSequenceAsync"/>. Lets the test prove the runner
   /// reads the value and threads it onto persisted metadata.
   /// </summary>
-  private sealed class _CommitSequenceStampingEventStore(
+  private sealed class CommitSequenceStampingEventStore(
       InMemoryEventStore inner, IReadOnlyDictionary<Guid, long?> stamps) : IEventStore {
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
-      inner.AppendAsync(streamId, envelope, ct);
-    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
-      inner.AppendAsync(streamId, message, ct);
-    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken ct = default) =>
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
+      inner.AppendAsync(streamId, envelope, cancellationToken);
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull =>
+      inner.AppendAsync(streamId, message, cancellationToken);
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(stamps.TryGetValue(eventId, out var v) ? v : null);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromSequence, ct);
-    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
-      inner.ReadAsync<TMessage>(streamId, fromEventId, ct);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+      inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
     public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
         Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
-      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, ct)) {
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await foreach (var envelope in inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken)) {
         if (stamps.TryGetValue(envelope.MessageId.Value, out var seq)) {
           envelope.LocalCommitSequence = seq;
         }
         yield return envelope;
       }
     }
-    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
-      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, ct);
-    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
-      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, ct);
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
-      inner.GetLastSequenceAsync(streamId, ct);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken);
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      inner.GetLastSequenceAsync(streamId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
       inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -668,7 +668,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   /// verify <c>snapshotCommitSequence</c> threads through the 5-arg overload — without G3/G4
   /// the runner calls the legacy 4-arg overload and the recording captures null.
   /// </summary>
-  private sealed class _RecordingSnapshotStore : IPerspectiveSnapshotStore {
+  private sealed class RecordingSnapshotStore : IPerspectiveSnapshotStore {
     public sealed record CreateCall(Guid StreamId, string PerspectiveName, Guid SnapshotEventId, long? SnapshotCommitSequence);
     public List<CreateCall> Calls { get; } = [];
     public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) {

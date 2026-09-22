@@ -24,7 +24,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Simple test message for envelope creation
-  public record _testEvent([StreamId] string Data) : IEvent;
+  public record TestEvent([StreamId] string Data) : IEvent;
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy
@@ -57,9 +57,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -121,9 +121,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -185,9 +185,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -655,9 +655,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private OutboxMessage _createOutboxMessage() {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -681,9 +681,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
   private MessageEnvelope<System.Text.Json.JsonElement> _createJsonEnvelope() {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
-      Payload = new _testEvent("test"),
+      Payload = new TestEvent("test"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -723,7 +723,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
       throw new NotImplementedException("Reader not needed for tests");
 
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
       WrittenWork.Add(work);
       return ValueTask.CompletedTask;
     }
@@ -752,12 +752,11 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; } = [];
     public MessageFailure[] LastOutboxFailures { get; } = [];
     public MessageFailure[] LastInboxFailures { get; } = [];
-    public WorkBatchOptions LastFlags { get; }
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -776,7 +775,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;

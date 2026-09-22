@@ -49,7 +49,7 @@ public class SessionRotationWiringTests {
     public override string FullyQualifiedNamespace => fullyQualifiedNamespace;
 
     public override ServiceBusSessionProcessor CreateSessionProcessor(
-        string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options) {
+        string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options = default!) {
       LastSessionProcessor = new RaisableSessionProcessor();
       return LastSessionProcessor;
     }
@@ -73,7 +73,7 @@ public class SessionRotationWiringTests {
     public override string SessionId => SESSION_ID;
   }
 
-  private sealed class RecordingArgs() : ProcessSessionMessageEventArgs(
+  private sealed class RecordingEventArgs() : ProcessSessionMessageEventArgs(
       ServiceBusModelFactory.ServiceBusReceivedMessage(sessionId: SESSION_ID),
       new RecordingSessionReceiver(),
       CancellationToken.None) {
@@ -84,7 +84,7 @@ public class SessionRotationWiringTests {
   [Test]
   public async Task Completion_BelowTheBudget_DoesNotReleaseTheSessionAsync() {
     var transport = _transport(TimeSpan.FromMinutes(5));
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     var t0 = DateTimeOffset.UtcNow;
 
     transport.OnSessionInitializing(_destination, SESSION_ID, t0);
@@ -98,7 +98,7 @@ public class SessionRotationWiringTests {
   [Test]
   public async Task Completion_AtTheBudget_ReleasesTheSessionExactlyOnceAsync() {
     var transport = _transport(TimeSpan.FromMinutes(5));
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     var t0 = DateTimeOffset.UtcNow;
 
     transport.OnSessionInitializing(_destination, SESSION_ID, t0);
@@ -114,11 +114,11 @@ public class SessionRotationWiringTests {
     var transport = _transport(TimeSpan.FromMinutes(5));
     var t0 = DateTimeOffset.UtcNow;
     transport.OnSessionInitializing(_destination, SESSION_ID, t0);
-    transport.RotateSessionIfPastBudget(new RecordingArgs(), _destination, t0 + TimeSpan.FromMinutes(5));
+    transport.RotateSessionIfPastBudget(new RecordingEventArgs(), _destination, t0 + TimeSpan.FromMinutes(5));
 
     var reaccept = t0 + TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1);
     transport.OnSessionInitializing(_destination, SESSION_ID, reaccept);
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     transport.RotateSessionIfPastBudget(args, _destination, reaccept + TimeSpan.FromMinutes(1));
 
     await Assert.That(args.Releases).IsEqualTo(0)
@@ -135,7 +135,7 @@ public class SessionRotationWiringTests {
 
     var hoursLater = t0 + TimeSpan.FromHours(3);
     transport.OnSessionInitializing(_destination, SESSION_ID, hoursLater);
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     transport.RotateSessionIfPastBudget(args, _destination, hoursLater + TimeSpan.FromSeconds(5));
 
     await Assert.That(args.Releases).IsEqualTo(0)
@@ -166,13 +166,13 @@ public class SessionRotationWiringTests {
 
     var sessionArgs = new ProcessSessionEventArgs(new RecordingSessionReceiver(), CancellationToken.None);
     await processor!.RaiseSessionInitializingAsync(sessionArgs);
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     transport.RotateSessionIfPastBudget(args, _destination, DateTimeOffset.UtcNow + TimeSpan.FromMinutes(5));
     await Assert.That(args.Releases).IsEqualTo(1)
       .Because("the initialize hook stamped the clock, so a budget-later completion rotates");
 
     await processor.RaiseSessionClosingAsync(sessionArgs);
-    var afterClose = new RecordingArgs();
+    var afterClose = new RecordingEventArgs();
     transport.RotateSessionIfPastBudget(afterClose, _destination, DateTimeOffset.UtcNow + TimeSpan.FromMinutes(6));
     await Assert.That(afterClose.Releases).IsEqualTo(0)
       .Because("the close hook cleared the clock — the completion path re-stamps fresh instead "
@@ -184,7 +184,7 @@ public class SessionRotationWiringTests {
     // Processors without the SessionInitializing hook still get rotation protection: the first
     // completion stamps the clock, and the budget is measured from there.
     var transport = _transport(TimeSpan.FromMinutes(5));
-    var args = new RecordingArgs();
+    var args = new RecordingEventArgs();
     var t0 = DateTimeOffset.UtcNow;
 
     transport.RotateSessionIfPastBudget(args, _destination, t0);

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Linq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -117,7 +119,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
     // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
-    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink;
+    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink —
     // PgInstanceLifecycleMonitor and ScheduleWorker need ISignalBus). AddWhizbang wires the bus for
     // full hosts, but this extension is also used standalone — without this call those hosted
     // services can't be constructed and GetServices<IHostedService>() throws. AddWhizbangSignalBus
@@ -287,17 +289,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   /// Returns null when none qualify.
   /// </summary>
   private static string? _findFirstCredentialBearingConnectionString(IConfiguration configuration) {
-    foreach (var child in configuration.GetSection("ConnectionStrings").GetChildren()) {
-      var value = child.Value;
-      if (string.IsNullOrEmpty(value)) {
-        continue;
-      }
-      var (_, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(value);
-      if (hasSecret) {
-        return value;
-      }
-    }
-    return null;
+    return configuration.GetSection("ConnectionStrings").GetChildren()
+      .Select(child => child.Value)
+      .FirstOrDefault(value => !string.IsNullOrEmpty(value) && ConnectionStringCredentialMarkerSummary.Summarize(value).Item2);
   }
 
   /// <summary>
@@ -464,19 +458,19 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
       options.DisableNotifications = disable;
     }
 
-    if (TimeSpan.TryParse(section["PollingFallbackInterval"], out var pollFallback)) {
+    if (TimeSpan.TryParse(section["PollingFallbackInterval"], CultureInfo.InvariantCulture, out var pollFallback)) {
       options.PollingFallbackInterval = pollFallback;
     }
 
-    if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], out var keepalive)) {
+    if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], CultureInfo.InvariantCulture, out var keepalive)) {
       options.ListenKeepaliveInterval = keepalive;
     }
 
-    if (TimeSpan.TryParse(section["ListenReconnectInitialDelay"], out var initialDelay)) {
+    if (TimeSpan.TryParse(section["ListenReconnectInitialDelay"], CultureInfo.InvariantCulture, out var initialDelay)) {
       options.ListenReconnectInitialDelay = initialDelay;
     }
 
-    if (TimeSpan.TryParse(section["ListenReconnectMaxDelay"], out var maxDelay)) {
+    if (TimeSpan.TryParse(section["ListenReconnectMaxDelay"], CultureInfo.InvariantCulture, out var maxDelay)) {
       options.ListenReconnectMaxDelay = maxDelay;
     }
 

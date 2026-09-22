@@ -26,16 +26,14 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
   [Test]
   public async Task Constructor_NullConnectionString_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new DapperDeadLetterStore(
-      connectionString: null!,
-      logger: NullLogger<DapperDeadLetterStore>.Instance))
+      connectionString: null!))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_NullLogger_ThrowsArgumentNullExceptionAsync() {
     await Assert.That(() => new DapperDeadLetterStore(
-      connectionString: ConnectionString,
-      logger: null!))
+      connectionString: ConnectionString))
       .Throws<ArgumentNullException>();
   }
 
@@ -171,7 +169,7 @@ public class DapperDeadLetterStoreTests : PostgresTestBase {
   // ===== Helpers =====
 
   private DapperDeadLetterStore _newStore() =>
-    new(ConnectionString, NullLogger<DapperDeadLetterStore>.Instance);
+    new(ConnectionString);
 
   private static async Task _insertOutboxRowAsync(NpgsqlConnection conn, Guid messageId) {
     await conn.ExecuteAsync(@"

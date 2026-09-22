@@ -76,6 +76,15 @@ public partial class TransportPublishStrategy(
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
   private readonly ICommandInboxAddressResolver _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Tags.TransportNamespaceResolver? _transportNamespaces = transportNamespaces;
+
+  /// <summary>The inbox topic commands ride when no resolver flips them; read by the registration tests.</summary>
+  internal string InboxTopic => _inboxTopic;
+
+  /// <summary>The command-inbox seam the factory handed through; read by the registration tests.</summary>
+  internal ICommandInboxAddressResolver NamespaceRouting => _namespaceRouting;
+
+  /// <summary>The transport-namespace resolver, when one was registered; read by the registration tests.</summary>
+  internal Whizbang.Core.Tags.TransportNamespaceResolver? NamespaceResolver => _transportNamespaces;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
@@ -644,7 +653,7 @@ public partial class TransportPublishStrategy(
   /// chain's outcome (envelope/type/bytes/destination) for the publish
   /// step or a pre-flight failure result the caller returns directly.
   /// </summary>
-  private async Task<_postSerializeOutcome> _runPostSerializeChainAsync(
+  private async Task<PostSerializeOutcome> _runPostSerializeChainAsync(
       OutboxWork work,
       TransportDestination destination,
       CancellationToken cancellationToken) {
@@ -688,7 +697,7 @@ public partial class TransportPublishStrategy(
     // size still exceeds the transport's ceiling, fail BEFORE handing it to the
     // transport — the outbox row stays put with a clear reason code.
     if (_transport.MaxMessageSizeBytes is long max && outcome.FinalSerializedBytes.Length > max) {
-      return new _postSerializeOutcome {
+      return new PostSerializeOutcome {
         Failure = new MessagePublishResult {
           MessageId = work.MessageId,
           Success = false,
@@ -699,7 +708,7 @@ public partial class TransportPublishStrategy(
       };
     }
 
-    return new _postSerializeOutcome {
+    return new PostSerializeOutcome {
       Envelope = outcome.FinalEnvelope,
       EnvelopeType = outcome.FinalEnvelopeType,
       Bytes = outcome.FinalSerializedBytes,
@@ -708,7 +717,7 @@ public partial class TransportPublishStrategy(
   }
 
   /// <summary>Internal carrier from <see cref="_runPostSerializeChainAsync"/>. Either Failure is set (pre-flight rejection) or the four chain-outcome fields are.</summary>
-  private sealed class _postSerializeOutcome {
+  private sealed class PostSerializeOutcome {
     public Whizbang.Core.Observability.IMessageEnvelope? Envelope { get; init; }
     public string? EnvelopeType { get; init; }
     public ReadOnlyMemory<byte> Bytes { get; init; }

@@ -35,7 +35,7 @@ public class AsbControlClassProvisioningTests {
 
     await provisioner.ProvisionManifestAsync(_manifest(_controlSubscription()));
 
-    var (Topic, Subscription, RequiresSession, MaxDeliveryCount) = admin.CreatedSubscriptions.Single(s => s.Topic == CommandInboxNaming.ControlBroadcastTopic);
+    var (_, _, RequiresSession, _) = admin.CreatedSubscriptions.Single(s => s.Topic == CommandInboxNaming.ControlBroadcastTopic);
     // The sessionless overload leaves RequiresSession unset — on Service Bus, "not requested" IS
     // sessionless (it is immutable after creation, which is why the deviation must be made here).
     await Assert.That(RequiresSession is true).IsFalse()
@@ -51,7 +51,7 @@ public class AsbControlClassProvisioningTests {
 
     await provisioner.ProvisionManifestAsync(_manifest(_durableBroadcastSubscription()));
 
-    var (Topic, Subscription, RequiresSession, MaxDeliveryCount) = admin.CreatedSubscriptions.Single(s => s.Topic == CommandInboxNaming.SystemBroadcastTopic);
+    var (_, _, RequiresSession, _) = admin.CreatedSubscriptions.Single(s => s.Topic == CommandInboxNaming.SystemBroadcastTopic);
     await Assert.That(RequiresSession).IsEqualTo(true);
   }
 
@@ -63,7 +63,7 @@ public class AsbControlClassProvisioningTests {
 
     await provisioner.ProvisionManifestAsync(_manifest(_controlSubscription(), _durableBroadcastSubscription()));
 
-    foreach (var (Topic, Subscription, RequiresSession, MaxDeliveryCount) in admin.CreatedSubscriptions) {
+    foreach (var (_, _, RequiresSession, _) in admin.CreatedSubscriptions) {
       await Assert.That(RequiresSession is null or false).IsTrue();
     }
   }

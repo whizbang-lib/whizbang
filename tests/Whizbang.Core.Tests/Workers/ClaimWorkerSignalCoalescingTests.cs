@@ -133,7 +133,7 @@ public class ClaimWorkerSignalCoalescingTests {
     public TaskCompletionSource FirstCallStarted => _firstCallStarted;
     public void ReleaseFirstCall() => _firstCallRelease.TrySetResult();
 
-    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public async Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       bool isFirst;
       lock (_lock) {
         CallCount++;
@@ -142,7 +142,7 @@ public class ClaimWorkerSignalCoalescingTests {
       }
       if (isFirst) {
         _firstCallStarted.TrySetResult();
-        await _firstCallRelease.Task.WaitAsync(ct).ConfigureAwait(false);
+        await _firstCallRelease.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
       }
       return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
     }
@@ -167,7 +167,5 @@ public class ClaimWorkerSignalCoalescingTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 }

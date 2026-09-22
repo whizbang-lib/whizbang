@@ -21,7 +21,7 @@ public class RetentionAdoptionSafetyTests : EFCoreTestBase {
   private const string TABLE = "wh_per_adoption";
   private const string CLR_TYPE = "TestApp.AdoptionModel";
 
-  private async Task _resetAsync(NpgsqlConnection conn, bool acknowledged, int rowCount, int idleDays) {
+  private static async Task _resetAsync(NpgsqlConnection conn, bool acknowledged, int rowCount, int idleDays) {
     await using var ddl = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (

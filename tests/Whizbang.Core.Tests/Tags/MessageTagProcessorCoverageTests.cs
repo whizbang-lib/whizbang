@@ -101,6 +101,7 @@ public class MessageTagProcessorCoverageTests {
   // A custom attribute type that is neither a built-in (Signal/Telemetry/Metric) nor registered
   // with MessageTagHookDispatcherRegistry — the exact shape that forces
   // _createHookContextForAttribute past both fast paths into the base-context fallback.
+  [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
   private sealed class FallbackOnlyTagAttribute : MessageTagAttribute;
 
   private sealed record FallbackTaggedMessage(string Value);
@@ -109,7 +110,7 @@ public class MessageTagProcessorCoverageTests {
     public int InvokedCount { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<FallbackOnlyTagAttribute> context, CancellationToken _) {
+        TagContext<FallbackOnlyTagAttribute> context, CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -119,7 +120,7 @@ public class MessageTagProcessorCoverageTests {
     public int InvokedCount { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<SignalTagAttribute> context, CancellationToken _) {
+        TagContext<SignalTagAttribute> context, CancellationToken ct) {
       InvokedCount++;
       return ValueTask.FromResult<JsonElement?>(null);
     }

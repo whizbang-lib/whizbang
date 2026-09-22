@@ -29,39 +29,39 @@ public class CollectiveEventApplierTests {
 
   [Test]
   public async Task ApplyAsync_EventTypeMismatch_ThrowsArgumentExceptionAsync() {
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeB(new _tenantScope("t"));
-    var resolver = new _stubResolver("tenant");
+    var entry = _entryFor<TypeA>(typeof(JobModel), "Apply");
+    var evt = new TypeB(new TenantScope("t"));
+    var resolver = new StubResolver("tenant");
     await using var ctx = _newCtx();
 
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        entry, new Handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
-      .Because("Entry registered for _typeA but dispatched a _typeB — that's a registry routing bug, not a domain condition.");
+      .Because("Entry registered for TypeA but dispatched a TypeB — that's a registry routing bug, not a domain condition.");
   }
 
   [Test]
   public async Task ApplyAsync_ModelTypeMismatch_ThrowsArgumentExceptionAsync() {
-    var entry = _entryFor<_typeA>(typeof(_otherModel), "Apply"); // mismatched TModel
-    var evt = new _typeA(new _tenantScope("t"));
-    var resolver = new _stubResolver("tenant");
+    var entry = _entryFor<TypeA>(typeof(OtherModel), "Apply"); // mismatched TModel
+    var evt = new TypeA(new TenantScope("t"));
+    var resolver = new StubResolver("tenant");
     await using var ctx = _newCtx();
 
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        entry, new Handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
-      .Because("Dispatching to CollectiveEventApplier<_jobModel> with an entry whose ModelType is _otherModel means the type-fanout in the upstream dispatcher is wrong.");
+      .Because("Dispatching to CollectiveEventApplier<JobModel> with an entry whose ModelType is OtherModel means the type-fanout in the upstream dispatcher is wrong.");
   }
 
   [Test]
   public async Task ApplyAsync_ScopeKindMismatch_ThrowsArgumentExceptionAsync() {
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"));
-    var resolver = new _stubResolver("workspace"); // wrong kind
+    var entry = _entryFor<TypeA>(typeof(JobModel), "Apply");
+    var evt = new TypeA(new TenantScope("t"));
+    var resolver = new StubResolver("workspace"); // wrong kind
     await using var ctx = _newCtx();
 
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        entry, new Handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentException>()
       .Because("DI should have dispatched the 'tenant' event to the tenant resolver — a mismatched resolver means the registry lookup is wrong.");
   }
@@ -70,20 +70,20 @@ public class CollectiveEventApplierTests {
 
   [Test]
   public async Task ApplyAsync_NullEntry_ThrowsArgumentNullAsync() {
-    var evt = new _typeA(new _tenantScope("t"));
+    var evt = new TypeA(new TenantScope("t"));
     await using var ctx = _newCtx();
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        null!, new _handler(), evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        null!, new Handler(), evt, new StubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
   public async Task ApplyAsync_NullHandlerInstance_ThrowsArgumentNullAsync() {
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"));
+    var entry = _entryFor<TypeA>(typeof(JobModel), "Apply");
+    var evt = new TypeA(new TenantScope("t"));
     await using var ctx = _newCtx();
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, null!, evt, new _stubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        entry, null!, evt, new StubResolver("tenant"), ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -94,36 +94,36 @@ public class CollectiveEventApplierTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = string.Empty;
   }
-  private sealed class _otherModel {
+  private sealed class OtherModel {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+  private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
   }
 
-  private sealed record _typeA(CollectiveScope Scope) : ICollectiveEvent;
-  private sealed record _typeB(CollectiveScope Scope) : ICollectiveEvent;
+  private sealed record TypeA(CollectiveScope Scope) : ICollectiveEvent;
+  private sealed record TypeB(CollectiveScope Scope) : ICollectiveEvent;
 
-  private sealed class _handler {
+  private sealed class Handler {
     public int InvocationCount { get; private set; }
     public ICollectiveEvent? LastEvent { get; private set; }
-    public ICollectiveSpec<_jobModel> Apply(_typeA e) {
+    public ICollectiveSpec<JobModel> Apply(TypeA e) {
       InvocationCount++;
       LastEvent = e;
-      return new _spec();
+      return new Spec();
     }
   }
 
-  private sealed class _spec : ICollectiveSpec<_jobModel> {
-    public Expression<Action<ICollectiveSetters<_jobModel>>> Setters { get; } =
+  private sealed class Spec : ICollectiveSpec<JobModel> {
+    public Expression<Action<ICollectiveSetters<JobModel>>> Setters { get; } =
       s => s.SetProperty(j => j.Status, "X");
   }
 
-  private sealed class _stubResolver(string kind) : ICollectiveScopeResolver {
+  private sealed class StubResolver(string kind) : ICollectiveScopeResolver {
     public string ScopeKind => kind;
     public int EnterCount { get; private set; }
     public int ExitCount { get; private set; }
@@ -132,9 +132,9 @@ public class CollectiveEventApplierTests {
       where TModel : class => _ => true;
     public IDisposable EnterContext(ICollectiveScope scope) {
       EnterCount++;
-      return new _exit(this);
+      return new Exit(this);
     }
-    private sealed class _exit(_stubResolver r) : IDisposable {
+    private sealed class Exit(StubResolver r) : IDisposable {
       public void Dispose() => r.ExitCount++;
     }
   }
@@ -142,26 +142,24 @@ public class CollectiveEventApplierTests {
   private static CollectiveApplyEntry _entryFor<TEvent>(Type modelType, string methodName)
     where TEvent : ICollectiveEvent {
     // Type-erased Invoker mirrors what the source generator (Slice 5) emits.
-    object invoker(object handler, ICollectiveEvent evt, ICollectiveQuery _) => ((_handler)handler).Apply((_typeA)(ICollectiveEvent)evt);
+    object invoker(object handler, ICollectiveEvent evt, ICollectiveQuery _) => ((Handler)handler).Apply((TypeA)evt);
     return new CollectiveApplyEntry(
       ModelType: modelType,
       EventType: typeof(TEvent),
-      HandlerType: typeof(_handler),
+      HandlerType: typeof(Handler),
       MethodName: methodName,
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
       Invoker: invoker);
   }
 
-  private static _ctx _newCtx() {
-    var options = new DbContextOptionsBuilder<_ctx>()
+  private static Ctx _newCtx() {
+    var options = new DbContextOptionsBuilder<Ctx>()
       .UseInMemoryDatabase($"applier-{Guid.NewGuid():N}")
       .Options;
-    return new _ctx(options);
+    return new Ctx(options);
   }
 
-  private sealed class _ctx(DbContextOptions<_ctx> opts) : DbContext(opts) {
-    public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
-    public DbSet<PerspectiveRow<_otherModel>> Others => Set<PerspectiveRow<_otherModel>>();
+  private sealed class Ctx(DbContextOptions<Ctx> opts) : DbContext(opts) {
   }
 }

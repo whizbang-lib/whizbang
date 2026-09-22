@@ -61,12 +61,12 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
         reader.GetGuid(0),
         reader.GetString(1),
         reader.GetString(2),
-        reader.GetFieldValue<DateTime>(3) is { } heardAt
+        await reader.GetFieldValueAsync<DateTime>(3) is { } heardAt
           ? new DateTimeOffset(DateTime.SpecifyKind(heardAt, DateTimeKind.Utc))
           : DateTimeOffset.MinValue,
-        reader.GetFieldValue<string[]>(4),
-        reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : reader.GetString(6),
+        await reader.GetFieldValueAsync<string[]>(4),
+        await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
+        await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
         reader.GetBoolean(7)));
     }
     return rows;

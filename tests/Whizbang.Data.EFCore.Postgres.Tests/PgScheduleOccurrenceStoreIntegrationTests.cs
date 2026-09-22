@@ -23,10 +23,10 @@ public class PgScheduleOccurrenceStoreIntegrationTests : EFCoreTestBase {
     var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     return new PgScheduleOccurrenceStore(
-      Options.Create(opts), cfg, NullLogger<PgScheduleOccurrenceStore>.Instance);
+      Options.Create(opts), cfg);
   }
 
-  private async Task _insertOutboxAsync(NpgsqlConnection conn, Guid messageId, Guid instanceId) {
+  private static async Task _insertOutboxAsync(NpgsqlConnection conn, Guid messageId, Guid instanceId) {
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_outbox (message_id, message_type, event_data, metadata, status, attempts, created_at,
                              instance_id, lease_expiry)
@@ -36,7 +36,7 @@ public class PgScheduleOccurrenceStoreIntegrationTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _insertScheduleAsync(NpgsqlConnection conn, Guid scheduleId, string claims) {
+  private static async Task _insertScheduleAsync(NpgsqlConnection conn, Guid scheduleId, string claims) {
     await using var cmd = new NpgsqlCommand(@"
       INSERT INTO wh_schedules
         (schedule_id, stream_id, recurrence_kind, interval_ms, next_fire_at, status, event_type,

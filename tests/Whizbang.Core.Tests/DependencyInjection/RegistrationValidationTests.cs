@@ -209,6 +209,7 @@ public class RegistrationValidationTests {
   private sealed class Present : IPresent;
   private interface IAbsent;
   private interface IAlsoAbsent;
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2326:Unused type parameters should be removed", Justification = "An open generic type is the shape under test; the parameter carries no data by design.")]
   private interface IGeneric<T>;
   private sealed class Generic<T> : IGeneric<T>;
   private sealed class Consumer;

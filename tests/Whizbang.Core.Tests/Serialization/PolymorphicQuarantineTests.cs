@@ -53,7 +53,7 @@ public class PolymorphicQuarantineTests {
   /// source-generated context does — and those options hold no HashSet metadata, so CONFIGURE
   /// (not resolution) throws.
   /// </summary>
-  private sealed class _poisonResolver : IJsonTypeInfoResolver {
+  private sealed class PoisonResolver : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {
       if (type != typeof(PoisonedProbeEvent)) {
         return null;
@@ -77,7 +77,7 @@ public class PolymorphicQuarantineTests {
   [Test]
   public async Task PoisonedDerivedType_IsQuarantined_EveryOtherSerializeStillWorksAsync() {
     JsonContextRegistry.RegisterContext(QuarantineProbeJsonContext.Default);
-    JsonContextRegistry.RegisterContext(new _poisonResolver());
+    JsonContextRegistry.RegisterContext(new PoisonResolver());
     JsonContextRegistry.RegisterDerivedType<IMessage, HealthyProbeEvent>(
       TypeNameFormatter.FormatClrTypeName(typeof(HealthyProbeEvent)));
     JsonContextRegistry.RegisterDerivedType<IEvent, HealthyProbeEvent>(

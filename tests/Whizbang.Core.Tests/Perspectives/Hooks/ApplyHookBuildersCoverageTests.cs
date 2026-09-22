@@ -10,9 +10,10 @@ namespace Whizbang.Core.Tests.Perspectives.Hooks;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Perspectives/Hooks/ApplyHookBuilders.cs</code-under-test>
 public class ApplyHookBuildersCoverageTests {
-  private sealed class _marker {
+  private sealed class Marker {
     public int Count { get; set; }
-    public string GetLabel() => "label";
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3400:Methods should not return constants", Justification = "The builder is asked to record a method call, which is the shape under test.")]
+    public static string GetLabel() => "label";
   }
 
   // If the boxing Convert the compiler inserts around `m => m.Count` (boxed to object) weren't
@@ -21,12 +22,12 @@ public class ApplyHookBuildersCoverageTests {
   // perspective row updates.
   [Test]
   public async Task SetProperty_BoxedValueTypeSelector_StripsConvertAndResolvesPropertyNameAsync() {
-    var builder = new ApplyHookBuilder<_marker>();
+    var builder = new ApplyHookBuilder<Marker>();
 
     builder.SetProperty<object>(m => m.Count, 5);
 
     var op = builder.Ops.OfType<SetPropertyOp>().Single();
-    await Assert.That(op.PropertyName).IsEqualTo(nameof(_marker.Count))
+    await Assert.That(op.PropertyName).IsEqualTo(nameof(Marker.Count))
       .Because("stripping the boxing Convert must still resolve to the underlying member name");
   }
 
@@ -35,9 +36,9 @@ public class ApplyHookBuildersCoverageTests {
   // at hook-configuration time — corrupting the compiled UPDATE at apply time instead of at setup.
   [Test]
   public async Task SetProperty_NonMemberSelector_ThrowsNotSupportedExceptionAsync() {
-    var builder = new ApplyHookBuilder<_marker>();
+    var builder = new ApplyHookBuilder<Marker>();
 
-    await Assert.That(() => builder.SetProperty(m => m.GetLabel(), "y"))
+    await Assert.That(() => builder.SetProperty(m => Marker.GetLabel(), "y"))
       .Throws<NotSupportedException>()
       .WithMessageContaining("top-level property selector");
   }

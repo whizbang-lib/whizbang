@@ -43,7 +43,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, instance);
 
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, _, _) = await _readInboxRowAsync(conn, messageId);
     await Assert.That(Attempts).IsEqualTo(1)
       .Because("the claim charges optimistically — that fail-safe is what this fix must NOT remove");
 
@@ -78,7 +78,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     await _expireLeaseAsync(conn, messageId);
     await _claimOrphanedInboxAsync(conn, TrackedGuid.NewMedo().Value);
 
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, _, _) = await _readInboxRowAsync(conn, messageId);
     await Assert.That(Attempts).IsEqualTo(2)
       .Because("a process that vanishes reports nothing, so its charge must stand — this is the "
              + "property that stops a crash loop from retrying forever");
@@ -105,7 +105,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
       await _releaseUnprocessedAsync(conn, instance, [untouched]);
     }
 
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, untouched);
+    var (Attempts, _, _) = await _readInboxRowAsync(conn, untouched);
     await Assert.That(Attempts).IsEqualTo(0)
       .Because("five cycles of claim-and-hand-back is five dispatches never attempted; charging for "
              + "them is what converts a backlog into permanent message loss");
@@ -125,7 +125,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     // A duplicated release — retry, at-least-once flush, double shutdown path.
     await _releaseUnprocessedAsync(conn, instance, [messageId]);
 
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, _, _) = await _readInboxRowAsync(conn, messageId);
     await Assert.That(Attempts).IsEqualTo(0)
       .Because("release must be idempotent; a negative budget would make the row effectively "
              + "un-dead-letterable");
@@ -146,7 +146,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
 
     await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
     await _claimOrphanedInboxAsync(conn, owner);
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, _, _) = await _readInboxRowAsync(conn, messageId);
 
     await _releaseUnprocessedAsync(conn, stranger, [messageId]);
 
@@ -181,7 +181,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     await Assert.That(released).IsEqualTo(1)
       .Because("the coordinator must report what it actually released — a worker sizing its next "
              + "claim on that number needs it to be true");
-    var (Attempts, InstanceId, LeaseExpiry) = await _readInboxRowAsync(conn, messageId);
+    var (Attempts, InstanceId, _) = await _readInboxRowAsync(conn, messageId);
     await Assert.That(Attempts).IsEqualTo(0)
       .Because("the refund must survive the wrapper, not just the function");
     await Assert.That(InstanceId).IsNull();
@@ -241,7 +241,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
         @inst, 0, 1, NOW() + INTERVAL '5 minutes', NOW(), 1, NOW() - INTERVAL '10 minutes')";
     cmd.Parameters.AddWithValue("inst", claimingInstance);
     await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync()) { }
+    while (await reader.ReadAsync()) { /* drain */ }
   }
 
   private static async Task _releaseUnprocessedAsync(
@@ -273,7 +273,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     }
     return (
       reader.GetInt32(0),
-      reader.IsDBNull(1) ? null : reader.GetGuid(1),
-      reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTimeOffset>(2));
+      await reader.IsDBNullAsync(1) ? null : reader.GetGuid(1),
+      await reader.IsDBNullAsync(2) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(2));
   }
 }

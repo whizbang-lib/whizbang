@@ -30,7 +30,7 @@ public class LeaseRenewalWorkerCoverageTests {
   /// <c>Task.Run</c>, so StartAsync returning proves only that the body was scheduled, and a work
   /// item dequeued after the stopping token is canceled never invokes the delegate at all.
   /// </summary>
-  private sealed class _signalLogger(string fragment) : ILogger<LeaseRenewalWorker> {
+  private sealed class SignalLogger(string fragment) : ILogger<LeaseRenewalWorker> {
     private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Matched => _matched.Task;
@@ -45,7 +45,7 @@ public class LeaseRenewalWorkerCoverageTests {
     }
   }
 
-  private sealed class _recordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<(WorkCategory Category, IReadOnlyList<Guid> Ids)> Calls { get; } = [];
 
     Task<int> IWorkCoordinator.RenewLeasesAsync(WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken cancellationToken) {
@@ -63,7 +63,7 @@ public class LeaseRenewalWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_WhenDisabled_ParksThenStopsCleanlyOnShutdownAsync(CancellationToken testToken) {
     var services = new ServiceCollection().BuildServiceProvider();
-    var logger = new _signalLogger("disabled via options");
+    var logger = new SignalLogger("disabled via options");
     var worker = new LeaseRenewalWorker(
       scopeFactory: services.GetRequiredService<IServiceScopeFactory>(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
@@ -98,7 +98,7 @@ public class LeaseRenewalWorkerCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task FlushBatchAsync_WhenDisabled_NeverReachesTheCoordinatorAsync(CancellationToken testToken) {
-    var coordinator = new _recordingCoordinator();
+    var coordinator = new RecordingCoordinator();
     var services = new ServiceCollection()
       .AddSingleton<IWorkCoordinator>(coordinator)
       .BuildServiceProvider();

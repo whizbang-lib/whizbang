@@ -279,16 +279,14 @@ public class WorkerPipelineExtensionsCoverageTests {
     public Task WaitForAsync(
         Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> predicate) {
       lock (_sync) {
-        foreach (var existing in _entries) {
-          if (predicate(existing)) { return Task.CompletedTask; }
-        }
+        if (_entries.Any(predicate)) { return Task.CompletedTask; }
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _waiters.Add((predicate, signal));
         return signal.Task;
       }
     }
 
-    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, this);
+    public ILogger CreateLogger(string categoryName) => new RecordingLogger(categoryName, this);
 
     public void Dispose() { }
 
@@ -308,7 +306,7 @@ public class WorkerPipelineExtensionsCoverageTests {
       foreach (var signal in ready) { signal.TrySetResult(); }
     }
 
-    private sealed class _RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
+    private sealed class RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
       public bool IsEnabled(LogLevel logLevel) => true;

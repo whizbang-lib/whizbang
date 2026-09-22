@@ -46,7 +46,7 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
       tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
 
       // Act
-      var result = await dispatcher.LocalInvokeAndSyncAsync(
+      _ = await dispatcher.LocalInvokeAndSyncAsync(
           command,
           onWaiting: ctx => capturedWaiting = ctx,
           onDecisionMade: ctx => capturedDecision = ctx);
@@ -80,7 +80,7 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
     ScopedEventTrackerAccessor.CurrentTracker = tracker;
     try {
       // Act - NO events tracked
-      var result = await dispatcher.LocalInvokeAndSyncAsync(
+      _ = await dispatcher.LocalInvokeAndSyncAsync(
           command,
           onWaiting: ctx => capturedWaiting = ctx,
           onDecisionMade: ctx => capturedDecision = ctx);
@@ -114,7 +114,7 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
       tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
 
       // Act
-      var result = await dispatcher.LocalInvokeAndSyncAsync(
+      _ = await dispatcher.LocalInvokeAndSyncAsync(
           command,
           timeout: TimeSpan.FromMilliseconds(10),
           onWaiting: ctx => capturedWaiting = ctx,
@@ -209,7 +209,7 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
       tracker.TrackEmittedEvent(stream2, typeof(object), Guid.NewGuid());
 
       // Act
-      var result = await dispatcher.LocalInvokeAndSyncAsync(
+      _ = await dispatcher.LocalInvokeAndSyncAsync(
           command,
           onWaiting: ctx => capturedWaiting = ctx,
           onDecisionMade: ctx => capturedDecision = ctx);
@@ -241,7 +241,7 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
       tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
 
       // Act
-      var result = await dispatcher.LocalInvokeAndSyncAsync(
+      _ = await dispatcher.LocalInvokeAndSyncAsync(
           command,
           onWaiting: ctx => capturedWaiting = ctx,
           onDecisionMade: ctx => capturedDecision = ctx);

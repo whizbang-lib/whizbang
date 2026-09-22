@@ -164,7 +164,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
 
   [Test]
   public async Task Acquire_AnInteractiveCallerPastTheDeadline_ProceedsWithoutASlot_AndTheWarningNamesTheHoldersAsync() {
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 100, logger: logger, interactiveReserve: 1);
     var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
 
@@ -193,7 +193,7 @@ public class WorkCoordinatorGateInteractiveReserveTests {
     reserved.Dispose();
   }
 
-  private sealed class _capturingLogger : ILogger<WorkCoordinatorGate> {
+  private sealed class CapturingLogger : ILogger<WorkCoordinatorGate> {
     public List<string> Warnings { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

@@ -36,7 +36,7 @@ public class PublicFrameworkTableRepairSqlTests : EFCoreTestBase {
   /// Stands up the shape a pre-qualification deployment is actually in: real rows in
   /// <c>public</c>, an empty service schema whose tables the qualified migrations just created.
   /// </summary>
-  private async Task _arrangeAsync(NpgsqlConnection conn) {
+  private static async Task _arrangeAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;
       CREATE SCHEMA {SCHEMA};
@@ -49,7 +49,7 @@ public class PublicFrameworkTableRepairSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _cleanupAsync(NpgsqlConnection conn) {
+  private static async Task _cleanupAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;
       DELETE FROM public.wh_settings WHERE setting_key = '{PROBE_KEY}';", conn);

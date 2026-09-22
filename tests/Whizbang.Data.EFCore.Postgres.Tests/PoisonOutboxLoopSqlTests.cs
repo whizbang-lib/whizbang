@@ -83,7 +83,7 @@ public class PoisonOutboxLoopSqlTests : EFCoreTestBase {
     read.Parameters.AddWithValue("msg", messageId);
     await using var reader = await read.ExecuteReaderAsync(ct);
     await reader.ReadAsync(ct);
-    return (reader.GetInt32(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    return (reader.GetInt32(0), await reader.IsDBNullAsync(1, ct) ? null : reader.GetString(1));
   }
 
   [Test]

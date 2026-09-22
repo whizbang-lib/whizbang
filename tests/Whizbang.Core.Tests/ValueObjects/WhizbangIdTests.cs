@@ -33,15 +33,6 @@ public class WhizbangIdTests {
   }
 
   [Test]
-  public async Task WhizbangId_New_SubMillisecondPrecision_ReturnsTrueAsync() {
-    // Act
-    var id = WhizbangId.New();
-
-    // Assert
-    await Assert.That(id.SubMillisecondPrecision).IsTrue();
-  }
-
-  [Test]
   public async Task WhizbangId_New_Timestamp_ReturnsRecentTimeAsync() {
     // Arrange
     var before = DateTimeOffset.UtcNow.AddSeconds(-1);

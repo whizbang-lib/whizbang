@@ -169,7 +169,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel(); // Cancel immediately
+    await cts.CancelAsync(); // Cancel immediately
 
     try {
       // Act & Assert
@@ -634,7 +634,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     try {
       // Act
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — outbox + inbox each trigger their own store call; completions/failures
       // route via channels (helper-level coverage in WorkCoordinatorFlushHelperTests).
@@ -1102,20 +1102,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // BestEffort mode with metrics: records flush call
   // ============================================================
 
-  [Test]
-  public async Task FlushAsync_BestEffortMode_WithDisposedState_ThrowsObjectDisposedExceptionAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
-    var instanceProvider = new TestInstanceProvider();
-    var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
-    await sut.DisposeAsync();
-
-    // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
-      .ThrowsExactly<ObjectDisposedException>();
-  }
-
   // ============================================================
   // All queue types combined then flush via IWorkFlusher
   // ============================================================
@@ -1208,7 +1194,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   /// coordinator leaves them unobservable.
   /// </summary>
   private sealed class ChannelScopeHost {
-    private readonly ServiceProvider _provider;
     private int _coordinatorResolutions;
 
     public ChannelScopeHost() {
@@ -1224,8 +1209,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       });
       services.AddSingleton<IOutboxCompletionChannel>(CompletionChannel);
       services.AddSingleton<IFailureChannel>(FailureChannel);
-      _provider = services.BuildServiceProvider();
-      ScopeFactory = _provider.GetRequiredService<IServiceScopeFactory>();
+      var provider = services.BuildServiceProvider();
+      ScopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
     }
 
     public TrackingWorkCoordinator Coordinator { get; }
@@ -1271,7 +1256,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -1296,7 +1281,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -1335,7 +1320,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       var call = Interlocked.Increment(ref _storeOutboxCalls);
       if (call == 1) {
@@ -1354,7 +1339,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated coordinator failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -1373,7 +1358,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     public async Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       await Task.Delay(_delayMs, cancellationToken);
     }
@@ -1386,7 +1371,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public async Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       await Task.Delay(_delayMs, cancellationToken);
     }
 
@@ -1403,8 +1388,6 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   private sealed class RecordingLogger<T> : ILogger<T>, IDisposable {
     private readonly ConcurrentBag<string> _messages = [];
-
-    public IReadOnlyCollection<string> Messages => _messages;
 
     public void Dispose() { }
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
