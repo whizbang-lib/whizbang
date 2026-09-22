@@ -46,9 +46,9 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   /// Creates the strategy with the given flush callback.
   /// </summary>
   /// <param name="flush">Called once per per-stream sliding-window flush. The signal count is informational; the downstream apply pipeline fetches actual pending events for the stream.</param>
+  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   /// <param name="options">Tuning knobs; null uses 300 ms / 3 s / 1000 defaults.</param>
   /// <param name="timeProvider">Time source. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
-  /// <param name="logger">Optional logger; flush exceptions get logged at Error.</param>
   public SlidingWindowApplyBatchStrategy(
       ApplyBulkFlushCallback flush,
       ILogger<SlidingWindowApplyBatchStrategy> logger,

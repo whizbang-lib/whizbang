@@ -53,10 +53,10 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   /// </summary>
   /// <param name="streamIdSelector">Extracts the stream-affinity key from each item; null returns route to a shared default channel.</param>
   /// <param name="processor">Per-item handler; called serially within a stream, in parallel across streams.</param>
-  /// <param name="options">Tuning knobs (channel capacity, drain window, idle eviction). Defaults if null.</param>
-  /// <param name="sortComparer">Optional sort applied to each batch within a drain window — resolves brief enqueue races between concurrent producers.</param>
-  /// <param name="timeProvider">Time source for idle eviction + drain-window timing. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
   /// <param name="logger">Logger; processor exceptions get logged at Error.</param>
+  /// <param name="sortComparer">Optional sort applied to each batch within a drain window — resolves brief enqueue races between concurrent producers.</param>
+  /// <param name="options">Tuning knobs (channel capacity, drain window, idle eviction). Defaults if null.</param>
+  /// <param name="timeProvider">Time source for idle eviction + drain-window timing. Pass <see cref="TimeProvider.System"/> in production, fake in tests.</param>
   public PerStreamSerializer(
       Func<T, Guid?> streamIdSelector,
       Func<T, CancellationToken, Task> processor,

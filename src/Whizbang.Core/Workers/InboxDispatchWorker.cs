@@ -340,8 +340,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       if (DeadLetterDropPolicy.ShouldDropInsteadOfStore(work.MessageType)) {
         LogControlPlaneDropped(_logger, work.MessageId, work.MessageType, work.Attempts);
         _dlqMetrics?.Added.Add(1,
-          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-          new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
+          new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, "ControlPlaneDropped"));
         _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
           (int)Whizbang.Core.Messaging.MessageFailureReason.PoisonRedeliveryLoop, null);
         var droppedRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
@@ -363,8 +363,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             ct: stoppingToken).ConfigureAwait(false);
           if (movedId is not null) {
             _dlqMetrics?.Added.Add(1,
-              new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-              new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+              new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+              new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, "MaxAttemptsExceeded"));
             _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
               (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
           } else {
@@ -671,8 +671,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           ct: ct).ConfigureAwait(false);
         if (movedId is not null) {
           _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>("reason", reason.ToString()));
+            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
           _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
@@ -763,8 +763,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           ct: ct).ConfigureAwait(false);
         if (movedId is not null) {
           _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>("reason", reason.ToString()));
+            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
           _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);

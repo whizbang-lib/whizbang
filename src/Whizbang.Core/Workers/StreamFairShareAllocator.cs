@@ -76,6 +76,7 @@ public sealed class StreamFairShareAllocator {
   /// <param name="totalBudget">Rows this cycle may fetch in total, across all streams.</param>
   /// <param name="demands">Streams and their known depth.</param>
   /// <returns>Per-stream allocations; streams granted nothing are omitted.</returns>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The allocation rounds are one computation; extracting them would hide the invariants the rounds share.")]
   public IReadOnlyList<Allocation> Allocate(int totalBudget, IReadOnlyList<StreamDemand> demands) {
     ArgumentNullException.ThrowIfNull(demands);
     if (totalBudget <= 0 || demands.Count == 0) {

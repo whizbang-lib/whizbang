@@ -28,6 +28,7 @@ public static class BodyClaimRehydrator {
   /// conditions (provider unknown / hash mismatch) returns a failure result
   /// the caller routes to DLQ.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision over the claim's states; each branch is a documented outcome the caller routes on.")]
   public static async Task<RehydrateResult> MaybeRehydrateAsync(
       IMessageEnvelope envelope,
       string? envelopeTypeHeader,

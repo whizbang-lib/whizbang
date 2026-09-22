@@ -38,7 +38,7 @@ public class OutboxDrainWorkerTests {
 
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public ConcurrentBag<Guid> AllIds { get; } = [];
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private int _target = -1;
     private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
 

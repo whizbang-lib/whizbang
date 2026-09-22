@@ -234,7 +234,6 @@ public class TransportConsumerWorkerProvisioningTests {
       orderedProcessor: new OrderedStreamProcessor(
         logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>(),
         parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>(),
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),

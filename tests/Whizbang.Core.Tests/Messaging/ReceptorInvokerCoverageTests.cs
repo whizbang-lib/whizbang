@@ -25,10 +25,10 @@ using Whizbang.Core.ValueObjects;
 // ReceptorInvokerCoverageTests.InvokeAsync_MessageTypeWithNoNamespaceAtPreOutbox_StillFiresWithoutThrowingAsync.
 // CA1050 (declare types in namespaces) is intentionally violated for this one type, for that exact
 // reason; suppressed rather than worked around so the violation stays visible and deliberate.
-#pragma warning disable CA1050
+#pragma warning disable CA1050, RCS1110 // a type outside any namespace is the case under test
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3903:Types should be defined in named namespaces", Justification = "A type outside any namespace is the case under test.")]
 public sealed record GlobalNamespaceCoverageCommand : IMessage;
-#pragma warning restore CA1050
+#pragma warning restore CA1050, RCS1110
 
 // IDE0161 (prefer file-scoped namespace) is a build-time error project-wide
 // (EnforceCodeStyleInBuild + TreatWarningsAsErrors). Block-scoped is required here, and only

@@ -170,7 +170,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   }
 
   private bool _isBindingOnUs(StandbyRequest request) {
-    if (request.RequestedBy == _instanceProvider!.InstanceId) {
+    if (request.RequestedBy == _instanceProvider.InstanceId) {
       return false;   // our own request binds our peers, not us
     }
     if (!_requesterIsAlive(request)) {

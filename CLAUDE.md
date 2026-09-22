@@ -192,8 +192,11 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 - Deciding whether a red line is a gap or a deliberate decision
 
 **Why it matters**: the attribute is member-level, so applying it to a method that
-has any tested behavior suppresses real coverage. The target is near-100%, not
-literal 100% — the file gives the decision procedure and worked examples.
+has any tested behavior suppresses real coverage. The target is a **literal 100%** of
+new code — lines *and* branches, since a fully executed line can still carry a condition
+nobody took, and the uncovered-new-lines gate counts only the lines. The slack is not in
+the number; it is in the rare, justified, member-level exclusion, and the file gives the
+decision procedure and worked examples.
 
 ### 📖 **[flaky-tests.md](ai-docs/flaky-tests.md)** - CRITICAL for worker tests
 **Read when**:

@@ -168,6 +168,7 @@ public sealed partial class MaintenanceWorker(
       new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", table));
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One maintenance cycle: each guarded task is a documented sweep and their order is the contract.")]
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,

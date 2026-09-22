@@ -40,9 +40,9 @@ public class AuditOutboxMessageBuilderCoverageTests {
     var source = _outboxEventWithMessageType(
       "Whizbang.Core.Messaging.PerspectiveCoverageGapDetected, Whizbang.Core, Version=not-a-version");
 
-    var built = _record(() => AuditOutboxMessageBuilder.TryBuildAuditMessage(source, options, logger));
+    var (_, Error) = _record(() => AuditOutboxMessageBuilder.TryBuildAuditMessage(source, options, logger));
 
-    await Assert.That(built.Error).IsNull()
+    await Assert.That(Error).IsNull()
       .Because("an unparseable stored type name must not fault the audit builder -- every later "
              + "message in the same batch would go unaudited because of one bad row");
     await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error))

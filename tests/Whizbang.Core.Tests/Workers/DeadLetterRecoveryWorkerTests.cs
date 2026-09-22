@@ -735,9 +735,9 @@ public class DeadLetterRecoveryWorkerTests {
 
     await Assert.That(svc.ScheduleCalls).Count().IsEqualTo(1)
       .Because("a recovery exception should result in next-attempt scheduling with policy cooldown");
-    var scheduled = svc.ScheduleCalls[0];
-    await Assert.That(scheduled.Id).IsEqualTo(entry.DeadLetterId);
-    await Assert.That(scheduled.NextAt).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(20))
+    var (Id, NextAt) = svc.ScheduleCalls[0];
+    await Assert.That(Id).IsEqualTo(entry.DeadLetterId);
+    await Assert.That(NextAt).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(20))
       .Because("Throttled policy cooldown is 30 min");
 
     await cts.CancelAsync();
@@ -992,6 +992,82 @@ public class DeadLetterRecoveryWorkerTests {
     await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip)
       .Because("with the breaker open the worker must leave the rows alone; recovering them is "
              + "what would re-create the dead letters it just decided it was looping on");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ATrippedLoopBreaker_ClosesOnItsOwnAfterTheCooldownAsync() {
+    // The breaker exists so a transient condition recovers without an operator: once its cooldown has
+    // passed, the next scan closes it and recovery resumes. Cooldown 0 would keep it open until restart.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      LoopBreakerConsecutiveCycles = 2,
+      LoopBreakerCooldownMinutes = 1,
+      EnableGenerationReplay = false,
+    };
+    var listener = new FakeNotificationListener();
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+    var (worker, svc) = _newWorker(options, listener: listener, timeProvider: clock);
+
+    static DeadLetterEntry Fresh() => new(
+      DeadLetterId: Guid.NewGuid(),
+      SourceTable: DeadLetterSourceTable.OUTBOX,
+      SourceId: Guid.NewGuid(),
+      StreamId: null,
+      MessageType: "Test.Event",
+      FailureReason: MessageFailureReason.Throttled,
+      AttemptsWhenDlq: 10,
+      // Ahead of any scan start in this test: the row did not exist when the last scan began.
+      DeadLetteredAt: DateTimeOffset.UtcNow.AddMinutes(5),
+      RecoveryStatus: DeadLetterRecoveryStatus.Pending,
+      RecoveryAttempts: 0,
+      Generation: "test/0.0.1");
+
+    for (var i = 0; i < 5; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // Scan 1 establishes the baseline and must NOT trip: nothing to compare against yet.
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(0);
+
+    // Scans 2 and 3 each see a wholly fresh batch; the second consecutive one trips.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(5));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(5));
+
+    // A fetch signal fires as the cycle STARTS gathering rows; the breaker decision is taken
+    // afterwards, while that batch is processed. Waiting on fetch 3 therefore says nothing about
+    // whether cycle 3 has reached its decision, and under load the assertion below wins the race
+    // and reads a trip count of 0. Cycle 4 cannot fetch until cycle 3 has returned, so its fetch
+    // is the signal that the third cycle -- and its breaker decision -- is genuinely complete.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(4).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1)
+      .Because("the second consecutive wholly-fresh batch is the signal that recovery is feeding "
+             + "itself, and tripping once is what stops the cycle from running forever");
+    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
+
+    var recoveredWhileOpen = svc.RecoverCalls.Count;
+
+    // Past the cooldown, the next scan closes the breaker and recovers again. Waiting on the fetch
+    // after that one is the signal that the closing scan has completed its decision.
+    clock.Advance(TimeSpan.FromMinutes(2));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(5).WaitAsync(TimeSpan.FromSeconds(5));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(6).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.IsLoopBreakerOpen).IsFalse()
+      .Because("the cooldown elapsed, so the breaker closes on its own rather than waiting for an operator or a restart");
+    await Assert.That(svc.RecoverCalls.Count).IsGreaterThan(recoveredWhileOpen)
+      .Because("a closed breaker lets the scan recover the rows it had been holding back");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -1300,8 +1376,8 @@ public class DeadLetterRecoveryWorkerTests {
 
     await Assert.That(svc.ScheduleCalls).Count().IsEqualTo(1)
       .Because("a recovery exception must still schedule a next attempt, even under a zero-cooldown policy");
-    var scheduled = svc.ScheduleCalls[0];
-    await Assert.That(scheduled.NextAt).IsLessThan(before.AddSeconds(5))
+    var (_, NextAt) = svc.ScheduleCalls[0];
+    await Assert.That(NextAt).IsLessThan(before.AddSeconds(5))
       .Because("a zero-cooldown policy means retry immediately; exponential backoff must not "
              + "manufacture a delay the operator did not configure — a real delay here would be "
              + "many minutes out, not a couple of seconds");

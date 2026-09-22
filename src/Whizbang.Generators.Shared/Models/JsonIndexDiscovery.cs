@@ -20,6 +20,7 @@ public static class JsonIndexDiscovery {
   private const string JSON_INDEXED = "Whizbang.Core.Perspectives.IndexedAttribute";
   private const string INDEX_ALL_FIELDS = "Whizbang.Core.Perspectives.IndexAllFieldsAttribute";
   private const string PHYSICAL_FIELD = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+  private const string PERSPECTIVE_INDEX = "Whizbang.Core.Perspectives.PerspectiveIndexAttribute";
   private const string VECTOR_FIELD = "Whizbang.Core.Perspectives.VectorFieldAttribute";
 
   /// <summary>The kinds as the attribute's flag enumeration spells them.</summary>
@@ -270,6 +271,143 @@ public static class JsonIndexDiscovery {
         Superseded: CanonicalTemporalDiscovery.KindOf(property.Type) == CanonicalTemporalKind.Day
           ? JsonIndexCast.Int4
           : JsonIndexCast.None);
+
+  /// <summary>
+  /// The composite and partial indexes a model declares with <c>[PerspectiveIndex]</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Each named property is resolved to the SQL the index is built over: a promoted property gives
+  /// its column, one in the document gives its extraction. Doing that here rather than in the
+  /// renderer keeps the promoted-or-document decision in one place, and is what lets an author name
+  /// a property without knowing which it is.
+  /// </para>
+  /// <para>
+  /// An index naming a property the model does not have, or one whose type cannot carry an index,
+  /// is dropped whole rather than emitted partially: a composite index missing one of its columns
+  /// is a different index, and one that silently answered fewer filters would be worse than none.
+  /// </para>
+  /// </remarks>
+  /// <param name="model">The perspective model.</param>
+  /// <returns>One entry per declaration that fully resolved.</returns>
+  public static ImmutableArray<CompositeIndexInfo> CompositesFrom(INamedTypeSymbol? model) {
+    if (model is null) {
+      return [];
+    }
+
+    var properties = model.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(static p => !p.IsStatic)
+        .ToDictionary(static p => p.Name, static p => p, StringComparer.Ordinal);
+
+    var found = new List<CompositeIndexInfo>();
+
+    foreach (var declaration in model.GetAttributes()
+        .Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_INDEX))) {
+      if (_compositeFor(declaration, properties) is { } index) {
+        found.Add(index);
+      }
+    }
+
+    return [.. found];
+  }
+
+  /// <summary>
+  /// One declaration resolved against the model, or null when it cannot be.
+  /// </summary>
+  /// <remarks>
+  /// Separate from the walk above so each does one thing: the walk finds declarations, this decides
+  /// what one means. Inline it was a loop inside a loop inside a loop, which the quality gate
+  /// measured at cognitive complexity 21.
+  /// </remarks>
+  private static CompositeIndexInfo? _compositeFor(
+      AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
+    var elements = _elementsFor(declaration, properties);
+    if (elements is null) {
+      return null;
+    }
+
+    string? declaredName = null;
+    string? where = null;
+    var unique = false;
+
+    foreach (var argument in declaration.NamedArguments) {
+      switch (argument.Key) {
+        case "Name":
+          declaredName = argument.Value.Value as string;
+          break;
+        case "Where":
+          where = argument.Value.Value as string;
+          break;
+        case "Unique":
+          unique = argument.Value.Value is true;
+          break;
+      }
+    }
+
+    return new CompositeIndexInfo([.. elements], declaredName, where, unique);
+  }
+
+  /// <summary>
+  /// The declaration's properties resolved to the SQL each is indexed over, or null when any one of
+  /// them cannot be.
+  /// </summary>
+  /// <remarks>
+  /// All or nothing. A composite missing one of its columns is a different index, and one that
+  /// silently answered fewer filters would be worse than none at all.
+  /// </remarks>
+  private static List<CompositeIndexElement>? _elementsFor(
+      AttributeData declaration, Dictionary<string, IPropertySymbol> properties) {
+    var names = declaration.ConstructorArguments.Length > 0
+      ? declaration.ConstructorArguments[0].Values
+          .Select(static v => v.Value as string)
+          .Where(static n => !string.IsNullOrWhiteSpace(n))
+          .Select(static n => n!)
+          .ToArray()
+      : [];
+
+    if (names.Length == 0) {
+      return null;
+    }
+
+    var elements = new List<CompositeIndexElement>(names.Length);
+
+    foreach (var name in names) {
+      if (!properties.TryGetValue(name, out var property) || _elementFor(property) is not { } element) {
+        return null;
+      }
+
+      elements.Add(new CompositeIndexElement(name, element));
+    }
+
+    return elements;
+  }
+
+  /// <summary>
+  /// The SQL one element of a composite index is built over, or null when the property cannot carry
+  /// one.
+  /// </summary>
+  private static string? _elementFor(IPropertySymbol property) {
+    var promoted = property.GetAttributes().FirstOrDefault(
+      a => TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD));
+
+    if (promoted is not null) {
+      // A promoted property is indexed as its column. The declared name wins over the convention,
+      // the same way the column itself is named.
+      var declared = promoted.NamedArguments
+          .FirstOrDefault(a => a.Key == "ColumnName").Value.Value as string;
+
+      return declared ?? NamingConventionUtilities.ToSnakeCase(property.Name);
+    }
+
+    // In the document, so the element is the extraction a query produces, cast the same way a
+    // single-property declaration would cast it. A type with no cast cannot carry an index at all.
+    var cast = CastFor(property.Type);
+
+    return cast is null
+      ? null
+      : JsonIndexSql.Expression("data", property.Name, cast.Value);
+  }
 
   /// <summary>
   /// Whether a combined kind includes substring matching.

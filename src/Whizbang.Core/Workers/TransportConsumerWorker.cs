@@ -126,7 +126,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <param name="scopeFactory">Service scope factory for creating scoped services</param>
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
-  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
   /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
   /// <remarks>
@@ -144,7 +143,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     IServiceScopeFactory scopeFactory,
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
     IServiceInstanceProvider serviceInstanceProvider,

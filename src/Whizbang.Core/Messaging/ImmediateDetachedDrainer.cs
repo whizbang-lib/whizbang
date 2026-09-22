@@ -28,8 +28,8 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// Creates a new ImmediateDetachedDrainer.
 /// </remarks>
-/// <param name="warningThreshold">Chain depth warning threshold. Logs when depth reaches a multiple of this value.</param>
 /// <param name="logger">Optional logger for chain depth warnings.</param>
+/// <param name="warningThreshold">Chain depth warning threshold. Logs when depth reaches a multiple of this value.</param>
 public sealed partial class ImmediateDetachedDrainer(ILogger logger, int warningThreshold = 10) {
   private readonly ConcurrentQueue<(IMessageEnvelope Envelope, ILifecycleContext? Context)> _queue = new();
   private readonly int _warningThreshold = warningThreshold > 0 ? warningThreshold : 10;

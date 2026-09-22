@@ -48,10 +48,10 @@ public class WhizbangConnectionTuningTests {
   }
 
   [Test]
-  public void EnableAutoPrepare_RejectsNonPositiveTuningAsync() {
+  public async Task EnableAutoPrepare_RejectsNonPositiveTuningAsync() {
     var builder = new NpgsqlDataSourceBuilder("Host=localhost;Database=x;Username=u");
 
-    Assert.Throws<ArgumentOutOfRangeException>(() => builder.EnableAutoPrepare(maxAutoPrepare: 0));
-    Assert.Throws<ArgumentOutOfRangeException>(() => builder.EnableAutoPrepare(autoPrepareMinUsages: 0));
+    await Assert.That(() => builder.EnableAutoPrepare(maxAutoPrepare: 0)).Throws<ArgumentOutOfRangeException>();
+    await Assert.That(() => builder.EnableAutoPrepare(autoPrepareMinUsages: 0)).Throws<ArgumentOutOfRangeException>();
   }
 }

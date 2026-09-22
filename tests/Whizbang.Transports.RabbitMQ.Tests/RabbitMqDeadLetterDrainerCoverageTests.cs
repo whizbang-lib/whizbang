@@ -20,7 +20,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// <code-under-test>src/Whizbang.Transports.RabbitMQ/RabbitMqDeadLetterDrainer.cs</code-under-test>
 public class RabbitMqDeadLetterDrainerCoverageTests {
 
-  private static readonly string _id1 = "00000000-0000-0000-0000-000000000101";
+  private const string ID1 = "00000000-0000-0000-0000-000000000101";
 
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);
@@ -33,7 +33,7 @@ public class RabbitMqDeadLetterDrainerCoverageTests {
   [Test]
   public async Task Drain_ImportThrowsOperationCanceled_PropagatesWithoutNackingAsync() {
     var channel = new DrainCoverageChannel();
-    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));
+    channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: ID1));
     var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
     var drainer = new RabbitMqDeadLetterDrainer(
       connection, "orders.dlq",
@@ -55,7 +55,7 @@ public class RabbitMqDeadLetterDrainerCoverageTests {
   [Test]
   public async Task TryBuildImport_EnvelopeTypeHeaderIsUnrecognizedShape_MapsNullMessageTypeAsync() {
     var headers = new Dictionary<string, object?> { ["EnvelopeType"] = 12345 };
-    var result = _dlqResult(1, headers, messageId: _id1);
+    var result = _dlqResult(1, headers, messageId: ID1);
 
     var ok = RabbitMqDeadLetterDrainer.TryBuildImport(result, "q.dlq", out var import);
 

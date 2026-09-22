@@ -129,6 +129,25 @@ public class ClaimWorkerAcquisitionBoundsTests {
       .Because("under the cap the store's own stream bound applies; null means 'no separate perspective bound'");
   }
 
+  [Test]
+  public async Task Claim_IgnoresTheDrainBacklogWhenTheCapIsZeroAsync() {
+    var drain = new PerspectiveDrainChannel();
+    for (var i = 0; i < 5; i++) {
+      drain.TryWrite(TrackedGuid.NewMedo().Value);
+    }
+    var coord = new ScriptedCoordinator(_ => _emptyBatch());
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxPerspectiveDrainBacklog = 0,
+    }, perspectiveDrainChannel: drain);
+
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.Requests[0].MaxPerspectiveStreams).IsNull()
+      .Because("a cap of zero switches the backlog check off, so a queue of any depth leaves the store's own bound in charge");
+  }
+
   // ---- #725: stealing is a last resort -------------------------------------------------------------
 
   [Test]

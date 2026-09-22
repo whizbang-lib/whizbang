@@ -1094,10 +1094,10 @@ public class InboxDispatchWorkerGapTests {
     var work = _makeWork();
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
-    var move = store.Moves.Single();
-    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(move.SourceId).IsEqualTo(work.MessageId);
-    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    var (SourceTable, SourceId, Reason) = store.Moves.Single();
+    await Assert.That(SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(SourceId).IsEqualTo(work.MessageId);
+    await Assert.That(Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("the DLQ move deletes the wh_inbox row in the same transaction — no children and no legacy commit");
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("50", StringComparison.Ordinal))).IsTrue()

@@ -32,6 +32,12 @@ public sealed class DeadLetterMetrics {
 #pragma warning disable CA1707
   /// <summary>OpenTelemetry meter name.</summary>
   public const string METER_NAME = "Whizbang.DeadLetters";
+
+  /// <summary>The tag naming the table a dead letter came from.</summary>
+  public const string SOURCE_TABLE_TAG = "source_table";
+
+  /// <summary>The tag naming the failure reason.</summary>
+  public const string REASON_TAG = "reason";
 #pragma warning restore CA1707
 
   /// <summary>Rows moved into wh_dead_letters (incremented per atomic Move). Tagged by source_table + reason.</summary>
@@ -117,12 +123,12 @@ public sealed class DeadLetterMetrics {
       description: "Never-before-seen normalized stack ids first recorded — the new-failure-mode alarm; a spike right after a deploy is a new bug shipped");
 
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
-    Added.Touch("source_table", _sourceTables);
-    Recovered.Touch("source_table", _sourceTables);
-    Held.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
-    PermanentlyFailed.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
-    RecoveryAttempts.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
-    _arrivalsByStack.Touch("source_table", _sourceTables);
+    Added.Touch(SOURCE_TABLE_TAG, _sourceTables);
+    Recovered.Touch(SOURCE_TABLE_TAG, _sourceTables);
+    Held.Touch(REASON_TAG, Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    PermanentlyFailed.Touch(REASON_TAG, Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    RecoveryAttempts.Touch(REASON_TAG, Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    _arrivalsByStack.Touch(SOURCE_TABLE_TAG, _sourceTables);
     _cohortVerdicts.Touch("verdict", Enum.GetNames<Whizbang.Core.Messaging.CanaryVerdictKind>());
     _releaseWaves.Touch("outcome", _releaseOutcomes);
   }
@@ -174,8 +180,8 @@ public sealed class DeadLetterMetrics {
       stackId = "overflow";
     }
     _arrivalsByStack.Add(1,
-      new KeyValuePair<string, object?>("source_table", sourceTable),
-      new KeyValuePair<string, object?>("reason", failureReason.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+      new KeyValuePair<string, object?>(SOURCE_TABLE_TAG, sourceTable),
+      new KeyValuePair<string, object?>(REASON_TAG, failureReason.ToString(System.Globalization.CultureInfo.InvariantCulture)),
       new KeyValuePair<string, object?>("stack_id", stackId));
   }
 

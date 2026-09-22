@@ -149,7 +149,6 @@ public class TransportConsumerWorkerDirectedTargetTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: serviceName is null ? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance : new StubServiceInstanceProvider(serviceName),

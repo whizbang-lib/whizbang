@@ -205,7 +205,7 @@ public class PerspectiveEventDiscoveryTests {
   public async Task TheGeneratedRegistryCompilesAsync() {
     // The registry is emitted into the consumer's build, so the scan producing a name it cannot
     // resolve shows up as an error in a file nobody wrote.
-    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<EventNamespaceRegistryGenerator>($$"""
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<EventNamespaceRegistryGenerator>("""
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;

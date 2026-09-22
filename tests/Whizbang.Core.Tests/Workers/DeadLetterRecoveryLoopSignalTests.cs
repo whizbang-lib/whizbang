@@ -90,8 +90,8 @@ public class DeadLetterRecoveryLoopSignalTests {
   }
 
   [Test]
-  public void Measure_NullRows_ThrowsAsync() {
-    Assert.Throws<ArgumentNullException>(
-      () => DeadLetterRecoveryLoopSignal.Measure(null!, _scanStart, 0.5));
+  public async Task Measure_NullRows_ThrowsAsync() {
+    await Assert.That(() => DeadLetterRecoveryLoopSignal.Measure(null!, _scanStart, 0.5))
+      .Throws<ArgumentNullException>();
   }
 }

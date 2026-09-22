@@ -80,11 +80,11 @@ public class GovernorMetricsTests {
 
     listener.RecordObservableInstruments();
 
-    var width = captured.FirstOrDefault(c => c.Name.Contains("width", StringComparison.Ordinal));
-    await Assert.That(width.Name).IsNotNull()
+    var (Name, Value, _) = captured.FirstOrDefault(c => c.Name.Contains("width", StringComparison.Ordinal));
+    await Assert.That(Name).IsNotNull()
       .Because("without the current width on a dashboard there is no way to tell an adaptive "
              + "governor from a broken one — both just look like a slow system");
-    await Assert.That(width.Value).IsEqualTo(4)
+    await Assert.That(Value).IsEqualTo(4)
       .Because("it must report the governor's ACTUAL width, not a configured maximum");
 
     listener.Dispose();
@@ -104,8 +104,8 @@ public class GovernorMetricsTests {
     }
     listener.RecordObservableInstruments();
 
-    var width = captured.Last(c => c.Name.Contains("width", StringComparison.Ordinal));
-    await Assert.That(width.Value).IsGreaterThan(2)
+    var (_, Value, _) = captured.Last(c => c.Name.Contains("width", StringComparison.Ordinal));
+    await Assert.That(Value).IsGreaterThan(2)
       .Because("a gauge pinned to the starting value would be worse than no metric — it would "
              + "report a healthy narrow width while the governor had actually moved");
 

@@ -123,6 +123,9 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
   /// message -- and the binder's contract is that no header can make it throw.
   /// </para>
   /// </summary>
+  // Excluded from coverage: with throwOnError false, GetType returns null for every malformed name, so the
+  // catch runs only for a corrupt or foreign-architecture assembly in the deployment, which no test can stage.
+  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "The exceptions are properties of the deployment, not of any input a test can supply.")]
   private static Type? _tryGetTypeFrom(Assembly assembly, string fullName) {
     try {
       return assembly.GetType(fullName, throwOnError: false, ignoreCase: false);

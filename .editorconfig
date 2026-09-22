@@ -423,6 +423,9 @@ dotnet_diagnostic.S3265.severity = none
 # assignment `x?.P = v`, which Sonar's S1121 then rejects as an assignment inside an expression. The
 # guarded form is the one both accept.
 dotnet_diagnostic.IDE0031.severity = none
+# RCS1130 flags `NpgsqlDbType.Array | NpgsqlDbType.Text`: Npgsql documents that composition even though its enum
+# carries no [Flags]; the same decision as S3265 above.
+dotnet_diagnostic.RCS1130.severity = none
 
 [src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs]
 # S3459 sees the row classes Dapper materializes as never assigned: Dapper sets them by column name
@@ -449,4 +452,7 @@ dotnet_diagnostic.S3877.severity = none
 #        at each site, and these two would otherwise report the same members a second and third time.
 dotnet_diagnostic.RCS1163.severity = none
 dotnet_diagnostic.IDE0060.severity = none
+# WHIZ501 guards the framework's own constructors, where an optional injected dependency hides a missing
+# registration. A test fixture's optional collaborators are the test's defaults, not registrations.
+dotnet_diagnostic.WHIZ501.severity = none
 

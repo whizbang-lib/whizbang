@@ -65,6 +65,9 @@ public class JsonbContainmentRewriterGuardTests {
 
     /// <summary>A one-argument static overload, which the rewriter must decline.</summary>
     public static bool Equals(int only) => only == 0;
+
+    /// <summary>A three-argument instance overload with a receiver, which the rewriter must decline.</summary>
+    public bool Equals(string first, string second, string third) => Label == first && second == third;
   }
 
   public sealed class NestedGuard {
@@ -260,10 +263,12 @@ public class JsonbContainmentRewriterGuardTests {
   [Test]
   [Arguments("three-argument instance")]
   [Arguments("one-argument static")]
+  [Arguments("three-argument instance on a receiver")]
   public async Task AnEqualsOfAnUnexpectedArityIsDeclinedAsync(string shape) {
     var plants = shape switch {
       "three-argument instance" => _plantsAMarkerFor<GuardModel>(r => Oddity.Equals(1, 1, 1)),
       "one-argument static" => _plantsAMarkerFor<GuardModel>(_ => Oddity.Equals(0)),
+      "three-argument instance on a receiver" => _plantsAMarkerFor<GuardModel>(r => r.Data.Odd.Equals("a", "b", "c")),
       _ => throw new InvalidOperationException(shape),
     };
 

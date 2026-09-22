@@ -428,7 +428,6 @@ public class TransportConsumerWorkerResilienceTests {
       scopeFactory: scopeFactory,
       jsonOptions: jsonOptions,
       orderedProcessor: orderedProcessor,
-      lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
