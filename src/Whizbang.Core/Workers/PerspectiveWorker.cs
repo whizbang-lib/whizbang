@@ -318,8 +318,8 @@ public partial class PerspectiveWorker(
   // Two-phase TTL cache to prevent duplicate Apply when SQL re-delivers events during batched completion window
   private readonly ProcessedEventCache _processedEventCache = new(
     TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.LeaseSeconds),
-    timeProvider: timeProvider,
-    observer: processedEventCacheObserver
+    observer: processedEventCacheObserver,
+    timeProvider: timeProvider
   );
 
   // Registry-based map: event type (CLR format) → all perspective CLR names that handle it.
@@ -550,13 +550,14 @@ public partial class PerspectiveWorker(
         } else {
           var consumers = new Task[consumerCount];
           for (var i = 0; i < consumerCount; i++) {
-            consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
+            // The token is NOT passed to Task.Run: the loop honors it itself and returns, exactly as
+            // the single-consumer path above relies on. Handing it to Task.Run as well adds one more
+            // way to end — a loop cancelled before it starts, which faults the await with an
+            // exception this code would then have to swallow — so a clean stop looks the same here
+            // as it does with one consumer.
+            consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), CancellationToken.None);
           }
-          try {
-            await Task.WhenAll(consumers).ConfigureAwait(false);
-          } catch (OperationCanceledException) {
-            // expected on shutdown
-          }
+          await Task.WhenAll(consumers).ConfigureAwait(false);
         }
       } finally {
         await watchdogCts.CancelAsync().ConfigureAwait(false);

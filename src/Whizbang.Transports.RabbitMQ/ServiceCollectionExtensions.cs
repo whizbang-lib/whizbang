@@ -343,9 +343,9 @@ public static class ServiceCollectionExtensions {
         transport, readinessCheck,
         commandInboxResolver.DefaultCommandInboxAddress,
         loggerFactory,
+        namespaceRouting: commandInboxResolver,
         throttleRetryOptions: null, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
-        namespaceRouting: commandInboxResolver,
         transportNamespaces: transportNamespaces);
     });
 

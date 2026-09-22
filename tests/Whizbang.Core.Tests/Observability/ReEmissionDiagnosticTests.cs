@@ -139,7 +139,7 @@ public sealed class ReEmissionDiagnosticTests {
     var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
     Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<IReceptorRegistryQuery>(services, registry);
     Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(services, new ReEmissionDiagnostic(registry, null, metrics));
-    var sp = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
+    var sp = services.BuildServiceProvider();
     var dispatcher = new PublishProbeDispatcher(sp);
 
     await dispatcher.PublishAsync(new ProbeEvent(Guid.NewGuid()));

@@ -20,9 +20,17 @@ namespace Whizbang.Core.Observability;
 /// better proxy anyway: what an unindexed sort costs is the bytes it has to read.
 /// </para>
 /// <para>
-/// Once per model per process. This runs on the statistics cycle, so repeating would turn one
-/// finding into a log entry every cycle forever, and a warning that repeats without changing gets
-/// filtered out at the collector.
+/// Once per finding, not once per cycle: this runs on the statistics cycle, so repeating would turn
+/// one finding into a log entry every cycle forever, and a warning that repeats without changing
+/// gets filtered out at the collector. How long "once" lasts belongs to the ledger, because the
+/// answer is a property of the deployment rather than of this type. A single long-lived instance
+/// can hold it in memory; a fleet cannot, since every replica reaches the same conclusion about the
+/// same table and every restart forgets.
+/// </para>
+/// <para>
+/// Advice that nobody acted on comes back after <see cref="DEFAULT_REPORT_COOLDOWN"/>, and advice
+/// that has CHANGED comes back at once. A finding suppressed forever is indistinguishable from a
+/// finding that was fixed, and the table is still being scanned either way.
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz306</docs>
@@ -32,12 +40,21 @@ namespace Whizbang.Core.Observability;
 /// wherever the type is built by hand, and this type is built by hand, so the argument is the one
 /// thing a call site must not be able to forget.
 /// </param>
-public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory> logger) {
+/// <param name="ledger">
+/// What has already been said. Required for the same reason as the logger, and with more at stake:
+/// a default would be the per-process one, so a deployment would quietly get per-replica advice on
+/// every restart and look exactly like a deployment that had chosen that.
+/// </param>
+/// <param name="timeProvider">The clock the cooldown is measured on. Defaults to the system clock.</param>
+public sealed partial class QueryExposureAdvisory(
+    ILogger<QueryExposureAdvisory> logger,
+    IAdvisoryLedger ledger,
+    TimeProvider? timeProvider = null) {
   private readonly ILogger<QueryExposureAdvisory> _logger =
     logger ?? throw new ArgumentNullException(nameof(logger));
-
-  private readonly Lock _reportedLock = new();
-  private readonly HashSet<Type> _reported = [];
+  private readonly IAdvisoryLedger _ledger =
+    ledger ?? throw new ArgumentNullException(nameof(ledger));
+  private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// The size a perspective has to reach before an unindexed sort over it is worth an operator's
@@ -53,6 +70,18 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
 #pragma warning restore CA1707
 
   /// <summary>
+  /// How long the same unchanged advice stays quiet before it is worth saying again.
+  /// </summary>
+  /// <remarks>
+  /// A week, because acting on this means adding a column and building an index on a large table,
+  /// which is scheduled work rather than something done on the spot. Short enough that a finding
+  /// nobody acted on does not disappear, long enough that it never competes with anything urgent.
+  /// </remarks>
+#pragma warning disable CA1707
+  public static readonly TimeSpan DEFAULT_REPORT_COOLDOWN = TimeSpan.FromDays(7);
+#pragma warning restore CA1707
+
+  /// <summary>
   /// Reports each newly oversized perspective that a request can order by.
   /// </summary>
   /// <param name="tableSizes">Estimated table sizes in bytes, by table name.</param>
@@ -63,15 +92,18 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
   /// <param name="thresholdBytes">
   /// The size to report above. Defaults to <see cref="DEFAULT_SIZE_THRESHOLD_BYTES"/>.
   /// </param>
+  /// <param name="cancellationToken">Cancels the ledger consult.</param>
   /// <returns>
-  /// The findings made on this call, not including models already reported. Returned rather than
-  /// counted so the caller can emit them: this method is synchronous and emitting is not, and
-  /// bridging that here would mean blocking the statistics cycle on a dispatch.
+  /// The findings made on this call, not including the ones the ledger has already reported.
+  /// Returned rather than counted so the caller can emit them, which the caller does after this
+  /// returns: the log line and the emitted record are the same finding and must share one
+  /// suppression decision, so the decision is taken here and the dispatch is not.
   /// </returns>
-  public IReadOnlyList<SystemEvents.PerspectiveIndexAdvised> Report(
+  public async ValueTask<IReadOnlyList<SystemEvents.PerspectiveIndexAdvised>> ReportAsync(
       IReadOnlyDictionary<string, long> tableSizes,
       ICollectiveSiblingTableSource? tables,
-      long thresholdBytes = DEFAULT_SIZE_THRESHOLD_BYTES) {
+      long thresholdBytes = DEFAULT_SIZE_THRESHOLD_BYTES,
+      CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(tableSizes);
 
     if (tables is null) {
@@ -79,9 +111,10 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
     }
 
     var reported = new List<SystemEvents.PerspectiveIndexAdvised>();
+    var now = _clock.GetUtcNow();
 
     foreach (var (model, exposure) in QueryExposureRegistry.All()) {
-      if (!QueryExposureRegistry.CanBeOrdered(model) || _alreadyReported(model)) {
+      if (!QueryExposureRegistry.CanBeOrdered(model)) {
         continue;
       }
 
@@ -99,7 +132,9 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
         continue;
       }
 
-      if (_claim(model)) {
+      if (await _ledger.TryBeginReportAsync(
+            _findingKey(model, table), _signature(exposure, unindexed), now, DEFAULT_REPORT_COOLDOWN,
+            cancellationToken).ConfigureAwait(false)) {
         LogExposedPerspectiveIsLarge(
           _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(),
           unindexed.Count, string.Join(", ", unindexed));
@@ -121,18 +156,28 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
     return reported;
   }
 
-  private bool _alreadyReported(Type model) {
-    lock (_reportedLock) {
-      return _reported.Contains(model);
-    }
-  }
+  /// <summary>What the finding is about, in a form that means the same thing in every process.</summary>
+  /// <remarks>
+  /// The model's name and its table, not the <see cref="Type"/> itself: a durable ledger has to
+  /// recognize the same finding after a restart and in another replica, and a runtime handle cannot
+  /// do that. Both halves, because the table is what an operator acts on and the model is what an
+  /// author would have to change. Rendered through the formatter that every other durable use of a
+  /// type name goes through, so this key agrees with them rather than nearly agreeing.
+  /// </remarks>
+  private static string _findingKey(Type model, string table) =>
+    $"perspective-index:{TypeNameFormatter.GetPerspectiveName(model)}:{table}";
 
-  /// <summary>Takes the report for this model, or declines if another caller already has it.</summary>
-  private bool _claim(Type model) {
-    lock (_reportedLock) {
-      return _reported.Add(model);
-    }
-  }
+  /// <summary>
+  /// What the finding says, so that advice which has changed is not mistaken for advice already
+  /// given.
+  /// </summary>
+  /// <remarks>
+  /// Ordered, because the set is what matters and the order it was discovered in is not. Without
+  /// that, indexing one field of three could leave the signature unchanged, or reorder it and
+  /// re-raise advice that had not changed at all.
+  /// </remarks>
+  private static string _signature(QueryExposures exposure, IReadOnlyCollection<string> unindexed) =>
+    $"{exposure}:{string.Join(",", unindexed.Order(StringComparer.Ordinal))}";
 
   /// <summary>
   /// The model's table, or null when the driver does not know it.
@@ -159,7 +204,7 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
         + "serves, reading the whole table. {UnindexedCount} of its fields carry no index and no "
         + "recorded decision ({UnindexedFields}). Declare [Indexed] on the fields the surface offers, "
         + "[IndexAllFields] if it is queried every way, or record the decision with "
-        + "[SuppressIndexAdvisory(\"reason\")]. Reported once per process.")]
+        + "[SuppressIndexAdvisory(\"reason\")]. Reported once until it changes.")]
   static partial void LogExposedPerspectiveIsLarge(
     ILogger logger, string ModelName, string TableName, long SizeMegabytes, string Exposure,
     int UnindexedCount, string UnindexedFields);

@@ -11,7 +11,11 @@ namespace Whizbang.Generators.Tests;
 /// Tests for the EFCorePerspectiveAssociationGenerator source generator.
 /// Ensures EF Core-specific perspective association registration code is generated correctly.
 /// </summary>
-public class EFCorePerspectiveAssociationGeneratorTests {
+public partial class EFCorePerspectiveAssociationGeneratorTests {
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"AssociationsHash\s*=\s*""([0-9a-f]{64})""")]
+  private static partial System.Text.RegularExpressions.Regex AssociationsHashPattern();
+
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -568,9 +572,8 @@ namespace TestNamespace {
     var sourceA = GeneratorTestHelper.GetGeneratedSource(resultA, "EFCorePerspectiveAssociations.g.cs");
     var sourceB = GeneratorTestHelper.GetGeneratedSource(resultB, "EFCorePerspectiveAssociations.g.cs");
 
-    const string pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
-    var hashA = System.Text.RegularExpressions.Regex.Match(sourceA!, pattern).Groups[1].Value;
-    var hashB = System.Text.RegularExpressions.Regex.Match(sourceB!, pattern).Groups[1].Value;
+    var hashA = AssociationsHashPattern().Match(sourceA!).Groups[1].Value;
+    var hashB = AssociationsHashPattern().Match(sourceB!).Groups[1].Value;
 
     await Assert.That(hashA).IsNotEmpty();
     await Assert.That(hashA).IsEqualTo(hashB)
@@ -616,9 +619,8 @@ namespace TestNamespace {
     var sourceOne = GeneratorTestHelper.GetGeneratedSource(resultOne, "EFCorePerspectiveAssociations.g.cs");
     var sourceTwo = GeneratorTestHelper.GetGeneratedSource(resultTwo, "EFCorePerspectiveAssociations.g.cs");
 
-    const string pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
-    var hashOne = System.Text.RegularExpressions.Regex.Match(sourceOne!, pattern).Groups[1].Value;
-    var hashTwo = System.Text.RegularExpressions.Regex.Match(sourceTwo!, pattern).Groups[1].Value;
+    var hashOne = AssociationsHashPattern().Match(sourceOne!).Groups[1].Value;
+    var hashTwo = AssociationsHashPattern().Match(sourceTwo!).Groups[1].Value;
 
     await Assert.That(hashOne).IsNotEmpty();
     await Assert.That(hashTwo).IsNotEmpty();
