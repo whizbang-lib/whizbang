@@ -1,10 +1,13 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -95,7 +98,10 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
   private static TransportPublishStrategy _flipPublishStrategy(RabbitMQTransport transport) {
     var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox();
     return new TransportPublishStrategy(
-      transport, new DefaultTransportReadinessCheck(), "inbox",
+      transport: transport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
   }
 
@@ -265,13 +271,15 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
   public async Task MisdeliveredMessage_OnFlippedEntity_DiscardedAtReceiveBoundary_NoDlqNoHandlerAsync(CancellationToken ct) {
     // Discard-at-receive-boundary stays the safety belt on the NEW entities: a deliverable,
     // deserializable message whose type this service does NOT consume is acked+dropped —
-    // never dead-lettered, never handled. The discard policy consults the receptor registry;
+    // never dead-lettered, never handled. The discard policy consults the receptor registry —
     // this stub consumes PlaceOrder (the sentinel) and nothing else, so the mis-delivered
     // ChargeCard on the orders exchange is exactly a mis-delivery.
     var discardPolicy = new MessageDiscardPolicy(
-      new ConsumesOnlyPlaceOrderRegistry(),
-      Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageDiscardPolicy>.Instance,
-      new System.Diagnostics.Metrics.Meter($"phase6-discard-{Guid.NewGuid():N}"));
+      registry: new ConsumesOnlyPlaceOrderRegistry(),
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageDiscardPolicy>.Instance,
+      meter: new System.Diagnostics.Metrics.Meter($"phase6-discard-{Guid.NewGuid():N}"),
+      routingOptions: Options.Create(new RoutingOptions()),
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     var transport = await _createTransportAsync(discardPolicy: discardPolicy);
     var handlerService = _uniqueService("svc-orders");
 
@@ -467,7 +475,10 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
     try {
       var publish = new TransportPublishStrategy(
-        transport, new DefaultTransportReadinessCheck(), "inbox",
+        transport: transport,
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        inboxTopic: "inbox",
+        loggerFactory: NullLoggerFactory.Instance,
         namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
       var commandResult = await publish.PublishAsync(commandWork, ct);
       var systemResult = await publish.PublishAsync(systemWork, ct);
@@ -549,11 +560,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       };
       await dlqChannel.BasicConsumeAsync(dlqQueue, autoAck: false, consumer: dlqConsumer, cancellationToken: ct);
 
-      var deadLettered = await deadLetteredTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+      var (DeliveryTag, Properties, Body) = await deadLetteredTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
       // It is OUR command sitting on THIS namespace's DLQ, not an unrelated arrival on a shared
       // broker: the dead-lettered copy carries the published message id.
-      await Assert.That(deadLettered.Properties.MessageId).IsEqualTo(work.MessageId.ToString());
+      await Assert.That(Properties.MessageId).IsEqualTo(work.MessageId.ToString());
       // MaxDeliveryAttempts=2 is the reason it got here: first delivery nacks and requeues, the
       // second dead-letters. One delivery would mean it never retried; three would mean the cap
       // is not being honored and a poison command loops.
@@ -563,15 +574,15 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       // the SAME flipped exchange, ack the DLQ copy.
       Volatile.Write(ref poisoned, false);
       var replayProperties = new BasicProperties {
-        MessageId = deadLettered.Properties.MessageId,
-        ContentType = deadLettered.Properties.ContentType,
+        MessageId = Properties.MessageId,
+        ContentType = Properties.ContentType,
         Persistent = true,
-        Headers = deadLettered.Properties.Headers?.ToDictionary(kv => kv.Key, kv => kv.Value)
+        Headers = Properties.Headers?.ToDictionary(kv => kv.Key, kv => kv.Value)
       };
       await dlqChannel.BasicPublishAsync(
         ORDERS_ENTITY, "wbtopo.orders.commands.placeorder", mandatory: false,
-        basicProperties: replayProperties, body: deadLettered.Body, cancellationToken: ct);
-      await dlqChannel.BasicAckAsync(deadLettered.DeliveryTag, multiple: false, ct);
+        basicProperties: replayProperties, body: Body, cancellationToken: ct);
+      await dlqChannel.BasicAckAsync(DeliveryTag, multiple: false, ct);
 
       await replayAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct);
 

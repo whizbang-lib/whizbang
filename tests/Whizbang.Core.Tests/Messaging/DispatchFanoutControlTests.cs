@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Messaging")]
 public class DispatchFanoutControlTests {
 
-  private sealed record _inner(string Id) : IMessage;
+  private sealed record Inner(string Id) : IMessage;
 
   [Test]
   public async Task Set_OutsideControlWindow_IsNoOp_DoesNotLeakIntoNextWindowAsync() {
@@ -45,7 +45,7 @@ public class DispatchFanoutControlTests {
   [Test]
   public async Task ReplaceWith_CarriesReplacementChildrenAsync() {
     using var scope = DispatchFanoutControl.Begin();
-    var replacement = new List<IMessage> { new _inner("a"), new _inner("b") };
+    var replacement = new List<IMessage> { new Inner("a"), new Inner("b") };
 
     DispatchFanoutControl.Set(FanoutDirective.ReplaceWith(replacement));
 

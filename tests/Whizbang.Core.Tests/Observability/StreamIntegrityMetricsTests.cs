@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -34,7 +35,7 @@ public class StreamIntegrityMetricsTests {
     };
     listener.Start();
 
-    var _ = new StreamIntegrityMetrics(new WhizbangMetrics());
+    _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(observed).Contains("whizbang.stream_integrity.checkpoints_published");
     await Assert.That(observed).Contains("whizbang.stream_integrity.checkpoints_received");
@@ -54,7 +55,7 @@ public class StreamIntegrityMetricsTests {
 
   [Test]
   public async Task Counters_AreNotNullAsync() {
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     await Assert.That(metrics.CheckpointsPublished).IsNotNull();
     await Assert.That(metrics.CheckpointsReceived).IsNotNull();
     await Assert.That(metrics.GapsDetected).IsNotNull();
@@ -86,7 +87,7 @@ public class StreamIntegrityMetricsTests {
     };
     listener.Start();
 
-    var _ = new StreamIntegrityMetrics(new WhizbangMetrics());
+    _ = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     // Durations: the compare histogram is the alpha-59-class early warning — comparisons slower
     // than manifest arrivals queued payloads in memory until the process died, invisibly.
@@ -128,7 +129,7 @@ public class StreamIntegrityMetricsTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
       UnhealedBuckets = 5,
       Seals = [new OriginSeal(originA, 300), new OriginSeal(originB, 0)],

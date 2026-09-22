@@ -106,7 +106,7 @@ public class ProgramCoverageTests {
       var exitCode = await Program.Main(["apply", "-p", dir]);
 
       await Assert.That(exitCode).IsEqualTo(0);
-      // 8 Guid.NewGuid() replacements + 1 added using + 1 constructor-parameter change = 10;
+      // 8 Guid.NewGuid() replacements + 1 added using + 1 constructor-parameter change = 10 —
       // 5 are printed, so 5 remain -- this is the overflow line, not a guess at the total.
       await Assert.That(_stdout()).Contains("... and 5 more changes")
         .Because("the overflow count must match what was actually left off the printed list");

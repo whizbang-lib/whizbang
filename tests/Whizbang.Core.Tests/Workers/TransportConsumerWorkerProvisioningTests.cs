@@ -1,14 +1,18 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -30,6 +34,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var ownedDomains = new HashSet<string> { "myapp.users", "myapp.orders" };
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
       new RoutingOptions().OwnDomains([.. ownedDomains])));
@@ -47,7 +52,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -72,6 +77,7 @@ public class TransportConsumerWorkerProvisioningTests {
     // Arrange
     var transport = new TrackingTransport();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
     var serviceProvider = services.BuildServiceProvider();
 
@@ -86,7 +92,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -104,6 +110,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var transport = new TrackingTransport();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions())); // Empty owned domains
     var serviceProvider = services.BuildServiceProvider();
@@ -120,7 +127,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -143,6 +150,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var manifest = new Whizbang.Core.Routing.TopologyManifest("test-service", [], []);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(manifest);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
@@ -159,7 +167,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -182,6 +190,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var transport = new TrackingTransport();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
     var serviceProvider = services.BuildServiceProvider();
@@ -197,7 +206,7 @@ public class TransportConsumerWorkerProvisioningTests {
       await worker.StartAsync(cts.Token);
       await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
     } finally {
-      cts.Cancel();
+      await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
     }
 
@@ -223,13 +232,21 @@ public class TransportConsumerWorkerProvisioningTests {
       scopeFactory: scopeFactory,
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(
-        parallelizeStreams: false,
-        logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
+        logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>(),
+        parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>(),
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
   }
 
   // ========================================
@@ -294,16 +311,6 @@ public class TransportConsumerWorkerProvisioningTests {
       return Task.CompletedTask;
     }
 
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      callOrder?.Record("subscribe");
-      _firstSubscribe.TrySetResult();
-      return Task.FromResult<ISubscription>(new NoOpSubscription());
-    }
-
     public Task PublishAsync(
         IMessageEnvelope envelope,
         TransportDestination destination,
@@ -325,7 +332,7 @@ public class TransportConsumerWorkerProvisioningTests {
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
-        IMessageEnvelope envelope,
+        IMessageEnvelope requestEnvelope,
         TransportDestination destination,
         CancellationToken cancellationToken = default)
         where TRequest : notnull

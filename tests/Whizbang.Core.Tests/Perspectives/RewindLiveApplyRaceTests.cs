@@ -11,13 +11,15 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Reproduces a production bulk-import projection-undercount bug: a large batch
 /// import committed a matching number of SagaItemCompletedEvent to the
 /// event store but the saga's projection undercounted by four items.
 /// Cursor inversion warnings + four <c>PerspectiveRewindStarted/Completed</c>
 /// event pairs (one per cursor-inverted perspective) correlated exactly with
 /// the four lost increments.
-///
+/// </para>
+/// <para>
 /// Hypothesis (proven RED here): the rewind path in the generated
 /// <see cref="IPerspectiveRunner"/> reads the model into memory, applies every
 /// event from snapshot/zero in memory, then persists the final state in a single
@@ -26,16 +28,19 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// for the same row — the second writer overwrites the first, and one
 /// increment is silently lost. Whichever finishes last "wins"; the loser's work
 /// vanishes.
-///
+/// </para>
+/// <para>
 /// This test reproduces the race deterministically with a gated
 /// <see cref="IPerspectiveStore{T}"/> — there is no flake. The order
 /// (live persists during rewind's in-memory phase, then rewind persists last)
 /// is forced by completion signals rather than wall-clock timing.
-///
+/// </para>
+/// <para>
 /// Expected behavior (and the assertion below): each event applied by either
 /// path must be reflected in the final projection. The lost-increment scenario
 /// is a real data-integrity bug that must be locked at the framework level so
 /// production traffic stops dropping projection state during rewinds.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
@@ -51,16 +56,19 @@ public class RewindLiveApplyRaceTests {
   }
 
   /// <summary>
+  /// <para>
   /// In-memory store that mirrors the production <c>BaseUpsertStrategy</c>
   /// race window: each <c>UpsertAsync</c> reads-modifies-writes the same row,
   /// with no concurrency control beyond last-writer-wins. A gate lets the test
   /// pause an in-flight upsert so a second writer can race past it.
-  ///
+  /// </para>
+  /// <para>
   /// This is the same race surface a real Postgres-backed
   /// <c>IPerspectiveStore</c> exhibits today: the EF Core upsert lands an
   /// entire row replacement; without a stream-level lock surrounding
   /// rewind's read+apply+write, a concurrent live apply on the same row
   /// produces the lost-update pattern.
+  /// </para>
   /// </summary>
   private sealed class GatedInMemoryStore : IPerspectiveStore<CountModel> {
     private readonly Dictionary<Guid, CountModel> _byStream = [];
@@ -105,17 +113,20 @@ public class RewindLiveApplyRaceTests {
   }
 
   /// <summary>
+  /// <para>
   /// Hand-rolled runner that mirrors the exact shape of the source-generated
   /// runner emitted by <c>Whizbang.Generators.Templates.PerspectiveRunnerTemplate</c>.
   /// Pattern under test (identical to lines 819-956 of the template):
   ///   1. Load model (snapshot OR <c>GetByStreamIdAsync</c> for live).
   ///   2. Apply every event in memory.
   ///   3. Single atomic <c>UpsertAsync</c> at the end.
-  ///
+  /// </para>
+  /// <para>
   /// When <paramref name="coordinator"/> is supplied, the read+apply+persist
   /// runs under an <see cref="IPerspectiveApplyCoordinator"/> lock —
   /// matching the production fix that the source generator emits around both
   /// <c>RewindAndRunAsync</c> and <c>RunWithEventsAsync</c>.
+  /// </para>
   /// </summary>
 #pragma warning disable CA1859 // Interface typing is intentional — production callers receive IPerspectiveApplyCoordinator from DI.
   private static async Task ApplyEventsAsync(

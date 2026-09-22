@@ -20,7 +20,7 @@ namespace Whizbang.Data.Tests;
 /// </summary>
 /// <docs>fundamentals/messaging/message-priority#on-the-wire</docs>
 /// <code-under-test>src/Whizbang.Data.Dapper.Sqlite/DapperSqliteEventStore.cs</code-under-test>
-public class DapperSqliteEventStorePriorityTests : IDisposable {
+public sealed class DapperSqliteEventStorePriorityTests : IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -43,10 +43,8 @@ public class DapperSqliteEventStorePriorityTests : IDisposable {
     new(_testBase.ConnectionFactory, _testBase.Executor, JsonOptionsHelper.CreateOptions(), new PolicyEngine());
 
   private static async Task<MessageEnvelope<TestEvent>> _firstAsync(DapperSqliteEventStore store, Guid streamId) {
-    await foreach (var envelope in store.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
-      return envelope;
-    }
-    throw new InvalidOperationException("Test setup: the stream is empty.");
+    // FirstAsync throws InvalidOperationException on an empty stream, which is the setup failure this guards.
+    return await store.ReadAsync<TestEvent>(streamId, fromSequence: 0).FirstAsync();
   }
 
   [Test]

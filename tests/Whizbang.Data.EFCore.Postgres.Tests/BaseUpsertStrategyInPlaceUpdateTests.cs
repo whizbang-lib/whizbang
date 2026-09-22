@@ -536,7 +536,7 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
     // Act - Use a context where the entity is already tracked locally
     await using (var context = CreateDbContext()) {
       // First, load the entity into the local tracker (simulating prior operations)
-      var existingRow = await context.Set<PerspectiveRow<Order>>()
+      _ = await context.Set<PerspectiveRow<Order>>()
         .FirstAsync(r => r.Id == testId);
 
       // Verify it's tracked

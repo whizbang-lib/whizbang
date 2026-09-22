@@ -17,7 +17,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 public class AsbBacklogPeekCoverageTests {
 
   /// <summary>A transport that is not an ASB one, so the peek must skip it rather than cast it.</summary>
-  private sealed class _foreignTransport : ITransport {
+  private sealed class ForeignTransport : ITransport {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -32,9 +32,6 @@ public class AsbBacklogPeekCoverageTests {
         Whizbang.Core.Observability.IMessageEnvelope requestEnvelope, TransportDestination destination,
         CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-    public Task<ISubscription> SubscribeAsync(
-        Func<TransportMessage, CancellationToken, Task> handler, TransportDestination destination,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, Whizbang.Core.Workers.TransportBatchOptions batchOptions,
@@ -49,7 +46,7 @@ public class AsbBacklogPeekCoverageTests {
   /// </summary>
   [Test]
   public async Task PeekAsync_TransportIsNotAzureServiceBus_ContributesNoSamplesAsync() {
-    var samples = await new AsbBacklogPeek(new _foreignTransport()).PeekAsync(CancellationToken.None);
+    var samples = await new AsbBacklogPeek(new ForeignTransport()).PeekAsync(CancellationToken.None);
 
     await Assert.That(samples).IsEmpty();
   }
@@ -72,7 +69,7 @@ public class AsbBacklogPeekCoverageTests {
     bulkTransport.OldestEnqueuedTimeProbe = (_, _, _) => Task.FromResult<DateTimeOffset?>(null);
 
     var router = new NamespaceRoutingTransport(
-      new _foreignTransport(),
+      new ForeignTransport(),
       new Dictionary<string, ITransport>(StringComparer.Ordinal) {
         ["bulk"] = bulkTransport,
       },

@@ -22,7 +22,7 @@ public class ReceiveLivenessWatchdogCoverageTests {
     // or, if the filter direction flipped instead, DisposeAsync would hang forever waiting for a
     // loop that no longer recognizes its own cancellation as a reason to return.
     var recoverInvoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new _levelRecordingLogger();
+    var logger = new LevelRecordingLogger();
     var time = new FakeTimeProvider();
     var interval = TimeSpan.FromMinutes(1);
     var watchdog = new ReceiveLivenessWatchdog(
@@ -106,7 +106,7 @@ public class ReceiveLivenessWatchdogCoverageTests {
   }
 
   /// <summary>Records only what this file asserts on: the level of each entry the loop emitted.</summary>
-  private sealed class _levelRecordingLogger : ILogger {
+  private sealed class LevelRecordingLogger : ILogger {
     public List<LogLevel> Levels { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

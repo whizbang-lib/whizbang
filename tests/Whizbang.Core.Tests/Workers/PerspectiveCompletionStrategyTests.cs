@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -170,7 +171,7 @@ public class PerspectiveCompletionStrategyTests {
       Status = PerspectiveProcessingStatus.Completed
     };
 
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     await strategy.ReportCompletionAsync(completion, coordinator, CancellationToken.None);
@@ -192,7 +193,7 @@ public class PerspectiveCompletionStrategyTests {
       Error = "Test error"
     };
 
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     await strategy.ReportFailureAsync(failure, coordinator, CancellationToken.None);
@@ -205,7 +206,7 @@ public class PerspectiveCompletionStrategyTests {
   [Test]
   public async Task InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async() {
     // Arrange
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     var pending = strategy.GetPendingCompletions();
@@ -217,7 +218,7 @@ public class PerspectiveCompletionStrategyTests {
   [Test]
   public async Task InstantStrategy_GetPendingFailures_AlwaysReturnsEmpty_Async() {
     // Arrange
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     // Act
     var pending = strategy.GetPendingFailures();
@@ -255,7 +256,7 @@ public class PerspectiveCompletionStrategyTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

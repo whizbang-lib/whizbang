@@ -46,6 +46,14 @@ public static class DbContextRegistrationRegistry {
     }
   }
 
+  /// <summary>Clears registrations and the invoked set; for tests that share this process-wide registry.</summary>
+  internal static void ResetForTesting() {
+    lock (_lock) {
+      _registrations.Clear();
+      _invoked.Clear();
+    }
+  }
+
   /// <summary>
   /// Invokes the registered callback for the given DbContext type.
   /// Called by PostgresDriverExtensions.Postgres to register NpgsqlDataSource and DbContext.

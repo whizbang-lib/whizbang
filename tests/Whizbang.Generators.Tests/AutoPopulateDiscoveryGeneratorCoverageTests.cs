@@ -76,9 +76,9 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
 
     var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
     await Assert.That(populator).IsNotNull();
-    await Assert.That(populator!).Contains("_extractScopeValue(hop, \"UserId\", \"UserId\")")
+    await Assert.That(populator).Contains("_extractScopeValue(hop, \"UserId\", \"UserId\")")
       .Because("with no PerspectiveScope type to read a [JsonPropertyName] alias from, the resolved alias must equal the fallback property name");
-    await Assert.That(populator!).Contains("_extractScopeValue(hop, \"TenantId\", \"TenantId\")");
+    await Assert.That(populator).Contains("_extractScopeValue(hop, \"TenantId\", \"TenantId\")");
   }
 
   /// <summary>
@@ -124,9 +124,9 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
 
     var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
     await Assert.That(populator).IsNotNull();
-    await Assert.That(populator!).Contains("_extractScopeValue(hop, \"UserId\", \"UserId\")")
+    await Assert.That(populator).Contains("_extractScopeValue(hop, \"UserId\", \"UserId\")")
       .Because("a [JsonPropertyName(\"\")] is present but carries no usable alias value, so resolution must fall through to the property name");
-    await Assert.That(populator!).Contains("_extractScopeValue(hop, \"TenantId\", \"TenantId\")");
+    await Assert.That(populator).Contains("_extractScopeValue(hop, \"TenantId\", \"TenantId\")");
   }
 
   // ==================== Unrelated attributes are ignored ====================
@@ -159,8 +159,8 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("PropertyName = \"SentAt\"");
-    await Assert.That(registry!).DoesNotContain("ArchivedAt")
+    await Assert.That(registry).Contains("PropertyName = \"SentAt\"");
+    await Assert.That(registry).DoesNotContain("ArchivedAt")
       .Because("[Obsolete] is not one of the five populate attributes and must not produce a registration");
   }
 
@@ -191,7 +191,7 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
 
     var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
     await Assert.That(populator).IsNotNull();
-    await Assert.That(populator!).Contains("m.Note = _extractUserId(hop);")
+    await Assert.That(populator).Contains("m.Note = _extractUserId(hop);")
       .Because("a property type with no fill-guard must still be populated via an unconditional assignment, not silently skipped");
   }
 
@@ -216,8 +216,8 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
 
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("GeneratedAutoPopulateRegistry_My_Test_Assembly")
+    await Assert.That(registry).Contains("GeneratedAutoPopulateRegistry_My_Test_Assembly")
       .Because("dots and hyphens are not legal in a C# identifier and must be replaced, not dropped or left in place");
-    await Assert.That(registry!).Contains("AutoPopulateRegistryInitializer_My_Test_Assembly");
+    await Assert.That(registry).Contains("AutoPopulateRegistryInitializer_My_Test_Assembly");
   }
 }

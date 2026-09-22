@@ -10,6 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// Implementations are typically singleton and shared between strategy and worker layers.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
+/// <docs>messaging/outbox-pattern</docs>
 public interface IWorkChannelWriter {
   /// <summary>
   /// Gets the channel reader for consumers (background workers).

@@ -33,6 +33,10 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason);
 /// </summary>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
 public interface IStartupAssessor {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>Reads the ledger and produces the verdict. Implementations should throw on an
   /// unreadable ledger only when refusing is safer than proceeding; the step maps a throw to a
   /// failed (fail-closed) assessment.</summary>
@@ -61,15 +65,10 @@ public interface IStartupAssessor {
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/AssessStartupStepTests.cs</tests>
-public sealed partial class AssessStartupStep : IStartupStep {
-  private readonly IStartupAssessor? _assessor;
-  private readonly ILogger<AssessStartupStep> _logger;
-
-  /// <summary>Creates the step over the driver-supplied assessor, when one is registered.</summary>
-  public AssessStartupStep(IStartupAssessor? assessor = null, ILogger<AssessStartupStep>? logger = null) {
-    _assessor = assessor;
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AssessStartupStep>.Instance;
-  }
+/// <remarks>Creates the step over the driver-supplied assessor; the framework's null default reports itself not configured and the step is skipped.</remarks>
+public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger<AssessStartupStep> logger) : IStartupStep {
+  private readonly IStartupAssessor _assessor = assessor;
+  private readonly ILogger<AssessStartupStep> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AssessStartupStep>.Instance;
 
   /// <inheritdoc />
   public StartupStepDescriptor Descriptor { get; } = new() {
@@ -78,7 +77,7 @@ public sealed partial class AssessStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
-    if (_assessor is null) {
+    if (!_assessor.IsConfigured) {
       return new StartupStepReport(StartupStepOutcome.Skipped,
         "no assessor registered — the storage driver supplies the verdict machinery");
     }
@@ -97,4 +96,23 @@ public sealed partial class AssessStartupStep : IStartupStep {
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Assess verdict: {Verdict} — {Reason}")]
   static partial void LogVerdict(ILogger logger, StartupVerdict verdict, string reason);
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IStartupAssessor"/>: reports <see cref="IStartupAssessor.IsConfigured"/>
+/// false. A storage driver supplies the real assessor; callers check the flag first and this
+/// implementation throws if they do not.
+/// </summary>
+public sealed class NullStartupAssessor : IStartupAssessor, INullDefault {
+  private NullStartupAssessor() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullStartupAssessor Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) =>
+    throw new InvalidOperationException("No startup assessor is registered; a storage driver supplies one. Check IsConfigured before calling.");
 }

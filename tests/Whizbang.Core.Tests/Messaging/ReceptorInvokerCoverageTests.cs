@@ -26,6 +26,7 @@ using Whizbang.Core.ValueObjects;
 // CA1050 (declare types in namespaces) is intentionally violated for this one type, for that exact
 // reason; suppressed rather than worked around so the violation stays visible and deliberate.
 #pragma warning disable CA1050
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3903:Types should be defined in named namespaces", Justification = "A type outside any namespace is the case under test.")]
 public sealed record GlobalNamespaceCoverageCommand : IMessage;
 #pragma warning restore CA1050
 
@@ -73,8 +74,10 @@ namespace Whizbang.Core.Tests.Messaging {
       }
 
       public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-      public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
       public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+      public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
       public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     }
 

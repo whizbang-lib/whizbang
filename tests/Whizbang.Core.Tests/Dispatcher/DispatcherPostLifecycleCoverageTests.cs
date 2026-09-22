@@ -1,5 +1,6 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -49,7 +50,7 @@ public class DispatcherPostLifecycleCoverageTests {
   // Dispatcher subclass with PostLifecycle receptors registered
   // ========================================
 
-  private sealed class PostLifecycleDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+  private sealed class PostLifecycleDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
              receptorRegistry: sp.GetService<IReceptorRegistry>()) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(PostLifecycleWithResultCommand)) {
@@ -515,16 +516,18 @@ public class DispatcherPostLifecycleCoverageTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
   private sealed class TrackingTagProcessor : IMessageTagProcessor {
     public ValueTask ProcessTagsAsync(
         object message, Type messageType,
-        LifecycleStage stage, IScopeContext? scope,
-        CancellationToken cancellationToken = default) {
+        LifecycleStage stage, IScopeContext? scope = null,
+        CancellationToken ct = default) {
       _track("tag-processed");
       return ValueTask.CompletedTask;
     }

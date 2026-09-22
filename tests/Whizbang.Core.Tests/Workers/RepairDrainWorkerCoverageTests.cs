@@ -202,10 +202,10 @@ public class RepairDrainWorkerCoverageTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
-  private static (RepairDrainWorker Worker, _scriptedCoordinator Coordinator, _captureTransport Transport) _buildLoop(
+  private static (RepairDrainWorker Worker, ScriptedCoordinator Coordinator, CaptureTransport Transport) _buildLoop(
       StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate, Guid origin) {
-    var coordinator = new _scriptedCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new ScriptedCoordinator();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(origin, "origin-svc", clock.GetUtcNow(), "origin.requests");
     var services = new ServiceCollection();
@@ -213,7 +213,7 @@ public class RepairDrainWorkerCoverageTests {
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -227,10 +227,10 @@ public class RepairDrainWorkerCoverageTests {
     return (worker, coordinator, transport);
   }
 
-  private static (RepairDrainWorker Worker, _scriptedCoordinator Coordinator, _captureTransport Transport, IntegrityGapTracker Tracker) _buildTick(
+  private static (RepairDrainWorker Worker, ScriptedCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _buildTick(
       StreamIntegrityOptions options, bool includeTransport = true) {
-    var coordinator = new _scriptedCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new ScriptedCoordinator();
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -239,7 +239,7 @@ public class RepairDrainWorkerCoverageTests {
     }
     services.AddSingleton(tracker);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
     services.AddSingleton(consumerOptions);
@@ -266,7 +266,7 @@ public class RepairDrainWorkerCoverageTests {
   /// returns that verbatim regardless of the requested origins, modeling a claim whose rows no
   /// longer match the in-memory learned-origin snapshot taken earlier in the same tick.
   /// </summary>
-  private sealed class _scriptedCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class ScriptedCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<IntegrityRepairDrainItem> Eligible { get; } = [];
     public List<IntegrityRepairDrainItem>? ForcedClaim { get; set; }
     public Queue<Exception> ThrowOnClaim { get; } = new();
@@ -290,7 +290,7 @@ public class RepairDrainWorkerCoverageTests {
     }
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -303,10 +303,9 @@ public class RepairDrainWorkerCoverageTests {
     }
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";

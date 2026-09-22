@@ -31,6 +31,14 @@ public static class ModelRegistrationRegistry {
     }
   }
 
+  /// <summary>Clears registrars and the invoked set; for tests that share this process-wide registry.</summary>
+  internal static void ResetForTesting() {
+    lock (_lock) {
+      _registrars.Clear();
+      _invoked.Clear();
+    }
+  }
+
   /// <summary>
   /// Invokes the LATEST registered model registration callback for the given ServiceCollection.
   /// Called by driver extensions (InMemory, Postgres) to register discovered models and infrastructure.

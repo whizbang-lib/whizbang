@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -28,8 +29,9 @@ public class TableRewriteStartupStepCoverageTests {
     var services = new ServiceCollection(); // deliberately no IWorkCoordinator registration
     var provider = services.BuildServiceProvider();
     var step = new TableRewriteStartupStep(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }));
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }),
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);
 

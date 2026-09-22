@@ -44,7 +44,7 @@ public class UpsertCoverageWidgetPerspective : IPerspectiveFor<UpsertCoverageWid
   public UpsertCoverageWidgetModel Apply(UpsertCoverageWidgetModel currentData, UpsertCoverageWidgetCreatedEvent @event) =>
     new() { Id = @event.Id, Name = @event.Name };
 
-  public Task Update(UpsertCoverageWidgetCreatedEvent @event, CancellationToken cancellationToken = default) =>
+  public static Task Update(UpsertCoverageWidgetCreatedEvent @event, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 }
 
@@ -130,15 +130,11 @@ public class BaseUpsertStrategyCoverageTests {
   // real cause behind "duplicate key retry" telemetry instead of surfacing it to the caller's failure channel.
   [Test]
   public async Task IsDuplicateKeyException_WithNonPostgresInnerExceptionChain_ReturnsFalseAsync() {
-    var method = typeof(BaseUpsertStrategy).GetMethod("_isDuplicateKeyException", BindingFlags.NonPublic | BindingFlags.Static);
-    await Assert.That(method).IsNotNull()
-      .Because("this test targets BaseUpsertStrategy's private duplicate-key classifier by exact name");
-
     var innermost = new InvalidOperationException("root cause, not a duplicate key");
     var middle = new InvalidOperationException("wrapping", innermost);
     var dbUpdateException = new DbUpdateException("save failed", middle);
 
-    var result = (bool)method!.Invoke(null, [dbUpdateException])!;
+    var result = BaseUpsertStrategy.IsDuplicateKeyException(dbUpdateException);
 
     await Assert.That(result).IsFalse()
       .Because("walking a multi-level inner-exception chain that never contains a Postgres 23505 must fall "

@@ -27,7 +27,7 @@ public sealed partial class TypeDefinitionReconciler(
     IServiceScopeFactory scopeFactory,
     IOptions<EphemeralOptions> options,
     ILogger<TypeDefinitionReconciler> logger,
-    IMessageTypeCatalog? catalog = null) {
+    IMessageTypeCatalog catalog) {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
   private readonly EphemeralOptions _options = options.Value;
   private readonly ILogger<TypeDefinitionReconciler> _logger = logger;
@@ -38,11 +38,11 @@ public sealed partial class TypeDefinitionReconciler(
   /// The window only needs to cover one fleet's simultaneous boot, not a whole deployment cycle.
   /// </summary>
   private static readonly TimeSpan _claimWindow = TimeSpan.FromMinutes(2);
-  private readonly IMessageTypeCatalog? _catalog = catalog;
+  private readonly IMessageTypeCatalog _catalog = catalog;
 
   /// <summary>Runs one reconciliation pass over the catalog. Returns a summary of what it found/did.</summary>
   public async Task<TypeDefinitionReconcileSummary> ReconcileAsync(CancellationToken cancellationToken = default) {
-    if (_catalog is null) {
+    if (!_catalog.IsAvailable) {
       return TypeDefinitionReconcileSummary.Empty;
     }
 
@@ -154,9 +154,11 @@ public sealed partial class TypeDefinitionReconciler(
       var schemaChanged = !string.Equals(prev.SchemaHashHex, entry.SchemaHash, StringComparison.OrdinalIgnoreCase);
       var isEphemeral = entry.Ephemeral is not null;
 
-      var relationship = schemaChanged
-        ? DefinitionRelationship.SchemaUpgradedTo
-        : (isEphemeral ? DefinitionRelationship.ReclassifiedTo : DefinitionRelationship.MetadataChangedTo);
+      var relationship = (schemaChanged, isEphemeral) switch {
+        (true, _) => DefinitionRelationship.SchemaUpgradedTo,
+        (false, true) => DefinitionRelationship.ReclassifiedTo,
+        _ => DefinitionRelationship.MetadataChangedTo,
+      };
       await coordinator.RecordDefinitionLineageAsync(
         prevId, reg.DefinitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
       LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());

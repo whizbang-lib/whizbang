@@ -26,10 +26,10 @@ public class DispatcherEventCascaderCoverageTests {
   public async Task CascadeFromResultAsync_NonMessageResult_LogsNonMessageReturnTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var dispatcher = new _NoOpDispatcher();
+    var dispatcher = new NoOpDispatcher();
     services.AddSingleton<IDispatcher>(dispatcher);
     var provider = services.BuildServiceProvider();
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var cascader = new DispatcherEventCascader(provider, logger);
 
     // Act - a plain string is not IMessage, IRouted, a typed message enumerable, or ITuple, and
@@ -52,7 +52,7 @@ public class DispatcherEventCascaderCoverageTests {
   // Test Fakes
   // ========================================
 
-  private sealed class _CapturingLogger : ILogger<DispatcherEventCascader> {
+  private sealed class CapturingLogger : ILogger<DispatcherEventCascader> {
     public List<string> Messages { get; } = [];
     public List<LogLevel> Levels { get; } = [];
 
@@ -66,27 +66,27 @@ public class DispatcherEventCascaderCoverageTests {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
   }
 
-  private sealed class _NoOpDispatcher : IDispatcher {
+  private sealed class NoOpDispatcher : IDispatcher {
     public List<IMessage> CascadedMessages { get; } = [];
     public IMessageEnvelope? LastSourceEnvelope { get; private set; }
 
     public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public Task<IDeliveryReceipt> SendAsync(object message) =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) =>
-      Task.FromResult<IDeliveryReceipt>(new _FakeDeliveryReceipt());
+      Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
 
     public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull =>
       throw new NotImplementedException();
@@ -148,11 +148,6 @@ public class DispatcherEventCascaderCoverageTests {
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
       throw new NotImplementedException();
 
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) {
-      CascadedMessages.Add(message);
-      return Task.CompletedTask;
-    }
-
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       LastSourceEnvelope = sourceEnvelope;
@@ -166,7 +161,7 @@ public class DispatcherEventCascaderCoverageTests {
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
   }
 
-  private sealed class _FakeDeliveryReceipt : IDeliveryReceipt {
+  private sealed class FakeDeliveryReceipt : IDeliveryReceipt {
     public MessageId MessageId => MessageId.New();
     public CorrelationId? CorrelationId => null;
     public MessageId? CausationId => null;

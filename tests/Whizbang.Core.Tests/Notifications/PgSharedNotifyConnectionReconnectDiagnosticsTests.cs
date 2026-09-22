@@ -14,6 +14,7 @@ namespace Whizbang.Core.Tests.Notifications;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Regression lock for a production-deployment diagnostic: when
 /// <see cref="PgSharedNotifyConnection"/>'s probe fails (or any other connect-time
 /// error), the disconnect warning MUST name the resolved connection-string source
@@ -21,11 +22,13 @@ namespace Whizbang.Core.Tests.Notifications;
 /// <c>-direct</c>, the pooled key fallback, the DbContext fallback, or an explicit
 /// option. Without this, "Self-test probe failed" in Azure logs is unactionable —
 /// the operator has to read source code to know which env var to investigate.
-///
+/// </para>
+/// <para>
 /// We drive a deliberately-bad connection string through the worker; it fails at
 /// the network layer (the host is unresolvable) which routes us into the
 /// LogReconnect path. The capturing logger snapshots the formatted message; we
 /// assert both placeholders survived into the output.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
@@ -50,7 +53,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -98,7 +101,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -135,7 +138,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -169,7 +172,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
       SelfTestTimeout = TimeSpan.FromMilliseconds(200),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -188,7 +191,7 @@ public class PgSharedNotifyConnectionReconnectDiagnosticsTests {
     await Assert.That(logger.LastPooledFallbackWarningLevel).IsEqualTo(LogLevel.Warning);
   }
 
-  private sealed class _CapturingLogger : ILogger<PgSharedNotifyConnection> {
+  private sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
     public TaskCompletionSource DisconnectLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ResolvedConnectionLoggedTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource PooledFallbackWarningTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -8,6 +8,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// a controllable fake, while the static <see cref="DbContextInitializationRegistry"/> remains the single
 /// production implementation.
 /// </summary>
+/// <docs>data/turnkey-initialization</docs>
 internal interface ISchemaInitializationRunner {
   /// <summary>
   /// Applies all registered DbContext migrations. Idempotent (advisory-locked, hash-gated); the

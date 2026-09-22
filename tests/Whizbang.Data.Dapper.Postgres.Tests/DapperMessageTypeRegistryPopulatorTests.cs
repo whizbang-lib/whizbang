@@ -290,10 +290,11 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Messages.Add(formatter(state, exception));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   private sealed record SamplePinned;

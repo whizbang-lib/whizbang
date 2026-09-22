@@ -43,7 +43,7 @@ public class TransportBatchFailureIsolationTests {
 
   [Test]
   public async Task AStatementTimeoutIsNotAShutdownRequestAsync() {
-    var shuttingDown = new CancellationTokenSource();   // NOT canceled
+    using var shuttingDown = new CancellationTokenSource();   // NOT canceled
 
     var verdict = TransportBatchFailureClassifier.Classify(_statementTimeout(), shuttingDown.Token);
 
@@ -67,7 +67,7 @@ public class TransportBatchFailureIsolationTests {
 
   [Test]
   public async Task AnUnrelatedFaultIsTransientNotShutdownAsync() {
-    var shuttingDown = new CancellationTokenSource();
+    using var shuttingDown = new CancellationTokenSource();
 
     var verdict = TransportBatchFailureClassifier.Classify(
       new InvalidOperationException("connection reset"), shuttingDown.Token);
@@ -79,7 +79,7 @@ public class TransportBatchFailureIsolationTests {
 
   [Test]
   public async Task CancellationWithoutASignalledTokenIsTransientAsync() {
-    var shuttingDown = new CancellationTokenSource();
+    using var shuttingDown = new CancellationTokenSource();
 
     // A bare OperationCanceledException with no inner Postgres error and an un-signalled token:
     // still not a stop request, because nothing asked this host to stop.

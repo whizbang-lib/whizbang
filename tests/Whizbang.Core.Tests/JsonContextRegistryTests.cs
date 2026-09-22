@@ -19,12 +19,12 @@ public partial class JsonContextRegistryTests {
   /// <summary>
   /// Test converter for MessageId-like type (simulates generated WhizbangId converter).
   /// </summary>
-  private sealed class TestIdJsonConverter : JsonConverter<_testId> {
-    public override _testId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
-      return new _testId { Value = reader.GetString() ?? string.Empty };
+  private sealed class TestIdJsonConverter : JsonConverter<TestId> {
+    public override TestId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+      return new TestId { Value = reader.GetString() ?? string.Empty };
     }
 
-    public override void Write(Utf8JsonWriter writer, _testId value, JsonSerializerOptions options) {
+    public override void Write(Utf8JsonWriter writer, TestId value, JsonSerializerOptions options) {
       writer.WriteStringValue(value.Value);
     }
   }
@@ -32,7 +32,7 @@ public partial class JsonContextRegistryTests {
   /// <summary>
   /// Test ID type (simulates generated WhizbangId value object).
   /// </summary>
-  private struct _testId {
+  private struct TestId {
     public string Value { get; set; }
   }
 
@@ -103,7 +103,7 @@ public partial class JsonContextRegistryTests {
     // not via Activator.CreateInstance() or other reflection at runtime.
     //
     // The generated code should look like:
-    //   JsonContextRegistry.RegisterConverter(new ProductIdJsonConverter());
+    //   JsonContextRegistry.RegisterConverter(new ProductIdJsonConverter()) —
     //
     // NOT like:
     //   JsonContextRegistry.RegisterConverterType(typeof(ProductIdJsonConverter)); // WRONG - uses reflection
@@ -132,8 +132,7 @@ public partial class JsonContextRegistryTests {
   /// Test JsonSerializerContext for type name mapping tests.
   /// </summary>
   [JsonSerializable(typeof(TestMessage))]
-  internal sealed partial class TestMessageJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class TestMessageJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task RegisterTypeName_WithValidArguments_RegistersSuccessfullyAsync() {
@@ -305,8 +304,7 @@ public partial class JsonContextRegistryTests {
   /// </summary>
   [JsonSerializable(typeof(TestEvent))]
   [JsonSerializable(typeof(MessageEnvelope<TestEvent>))]
-  internal sealed partial class TestEventJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class TestEventJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task GetTypeInfoByName_WithEnvelopeType_ReturnsEnvelopeJsonTypeInfoAsync() {
@@ -424,8 +422,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestOrderPlacedEvent))]
   [JsonSerializable(typeof(TestOrderShippedEvent))]
   [JsonSerializable(typeof(TestCreateOrderCommand))]
-  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext;
 
   /// <summary>
   /// Test composite event — bundles inner events that all inherit the composite's stream at the
@@ -444,8 +441,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestOrderPlacedEvent))]
   [JsonSerializable(typeof(MessageEnvelope<IMessage>))]
   [JsonSerializable(typeof(List<IMessage>))]
-  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class CompositeRoundTripJsonContext : JsonSerializerContext;
 
   /// <summary>Plain (non-composite) event carrying a polymorphic IMessage collection.</summary>
   internal sealed record TestEventWithMessageList(Guid Id, List<IMessage> Items) : IEvent;
@@ -472,8 +468,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(List<IMessage>))]
   [JsonSerializable(typeof(List<IEvent>))]
   [JsonSerializable(typeof(List<ICommand>))]
-  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicCollectionTestJsonContext : JsonSerializerContext;
 
   /// <summary>One-line consumer composite built on the turnkey <see cref="CompositeEventBase"/> helper.
   /// Public so the source generator discovers it and auto-registers its wire metadata — exactly as a
@@ -977,8 +972,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(TestRecordWithPrimitives))]
   [JsonSerializable(typeof(MessageEnvelope<TestRecordWithGuid>))]
   [JsonSerializable(typeof(List<TestRecordWithGuid>))]
-  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task NonNullableGuid_SerializesCorrectlyAsync() {
@@ -1136,8 +1130,7 @@ public partial class JsonContextRegistryTests {
   [JsonSerializable(typeof(MessageEnvelope<TestRecordWithNullablePrimitives>))]
   [JsonSerializable(typeof(List<TestRecordWithNullableGuid>))]
   [JsonSerializable(typeof(TestRecordWithNullableGuid[]))]
-  internal sealed partial class NullablePrimitiveTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class NullablePrimitiveTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task NullableGuid_WithValue_SerializesCorrectlyAsync() {
@@ -1442,8 +1435,7 @@ public partial class JsonContextRegistryTests {
   /// </summary>
   [JsonSerializable(typeof(PolymorphicFallbackTestEvent))]
   [JsonSerializable(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>))]
-  internal sealed partial class PolymorphicFallbackTestJsonContext : JsonSerializerContext {
-  }
+  internal sealed partial class PolymorphicFallbackTestJsonContext : JsonSerializerContext;
 
   [Test]
   public async Task GetTypeInfoByName_WithInterfaceEnvelopeTypeName_ReturnsNullAsync() {

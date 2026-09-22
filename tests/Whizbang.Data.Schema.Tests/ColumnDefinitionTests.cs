@@ -175,9 +175,8 @@ public class ColumnDefinitionTests {
 
   [Test]
   public async Task ColumnDefinition_IsRecordAsync() {
-    // Arrange & Act - Records have compiler-generated EqualityContract property
-    var hasEqualityContract = typeof(ColumnDefinition).GetProperty("EqualityContract",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) != null;
+    // Arrange & Act - Records carry the compiler-generated public clone method
+    var hasEqualityContract = typeof(ColumnDefinition).GetMethod("<Clone>$") is not null;
 
     // Assert
     await Assert.That(hasEqualityContract).IsTrue();

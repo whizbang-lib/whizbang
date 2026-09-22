@@ -351,7 +351,7 @@ public class RabbitMQTransportRecoveryTests {
 /// Fake channel that throws TaskCanceledException on QueueBindAsync.
 /// </summary>
 internal sealed class FakeChannelThatThrowsOnBind : FakeChannel {
-  public override Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+  public override Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, bool noWait = false, CancellationToken cancellationToken = default) {
     throw new TaskCanceledException("A task was canceled.");
   }
 }

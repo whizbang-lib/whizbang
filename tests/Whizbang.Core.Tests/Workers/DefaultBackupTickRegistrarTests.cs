@@ -27,7 +27,7 @@ public class DefaultBackupTickRegistrarTests {
 
   private sealed class FakeSchemaReadyGate(bool isReady) : ISchemaReadyGate {
     public bool IsReady { get; } = isReady;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) =>
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
       IsReady ? Task.CompletedTask : Task.Delay(Timeout.Infinite, cancellationToken);
     public void MarkReady() { }
   }
@@ -90,7 +90,7 @@ public class DefaultBackupTickRegistrarTests {
   }
 
   /// <summary>Counts scheduled-retry wakes and reports how many streams each one woke.</summary>
-  private sealed class _countingCoordinator(int streamsWoken) : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CountingCoordinator(int streamsWoken) : NoOpWorkCoordinator, IWorkCoordinator {
     public int Calls { get; private set; }
     public Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
       Calls++;
@@ -118,7 +118,7 @@ public class DefaultBackupTickRegistrarTests {
     // can fire while migrations are still running. What it calls reads the schedule tables — a
     // query against tables that do not exist yet throws inside a backup tick, on a timer, once
     // per polling cycle, for as long as the migration takes.
-    var coordinator = new _countingCoordinator(streamsWoken: 3);
+    var coordinator = new CountingCoordinator(streamsWoken: 3);
     var (registrar, registry, provider) = _build(schemaReady: false, coordinator);
     await using var _ = provider;
 
@@ -135,7 +135,7 @@ public class DefaultBackupTickRegistrarTests {
     // This tick is the backstop for scheduled retries: without it a retry whose time has come
     // waits for some other signal to wake its stream. Registering it and never calling through is
     // indistinguishable, from the outside, from registering a tick that does nothing at all.
-    var coordinator = new _countingCoordinator(streamsWoken: 3);
+    var coordinator = new CountingCoordinator(streamsWoken: 3);
     var (registrar, registry, provider) = _build(schemaReady: true, coordinator);
     await using var _ = provider;
 
@@ -152,7 +152,7 @@ public class DefaultBackupTickRegistrarTests {
     // The common case by a wide margin: the tick runs on every polling cycle and usually finds
     // nothing. It has to stay silent then — a log line per cycle per process buries the one that
     // reports real work, and this fires for the life of the service.
-    var coordinator = new _countingCoordinator(streamsWoken: 0);
+    var coordinator = new CountingCoordinator(streamsWoken: 0);
     var (registrar, registry, provider) = _build(schemaReady: true, coordinator);
     await using var _ = provider;
 

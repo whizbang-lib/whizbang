@@ -30,7 +30,7 @@ public class AsbReceiveDecisionMakerCoverageTests {
 
   private static JsonTypeInfo? _resolveAlwaysNull(string typeName, JsonSerializerOptions options) => null;
 
-  private sealed class _fakeBinder(Type returnType) : IMessageTypeBinder {
+  private sealed class FakeBinder(Type returnType) : IMessageTypeBinder {
     public Type? Bind(string assemblyQualifiedName) => returnType;
     public (Type? Type, MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) =>
       (returnType, MessageTypeBinderPass.TypeFullNameAcrossAssemblies);
@@ -44,11 +44,11 @@ public class AsbReceiveDecisionMakerCoverageTests {
   /// misconfiguration: two combined source-generated contexts whose <c>JsonTypeInfo</c> objects
   /// carry their own originating <c>Options</c>, queried through a third combined instance.
   /// </summary>
-  private sealed class _foreignOptionsResolver(JsonTypeInfo foreignTypeInfo) : IJsonTypeInfoResolver {
+  private sealed class ForeignOptionsResolver(JsonTypeInfo foreignTypeInfo) : IJsonTypeInfoResolver {
     public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) => foreignTypeInfo;
   }
 
-  private sealed class _fakeRawReceptor(string targetName) : IRawReceptor {
+  private sealed class FakeRawReceptor(string targetName) : IRawReceptor {
     public string TargetMessageTypeName { get; } = targetName;
     public Task HandleAsync(JsonElement payload, CancellationToken cancellationToken) => Task.CompletedTask;
   }
@@ -64,12 +64,12 @@ public class AsbReceiveDecisionMakerCoverageTests {
     var foreignOptions = new JsonSerializerOptions { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
     var foreignTypeInfo = foreignOptions.GetTypeInfo(typeof(string));
     var badOptions = new JsonSerializerOptions {
-      TypeInfoResolver = new _foreignOptionsResolver(foreignTypeInfo)
+      TypeInfoResolver = new ForeignOptionsResolver(foreignTypeInfo)
     };
     var decider = new AsbReceiveDecisionMaker();
     // The binder's return type is arbitrary -- only its "loadable but not servable through this
     // options instance" shape matters, so a BCL type keeps the test double honest and simple.
-    var binder = new _fakeBinder(typeof(string));
+    var binder = new FakeBinder(typeof(string));
     var props = _withEnvelopeType("MyApp.Events.Foo, MyApp.Contracts");
 
     var decision = decider.Decide(
@@ -113,7 +113,7 @@ public class AsbReceiveDecisionMakerCoverageTests {
   [Test]
   public async Task Decide_TypeInfoMisses_RawReceptorRegistered_BodyMissingPayloadProperty_FallsThroughToAckAndDropAsync() {
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
-    var receptor = new _fakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
+    var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
     var rawRegistry = new RawReceptorRegistry([receptor]);
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType(envelopeType);

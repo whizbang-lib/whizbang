@@ -26,9 +26,6 @@ public class PgSharedNotifyConnectionTests {
   private static IConfiguration _emptyConfig() =>
     new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
-  private static IConfiguration _configWith(string key, string value) =>
-    new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [key] = value }).Build();
-
   private static PgSharedNotifyConnection _build(WhizbangNotificationOptions opts, IConfiguration? cfg = null) {
     cfg ??= _emptyConfig();
     return new PgSharedNotifyConnection(

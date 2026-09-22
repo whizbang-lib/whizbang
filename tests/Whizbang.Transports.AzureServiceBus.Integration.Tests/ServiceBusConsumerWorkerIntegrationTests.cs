@@ -4,18 +4,22 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Transport;
+using Whizbang.Testing.Workers;
 using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 using EnvelopeSerializer = Whizbang.Core.Messaging.EnvelopeSerializer;
 
@@ -30,7 +34,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]
@@ -49,16 +53,18 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -68,10 +74,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     // Drain existing messages
@@ -95,13 +106,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       // (the DistinctMessageIdAwaiter lesson applied at this seam). Snapshot before
       // enumerating: the worker appends concurrently.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.ToArray().Any(m => m.MessageId == envelope.MessageId.Value),
+        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert
       await Assert.That(processed).IsTrue();
 
-      var inbox = capturedInboxMessages.ToArray().First(m => m.MessageId == envelope.MessageId.Value);
+      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
       // TestMessage does not implement IEvent, so isEvent is false
       await Assert.That(inbox.IsEvent).IsFalse();
     } finally {
@@ -122,6 +133,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await transport.InitializeAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => new CapturingWorkCoordinatorStrategy([]));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
@@ -130,17 +142,22 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: new TestConsumerLogger(),
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] });
 
     // The pipeline itself is drained (no blocking steps) — readiness now hangs ONLY on the broker.
     var state = new Whizbang.Core.Startup.StartupPipelineState();
-    await new Whizbang.Core.Startup.StartupPipelineRunner([], [state]).RunAsync(CancellationToken.None);
+    await new Whizbang.Core.Startup.StartupPipelineRunner(steps: [], observers: [state], dutyElector: NullDutyElector.Instance).RunAsync(CancellationToken.None);
     var signal = new Whizbang.Core.Startup.StartupReadySignal();
-    var readyService = new Whizbang.Core.Startup.StartupReadyService(state, signal, [worker]);
+    var readyService = new Whizbang.Core.Startup.StartupReadyService(pipelineState: state, signal: signal, contributors: [worker], logger: NullLogger<StartupReadyService>.Instance);
 
     var startedTask = readyService.StartedAsync(CancellationToken.None);
     await Task.Delay(TimeSpan.FromSeconds(2));
@@ -167,7 +184,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await transport.InitializeAsync();
 
     IScopeContext? capturedScope = null;
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(
       capturedInboxMessages,
       onFlush: sp => {
@@ -176,12 +194,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       });
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -191,10 +210,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
@@ -210,7 +234,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       await transport.PublishAsync(envelope, destination);
 
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => !capturedInboxMessages.IsEmpty,
         TimeSpan.FromSeconds(30));
 
       await Assert.That(processed).IsTrue();
@@ -236,12 +260,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new DuplicateDetectingStrategy(processedMessageIds, () => flushCount++);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -251,10 +276,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
@@ -291,11 +321,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -308,10 +339,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     // Act: Start creates subscriptions, stop disposes them
@@ -336,11 +372,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -350,10 +387,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     await worker.StartAsync(CancellationToken.None);
@@ -381,11 +423,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     // Use DestinationFilter to test that code path
@@ -396,10 +439,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     // Act: Start should handle filter metadata without errors
@@ -423,16 +471,18 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -442,10 +492,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
@@ -485,16 +540,18 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var capturedInboxMessages = new List<InboxMessage>();
+    // The worker appends from the processor's thread while the test polls, so the capture is thread-safe.
+    var capturedInboxMessages = new System.Collections.Concurrent.ConcurrentQueue<InboxMessage>();
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
-    var orderedProcessor = new OrderedStreamProcessor();
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance);
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
@@ -504,10 +561,15 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var worker = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: jsonOptions,
       logger: logger,
       orderedProcessor: orderedProcessor,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      envelopeSerializer: new EnvelopeSerializer(jsonOptions),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
       options: options);
 
     await _drainMessagesAsync("topic-00", "sub-00-a");
@@ -637,9 +699,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   /// Work coordinator strategy that captures inbox messages and returns them as work items.
   /// </summary>
   private sealed class CapturingWorkCoordinatorStrategy(
-      List<InboxMessage> capturedMessages,
+      System.Collections.Concurrent.ConcurrentQueue<InboxMessage> capturedMessages,
       Action<IServiceProvider?>? onFlush = null) : IWorkCoordinatorStrategy {
-    private readonly List<InboxMessage> _capturedMessages = capturedMessages;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<InboxMessage> _capturedMessages = capturedMessages;
     private readonly Action<IServiceProvider?>? _onFlush = onFlush;
     private InboxMessage? _pendingMessage;
 
@@ -647,13 +709,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     public void QueueInboxMessage(InboxMessage message) {
       _pendingMessage = message;
-      _capturedMessages.Add(message);
+      _capturedMessages.Enqueue(message);
     }
 
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -703,10 +765,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       _pendingMessage = message;
     }
 
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);
@@ -759,10 +821,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   private sealed class NoOpWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
 
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
       return FlushAndGetBatchAsync(flags, ct);

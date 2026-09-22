@@ -29,13 +29,13 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
     IOptions<PerspectiveCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<PerspectiveCompletionFlushWorker> logger,
-    IPinnedConnectionPool? pinnedPool = null) {
+    IPinnedConnectionPool pinnedPool) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<PerspectiveCompletionItem>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -107,7 +107,12 @@ public sealed partial class PerspectiveCompletionFlushWorker : BackgroundService
 /// <summary>Discriminated payload carried by the perspective-completion channel.</summary>
 public sealed record PerspectiveCompletionItem(Guid? EventWorkId, PerspectiveCursorCompletion? Cursor);
 
-/// <summary>Channel surface for the PerspectiveProcessWorker to enqueue completions.</summary>
+/// <summary>
+/// Channel through which the perspective worker reports completed perspective work and advanced
+/// cursors. The completion flush worker drains it and acknowledges the work in batches. Replaceable;
+/// the default is the flush worker itself.
+/// </summary>
+/// <docs>operations/workers/perspective-worker</docs>
 public interface IPerspectiveCompletionChannel {
   /// <summary>Enqueue a perspective_event work id to be marked complete (deleted in production mode).</summary>
   ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default);

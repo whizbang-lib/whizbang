@@ -7,6 +7,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Generators;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators.Tests;
@@ -30,21 +31,9 @@ namespace Whizbang.Generators.Tests;
 /// of the real types can ever have zero constructor arguments.
 /// </remarks>
 public class CompileTimeMessageClassificationCoverageTests {
-  private static readonly Type _classificationType = typeof(AttributeArgNamingHelper).Assembly
-    .GetType("Whizbang.Generators.CompileTimeMessageClassification")
-    ?? throw new InvalidOperationException("Whizbang.Generators.CompileTimeMessageClassification not found — check the type's namespace/name.");
+  private static string _detectMessageKind(ITypeSymbol type) => CompileTimeMessageClassification.DetectMessageKind(type);
 
-  private static string _detectMessageKind(ITypeSymbol type) {
-    var method = _classificationType.GetMethod("DetectMessageKind", BindingFlags.NonPublic | BindingFlags.Static)
-      ?? throw new InvalidOperationException("CompileTimeMessageClassification.DetectMessageKind(ITypeSymbol) not found.");
-    return (string)method.Invoke(null, [type])!;
-  }
-
-  private static ImmutableArray<string> _fireAtStagesOf(INamedTypeSymbol receptorClass) {
-    var method = _classificationType.GetMethod("FireAtStagesOf", BindingFlags.NonPublic | BindingFlags.Static)
-      ?? throw new InvalidOperationException("CompileTimeMessageClassification.FireAtStagesOf(INamedTypeSymbol) not found.");
-    return (ImmutableArray<string>)method.Invoke(null, [receptorClass])!;
-  }
+  private static ImmutableArray<string> _fireAtStagesOf(INamedTypeSymbol receptorClass) => CompileTimeMessageClassification.FireAtStagesOf(receptorClass);
 
   private static INamedTypeSymbol _classSymbolFor(string source, string typeName) {
     var compilation = GeneratorTestHelper.CreateCompilation(source);

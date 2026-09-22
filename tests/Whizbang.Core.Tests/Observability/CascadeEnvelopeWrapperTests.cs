@@ -14,16 +14,19 @@ namespace Whizbang.Core.Tests.Observability;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Direct tests for the internal <see cref="CascadeEnvelopeWrapper"/> — used by the
 /// dispatcher cascade path to flip <see cref="MessageDispatchContext.IsDefaultDispatch"/>
 /// to true without rebuilding the envelope. Every property + every method must
 /// delegate to the inner envelope unchanged EXCEPT DispatchContext, which is a
 /// fresh value with the default-dispatch flag set.
-///
+/// </para>
+/// <para>
 /// Why a wrapper instead of a clone: the envelope can carry heavy payloads, hop
 /// lists, and receptor-invocation history; copying them per cascade would be
 /// wasteful. The wrapper enforces "delegate everything else" — this test pins
 /// that delegation so a future cleanup can't accidentally diverge a property.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/dispatcher/dispatcher#cascade-default-dispatch</docs>
 public class CascadeEnvelopeWrapperTests {

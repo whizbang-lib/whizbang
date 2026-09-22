@@ -38,7 +38,7 @@ public sealed partial class RepairDrainWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     if (!_options.RepairDrainEnabled || _options.RepairDrainRatePerSecond <= 0) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.InfiniteTimeSpan, _time, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.InfiniteTimeSpan, _time, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
     try {

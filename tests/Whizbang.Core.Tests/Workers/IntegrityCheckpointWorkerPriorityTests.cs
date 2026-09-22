@@ -31,7 +31,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
   public async Task RunCheckpointOnce_WithTransport_EveryTopicCopyIsBackgroundAsync() {
     var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
     var usersType = typeof(CheckpointTopicProbes.Users.UsersProbeEvent);
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow {
         FromCommitSequence = 5,
         ToCommitSequence = 9,
@@ -39,8 +39,8 @@ public class IntegrityCheckpointWorkerPriorityTests {
       },
       OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType), TypeNameFormatter.Format(usersType)],
     };
-    var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport, new _catalog(ordersType, usersType));
+    var transport = new CaptureTransport();
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport, new Catalog(ordersType, usersType));
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -53,10 +53,10 @@ public class IntegrityCheckpointWorkerPriorityTests {
 
   [Test]
   public async Task RunCheckpointOnce_DispatcherFallback_PublishesInsideABackgroundHandlingAsync() {
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow { FromCommitSequence = 0, ToCommitSequence = 4, Buckets = [] },
     };
-    var dispatcher = new _captureDispatcher();
+    var dispatcher = new CaptureDispatcher();
     var worker = _buildWorker(coordinator, dispatcher, transport: null, catalog: null);
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
@@ -69,10 +69,10 @@ public class IntegrityCheckpointWorkerPriorityTests {
 
   [Test]
   public async Task RunCheckpointOnce_DoesNotLeaveTheBackgroundHandlingBehindAsync() {
-    var coordinator = new _checkpointCoordinator {
+    var coordinator = new CheckpointCoordinator {
       Window = new IntegrityCheckpointWindow { FromCommitSequence = 0, ToCommitSequence = 4, Buckets = [] },
     };
-    var worker = _buildWorker(coordinator, new _captureDispatcher(), transport: null, catalog: null);
+    var worker = _buildWorker(coordinator, new CaptureDispatcher(), transport: null, catalog: null);
 
     await worker.RunCheckpointOnceAsync(CancellationToken.None);
 
@@ -81,11 +81,11 @@ public class IntegrityCheckpointWorkerPriorityTests {
   }
 
   private static IntegrityCheckpointWorker _buildWorker(
-      _checkpointCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport? transport, IMessageTypeCatalog? catalog) {
+      CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, CaptureTransport? transport, IMessageTypeCatalog? catalog) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("origin-svc"));
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
       services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -105,7 +105,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }
 
-  private sealed class _checkpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public IntegrityCheckpointWindow? Window { get; init; }
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public List<string> OwnAuditedEventTypes { get; init; } = [];
@@ -118,7 +118,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
   }
 
   /// <summary>Records what was published and the ambient parent the producer hooks would have inherited from.</summary>
-  private sealed class _captureDispatcher : FakeDispatcher, IDispatcher {
+  private sealed class CaptureDispatcher : FakeDispatcher, IDispatcher {
     public List<(object Message, int AmbientParent)> Published { get; } = [];
     public new Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add((eventData!, PriorityContext.CurrentParent));
@@ -126,7 +126,7 @@ public class IntegrityCheckpointWorkerPriorityTests {
     }
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -139,12 +139,12 @@ public class IntegrityCheckpointWorkerPriorityTests {
     };
   }
 
-  private sealed class _catalog(params Type[] eventTypes) : IMessageTypeCatalog {
+  private sealed class Catalog(params Type[] eventTypes) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
       [.. eventTypes.Select(t => new MessageTypeCatalogEntry(t, TypeNameFormatter.Format(t), "event", null))];
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

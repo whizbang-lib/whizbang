@@ -173,12 +173,7 @@ public class PooledSourcePoolTests {
 
     // Assert - SOME instances should be from our original set (proves pooling works)
     // Note: Can't expect ALL because pool is static and shared across tests
-    int matchCount = 0;
-    foreach (var r in reused) {
-      if (sources.Any(s => object.ReferenceEquals(s, r))) {
-        matchCount++;
-      }
-    }
+    var matchCount = reused.Count(r => sources.Any(s => ReferenceEquals(s, r)));
 
     // At least SOME reuse should occur (conservative threshold)
     await Assert.That(matchCount).IsGreaterThanOrEqualTo(operationCount / 10);

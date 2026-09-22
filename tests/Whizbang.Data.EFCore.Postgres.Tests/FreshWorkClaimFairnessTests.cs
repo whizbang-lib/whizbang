@@ -44,7 +44,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
       FROM m";
     ins.Parameters.AddWithValue("inst", instanceId);
     ins.Parameters.AddWithValue("n", streams);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     ins.Parameters.AddWithValue("age", ageOffset);
     await ins.ExecuteNonQueryAsync();
   }
@@ -64,7 +64,7 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
     return (fresh, retry);
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   [Test]

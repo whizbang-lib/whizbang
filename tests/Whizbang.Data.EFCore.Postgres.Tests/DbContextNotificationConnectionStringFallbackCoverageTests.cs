@@ -23,12 +23,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class DbContextNotificationConnectionStringFallbackCoverageTests {
 
-  private sealed class _FallbackTestDbContext(DbContextOptions<_FallbackTestDbContext> options) : DbContext(options) { }
+  private sealed class FallbackTestDbContext(DbContextOptions<FallbackTestDbContext> options) : DbContext(options) { }
 
   /// <summary>DbContext whose model declares a default schema, so <c>GetSearchPath</c> has a
   /// non-null value to prove caching against (unlike the unconfigured contexts elsewhere in
   /// this file, whose default schema is trivially null either way).</summary>
-  private sealed class _SchemaTestDbContext(DbContextOptions<_SchemaTestDbContext> options) : DbContext(options) {
+  private sealed class SchemaTestDbContext(DbContextOptions<SchemaTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.HasDefaultSchema("svc_schema");
     }
@@ -41,9 +41,9 @@ public class DbContextNotificationConnectionStringFallbackCoverageTests {
   [Test]
   public async Task GetSearchPath_CalledTwice_SecondCallReturnsTheCachedSchemaAsync() {
     var services = new ServiceCollection();
-    services.AddDbContext<_SchemaTestDbContext>(o => o.UseNpgsql("Host=schema-cache.local;Database=db"));
+    services.AddDbContext<SchemaTestDbContext>(o => o.UseNpgsql("Host=schema-cache.local;Database=db"));
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_SchemaTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(SchemaTestDbContext));
 
     var first = fallback.GetSearchPath();
     var second = fallback.GetSearchPath();
@@ -60,9 +60,9 @@ public class DbContextNotificationConnectionStringFallbackCoverageTests {
   [Test]
   public async Task GetSearchPath_NoProviderConfigured_TreatsItAsNoSchemaKnownAsync() {
     var services = new ServiceCollection();
-    services.AddDbContext<_FallbackTestDbContext>(_ => { });
+    services.AddDbContext<FallbackTestDbContext>(_ => { });
     await using var sp = services.BuildServiceProvider();
-    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(FallbackTestDbContext));
 
     var result = fallback.GetSearchPath();
 

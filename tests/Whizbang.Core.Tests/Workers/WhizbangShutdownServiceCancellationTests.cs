@@ -21,7 +21,7 @@ public class WhizbangShutdownServiceCancellationTests {
 
   [Test]
   public async Task StopAsync_WithAlreadyCanceledToken_DoesNotForwardCancellationToDeregistrationAsync() {
-    var coordinator = new _RecordingCoordinator();
+    var coordinator = new RecordingCoordinator();
     var service = _build(coordinator, out _);
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
@@ -36,7 +36,7 @@ public class WhizbangShutdownServiceCancellationTests {
 
   [Test]
   public async Task StopAsync_WhenDeregistrationIsCanceled_DoesNotThrowAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
+    var coordinator = new RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
     var service = _build(coordinator, out _);
 
     // Must not escape StopAsync — Host.StopAsync rethrows, which is what produces the crash exit.
@@ -51,7 +51,7 @@ public class WhizbangShutdownServiceCancellationTests {
 
   [Test]
   public async Task StopAsync_WhenDeregistrationIsCanceled_LogsTheAbandonmentAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
+    var coordinator = new RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
     var service = _build(coordinator, out var logger);
 
     await service.StopAsync(CancellationToken.None);
@@ -63,7 +63,7 @@ public class WhizbangShutdownServiceCancellationTests {
 
   [Test]
   public async Task StopAsync_WhenDeregistrationFaults_SwallowsAndLogsAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new InvalidOperationException("boom") };
+    var coordinator = new RecordingCoordinator { ThrowOnDeregister = new InvalidOperationException("boom") };
     var service = _build(coordinator, out var logger);
 
     await service.StopAsync(CancellationToken.None);
@@ -84,25 +84,25 @@ public class WhizbangShutdownServiceCancellationTests {
     await Assert.That(options.ShutdownDeregistrationTimeout).IsLessThan(TimeSpan.FromSeconds(30));
   }
 
-  private static WhizbangShutdownService _build(IWorkCoordinator coordinator, out _CapturingLogger logger) {
+  private static WhizbangShutdownService _build(IWorkCoordinator coordinator, out CapturingLogger logger) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
-    logger = new _CapturingLogger();
+    logger = new CapturingLogger();
     return new WhizbangShutdownService(
-      services.BuildServiceProvider(), new _StubInstanceProvider(), new WhizbangCoreOptions(), logger);
+      services.BuildServiceProvider(), new StubInstanceProvider(), new WhizbangCoreOptions(), logger);
   }
 
-  private sealed record _Entry(LogLevel Level, string Message);
+  private sealed record Entry(LogLevel Level, string Message);
 
-  private sealed class _CapturingLogger : ILogger<WhizbangShutdownService> {
-    public List<_Entry> Entries { get; } = [];
+  private sealed class CapturingLogger : ILogger<WhizbangShutdownService> {
+    public List<Entry> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-      Entries.Add(new _Entry(logLevel, formatter(state, exception)));
+      Entries.Add(new Entry(logLevel, formatter(state, exception)));
   }
 
-  private sealed class _StubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-service";
     public string HostName => "test-host";
@@ -116,7 +116,7 @@ public class WhizbangShutdownServiceCancellationTests {
   }
 
   /// <summary>Records the token deregistration actually received, and can fail on demand.</summary>
-  private sealed class _RecordingCoordinator : IWorkCoordinator {
+  private sealed class RecordingCoordinator : IWorkCoordinator {
     public bool WasCalled { get; private set; }
     public bool ReceivedCanceledToken { get; private set; }
     public Exception? ThrowOnDeregister { get; init; }
@@ -127,7 +127,7 @@ public class WhizbangShutdownServiceCancellationTests {
       return ThrowOnDeregister is not null ? Task.FromException(ThrowOnDeregister) : Task.CompletedTask;
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
@@ -140,8 +140,5 @@ public class WhizbangShutdownServiceCancellationTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 }

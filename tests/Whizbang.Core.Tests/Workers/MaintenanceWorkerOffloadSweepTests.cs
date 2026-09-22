@@ -52,11 +52,11 @@ public class MaintenanceWorkerOffloadSweepTests {
     public List<string> Removed { get; } = [];
     private int _batches;
 
-    public Task<bool> TryClaimOffloadSweepAsync(TimeSpan claimWindow, CancellationToken ct = default)
+    public Task<bool> TryClaimOffloadSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default)
       => Task.FromResult(GrantSweep);
 
     public Task<IReadOnlyList<OffloadClaimRecord>> GetExpiredOffloadClaimsAsync(
-        TimeSpan olderThan, int batchSize, CancellationToken ct = default) {
+        TimeSpan olderThan, int batchSize, CancellationToken cancellationToken = default) {
       if (ScanThrows is not null) {
         return Task.FromException<IReadOnlyList<OffloadClaimRecord>>(ScanThrows);
       }
@@ -66,7 +66,7 @@ public class MaintenanceWorkerOffloadSweepTests {
     }
 
     public Task RemoveOffloadClaimsAsync(
-        IReadOnlyCollection<string> storageKeys, CancellationToken ct = default) {
+        IReadOnlyCollection<string> storageKeys, CancellationToken cancellationToken = default) {
       if (RemoveThrows is not null) {
         return Task.FromException(RemoveThrows);
       }
@@ -74,17 +74,17 @@ public class MaintenanceWorkerOffloadSweepTests {
       return Task.CompletedTask;
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -92,7 +92,7 @@ public class MaintenanceWorkerOffloadSweepTests {
     public string ProviderName => providerName;
     public List<string> Deleted { get; } = [];
 
-    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken ct = default) {
+    public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default) {
       if (deleteThrows is not null) {
         return Task.FromException(deleteThrows);
       }
@@ -102,10 +102,10 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     public Task<MessageBodyClaim> UploadAsync(
         ReadOnlyMemory<byte> body, string contentType, MessageBodyUploadOptions? options = null,
-        CancellationToken ct = default) => throw new NotImplementedException();
+        CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task<ReadOnlyMemory<byte>> DownloadAsync(
         MessageBodyClaim claim, MessageBodyDownloadOptions? options = null,
-        CancellationToken ct = default) => throw new NotImplementedException();
+        CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
@@ -225,7 +225,7 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is InvalidOperationException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is InvalidOperationException)];
     }
     await Assert.That(failures).IsNotEmpty();
   }
@@ -254,7 +254,7 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is InvalidOperationException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is InvalidOperationException)];
     }
 
     await Assert.That(failures).IsNotEmpty();
@@ -305,7 +305,7 @@ public class MaintenanceWorkerOffloadSweepTests {
              + "the record a later cycle needs to finish the job");
     List<LogEntry> failures;
     lock (logger.Entries) {
-      failures = logger.Entries.Where(e => e.Exception is OperationCanceledException).ToList();
+      failures = [.. logger.Entries.Where(e => e.Exception is OperationCanceledException)];
     }
     await Assert.That(failures).IsEmpty()
       .Because("a shutdown logged as a sweep failure is noise on every deploy");

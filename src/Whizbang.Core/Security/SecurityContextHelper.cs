@@ -61,7 +61,9 @@ public static partial class SecurityContextHelper {
 
     if (securityContext is not null) {
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      accessor?.Current = securityContext;
+      if (accessor is not null) {
+        accessor.Current = securityContext;
+      }
     }
 
     return securityContext;
@@ -126,7 +128,9 @@ public static partial class SecurityContextHelper {
     // CRITICAL: Set InitiatingContext on IScopeContextAccessor — establishes IMessageContext as the SOURCE OF
     // TRUTH for security context. AsyncLocal carries a REFERENCE to this IMessageContext, not a copy.
     var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
-    scopeContextAccessor?.InitiatingContext = messageContext;
+    if (scopeContextAccessor is not null) {
+      scopeContextAccessor.InitiatingContext = messageContext;
+    }
 
     return messageContext;
   }
@@ -176,7 +180,9 @@ public static partial class SecurityContextHelper {
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (for GetSecurityFromAmbient)
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      accessor?.Current = immutableScope;
+      if (accessor is not null) {
+        accessor.Current = immutableScope;
+      }
     }
 
     // Step 4: Set message context with the resolved scope

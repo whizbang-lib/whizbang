@@ -43,10 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </description></item>
 /// </list>
 /// </remarks>
-public sealed class WorkCostRecorder {
-  private readonly string _connectionString;
-
-  public WorkCostRecorder(string connectionString) => _connectionString = connectionString;
+public sealed class WorkCostRecorder(string connectionString) {
+  private readonly string _connectionString = connectionString;
 
   /// <summary>Per-table counters: what the tables gave up.</summary>
   public readonly record struct TableCost(
@@ -146,7 +144,7 @@ public sealed class WorkCostRecorder {
         FROM pg_statio_user_indexes i GROUP BY i.relid
       ) x ON x.relid = u.relid
       WHERE u.relname = ANY(@tables)";
-    cmd.Parameters.AddWithValue("tables", tables.ToArray());
+    cmd.Parameters.AddWithValue(nameof(tables), tables.ToArray());
     var costs = new Dictionary<string, TableCost>(StringComparer.Ordinal);
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {

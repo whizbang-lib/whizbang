@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -18,12 +19,12 @@ namespace Whizbang.Core.Tests.Startup;
 /// </summary>
 public class StandbyHandshakeCoverageTests {
 
-  private sealed class _fakeFleetSource(IReadOnlyList<FleetInstanceStatus> fleet) : IStartupFleetStatusSource {
+  private sealed class FakeFleetSource(IReadOnlyList<FleetInstanceStatus> fleet) : IStartupFleetStatusSource {
     public Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) =>
       Task.FromResult(fleet);
   }
 
-  private sealed class _fakeInstanceProvider(Guid instanceId) : IServiceInstanceProvider {
+  private sealed class FakeInstanceProvider(Guid instanceId) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = instanceId;
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -45,7 +46,10 @@ public class StandbyHandshakeCoverageTests {
   [Test]
   public async Task AwaitPeersStandingByAsync_UnreadableVersion_ThrowsArgumentExceptionAsync() {
     var handshake = new StandbyHandshake(
-      _emptyScopeFactory(), new _fakeFleetSource([]), new _fakeInstanceProvider(Guid.NewGuid()));
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: new FakeFleetSource([]),
+      instanceProvider: new FakeInstanceProvider(Guid.NewGuid()),
+      logger: NullLogger<StandbyHandshake>.Instance);
 
     await Assert.That(async () => await handshake.AwaitPeersStandingByAsync("not-a-version", CancellationToken.None))
       .Throws<ArgumentException>()
@@ -68,7 +72,10 @@ public class StandbyHandshakeCoverageTests {
       new(newerPeer, "svc", "host", DateTimeOffset.UtcNow, [], LifecyclePhase: "Running", LibraryVersion: "99.0.0"),
     };
     var handshake = new StandbyHandshake(
-      _emptyScopeFactory(), new _fakeFleetSource(fleet), new _fakeInstanceProvider(self));
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: new FakeFleetSource(fleet),
+      instanceProvider: new FakeInstanceProvider(self),
+      logger: NullLogger<StandbyHandshake>.Instance);
 
     var acknowledged = await handshake.AwaitPeersStandingByAsync("1.0.0", CancellationToken.None);
 

@@ -23,26 +23,25 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Unit")]
 public class CompositeInboxFanoutIdentityAndSubscriptionTests {
 
-  private sealed record _rowAdded(string Id) : IEvent;
-  private sealed record _rowRemoved(string Id) : IEvent;
+  private sealed record FakeRowAdded(string Id) : IEvent;
+  private sealed record RowRemoved(string Id) : IEvent;
 
-  private sealed class _composite(params IMessage[] inner) : ICompositeEvent {
+  private sealed class Composite(params IMessage[] inner) : ICompositeEvent {
     public IEnumerable<IMessage> InnerEvents => inner;
   }
 
   /// <summary>A raw bundle that carries no child ids: the shape a producer's transport packaging has.</summary>
-  private sealed class _rawBundle(Guid streamId, params (string Type, string Json)[] inner) : IRawInnerComposite {
+  private sealed class RawBundle(params (string Type, string Json)[] inner) : IRawInnerComposite {
     public IEnumerable<IMessage> InnerEvents => [];
     public IReadOnlyList<JsonElement> InnerPayloads { get; } = [.. inner.Select(i => JsonSerializer.Deserialize<JsonElement>(i.Json))];
     public IReadOnlyList<string> InnerTypeNames { get; } = [.. inner.Select(i => i.Type)];
-    public Guid StreamId => streamId;
   }
 
-  private sealed class _emptyCatalog : IEventTypeProvider {
+  private sealed class EmptyCatalog : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
-  private sealed class _serializer : IEnvelopeSerializer {
+  private sealed class Serializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var aqn = envelope.Payload!.GetType().AssemblyQualifiedName!;
       var jsonEnv = new MessageEnvelope<JsonElement> {
@@ -57,9 +56,9 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   }
 
   private static ServiceProvider _scope(bool withEmptyCatalog = false) {
-    var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new _serializer());
+    var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new Serializer());
     if (withEmptyCatalog) {
-      services.AddSingleton<IEventTypeProvider>(new _emptyCatalog());
+      services.AddSingleton<IEventTypeProvider>(new EmptyCatalog());
     }
     return services.BuildServiceProvider();
   }
@@ -84,7 +83,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   public async Task TryExpand_TypedComposite_ExpandedTwice_YieldsTheSameChildIdsAsync() {
     var streamId = Guid.CreateVersion7();
     var compositeId = Guid.CreateVersion7();
-    var composite = new _composite(new _rowAdded("a"), new _rowAdded("b"), new _rowRemoved("c"));
+    var composite = new Composite(new FakeRowAdded("a"), new FakeRowAdded("b"), new RowRemoved("c"));
 
     var first = CompositeInboxFanout.TryExpand(composite, _source(streamId, compositeId), _scope());
     var second = CompositeInboxFanout.TryExpand(composite, _source(streamId, compositeId), _scope());
@@ -101,7 +100,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   [Test]
   public async Task TryExpand_TypedComposite_ChildIdsFollowTheCompositeIdAsync() {
     var streamId = Guid.CreateVersion7();
-    var composite = new _composite(new _rowAdded("a"));
+    var composite = new Composite(new FakeRowAdded("a"));
 
     var one = CompositeInboxFanout.TryExpand(composite, _source(streamId, Guid.CreateVersion7()), _scope());
     var other = CompositeInboxFanout.TryExpand(composite, _source(streamId, Guid.CreateVersion7()), _scope());
@@ -114,7 +113,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   public async Task TryExpand_RawBundleWithoutChildIds_ExpandedTwice_YieldsTheSameChildIdsAsync() {
     var streamId = Guid.CreateVersion7();
     var compositeId = Guid.CreateVersion7();
-    var bundle = new _rawBundle(streamId, ("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"), ("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":2}"));
+    var bundle = new RawBundle(("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"), ("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":2}"));
 
     var first = CompositeInboxFanout.TryExpand(bundle, _source(streamId, compositeId), _scope());
     var second = CompositeInboxFanout.TryExpand(bundle, _source(streamId, compositeId), _scope());
@@ -146,7 +145,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
 
   [Test]
   public async Task TryExpand_TypedChildMissingFromTheCatalog_IsStillAnEvent_WhenItIsOneAsync() {
-    var composite = new _composite(new _rowAdded("a"));
+    var composite = new Composite(new FakeRowAdded("a"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _source(Guid.CreateVersion7()), _scope(withEmptyCatalog: true));
 
@@ -157,7 +156,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   [Test]
   public async Task TryExpand_RawChildMissingFromTheCatalog_IsAnEventAsync() {
     var streamId = Guid.CreateVersion7();
-    var bundle = new _rawBundle(streamId, ("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"));
+    var bundle = new RawBundle(("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"));
 
     var result = CompositeInboxFanout.TryExpand(bundle, _source(streamId), _scope(withEmptyCatalog: true));
 
@@ -169,16 +168,16 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
 
   [Test]
   public async Task TryExpand_WithAConsumerPredicate_DropsChildrenNobodySubscribesTo_AndCountsThemAsync() {
-    var composite = new _composite(new _rowAdded("a"), new _rowRemoved("b"), new _rowAdded("c"));
+    var composite = new Composite(new FakeRowAdded("a"), new RowRemoved("b"), new FakeRowAdded("c"));
 
     var result = CompositeInboxFanout.TryExpand(
       composite, _source(Guid.CreateVersion7()), _scope(),
-      hasConsumer: typeName => typeName.Contains(nameof(_rowAdded), StringComparison.Ordinal));
+      hasConsumer: typeName => typeName.Contains(nameof(FakeRowAdded), StringComparison.Ordinal));
 
     await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
     await Assert.That(result.Children.Count).IsEqualTo(2)
       .Because("a child the consumer has no handler for would be stored, leased, fetched and then discarded; dropping it here costs nothing");
-    await Assert.That(result.Children.All(c => c.MessageType.Contains(nameof(_rowAdded), StringComparison.Ordinal))).IsTrue();
+    await Assert.That(result.Children.All(c => c.MessageType.Contains(nameof(FakeRowAdded), StringComparison.Ordinal))).IsTrue();
     await Assert.That(result.UnsubscribedChildren).IsEqualTo(1)
       .Because("the drop is counted so the meters can show how much of a composite a consumer actually wanted");
   }
@@ -186,7 +185,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   [Test]
   public async Task TryExpand_WithAConsumerPredicate_RawBundle_DropsUnsubscribedChildrenAsync() {
     var streamId = Guid.CreateVersion7();
-    var bundle = new _rawBundle(streamId, ("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"), ("Contracts.Job.RowRemovedEvent, Contracts", "{\"v\":2}"));
+    var bundle = new RawBundle(("Contracts.Job.RowAddedEvent, Contracts", "{\"v\":1}"), ("Contracts.Job.RowRemovedEvent, Contracts", "{\"v\":2}"));
 
     var result = CompositeInboxFanout.TryExpand(bundle, _source(streamId), _scope(), hasConsumer: t => t.StartsWith("Contracts.Job.RowAdded", StringComparison.Ordinal));
 
@@ -196,7 +195,7 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
 
   [Test]
   public async Task TryExpand_WithoutAPredicate_KeepsEveryChildAsync() {
-    var composite = new _composite(new _rowAdded("a"), new _rowRemoved("b"));
+    var composite = new Composite(new FakeRowAdded("a"), new RowRemoved("b"));
 
     var result = CompositeInboxFanout.TryExpand(composite, _source(Guid.CreateVersion7()), _scope());
 
@@ -212,9 +211,9 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
     // could not match them up.
     var streamId = Guid.CreateVersion7();
     var compositeId = Guid.CreateVersion7();
-    var composite = new _composite(new _rowRemoved("x"), new _rowAdded("a"));
+    var composite = new Composite(new RowRemoved("x"), new FakeRowAdded("a"));
 
-    var filtered = CompositeInboxFanout.TryExpand(composite, _source(streamId, compositeId), _scope(), hasConsumer: t => t.Contains(nameof(_rowAdded), StringComparison.Ordinal));
+    var filtered = CompositeInboxFanout.TryExpand(composite, _source(streamId, compositeId), _scope(), hasConsumer: t => t.Contains(nameof(FakeRowAdded), StringComparison.Ordinal));
     var full = CompositeInboxFanout.TryExpand(composite, _source(streamId, compositeId), _scope());
 
     await Assert.That(filtered.Children[0].MessageId).IsEqualTo(full.Children[1].MessageId)

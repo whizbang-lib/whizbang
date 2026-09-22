@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Whizbang.Core.Lenses;
@@ -167,10 +168,8 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Aggregate: union across all claim types, deduplicated.
     var seen = new HashSet<string>(StringComparer.Ordinal);
     foreach (var claimType in claimTypes) {
-      foreach (var claim in context.User.FindAll(claimType)) {
-        if (!string.IsNullOrEmpty(claim.Value) && seen.Add(claim.Value)) {
-          yield return claim.Value;
-        }
+      foreach (var value in context.User.FindAll(claimType).Select(c => c.Value).Where(v => !string.IsNullOrEmpty(v) && seen.Add(v))) {
+        yield return value;
       }
     }
   }

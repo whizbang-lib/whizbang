@@ -6,9 +6,11 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -327,19 +329,27 @@ public class ClaimWorkerAcquisitionBoundsTests {
       IInboxDrainChannel? inboxDrainChannel = null,
       TimeProvider? timeProvider = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstance(coord.InstanceId),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(options),
-      NullLogger<ClaimWorker>.Instance,
-      perspectiveDrainChannel: perspectiveDrainChannel,
-      inboxDrainChannel: inboxDrainChannel,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstance(coord.InstanceId),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: perspectiveDrainChannel ?? new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: inboxDrainChannel ?? new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       completionMeter: completionMeter,
       timeProvider: timeProvider);
     var cts = new CancellationTokenSource();
@@ -352,7 +362,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
     public CancellationTokenSource Cts => cts;
     public void Dispose() {
       cts.Cancel();
-      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       cts.Dispose();
     }
   }
@@ -404,14 +414,14 @@ public class ClaimWorkerAcquisitionBoundsTests {
     public List<Guid> ReleasedInboxStreams { get; } = [];
     public List<Guid> ReleasedPerspectiveStreams { get; } = [];
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       WorkBatch batch;
       lock (_lock) {
-        Requests.Add(req);
+        Requests.Add(request);
         var call = Requests.Count;
         OnClaim?.Invoke(call);
         batch = script(call);
-        if (req.IncludeOutstanding && OutstandingToReport is not null) {
+        if (request.IncludeOutstanding && OutstandingToReport is not null) {
           batch = batch with { Outstanding = OutstandingToReport };
         }
         if (_watchers.TryGetValue(call, out var tcs)) { tcs.TrySetResult(); }

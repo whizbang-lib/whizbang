@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -116,7 +117,7 @@ public class WorkCoordinatorGateRegistrationTests {
   [Test]
   public async Task AGateRegisteredBeforeThePipeline_IsKeptAsync() {
     var services = _services();
-    services.AddSingleton(new WorkCoordinatorGate(maxConcurrent: 3));
+    services.AddSingleton(new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance));
     services.AddWhizbangWorkers();
 
     await using var provider = services.BuildServiceProvider();

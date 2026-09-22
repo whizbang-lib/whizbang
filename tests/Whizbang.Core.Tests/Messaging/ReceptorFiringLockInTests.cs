@@ -48,8 +48,10 @@ public class ReceptorFiringLockInTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
@@ -170,10 +172,10 @@ public class ReceptorFiringLockInTests {
       // Assert — exactly 100 invocations total, each envelope has exactly one record, and
       // every record's MessageId matches the envelope it's on.
       await Assert.That(sharedFires.Count).IsEqualTo(MessageCount);
-      foreach (var envelope in envelopes) {
-        await Assert.That(envelope.ReceptorInvocations).IsNotNull();
-        await Assert.That(envelope.ReceptorInvocations).Count().IsEqualTo(1);
-        await Assert.That(envelope.ReceptorInvocations![0].ReceptorId).IsEqualTo("ConcurrentReceptor");
+      foreach (var invocations in envelopes.Select(envelope => envelope.ReceptorInvocations)) {
+        await Assert.That(invocations).IsNotNull();
+        await Assert.That(invocations).Count().IsEqualTo(1);
+        await Assert.That(invocations![0].ReceptorId).IsEqualTo("ConcurrentReceptor");
       }
 
       // Cross-contamination check: each MessageId appears exactly once in the fires bag.

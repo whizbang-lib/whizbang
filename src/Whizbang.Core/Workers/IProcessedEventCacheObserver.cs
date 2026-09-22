@@ -48,7 +48,7 @@ public interface IProcessedEventCacheObserver {
 /// <summary>
 /// No-op observer. Registered by default — zero overhead.
 /// </summary>
-internal sealed class NullProcessedEventCacheObserver : IProcessedEventCacheObserver {
+public sealed class NullProcessedEventCacheObserver : IProcessedEventCacheObserver, INullDefault {
   /// <summary>Singleton instance of the no-op observer.</summary>
   public static readonly NullProcessedEventCacheObserver Instance = new();
 

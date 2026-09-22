@@ -28,8 +28,8 @@ public class AzureServiceBusDeadLetterDrainerCoverageTests {
   // the caller's own cancellation handling decides what happens next, not the per-message retry logic.
   [Test]
   public async Task DrainDeadLetterQueueAsync_ImportThrowsOperationCanceled_PropagatesWithoutAbandoningOrCompletingAsync() {
-    var client = new _fakeDrainClient();
-    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(MESSAGE_ID) });
+    var client = new FakeDrainClient();
+    client.Receiver.Batches.Enqueue([_dlqMessage(MESSAGE_ID)]);
     static Task<bool> throwingImport(BrokerDeadLetterImport import, CancellationToken ct) =>
       Task.FromException<bool>(new OperationCanceledException("import canceled"));
     await using var drainer = new AzureServiceBusDeadLetterDrainer(
@@ -53,14 +53,14 @@ public class AzureServiceBusDeadLetterDrainerCoverageTests {
         ["DeadLetterReason"] = "TestReason",
       });
 
-  private sealed class _fakeDrainClient : ServiceBusClient {
-    public _fakeDlqReceiver Receiver { get; } = new();
+  private sealed class FakeDrainClient : ServiceBusClient {
+    public FakeDlqReceiver Receiver { get; } = new();
 
     public override ServiceBusReceiver CreateReceiver(
       string topicName, string subscriptionName, ServiceBusReceiverOptions options) => Receiver;
   }
 
-  private sealed class _fakeDlqReceiver : ServiceBusReceiver {
+  private sealed class FakeDlqReceiver : ServiceBusReceiver {
     public Queue<IReadOnlyList<ServiceBusReceivedMessage>?> Batches { get; } = new();
     public List<string> Completed { get; } = [];
     public List<string> Abandoned { get; } = [];

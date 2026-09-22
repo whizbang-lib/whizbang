@@ -184,7 +184,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   public async Task ResetForGeneration_AlreadyRetriedOnCurrentGeneration_NoOpAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
-    var dlqId = await _moveToDlqAsync(conn, sourceTable: "wh_outbox", generation: "v0.502");
+    _ = await _moveToDlqAsync(conn, sourceTable: "wh_outbox", generation: "v0.502");
 
     // First reset includes this row.
     await _callResetForGenerationAsync(conn, "v0.502");
@@ -280,7 +280,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   private static async Task<List<Guid>> _fetchDueAsync(NpgsqlConnection conn, int max) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT dead_letter_id FROM fetch_dead_letters_due(NOW(), @max)";
-    cmd.Parameters.AddWithValue("max", max);
+    cmd.Parameters.AddWithValue(nameof(max), max);
     var ids = new List<Guid>();
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {

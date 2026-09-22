@@ -50,8 +50,8 @@ public class PinnedTypeLedgerGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("TestApp.OrderContracts+OrderPlacedEvent"); // literal '+'
-    await Assert.That(generated!).DoesNotContain("\\u002B");                            // not the escaped form
+    await Assert.That(generated).Contains("TestApp.OrderContracts+OrderPlacedEvent"); // literal '+'
+    await Assert.That(generated).DoesNotContain("\\u002B");                            // not the escaped form
   }
 
   [Test]
@@ -62,12 +62,12 @@ public class PinnedTypeLedgerGeneratorTests {
 
     await Assert.That(generated).IsNotNull();
     // Both pinned ids and their current CLR names, with empty formerNames.
-    await Assert.That(generated!).Contains("11111111-1111-1111-1111-111111111111");
-    await Assert.That(generated!).Contains("TestApp.OrderPlacedEvent");
-    await Assert.That(generated!).Contains("22222222-2222-2222-2222-222222222222");
-    await Assert.That(generated!).Contains("TestApp.OrderProjection");
-    await Assert.That(generated!).Contains("\"\"event\"\"");         // kind survives (JSON is @-escaped: "" == ")
-    await Assert.That(generated!).Contains("\"\"perspective\"\"");
+    await Assert.That(generated).Contains("11111111-1111-1111-1111-111111111111");
+    await Assert.That(generated).Contains("TestApp.OrderPlacedEvent");
+    await Assert.That(generated).Contains("22222222-2222-2222-2222-222222222222");
+    await Assert.That(generated).Contains("TestApp.OrderProjection");
+    await Assert.That(generated).Contains("\"\"event\"\"");         // kind survives (JSON is @-escaped: "" == ")
+    await Assert.That(generated).Contains("\"\"perspective\"\"");
   }
 
   [Test]
@@ -88,9 +88,9 @@ public class PinnedTypeLedgerGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("TestApp.OrderCreatedEvent");   // former name preserved
-    await Assert.That(generated!).Contains("22222222-2222-2222-2222-222222222222"); // new projection added
-    await Assert.That(generated!).Contains("TestApp.OrderProjection");
+    await Assert.That(generated).Contains("TestApp.OrderCreatedEvent");   // former name preserved
+    await Assert.That(generated).Contains("22222222-2222-2222-2222-222222222222"); // new projection added
+    await Assert.That(generated).Contains("TestApp.OrderProjection");
   }
 
   [Test]
@@ -119,7 +119,7 @@ public class PinnedTypeLedgerGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("TestApp.OrderCreatedEvent");        // old name preserved
-    await Assert.That(generated!).DoesNotContain("TestApp.OrderPlacedEvent");   // NOT auto-updated to current name
+    await Assert.That(generated).Contains("TestApp.OrderCreatedEvent");        // old name preserved
+    await Assert.That(generated).DoesNotContain("TestApp.OrderPlacedEvent");   // NOT auto-updated to current name
   }
 }

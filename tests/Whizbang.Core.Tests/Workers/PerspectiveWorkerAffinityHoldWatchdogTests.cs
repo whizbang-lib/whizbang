@@ -1,19 +1,26 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -32,7 +39,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
   [Test]
   public async Task HeldGate_IsListedWithItsPhase_AndAgesAgainstTheGivenClockAsync() {
-    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
     await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
     await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -61,7 +68,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
   [Test]
   public async Task LongHold_IsNamedAtWarning_OncePerThresholdAsync() {
-    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60));
     await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
     await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     var now = TimeProvider.System.GetUtcNow().UtcTicks;
@@ -90,7 +97,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
   [Test]
   public async Task WatchdogOff_ReportsNothingAsync() {
-    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.Zero);
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.Zero);
     await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
     await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     var now = TimeProvider.System.GetUtcNow().UtcTicks;
@@ -106,7 +113,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
   [Test]
   public async Task DrainWidth_IsClampedToHalfTheGate_AndLoggedOnceAsync() {
-    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), gateMaxConcurrent: 8);
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), gateMaxConcurrent: 8);
     await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
     await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     f.Registry.Release.TrySetResult();
@@ -122,7 +129,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
   [Test]
   public async Task Watchdog_TicksOnTheWorkerClock_AndNamesAHoldPastTheThresholdAsync() {
     var clock = new FakeTimeProvider();
-    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), timeProvider: clock);
+    await using var f = await FakeFixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), timeProvider: clock);
     await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
     await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -142,7 +149,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
 
   private sealed record WatchdogTestEvent(string Data) : IEvent;
 
-  private sealed class _Fixture : IAsyncDisposable {
+  private sealed class FakeFixture : IAsyncDisposable {
     public BlockingRunnerRegistry Registry { get; } = new();
     public CapturingLogger<PerspectiveWorker> Logger { get; } = new();
     public PerspectiveWorkerTestHarness Harness { get; } = new();
@@ -152,8 +159,8 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     private readonly CancellationTokenSource _cts = new();
     private bool _stopped;
 
-    public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
-      var f = new _Fixture();
+    public static async Task<FakeFixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
+      var f = new FakeFixture();
       var eventId = (Guid)TrackedGuid.NewMedo();
       f.Coordinator.StreamEventsToReturn = [
         new StreamEventData {
@@ -186,6 +193,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       };
       var instanceProvider = new HoldInstanceProvider();
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       services.AddSingleton<IWorkCoordinator>(f.Coordinator);
       services.AddSingleton<IPerspectiveRunnerRegistry>(f.Registry);
       services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
@@ -212,17 +220,38 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
           }
         }),
         schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        tracingOptions: null,
-        completionStrategy: new InstantCompletionStrategy(),
-        eventTypeProvider: null,
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+        eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
+        syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+        syncEventTracker: new SyncEventTracker(),
         logger: f.Logger,
+        snapshotStore: NullPerspectiveSnapshotStore.Instance,
+        streamLocker: NullPerspectiveStreamLocker.Instance,
+        streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
         streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
-        timeProvider: timeProvider,
+        processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+        workChannelWriter: new WorkChannelWriter(),
+        rewindOptions: Options.Create(new PerspectiveRewindOptions()),
         perspectiveChannelWriter: f.Harness.ChannelWriter,
         perspectiveCompletionChannel: f.Harness.CompletionCapture,
         failureChannel: f.Harness.FailureCapture,
+        leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
         perspectiveDrainChannel: f.Harness.DrainChannel,
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
+        leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+        leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+        deadLetterStore: NullDeadLetterStore.Instance,
+        generationProvider: new DefaultGenerationProvider(),
+        perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+        governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions {
+          PollingIntervalMilliseconds = 50,
+          DrainBatcher = new SlidingWindowBatcherOptions {
+            SlidingWindow = TimeSpan.Zero,
+            MaxWait = TimeSpan.Zero
+          }
+        })).Value),
+        timeProvider: timeProvider,
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent, logger: NullLogger<WorkCoordinatorGate>.Instance) : null);
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
       // ExecuteAsync is queued to the thread pool.
@@ -275,7 +304,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     private sealed class BlockingRunner(BlockingRunnerRegistry registry) : IPerspectiveRunner {
       public Type PerspectiveType => typeof(object);
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
         Task.FromResult(new PerspectiveCursorCompletion { StreamId = streamId, PerspectiveName = perspectiveName, LastEventId = (Guid)TrackedGuid.NewMedo(), Status = PerspectiveProcessingStatus.Completed });
 
       public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
@@ -313,7 +342,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       return Task.CompletedTask;
     }
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)

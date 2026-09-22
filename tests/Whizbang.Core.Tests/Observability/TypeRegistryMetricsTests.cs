@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,14 +16,14 @@ namespace Whizbang.Core.Tests.Observability;
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 public class TypeRegistryMetricsTests {
 
-  private static TypeRegistryMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: null));
+  private static TypeRegistryMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
   // The counters are passive (#711): the meter reports every series it holds at collection, so
   // the capture collects after the act and keeps the series that counted something. The series
   // at zero (the untagged one and the entry-assembly service tag declared at construction) are
   // the "nothing happened" reading, not an emission.
   private static (List<long> values, List<KeyValuePair<string, object?>[]> tags) _capture(
-      TypeRegistryMetrics metrics, PassiveCounter<long> instrument, System.Action act) {
+      PassiveCounter<long> instrument, System.Action act) {
     var values = new List<long>();
     var tags = new List<KeyValuePair<string, object?>[]>();
     using var listener = new MeterListener();
@@ -48,7 +49,7 @@ public class TypeRegistryMetricsTests {
   [Test]
   public async Task Record_AcknowledgedRenames_IncrementsRenamedCounterTaggedWithServiceAsync() {
     var metrics = _newMetrics();
-    var (values, tags) = _capture(metrics, metrics.Renamed, () => metrics.Record(renamed: 3, driftDetected: 0, service: "Job.Service"));
+    var (values, tags) = _capture(metrics.Renamed, () => metrics.Record(renamed: 3, driftDetected: 0, service: "Job.Service"));
 
     await Assert.That(values).Count().IsEqualTo(1);
     await Assert.That(values[0]).IsEqualTo(3L);
@@ -59,7 +60,7 @@ public class TypeRegistryMetricsTests {
   [Test]
   public async Task Record_UnacknowledgedDrift_IncrementsDriftCounterAsync() {
     var metrics = _newMetrics();
-    var (values, _) = _capture(metrics, metrics.DriftDetected, () => metrics.Record(renamed: 0, driftDetected: 2, service: "Bff.Service"));
+    var (values, _) = _capture(metrics.DriftDetected, () => metrics.Record(renamed: 0, driftDetected: 2, service: "Bff.Service"));
 
     await Assert.That(values).Count().IsEqualTo(1);
     await Assert.That(values[0]).IsEqualTo(2L);
@@ -68,8 +69,8 @@ public class TypeRegistryMetricsTests {
   [Test]
   public async Task Record_ZeroCounts_EmitsNothingAsync() {
     var metrics = _newMetrics();
-    var (renamed, _) = _capture(metrics, metrics.Renamed, () => metrics.Record(renamed: 0, driftDetected: 0, service: "Svc"));
-    var (drift, _) = _capture(metrics, metrics.DriftDetected, () => metrics.Record(renamed: 0, driftDetected: 0, service: "Svc"));
+    var (renamed, _) = _capture(metrics.Renamed, () => metrics.Record(renamed: 0, driftDetected: 0, service: "Svc"));
+    var (drift, _) = _capture(metrics.DriftDetected, () => metrics.Record(renamed: 0, driftDetected: 0, service: "Svc"));
 
     await Assert.That(renamed).IsEmpty();
     await Assert.That(drift).IsEmpty();
@@ -78,7 +79,7 @@ public class TypeRegistryMetricsTests {
   [Test]
   public async Task Record_EmptyServiceName_TaggedUnknownAsync() {
     var metrics = _newMetrics();
-    var (_, tags) = _capture(metrics, metrics.Renamed, () => metrics.Record(renamed: 1, driftDetected: 0, service: ""));
+    var (_, tags) = _capture(metrics.Renamed, () => metrics.Record(renamed: 1, driftDetected: 0, service: ""));
 
     var svc = tags[0].FirstOrDefault(kv => kv.Key == "service");
     await Assert.That((string?)svc.Value).IsEqualTo("<unknown>");

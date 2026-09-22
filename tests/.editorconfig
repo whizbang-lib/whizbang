@@ -12,3 +12,10 @@ dotnet_diagnostic.WHIZ160.severity = none
 dotnet_diagnostic.WHIZ161.severity = none
 dotnet_diagnostic.WHIZ162.severity = none
 dotnet_diagnostic.WHIZ163.severity = none
+
+# RCS1118 (mark local as const) cannot be applied in this suite. TUnitAssertions0005 forbids a
+# constant as the Assert.That subject, so converting a local that any assertion reads is a build
+# error: a sweep of 124 conversions produced 141 of them. sonar.config has carried a t1 entry
+# expressing this intent since 2026-03-22, but sonar.config cannot suppress imported Roslyn
+# rules, so it never took effect. Severity here does: the diagnostic is never emitted at all.
+dotnet_diagnostic.RCS1118.severity = none

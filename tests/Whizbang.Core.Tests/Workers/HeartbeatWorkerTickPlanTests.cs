@@ -1,5 +1,6 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -7,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -196,7 +198,7 @@ public class HeartbeatWorkerTickPlanTests {
 
   private static HeartbeatWorker _worker(IInstanceAliveLockSource lockSource) {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var sp = services.BuildServiceProvider();
 
     return new HeartbeatWorker(
@@ -207,8 +209,9 @@ public class HeartbeatWorkerTickPlanTests {
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
-      pinnedPool: null,
-      aliveLockSource: lockSource);
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      aliveLockSource: lockSource,
+      signalBus: NullSignalBus.Instance);
   }
 
   private sealed class ToggleLock(bool held) : IInstanceAliveLockSource {

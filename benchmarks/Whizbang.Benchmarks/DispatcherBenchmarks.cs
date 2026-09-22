@@ -327,24 +327,24 @@ public class DispatcherBenchmarks {
 
   // Simple in-memory trace store for benchmarking
   private sealed class InMemoryTraceStore : ITraceStore {
-    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
       // No-op storage for benchmarking
       return Task.CompletedTask;
     }
 
-    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken ct = default) {
       return Task.FromResult<IMessageEnvelope?>(null);
     }
 
-    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
 
-    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
 
-    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
   }

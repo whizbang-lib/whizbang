@@ -715,7 +715,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, string payload, params Guid[] streamIds) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT notify_instance_owners(@payload, @ids)";
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
       Value = streamIds
     });

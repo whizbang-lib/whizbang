@@ -99,7 +99,7 @@ public class TransportNamespaceResolverTests {
 
   [Test]
   public async Task Resolve_ShortTypeNameForm_ResolvesViaMatchingHelperAsync() {
-    // The transport boundary holds stored type-name STRINGS in several canonical forms;
+    // The transport boundary holds stored type-name STRINGS in several canonical forms —
     // resolution must ride EventTypeMatchingHelper like the coalesce path, not exact match.
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");

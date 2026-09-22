@@ -53,7 +53,7 @@ public class DirectMarkerPerspective : IPerspectiveBase<DirectMarkerModel> {
     // Assert — no event-bearing perspective interface, so the empty-invoker path is taken.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveInvoker.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("No perspectives discovered")
+    await Assert.That(code).Contains("No perspectives discovered")
       .Because("a class implementing only the 1-arg IPerspectiveBase<TModel> marker directly exposes no TEvent-bearing interface to route, and must not crash the generator");
   }
 }

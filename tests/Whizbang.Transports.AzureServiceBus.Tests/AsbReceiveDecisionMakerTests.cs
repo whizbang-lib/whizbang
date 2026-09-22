@@ -393,8 +393,8 @@ public class AsbReceiveDecisionMakerTests {
     // looped at thousands of errors per hour). An unbindable message must degrade to the
     // same graceful ack-and-drop as a registry miss, never an abandon loop.
     var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Transports.AzureServiceBus.Tests.AsbReceiveDecisionMakerTests+_unresolvableProbe, Whizbang.Transports.AzureServiceBus.Tests");
-    var binder = new _bindsToUnresolvableType();
+    var props = _withEnvelopeType("Whizbang.Transports.AzureServiceBus.Tests.AsbReceiveDecisionMakerTests+UnresolvableProbe, Whizbang.Transports.AzureServiceBus.Tests");
+    var binder = new BindsToUnresolvableType();
     // Source-gen-shaped options with NO metadata for the probe — the production condition:
     // the type is loadable but no registered context can serve it, so GetTypeInfo throws.
     var barrenOptions = new JsonSerializerOptions {
@@ -412,14 +412,12 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   /// <summary>A loadable type deliberately absent from every registered JSON context.</summary>
-  private sealed class _unresolvableProbe {
-    public HashSet<string>? Keys { get; init; }
-  }
+  private sealed class UnresolvableProbe;
 
-  private sealed class _bindsToUnresolvableType : Whizbang.Core.Messaging.IMessageTypeBinder {
-    public Type? Bind(string assemblyQualifiedName) => typeof(_unresolvableProbe);
+  private sealed class BindsToUnresolvableType : Whizbang.Core.Messaging.IMessageTypeBinder {
+    public Type? Bind(string assemblyQualifiedName) => typeof(UnresolvableProbe);
     public (Type? Type, Whizbang.Core.Messaging.MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) =>
-      (typeof(_unresolvableProbe), Whizbang.Core.Messaging.MessageTypeBinderPass.ExactStrongName);
+      (typeof(UnresolvableProbe), Whizbang.Core.Messaging.MessageTypeBinderPass.ExactStrongName);
   }
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {

@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
@@ -134,16 +135,17 @@ public sealed class RecoveryLifecycleHardeningTests {
     var collector = provider.GetFakeLogCollector();
 
     var worker = new DeadLetterRecoveryWorker(
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      new ImmediateGate(),
-      Options.Create(new DeadLetterRecoveryOptions {
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: new ImmediateGate(),
+      options: Options.Create(new DeadLetterRecoveryOptions {
         ScanIntervalMinutes = 1,
         WaitForIdle = false,
         EnableGenerationReplay = true
       }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new FixedGeneration(),
-      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGeneration(),
+      logger: provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -235,7 +237,7 @@ public sealed class RecoveryLifecycleHardeningTests {
   }
 
   private sealed class ImmediateGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public void MarkReady() { }
     public bool IsReady => true;
   }

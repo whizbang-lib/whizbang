@@ -8,15 +8,13 @@ using Whizbang.Core.Signals;
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
-/// Concrete Postgres pull sources for the three work-available signal types. Each subclass
+/// Pull source for <see cref="WorkOutboxAvailableSignal"/>, and the first of the three concrete
+/// Postgres pull sources for the work-available signal types. Each of them
 /// supplies a small <c>EXISTS</c> query against its work table scoped to this pod's
 /// <see cref="IServiceInstanceProvider.InstanceId"/>. The shared plumbing (connection resolve,
 /// parameter bind, error logging) lives on <see cref="PgWorkAvailablePollSourceBase{TSignal}"/>.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-internal static class PgWorkAvailablePollSourcesOverview;
-
-/// <summary>Pull source for <see cref="WorkOutboxAvailableSignal"/>.</summary>
 public sealed class PgOutboxWorkAvailablePollSource(
   TimeProvider clock,
   IOptions<WhizbangNotificationOptions> options,

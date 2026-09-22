@@ -33,7 +33,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     if (columnExists) {
       var columnName = reader.GetString(0);
       var dataType = reader.GetString(1);
-      var columnDefault = reader.IsDBNull(2) ? null : reader.GetString(2);
+      var columnDefault = await reader.IsDBNullAsync(2) ? null : reader.GetString(2);
 
       await Assert.That(columnName).IsEqualTo("failure_reason");
       await Assert.That(dataType).IsEqualTo("integer");
@@ -67,7 +67,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     if (columnExists) {
       var columnName = reader.GetString(0);
       var dataType = reader.GetString(1);
-      var columnDefault = reader.IsDBNull(2) ? null : reader.GetString(2);
+      var columnDefault = await reader.IsDBNullAsync(2) ? null : reader.GetString(2);
 
       await Assert.That(columnName).IsEqualTo("failure_reason");
       await Assert.That(dataType).IsEqualTo("integer");

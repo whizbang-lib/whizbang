@@ -250,10 +250,8 @@ public class CanonicalTemporalConventionTests {
   }
 
   private static void _collectReaders(IComplexProperty complex, string path, Dictionary<string, Type?> found) {
-    foreach (var property in complex.ComplexType.GetProperties()) {
-      if (CanonicalTemporalConvention.KindOf(property.ClrType) is not null) {
-        found[$"{path}.{property.Name}"] = property.GetJsonValueReaderWriter()?.GetType();
-      }
+    foreach (var property in complex.ComplexType.GetProperties().Where(p => CanonicalTemporalConvention.KindOf(p.ClrType) is not null)) {
+      found[$"{path}.{property.Name}"] = property.GetJsonValueReaderWriter()?.GetType();
     }
     foreach (var nested in complex.ComplexType.GetComplexProperties()) {
       _collectReaders(nested, $"{path}.{nested.Name}", found);

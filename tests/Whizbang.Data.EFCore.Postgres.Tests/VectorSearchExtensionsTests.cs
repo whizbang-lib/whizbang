@@ -1016,7 +1016,7 @@ public class VectorSearchExtensionsTests {
     var memberAccess = Expression.Property(
         Expression.Property(
             Expression.Property(param, nameof(JoinRow.Row)),
-            nameof(PerspectiveRow<EmbeddingTestModel>.Data)),
+            nameof(PerspectiveRow<>.Data)),
         nameof(EmbeddingTestModel.ContentEmbedding));
     var convertingSelector = Expression.Lambda<Func<JoinRow, float[]?>>(
         Expression.Convert(memberAccess, typeof(float[])), param);

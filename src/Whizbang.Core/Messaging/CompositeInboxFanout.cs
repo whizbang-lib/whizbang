@@ -455,7 +455,7 @@ public static partial class CompositeInboxFanout {
     // Positive classification (#736): the IEvent marker is authoritative and the catalog can only add to
     // it; a catalog miss never demotes an event to a command.
     var isEvent = inner is IEvent
-      || (eventTypeProvider is not null && EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes()));
+      || (eventTypeProvider is { IsAvailable: true } && EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes()));
 
     var streamId = _extractStreamId(source);
     if (isEvent) {

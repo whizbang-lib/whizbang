@@ -70,13 +70,13 @@ public class SqliteGuidHandlerTests {
     SqliteGuidHandler.Register();
 
     await using var connection = new SqliteConnection("DataSource=:memory:");
-    connection.Open();
-    connection.Execute("CREATE TABLE t (id TEXT)");
+    await connection.OpenAsync();
+    await connection.ExecuteAsync("CREATE TABLE t (id TEXT)");
 
     var input = Guid.NewGuid();
-    connection.Execute("INSERT INTO t (id) VALUES (@Id)", new { Id = input });
+    await connection.ExecuteAsync("INSERT INTO t (id) VALUES (@Id)", new { Id = input });
 
-    var output = connection.QuerySingle<Guid>("SELECT id FROM t");
+    var output = await connection.QuerySingleAsync<Guid>("SELECT id FROM t");
     await Assert.That(output).IsEqualTo(input);
   }
 }

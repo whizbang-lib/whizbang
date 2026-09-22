@@ -27,8 +27,8 @@ public class LifecycleInvocationHelperCoverageTests {
     var metrics = new LifecycleMetrics(new WhizbangMetrics(factory));
     using var metricHelper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
-    var invoker = new _ThrowingReceptorInvoker(new InvalidOperationException("receptor exploded"));
-    var deserializer = new _PassthroughDeserializer();
+    var invoker = new ThrowingReceptorInvoker(new InvalidOperationException("receptor exploded"));
+    var deserializer = new PassthroughDeserializer();
     var outboxMessages = new List<OutboxMessage>();
     var inboxMessages = new List<InboxMessage> { _createTestInboxMessage() };
 
@@ -97,26 +97,26 @@ public class LifecycleInvocationHelperCoverageTests {
   // Test Fakes
   // ========================================
 
-  private sealed class _ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
+  private sealed class ThrowingReceptorInvoker(Exception toThrow) : IReceptorInvoker {
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) =>
       throw toThrow;
   }
 
-  private sealed class _PassthroughDeserializer : ILifecycleMessageDeserializer {
+  private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) =>
-      new _TestMessage { Value = "deserialized" };
+      new FakeTestMessage { Value = "deserialized" };
 
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) =>
-      new _TestMessage { Value = "deserialized" };
+      new FakeTestMessage { Value = "deserialized" };
 
     public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) =>
-      new _TestMessage { Value = "deserialized" };
+      new FakeTestMessage { Value = "deserialized" };
 
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) =>
-      new _TestMessage { Value = "deserialized" };
+      new FakeTestMessage { Value = "deserialized" };
   }
 
-  private sealed record _TestMessage {
+  private sealed record FakeTestMessage {
     public required string Value { get; init; }
   }
 }

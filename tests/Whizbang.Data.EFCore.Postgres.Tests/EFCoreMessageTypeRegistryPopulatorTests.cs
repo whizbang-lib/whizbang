@@ -283,9 +283,9 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
       rows.Add(new RegistryRow(
         reader.GetGuid(0),
         reader.GetString(1),
-        reader.IsDBNull(2) ? null : reader.GetGuid(2),
+        await reader.IsDBNullAsync(2) ? null : reader.GetGuid(2),
         reader.GetString(3),
-        reader.GetFieldValue<DateTimeOffset>(4)));
+        await reader.GetFieldValueAsync<DateTimeOffset>(4)));
     }
     return rows;
   }
@@ -305,10 +305,11 @@ public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
     }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
   }
 
   private sealed record SamplePinned;

@@ -47,7 +47,7 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
   /// Creates the perspective's table and its registry ROW — the perspective merely existing. No
   /// retention column is touched: those must arrive through the sync, which is the point.
   /// </summary>
-  private async Task _arrangeAsync(NpgsqlConnection conn) {
+  private static async Task _arrangeAsync(NpgsqlConnection conn) {
     await using var ddl = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (
@@ -62,12 +62,12 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
     await ddl.ExecuteNonQueryAsync();
   }
 
-  private async Task _seedRowAsync(NpgsqlConnection conn, Guid id, string user, int idleDays) {
+  private static async Task _seedRowAsync(NpgsqlConnection conn, Guid id, string user, int idleDays) {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, jsonb_build_object('u', @u),
               NOW() - make_interval(days => @d), NOW() - make_interval(days => @d), 1)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("u", user);
     cmd.Parameters.AddWithValue("d", idleDays);
     await cmd.ExecuteNonQueryAsync();
@@ -75,7 +75,7 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
 
   private static async Task<bool> _survivesAsync(NpgsqlConnection conn, Guid id) {
     await using var cmd = new NpgsqlCommand($"SELECT COUNT(*) FROM {TABLE} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return Convert.ToInt64(
       await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) > 0;
   }
@@ -117,11 +117,11 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
     await using var reader = await read.ExecuteReaderAsync();
     await reader.ReadAsync();
 
-    await Assert.That(reader.IsDBNull(0) ? (int?)null : reader.GetInt32(0)).IsEqualTo(2)
+    await Assert.That(await reader.IsDBNullAsync(0) ? (int?)null : reader.GetInt32(0)).IsEqualTo(2)
       .Because("the declared cap must survive the whole sync path — this is the link that was missing, "
         + "where sync_perspective_retention had no cap parameter and the coordinator called it with "
         + "four arguments while binding six");
-    await Assert.That(reader.IsDBNull(1) ? null : reader.GetString(1)).IsEqualTo("u")
+    await Assert.That(await reader.IsDBNullAsync(1) ? null : reader.GetString(1)).IsEqualTo("u")
       .Because("the scope key partitions the sweep's ranking, so losing it silently changes who evicts "
         + "whom rather than failing");
   }
@@ -171,9 +171,9 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
     await reader.ReadAsync();
 
     await Assert.That(reader.GetBoolean(0)).IsTrue();
-    await Assert.That(reader.IsDBNull(1)).IsTrue()
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue()
       .Because("no sliding rule was declared, which must stay distinct from a rule of zero");
-    await Assert.That(reader.IsDBNull(2) ? (int?)null : reader.GetInt32(2)).IsEqualTo(5);
+    await Assert.That(await reader.IsDBNullAsync(2) ? (int?)null : reader.GetInt32(2)).IsEqualTo(5);
   }
 
   [Test]
@@ -218,8 +218,8 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
     await using var reader = await read.ExecuteReaderAsync();
     await reader.ReadAsync();
 
-    await Assert.That(reader.IsDBNull(0)).IsTrue();
-    await Assert.That(reader.IsDBNull(1)).IsTrue()
+    await Assert.That(await reader.IsDBNullAsync(0)).IsTrue();
+    await Assert.That(await reader.IsDBNullAsync(1)).IsTrue()
       .Because("removing a declaration must clear the cap as well as the windows, or a later "
         + "re-enrolment silently inherits a stale bound nobody declared");
   }

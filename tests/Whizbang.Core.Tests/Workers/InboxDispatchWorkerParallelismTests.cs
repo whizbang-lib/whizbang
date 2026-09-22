@@ -8,12 +8,15 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -55,7 +58,7 @@ public class InboxDispatchWorkerParallelismTests {
 
   private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
     public ConcurrentBag<HandlerCommitRequest> All { get; } = [];
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
       All.Add(request);
       return ValueTask.CompletedTask;
     }
@@ -63,7 +66,7 @@ public class InboxDispatchWorkerParallelismTests {
 
   private sealed class FakeFailureChannel : IFailureChannel {
     public List<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       lock (All) { All.Add(failure); }
       return ValueTask.CompletedTask;
     }
@@ -87,8 +90,6 @@ public class InboxDispatchWorkerParallelismTests {
     public readonly ConcurrentDictionary<Guid, TaskCompletionSource> ReleaseGates = new();
 
     public bool HasStarted(Guid messageId) => Events.Any(e => e.MessageId == messageId && e.IsStart);
-    public bool HasEnded(Guid messageId, LifecycleStage stage) =>
-      Events.Any(e => e.MessageId == messageId && e.Stage == stage && !e.IsStart);
     public DateTime? StartedAt(Guid messageId, LifecycleStage stage) =>
       Events.Where(e => e.MessageId == messageId && e.Stage == stage && e.IsStart).Select(e => (DateTime?)e.At).FirstOrDefault();
     public DateTime? EndedAt(Guid messageId, LifecycleStage stage) =>
@@ -119,7 +120,7 @@ public class InboxDispatchWorkerParallelismTests {
     public int CallCount;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
-    public object DeserializeFromBytes(byte[] payload, string messageType) { Interlocked.Increment(ref CallCount); return JsonDocument.Parse(payload).RootElement; }
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) { Interlocked.Increment(ref CallCount); return JsonDocument.Parse(jsonBytes).RootElement; }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) { Interlocked.Increment(ref CallCount); return jsonElement; }
   }
 
@@ -154,7 +155,7 @@ public class InboxDispatchWorkerParallelismTests {
     public TrackingReceptorInvoker Invoker { get; } = invoker;
     public FakeFailureChannel Failure { get; } = failure;
     public async ValueTask DisposeAsync() {
-      try { await Worker.StopAsync(CancellationToken.None); } catch { }
+      try { await Worker.StopAsync(CancellationToken.None); } catch { /* stopping is teardown; its outcome is not what this test asserts */ }
       await sp.DisposeAsync();
     }
   }
@@ -170,18 +171,29 @@ public class InboxDispatchWorkerParallelismTests {
     var deserializer = new CountingDeserializer();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var sp = services.BuildServiceProvider();
 
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      instance, inbox, handlerCommit, failure, gate,
-      Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = maxConcurrent }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: instance,
+      inboxChannelWriter: inbox,
+      handlerCommitChannel: handlerCommit,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = maxConcurrent }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
-      receptorRegistry: new FakeReceptorRegistry());
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new FakeReceptorRegistry(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, failure);
   }
@@ -345,7 +357,7 @@ public class InboxDispatchWorkerParallelismTests {
       .Because("the dispatch has to be inside the gate for the cancellation to land where the "
              + "filtered catch lives");
     await cts.CancelAsync();
-    try { await harness.Worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await harness.Worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     List<MessageFailure> recorded;
     lock (harness.Failure.All) { recorded = [.. harness.Failure.All]; }

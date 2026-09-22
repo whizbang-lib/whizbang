@@ -72,7 +72,7 @@ public class WhizbangActivitySourceTests {
     await Assert.That(activity.GetTagItem("exception.type")).IsEqualTo(typeof(InvalidOperationException).FullName);
     await Assert.That(activity.GetTagItem("exception.message")).IsEqualTo("Test exception");
     // Note: exception.stacktrace is null for unthrown exceptions, so we just verify the code added it
-    var stackTrace = activity.GetTagItem("exception.stacktrace");
+    _ = activity.GetTagItem("exception.stacktrace");
     await Assert.That(activity.GetTagItem("defensive.code")).IsEqualTo(true);
   }
 

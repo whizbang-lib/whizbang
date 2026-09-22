@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -49,6 +50,7 @@ public class PerStreamSerializerCoverageTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
         DrainBatchWindow = TimeSpan.FromMilliseconds(500),
       });

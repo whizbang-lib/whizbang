@@ -141,7 +141,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     store.Parameters.AddWithValue("stream", streamId);
     store.Parameters.AddWithValue("type", eventType);
     store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-    store.Parameters.AddWithValue("version", version);
+    store.Parameters.AddWithValue(nameof(version), version);
     store.Parameters.AddWithValue("origin", originServiceId);
     store.Parameters.AddWithValue("oseq", originSeq);
     await store.ExecuteNonQueryAsync();
@@ -166,7 +166,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
-      store.Parameters.AddWithValue("version", version);
+      store.Parameters.AddWithValue(nameof(version), version);
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {

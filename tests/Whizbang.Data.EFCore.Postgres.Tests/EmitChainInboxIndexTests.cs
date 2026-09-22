@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
+/// <para>
 /// v0.685 lock-in — <c>_emit_event_store_chain_for_inbox</c>'s per-row
 /// <c>NOT EXISTS in wh_event_store</c> scan is the dominant cost on the
 /// work-pump under heavy inbox load (a production PM measurement: 137 ms mean per
@@ -15,14 +16,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// PK-looks-up each against the ~600 k-row wh_event_store. Without a
 /// dedicated partial index, PG plans a sequential scan + nested-loop
 /// anti-join.
-///
+/// </para>
+/// <para>
 /// The lock-in: an index must exist that covers exactly the WHERE shape of emit_chain's outer
 /// scan, with <c>message_id</c> reachable from it so PG can pick a merge anti-join against the
 /// wh_event_store PK rather than a nested loop over heap tuples.
-///
+/// </para>
+/// <para>
 /// Without this partial index, a future refactor (or a missed apply on a fresh DB) would silently
 /// bring back the 137 ms / call regression.
-///
+/// </para>
+/// <para>
 /// <strong>Migration 162 moved the scan, and this test moved with it.</strong> Every column the
 /// outer scan filters on -- instance_id, lease_expiry, processed_at, chain_emitted_at -- is work
 /// state and now lives on <c>wh_inbox_state</c>, so the scan never touches the wide message row and
@@ -33,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// read before, and the replacement INCLUDEs message_id, stream_id and lease_expiry so the pass is
 /// index-only. message_id is the primary key of the state table, which does NOT place it in a
 /// secondary index, so it is named explicitly.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/work-pump</docs>
 [Category("Shard4")]

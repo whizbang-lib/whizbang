@@ -186,8 +186,7 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       // A flush callback that will not return must not hold host shutdown open forever.
       LogDrainTimeout(_logger, _options.DrainTimeoutMs);
       await _stop.CancelAsync().ConfigureAwait(false);
-      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { }
-    } catch (OperationCanceledException) {
+      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
     }
 
     if (!_stop.IsCancellationRequested) {

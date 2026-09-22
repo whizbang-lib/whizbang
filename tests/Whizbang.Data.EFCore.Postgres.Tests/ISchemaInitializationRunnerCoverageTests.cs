@@ -27,18 +27,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class ISchemaInitializationRunnerCoverageTests {
   [Before(Test)]
-  public void ResetStaticState() {
-    var field = typeof(DbContextInitializationRegistry)
-        .GetField("_initializers", BindingFlags.Static | BindingFlags.NonPublic)!;
-    var list = (System.Collections.IList)field.GetValue(null)!;
-    list.Clear();
-  }
+  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
 
-  private sealed class _fakeServiceProvider : IServiceProvider {
+  private sealed class FakeServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
   }
 
-  private sealed class _fakeDbContext;
+  private sealed class FakeDbContext;
 
   // The runner is the seam WhizbangDatabaseInitializerService calls into for its
   // blocking/non-blocking + timeout orchestration. If this delegation line regressed to call
@@ -48,12 +43,12 @@ public class ISchemaInitializationRunnerCoverageTests {
   [Test]
   public async Task RunAsync_InvokesTheRegisteredDbContextInitializationCallbackAsync() {
     var called = false;
-    DbContextInitializationRegistry.Register<_fakeDbContext>((_, _, _) => {
+    DbContextInitializationRegistry.Register<FakeDbContext>((_, _, _) => {
       called = true;
       return Task.CompletedTask;
     });
     var runner = new DbContextSchemaInitializationRunner(
-      new _fakeServiceProvider(), NullLogger<DbContextSchemaInitializationRunner>.Instance);
+      new FakeServiceProvider(), NullLogger<DbContextSchemaInitializationRunner>.Instance);
 
     await runner.RunAsync(CancellationToken.None);
 

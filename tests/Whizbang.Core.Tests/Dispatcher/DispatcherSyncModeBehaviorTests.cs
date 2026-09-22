@@ -1,5 +1,6 @@
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -154,7 +155,7 @@ public sealed class DispatcherSyncModeBehaviorTests {
       scopedEventTracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
 
       using var cts = new CancellationTokenSource();
-      cts.Cancel();
+      await cts.CancelAsync();
 
       await Assert.That(async () =>
         await dispatcher.LocalInvokeAndSyncAsync(new VoidCommand("x"), SyncMode.AllProjections, cts.Token))
@@ -168,7 +169,7 @@ public sealed class DispatcherSyncModeBehaviorTests {
   private static IDispatcher _createDispatcher(IEventCompletionAwaiter? eventCompletionAwaiter) {
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
-        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     if (eventCompletionAwaiter != null) {
       services.AddSingleton(eventCompletionAwaiter);
@@ -178,14 +179,9 @@ public sealed class DispatcherSyncModeBehaviorTests {
     return serviceProvider.GetRequiredService<IDispatcher>();
   }
 
-  private sealed class RecordingEventCompletionAwaiter : IEventCompletionAwaiter {
-    private readonly bool _completesImmediately;
-    private readonly bool _throwOnWait;
-
-    public RecordingEventCompletionAwaiter(bool completesImmediately = true, bool throwOnWait = false) {
-      _completesImmediately = completesImmediately;
-      _throwOnWait = throwOnWait;
-    }
+  private sealed class RecordingEventCompletionAwaiter(bool completesImmediately = true, bool throwOnWait = false) : IEventCompletionAwaiter {
+    private readonly bool _completesImmediately = completesImmediately;
+    private readonly bool _throwOnWait = throwOnWait;
 
     public Guid AwaiterId { get; } = Guid.NewGuid();
     public bool WaitForEventsWasCalled { get; private set; }

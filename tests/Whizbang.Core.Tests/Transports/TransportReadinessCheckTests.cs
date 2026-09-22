@@ -56,8 +56,8 @@ public class TransportReadinessCheckTests {
   public async Task ConfigurableCheck_RespectsCancellationToken_WhenCanceledAsync() {
     // Arrange
     var check = new ConfigurableReadinessCheck(isReady: true);
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

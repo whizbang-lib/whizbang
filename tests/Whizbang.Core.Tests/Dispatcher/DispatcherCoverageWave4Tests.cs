@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -25,6 +26,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 public sealed record Wave4DynamicEvent([property: StreamId] Guid Id) : IEvent;
 
 /// <summary>
+/// <para>
 /// Wave 4 coverage tests for Dispatcher.cs targeting specific uncovered lines identified in the
 /// 2026-09-05 coverage report:
 /// - _lookupReceptorDefaultRouting: own-routing hit and foreign-lookup-exhausted fallback (231, 237)
@@ -33,10 +35,12 @@ public sealed record Wave4DynamicEvent([property: StreamId] Guid Id) : IEvent;
 ///   guard, and the non-IHasStreamId SetStreamId fallback (4004-4005, 4013-4014, 4033, 4039-4040)
 /// - _sendToOutboxViaScopeAsync (generic and non-generic) and _sendManyToOutboxAsync: sync scope dispose
 ///   when the resolved IServiceScope is not IAsyncDisposable (4312-4313, 4397-4398, 4452-4453)
-///
+/// </para>
+/// <para>
 /// Several other lines from the same report were confirmed, by reading the surrounding call graph,
 /// to be unreachable through any current caller (see the class-level remarks below for the specific
 /// lines and reasoning) and are intentionally left without a test rather than exercised via reflection.
+/// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Dispatcher")]
@@ -73,7 +77,7 @@ public class DispatcherCoverageWave4Tests {
     DispatchModes? defaultRouting = null,
     bool publisherThrows = false,
     string publisherFailureMessage = "wave4-publisher-failed"
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
@@ -218,7 +222,7 @@ public class DispatcherCoverageWave4Tests {
   // registration cannot override -- resolving it back out yields a ServiceProviderEngineScope,
   // never the double. So the double is injected by wrapping the provider rather than registering
   // it, which is the only way a test can see the scopes the dispatcher actually opened and closed.
-  private sealed class _scopeFactoryOverrideProvider(IServiceProvider inner, IServiceScopeFactory factory)
+  private sealed class ScopeFactoryOverrideProvider(IServiceProvider inner, IServiceScopeFactory factory)
       : IServiceProvider {
     public object? GetService(Type serviceType) =>
       serviceType == typeof(IServiceScopeFactory) ? factory : inner.GetService(serviceType);
@@ -226,14 +230,14 @@ public class DispatcherCoverageWave4Tests {
 
   private static readonly ConditionalWeakTable<IServiceProvider, TestServiceScopeFactory> _scopeFactories = [];
 
-  private static _scopeFactoryOverrideProvider _buildProvider(IWorkCoordinatorStrategy? strategy = null) {
+  private static ScopeFactoryOverrideProvider _buildProvider(IWorkCoordinatorStrategy? strategy = null) {
     var services = new ServiceCollection();
     if (strategy != null) {
       services.AddSingleton(strategy);
     }
     var inner = services.BuildServiceProvider();
     var factory = new TestServiceScopeFactory(inner);
-    var provider = new _scopeFactoryOverrideProvider(inner, factory);
+    var provider = new ScopeFactoryOverrideProvider(inner, factory);
     _scopeFactories.Add(provider, factory);
     return provider;
   }

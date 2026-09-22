@@ -14,8 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// helpers. This is a composition helper -- each strategy owns an instance and delegates
 /// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
-internal sealed class WorkCoordinatorQueues(ILogger? logger = null, CoalesceGroupResolver? coalesceResolver = null) {
-  private readonly ILogger _logger = logger ?? NullLogger.Instance;
+internal sealed class WorkCoordinatorQueues(ILogger logger, CoalesceGroupResolver? coalesceResolver = null) {
+  private readonly ILogger _logger = logger;
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   internal readonly List<OutboxMessage> OutboxMessages = [];
   internal readonly List<OutboxMessage> PendingAuditMessages = [];

@@ -36,9 +36,9 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_MapsSelectionAndPublishesTargetedCompositesAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     var streamId = TrackedGuid.NewMedo().Value;
     var e1 = TrackedGuid.NewMedo().Value;
     var e2 = TrackedGuid.NewMedo().Value;
@@ -89,8 +89,8 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_ClampsMaxEventsToTheOriginCapAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
     await using var sp = _buildProvider(coordinator, transport,
       options: new RedeliveryPumpOptions { MaxEventsPerRequest = 100 });
     var receptor = new RedeliveryRequestReceptor(
@@ -116,9 +116,9 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_PagesWideSelections_KeysetAdvancesAndEverythingPublishesAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
-    var serializer = new _captureSerializer();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
     var s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
     var s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
     var ids = new[] {
@@ -154,8 +154,8 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_ConcurrentRequests_BuildOneAtATimeAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
     var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     coordinator.BlockFirstSelect = gate;
     await using var sp = _buildProvider(coordinator, transport);
@@ -191,8 +191,8 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_EmptySelection_PublishesNothingAsync() {
-    var coordinator = new _selectingCoordinator();   // Selection stays empty
-    var transport = new _captureTransport();
+    var coordinator = new SelectingCoordinator();   // Selection stays empty
+    var transport = new CaptureTransport();
     await using var sp = _buildProvider(coordinator, transport);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
@@ -208,10 +208,10 @@ public class RedeliveryRequestReceptorTests {
     // Transport and serializer ARE wired; the coordinator — the piece that decides WHAT to ship —
     // is not. Wiring the one component that can show a side effect is what makes "inert" observable
     // rather than merely "did not throw": an empty provider has nothing to publish through.
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var services = new ServiceCollection();
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IEnvelopeSerializer>(new _captureSerializer());
+    services.AddSingleton<IEnvelopeSerializer>(new CaptureSerializer());
     services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }));
     await using var sp = services.BuildServiceProvider();
     var receptor = new RedeliveryRequestReceptor(
@@ -228,7 +228,7 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
-    var registry = new _recordingRegistry();
+    var registry = new RecordingRegistry();
     var services = new ServiceCollection();
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
@@ -287,8 +287,8 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_UnderReportOnly_DeclinesTheRequestWithoutSelectingOrShippingAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
     var streamId = TrackedGuid.NewMedo().Value;
     coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
     await using var sp = _buildProvider(coordinator, transport, repairMode: IntegrityRepairMode.ReportOnly);
@@ -305,8 +305,8 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_WithNoIntegrityOptionsRegistered_DeclinesAsTheReportOnlyDefaultAsync() {
-    var coordinator = new _selectingCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
     var streamId = TrackedGuid.NewMedo().Value;
     coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
     await using var sp = _buildProvider(coordinator, transport, repairMode: null);
@@ -321,13 +321,13 @@ public class RedeliveryRequestReceptorTests {
   }
 
   private static ServiceProvider _buildProvider(
-      _selectingCoordinator coordinator, _captureTransport transport,
-      _captureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
+      SelectingCoordinator coordinator, CaptureTransport transport,
+      CaptureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
       IntegrityRepairMode? repairMode = IntegrityRepairMode.AutoRepairCapped) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IEnvelopeSerializer>(serializer ?? new _captureSerializer());
+    services.AddSingleton<IEnvelopeSerializer>(serializer ?? new CaptureSerializer());
     if (options is not null) {
       services.AddSingleton(options);
     }
@@ -351,15 +351,13 @@ public class RedeliveryRequestReceptorTests {
     Flags = 0
   };
 
-  internal sealed record _probeEvent(Guid Id) : IEvent;
-
   /// <summary>
   /// Captures every selection request and serves the canned selection with the REAL keyset-paging
   /// contract: rows strictly after (AfterStreamId, AfterVersion), at most MaxEvents. Optionally
   /// blocks the first select on <see cref="BlockFirstSelect"/> and logs a per-request tag
   /// (the request's first EventTypes entry) for interleaving assertions.
   /// </summary>
-  private sealed class _selectingCoordinator : IWorkCoordinator {
+  private sealed class SelectingCoordinator : IWorkCoordinator {
     public RedeliveryRequest? LastRequest { get; private set; }
     public List<RedeliveryRequest> Requests { get; } = [];
     public List<string> SelectLog { get; } = [];
@@ -383,29 +381,29 @@ public class RedeliveryRequestReceptorTests {
         query = query.Where(e => e.StreamId.CompareTo(afterStream) > 0
           || (e.StreamId == afterStream && e.Version > afterVersion));
       }
-      return query.Take(request.MaxEvents).ToList();
+      return [.. query.Take(request.MaxEvents)];
     }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The signature is the contract the fake implements; the parameter belongs to the interface.")]
+    public static Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
   /// <summary>Captures the typed composite envelope at the serializer seam and returns a
   /// field-copied JsonElement envelope, as the real serializer does.</summary>
-  private sealed class _captureSerializer : IEnvelopeSerializer {
+  private sealed class CaptureSerializer : IEnvelopeSerializer {
     public List<IMessageEnvelope<RedeliveryComposite>> Captured { get; } = [];
 
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
@@ -428,7 +426,7 @@ public class RedeliveryRequestReceptorTests {
       throw new NotSupportedException();
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -439,12 +437,11 @@ public class RedeliveryRequestReceptorTests {
       }
       return Task.CompletedTask;
     }
-    public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private sealed class _recordingRegistry : IReceptorRegistry {
+  private sealed class RecordingRegistry : IReceptorRegistry {
     public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       Registered.Add((typeof(TMessage), stage));

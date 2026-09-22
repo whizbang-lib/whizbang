@@ -89,14 +89,14 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
   public StartupReadyService(
       IStartupPipelineState pipelineState,
       StartupReadySignal signal,
-      IReadOnlyList<IStartupReadinessContributor>? contributors = null,
-      ILogger<StartupReadyService>? logger = null) {
+      IReadOnlyList<IStartupReadinessContributor> contributors,
+      ILogger<StartupReadyService> logger) {
     ArgumentNullException.ThrowIfNull(pipelineState);
     ArgumentNullException.ThrowIfNull(signal);
     _pipelineState = pipelineState;
     _signal = signal;
-    _contributors = contributors ?? [];
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StartupReadyService>.Instance;
+    _contributors = contributors;
+    _logger = logger;
   }
 
   /// <summary>

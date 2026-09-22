@@ -70,10 +70,9 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
       var ctx = probeScope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
       await ctx.Database.OpenConnectionAsync();
       var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
-      await using (var cmd = new NpgsqlCommand("SELECT 1", conn)) {
-        var result = await cmd.ExecuteScalarAsync();
-        await Assert.That(result).IsEqualTo(1);
-      }
+      await using var cmd = new NpgsqlCommand("SELECT 1", conn);
+      var result = await cmd.ExecuteScalarAsync();
+      await Assert.That(result).IsEqualTo(1);
       // At this point `conn.ConnectionString` no longer contains "Password=" —
       // Npgsql strips it for security once auth completes.
     }
@@ -96,10 +95,9 @@ public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFC
     // the regression is reproducible here.
     await using var freshConn = new NpgsqlConnection(resolution.ConnectionString);
     await freshConn.OpenAsync();
-    await using (var verify = new NpgsqlCommand("SELECT 1", freshConn)) {
-      var got = await verify.ExecuteScalarAsync();
-      await Assert.That(got).IsEqualTo(1);
-    }
+    await using var verify = new NpgsqlCommand("SELECT 1", freshConn);
+    var got = await verify.ExecuteScalarAsync();
+    await Assert.That(got).IsEqualTo(1);
   }
 
   /// <summary>

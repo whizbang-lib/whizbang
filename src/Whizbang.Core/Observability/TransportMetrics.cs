@@ -130,7 +130,7 @@ public sealed class TransportMetrics {
   /// <summary>Initializes a new instance of the <see cref="TransportMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public TransportMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     InboxReceiveDuration = meter.CreateHistogram<double>("whizbang.transport.inbox.receive.duration", "ms", "Full _handleMessageAsync: receive → process → complete");
     InboxDedupDuration = meter.CreateHistogram<double>("whizbang.transport.inbox.dedup.duration", "ms", "First FlushAsync (INSERT ... ON CONFLICT)");

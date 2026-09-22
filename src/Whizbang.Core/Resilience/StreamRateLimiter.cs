@@ -17,9 +17,9 @@ namespace Whizbang.Core.Resilience;
 /// <remarks>
 /// Creates a new stream rate limiter with the specified options.
 /// </remarks>
-public sealed partial class StreamRateLimiter(StreamRateLimiterOptions options, ILogger<StreamRateLimiter>? logger = null) {
+public sealed partial class StreamRateLimiter(StreamRateLimiterOptions options, ILogger<StreamRateLimiter> logger) {
   private readonly StreamRateLimiterOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StreamRateLimiter>.Instance;
+  private readonly ILogger _logger = logger;
   private readonly ConcurrentDictionary<Guid, StreamState> _streams = new();
   private int _callCount;
 

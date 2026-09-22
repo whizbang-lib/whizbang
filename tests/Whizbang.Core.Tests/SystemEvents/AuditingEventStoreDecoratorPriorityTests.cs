@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -30,7 +32,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
   [Test]
   public async Task AppendAsync_WithEnvelope_QueuesTheAuditRecordOnTheAuditBand_OnTheRowAndTheEnvelopeAsync() {
     var (decorator, channel) = _createDecorator();
-    var source = _createTestEnvelope(new _auditedEvent { Name = "interactive-source" });
+    var source = _createTestEnvelope(new AuditedEvent { Name = "interactive-source" });
     source.Priority = WorkPriority.INTERACTIVE;
 
     await decorator.AppendAsync(Guid.NewGuid(), source);
@@ -46,7 +48,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
   public async Task AppendAsync_WithBareMessage_QueuesTheAuditRecordOnTheAuditBandAsync() {
     var (decorator, channel) = _createDecorator();
 
-    await decorator.AppendAsync(Guid.NewGuid(), new _auditedEvent { Name = "bare" });
+    await decorator.AppendAsync(Guid.NewGuid(), new AuditedEvent { Name = "bare" });
 
     var queued = channel.QueuedMessages.Single();
     await Assert.That(queued.Priority).IsEqualTo(WorkPriority.IDLE)
@@ -57,7 +59,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
   [Test]
   public async Task AppendAsync_TheAuditedEventsInteractiveNumber_DoesNotReachTheAuditRecordAsync() {
     var (decorator, channel) = _createDecorator();
-    var source = _createTestEnvelope(new _auditedEvent { Name = "urgent" });
+    var source = _createTestEnvelope(new AuditedEvent { Name = "urgent" });
     source.Priority = WorkPriority.INTERACTIVE;
 
     await decorator.AppendAsync(Guid.NewGuid(), source);
@@ -71,7 +73,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
     var (decorator, channel) = _createDecorator();
 
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
-      await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new _auditedEvent { Name = "in-handler" }));
+      await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new AuditedEvent { Name = "in-handler" }));
     }
 
     var queued = channel.QueuedMessages.Single();
@@ -80,13 +82,13 @@ public class AuditingEventStoreDecoratorPriorityTests {
     await Assert.That(queued.Envelope.Priority).IsEqualTo(WorkPriority.IDLE);
   }
 
-  private static (AuditingEventStoreDecorator Decorator, _captureChannel Channel) _createDecorator() {
+  private static (AuditingEventStoreDecorator Decorator, CaptureChannel Channel) _createDecorator() {
     var options = new SystemEventOptions().EnableEventAudit();
-    var channel = new _captureChannel();
+    var channel = new CaptureChannel();
     var decorator = new AuditingEventStoreDecorator(
-      new _inertStore(), channel, Options.Create(options),
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance);
+      new InertStore(), channel, Options.Create(options),
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance);
     return (decorator, channel);
   }
 
@@ -103,11 +105,11 @@ public class AuditingEventStoreDecoratorPriorityTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private sealed record _auditedEvent {
+  private sealed record AuditedEvent {
     public required string Name { get; init; }
   }
 
-  private sealed class _inertStore : IEventStore {
+  private sealed class InertStore : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
     public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
@@ -124,7 +126,7 @@ public class AuditingEventStoreDecoratorPriorityTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
   }
 
-  private sealed class _captureChannel : IDeferredOutboxChannel {
+  private sealed class CaptureChannel : IDeferredOutboxChannel {
     public List<OutboxMessage> QueuedMessages { get; } = [];
     public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) {
       QueuedMessages.Add(message);

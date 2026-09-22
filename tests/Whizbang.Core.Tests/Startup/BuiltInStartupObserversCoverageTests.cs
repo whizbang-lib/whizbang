@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Startup;
 [Category("Startup")]
 public class BuiltInStartupObserversCoverageTests {
 
-  private sealed class _captureLogger : ILogger {
+  private sealed class CaptureLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -27,7 +27,7 @@ public class BuiltInStartupObserversCoverageTests {
   // blocked — exactly the "hang with no output" this hook exists to prevent (issue #494/#493).
   [Test]
   public async Task LoggingObserver_StepWaiting_LogsStepDutyWaitedAndRefusalDetailAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
     var context = new StartupStepWaitContext(
       _descriptor("Migrate"), "schema-owner", TimeSpan.FromSeconds(30), "held by another candidate");
@@ -46,7 +46,7 @@ public class BuiltInStartupObserversCoverageTests {
   // blank hole in the log exactly where the elector's reason for refusing should be.
   [Test]
   public async Task LoggingObserver_StepWaiting_WithNoRefusalDetail_DefaultsToHeldByAnotherInstanceAsync() {
-    var logger = new _captureLogger();
+    var logger = new CaptureLogger();
     var observer = new LoggingStartupStepObserver(logger);
     var context = new StartupStepWaitContext(_descriptor("Migrate"), "schema-owner", TimeSpan.FromSeconds(5), null);
 

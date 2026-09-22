@@ -17,9 +17,9 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   [Test]
   public async Task RealPool_BorrowAndDispose_RoundTripsConnectionAsync() {
     var opts = _options(size: 2);
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
-    await using var borrow = await pool.TryPinForAsync(typeof(_pinnedWorker), CancellationToken.None);
+    await using var borrow = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None);
 
     await Assert.That(borrow.Connection).IsNotNull()
       .Because("Eligible worker against an enabled pool MUST receive an open conn.");
@@ -35,10 +35,10 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   [Test]
   public async Task RealPool_IneligibleWorker_ReturnsNoOpBorrowAsync() {
     var opts = _options(size: 1);
-    opts.ExcludeWorkers.Add(nameof(_pinnedWorker));
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    opts.ExcludeWorkers.Add(nameof(PinnedWorker));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
-    await using var borrow = await pool.TryPinForAsync(typeof(_pinnedWorker), CancellationToken.None);
+    await using var borrow = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None);
 
     await Assert.That(borrow.Connection).IsNull()
       .Because("ExcludeWorkers naming this worker MUST yield a no-op borrow with no actual pool conn acquired.");
@@ -49,11 +49,11 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   public async Task RealPool_Size1_SecondBorrowBlocksUntilFirstDisposesAsync(CancellationToken ct) {
     var opts = _options(size: 1);
     opts.BorrowTimeoutMilliseconds = 8_000;
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
-    var first = await pool.TryPinForAsync(typeof(_pinnedWorker), ct);
+    var first = await pool.TryPinForAsync(typeof(PinnedWorker), ct);
 
-    var secondTask = pool.TryPinForAsync(typeof(_pinnedWorker), ct).AsTask();
+    var secondTask = pool.TryPinForAsync(typeof(PinnedWorker), ct).AsTask();
 
     // Second borrow is in flight, waiting on the first to release.
     var raced = await Task.WhenAny(secondTask, Task.Delay(500, ct));
@@ -77,11 +77,11 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   public async Task RealPool_Size1_BorrowTimeout_ThrowsOperationCanceledAsync(CancellationToken ct) {
     var opts = _options(size: 1);
     opts.BorrowTimeoutMilliseconds = 500;
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
-    var held = await pool.TryPinForAsync(typeof(_pinnedWorker), ct);
+    var held = await pool.TryPinForAsync(typeof(PinnedWorker), ct);
     try {
-      await Assert.That(async () => await pool.TryPinForAsync(typeof(_pinnedWorker), ct))
+      await Assert.That(async () => await pool.TryPinForAsync(typeof(PinnedWorker), ct))
         .Throws<OperationCanceledException>()
         .Because("With Size=1 already held and BorrowTimeoutMilliseconds=500, the second borrow MUST time out — confirming the timeout knob is wired.");
     } finally {
@@ -96,15 +96,15 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
     // DISCARD ALL count would need superuser; instead we assert the Npgsql ProcessID
     // is identical, which is only possible when the underlying conn is the same.
     var opts = _options(size: 1);
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
     int? firstPid = null;
     int? secondPid = null;
 
-    await using (var first = await pool.TryPinForAsync(typeof(_pinnedWorker), CancellationToken.None)) {
+    await using (var first = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None)) {
       firstPid = (first.Connection as NpgsqlConnection)?.ProcessID;
     }
-    await using (var second = await pool.TryPinForAsync(typeof(_pinnedWorker), CancellationToken.None)) {
+    await using (var second = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None)) {
       secondPid = (second.Connection as NpgsqlConnection)?.ProcessID;
     }
 
@@ -118,9 +118,9 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
     // Verifies the end-to-end wiring: pin via pool → push to PinnedConnectionContext →
     // CoordinatorConnectionScope.AcquireAsync sees it → returns the pinned (not a fresh) conn.
     var opts = _options(size: 1);
-    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(_pinnedWorker)));
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
 
-    await using var borrow = await pool.TryPinForAsync(typeof(_pinnedWorker), CancellationToken.None);
+    await using var borrow = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None);
     using var ctx = PinnedConnectionContext.Push(borrow.Connection);
 
     await using var scope = await CoordinatorConnectionScope.AcquireAsync(
@@ -156,5 +156,5 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   }
 
   /// <summary>Stand-in worker type used as the eligibility key; not a real BackgroundService.</summary>
-  private sealed class _pinnedWorker;
+  private sealed class PinnedWorker;
 }

@@ -129,9 +129,9 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
     }
     return (
       Count: reader.GetInt64(0),
-      Sample: reader.IsDBNull(1) ? null : reader.GetString(1),
-      FirstSeen: reader.GetFieldValue<DateTimeOffset>(2),
-      LastSeen: reader.GetFieldValue<DateTimeOffset>(3));
+      Sample: await reader.IsDBNullAsync(1) ? null : reader.GetString(1),
+      FirstSeen: await reader.GetFieldValueAsync<DateTimeOffset>(2),
+      LastSeen: await reader.GetFieldValueAsync<DateTimeOffset>(3));
   }
 
   private static async Task<short?> _fingerprintVersionForRowAsync(NpgsqlConnection conn, string errorText) {

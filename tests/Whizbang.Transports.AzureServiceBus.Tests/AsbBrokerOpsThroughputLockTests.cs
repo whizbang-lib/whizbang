@@ -83,9 +83,10 @@ public class AsbBrokerOpsThroughputLockTests {
       NullLogger<AzureServiceBusTransport>.Instance);
     var routingOptions = new RoutingOptions().RouteCommandNamespaceToInbox(HANDLED_NAMESPACE);
     var publishStrategy = new TransportPublishStrategy(
-      publisherTransport,
-      new DefaultTransportReadinessCheck(),
-      "inbox",
+      transport: publisherTransport,
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: NullLoggerFactory.Instance,
       namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
     for (var i = 0; i < N; i++) {

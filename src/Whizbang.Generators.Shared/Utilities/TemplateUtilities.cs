@@ -207,14 +207,14 @@ public static class TemplateUtilities {
     var indentation = rawIndentation.Replace("\r", "").Replace("\n", "");
 
     // Remove the base indentation from all lines
-    return _removeIndentation(content, indentation);
+    return RemoveIndentation(content, indentation);
   }
 
   /// <summary>
   /// Removes a specific indentation prefix from each line of code.
   /// Used when extracting snippets to normalize indentation.
   /// </summary>
-  private static string _removeIndentation(string code, string indentationToRemove) {
+  public static string RemoveIndentation(string code, string indentationToRemove) {
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(indentationToRemove)) {
       return code;
     }

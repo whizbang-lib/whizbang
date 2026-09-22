@@ -40,12 +40,12 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithConfiguration_ResolvesServiceName_FromWhizbangKeyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithConfiguration_ResolvesServiceName_FromServiceNameKeyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithoutConfiguration_UsesAssemblyNameAsync</tests>
-  public ServiceInstanceProvider(IConfiguration? configuration = null) {
+  public ServiceInstanceProvider(IConfiguration configuration) {
     InstanceId = WhizbangIdProvider.NewGuid();
 
     // Resolve ServiceName from configuration or assembly
-    ServiceName = configuration?["Whizbang:ServiceName"]
-                  ?? configuration?["ServiceName"]
+    ServiceName = configuration["Whizbang:ServiceName"]
+                  ?? configuration["ServiceName"]
                   ?? Assembly.GetEntryAssembly()?.GetName().Name
                   ?? "Unknown";
 

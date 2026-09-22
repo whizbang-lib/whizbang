@@ -101,8 +101,8 @@ public class MessagePublishStrategyTests {
   public async Task IMessagePublishStrategy_IsReadyAsync_RespectsCancellationTokenAsync() {
     // Arrange
     IMessagePublishStrategy strategy = new DefaultPublishStrategy();
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>

@@ -47,7 +47,7 @@ public class HousekeepingIntegrityPriorityTests {
     try {
       using var hold = coordinator.BeginIntegrityScope();
       throw new InvalidOperationException("checkpoint failed");
-    } catch (InvalidOperationException) { }
+    } catch (InvalidOperationException) { /* the assertion decides the outcome, not this failure */ }
 
     var after = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, new ServiceBacklog());
     await Assert.That(after.Granted).IsTrue()

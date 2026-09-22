@@ -34,7 +34,7 @@ public class SchemaLedgerVersionTests : EFCoreTestBase {
   /// </summary>
   private const string ANCIENT_VERSION = "0.0.0-0";
 
-  private async Task<(string FileName, string Hash)> _pickTrackedMigrationAsync(
+  private static async Task<(string FileName, string Hash)> _pickTrackedMigrationAsync(
       NpgsqlConnection conn, CancellationToken ct) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"SELECT file_name, content_hash FROM wh_schema_migrations

@@ -22,7 +22,6 @@ public class CursorInversionDetectorTests {
   // --- helpers ---
 
   private sealed class TestEvent : IEvent {
-    public Guid StreamId { get; set; }
   }
 
   private static MessageEnvelope<IEvent> _envelope(Guid messageId) => new() {

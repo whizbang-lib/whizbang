@@ -1,11 +1,17 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -16,7 +22,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class WorkFlusherTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
-  public record _testEvent([StreamId] string Data) : IEvent;
+  public record TestEvent([StreamId] string Data) : IEvent;
 
   // ========================================
   // Strategy-specific IWorkFlusher Tests
@@ -30,7 +36,16 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -53,7 +68,12 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ScopedWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, workChannelWriter: null, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      workChannelWriter: null,
+      options: options,
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -76,7 +96,15 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions { IntervalMilliseconds = 60_000 };
 
     var strategy = new IntervalWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -105,7 +133,14 @@ public class WorkFlusherTests {
     };
 
     var strategy = new BatchWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -139,7 +174,16 @@ public class WorkFlusherTests {
     var options = new WorkCoordinatorOptions();
 
     var strategy = new ImmediateWorkCoordinatorStrategy(
-      fakeCoordinator, instanceProvider, options
+      coordinator: fakeCoordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -162,9 +206,9 @@ public class WorkFlusherTests {
   private OutboxMessage _createOutboxMessage() {
     var messageId = _idProvider.NewGuid();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var envelope = new MessageEnvelope<_testEvent> {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testEvent("test-data"),
+      Payload = new TestEvent("test-data"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -197,7 +241,7 @@ public class WorkFlusherTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -217,7 +261,7 @@ public class WorkFlusherTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastCancellationToken = cancellationToken;
       return Task.CompletedTask;

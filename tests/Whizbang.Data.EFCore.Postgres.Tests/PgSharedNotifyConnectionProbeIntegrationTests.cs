@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
   private static readonly bool[] _expectedSingleTrueTransition = [true];
 
-  private PgSharedNotifyConnection _newGate(WhizbangNotificationOptions options) {
+  private static PgSharedNotifyConnection _newGate(WhizbangNotificationOptions options) {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     return new PgSharedNotifyConnection(
       Options.Create(options),

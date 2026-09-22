@@ -69,15 +69,11 @@ public class FilterConventionTests {
   [Test]
   public async Task FilterConvention_ShouldHaveConfigureMethodAsync() {
     // Arrange
-    var conventionType = typeof(WhizbangFilterConvention);
-
-    // Act
-    var configureMethod = conventionType.GetMethod(
-        "Configure",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+    // Act - the Configure hook is the base convention's; deriving from it is what makes it available
+    var convention = new WhizbangFilterConvention();
 
     // Assert
-    await Assert.That(configureMethod).IsNotNull();
+    await Assert.That(convention).IsAssignableTo<FilterConvention>();
   }
 
   [Test]

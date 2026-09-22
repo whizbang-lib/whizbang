@@ -41,7 +41,7 @@ public sealed partial class DispatcherEventCascader : IEventCascader {
   /// </summary>
   /// <param name="serviceProvider">The service provider to lazily resolve the dispatcher.</param>
   /// <param name="logger">Optional logger for reporting unexpected non-message return types.</param>
-  public DispatcherEventCascader(IServiceProvider serviceProvider, ILogger<DispatcherEventCascader>? logger = null) {
+  public DispatcherEventCascader(IServiceProvider serviceProvider, ILogger<DispatcherEventCascader> logger) {
     ArgumentNullException.ThrowIfNull(serviceProvider);
     _serviceProvider = serviceProvider;
     _logger = logger ?? NullLogger<DispatcherEventCascader>.Instance;

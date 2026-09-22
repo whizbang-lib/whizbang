@@ -34,16 +34,13 @@ public class TraceBaselineTests {
     var baselinePath = Path.Combine(_baselinesPath, "command-dispatch.json");
 
     // Act - Simulate a typical command dispatch trace
-    _simulateCommandDispatch(collector);
+    _simulateCommandDispatch();
 
     // Assert or regenerate baseline
-    if (Environment.GetEnvironmentVariable("REGENERATE_BASELINES") == "true") {
-      await collector.SaveBaselineAsync(baselinePath);
-      await Assert.That(File.Exists(baselinePath)).IsTrue();
-    } else if (File.Exists(baselinePath)) {
+    if (File.Exists(baselinePath) && Environment.GetEnvironmentVariable("REGENERATE_BASELINES") != "true") {
       await collector.AssertMatchesBaselineFileAsync(baselinePath);
     } else {
-      // First run - generate baseline
+      // First run, or a requested regeneration: write the baseline
       await collector.SaveBaselineAsync(baselinePath);
       await Assert.That(File.Exists(baselinePath)).IsTrue();
     }
@@ -56,16 +53,13 @@ public class TraceBaselineTests {
     var baselinePath = Path.Combine(_baselinesPath, "lifecycle-stages.json");
 
     // Act - Simulate lifecycle stages
-    _simulateLifecycleStages(collector);
+    _simulateLifecycleStages();
 
     // Assert or regenerate baseline
-    if (Environment.GetEnvironmentVariable("REGENERATE_BASELINES") == "true") {
-      await collector.SaveBaselineAsync(baselinePath);
-      await Assert.That(File.Exists(baselinePath)).IsTrue();
-    } else if (File.Exists(baselinePath)) {
+    if (File.Exists(baselinePath) && Environment.GetEnvironmentVariable("REGENERATE_BASELINES") != "true") {
       await collector.AssertMatchesBaselineFileAsync(baselinePath);
     } else {
-      // First run - generate baseline
+      // First run, or a requested regeneration: write the baseline
       await collector.SaveBaselineAsync(baselinePath);
       await Assert.That(File.Exists(baselinePath)).IsTrue();
     }
@@ -78,16 +72,13 @@ public class TraceBaselineTests {
     var baselinePath = Path.Combine(_baselinesPath, "multiple-handlers.json");
 
     // Act - Simulate multiple handlers for an event
-    _simulateMultipleHandlers(collector);
+    _simulateMultipleHandlers();
 
     // Assert or regenerate baseline
-    if (Environment.GetEnvironmentVariable("REGENERATE_BASELINES") == "true") {
-      await collector.SaveBaselineAsync(baselinePath);
-      await Assert.That(File.Exists(baselinePath)).IsTrue();
-    } else if (File.Exists(baselinePath)) {
+    if (File.Exists(baselinePath) && Environment.GetEnvironmentVariable("REGENERATE_BASELINES") != "true") {
       await collector.AssertMatchesBaselineFileAsync(baselinePath);
     } else {
-      // First run - generate baseline
+      // First run, or a requested regeneration: write the baseline
       await collector.SaveBaselineAsync(baselinePath);
       await Assert.That(File.Exists(baselinePath)).IsTrue();
     }
@@ -100,16 +91,13 @@ public class TraceBaselineTests {
     var baselinePath = Path.Combine(_baselinesPath, "trace-with-error.json");
 
     // Act - Simulate a trace with error
-    _simulateTraceWithError(collector);
+    _simulateTraceWithError();
 
     // Assert or regenerate baseline
-    if (Environment.GetEnvironmentVariable("REGENERATE_BASELINES") == "true") {
-      await collector.SaveBaselineAsync(baselinePath);
-      await Assert.That(File.Exists(baselinePath)).IsTrue();
-    } else if (File.Exists(baselinePath)) {
+    if (File.Exists(baselinePath) && Environment.GetEnvironmentVariable("REGENERATE_BASELINES") != "true") {
       await collector.AssertMatchesBaselineFileAsync(baselinePath);
     } else {
-      // First run - generate baseline
+      // First run, or a requested regeneration: write the baseline
       await collector.SaveBaselineAsync(baselinePath);
       await Assert.That(File.Exists(baselinePath)).IsTrue();
     }
@@ -120,7 +108,7 @@ public class TraceBaselineTests {
   /// - Dispatch CreateOrderCommand
   ///   - Handler: OrderReceptor
   /// </summary>
-  private static void _simulateCommandDispatch(InMemorySpanCollector collector) {
+  private static void _simulateCommandDispatch() {
     using var dispatch = WhizbangActivitySource.Tracing.StartActivity("Dispatch CreateOrderCommand");
     dispatch?.SetTag("whizbang.message.type", "CreateOrderCommand");
     dispatch?.SetTag("whizbang.route", "Direct");
@@ -140,7 +128,7 @@ public class TraceBaselineTests {
   ///   - Lifecycle PostDistributeInline
   ///   - Lifecycle PostDistributeDetached
   /// </summary>
-  private static void _simulateLifecycleStages(InMemorySpanCollector collector) {
+  private static void _simulateLifecycleStages() {
     using var dispatch = WhizbangActivitySource.Tracing.StartActivity("Dispatch ReseedSystemCommand");
     dispatch?.SetTag("whizbang.message.type", "ReseedSystemCommand");
 
@@ -171,7 +159,7 @@ public class TraceBaselineTests {
   ///   - Handler: InventoryHandler
   ///   - Handler: AnalyticsHandler (explicit)
   /// </summary>
-  private static void _simulateMultipleHandlers(InMemorySpanCollector collector) {
+  private static void _simulateMultipleHandlers() {
     using var dispatch = WhizbangActivitySource.Tracing.StartActivity("Dispatch OrderCreatedEvent");
     dispatch?.SetTag("whizbang.message.type", "OrderCreatedEvent");
     dispatch?.SetTag("whizbang.handler.count", 3);
@@ -199,7 +187,7 @@ public class TraceBaselineTests {
   /// - Dispatch PaymentCommand
   ///   - Handler: PaymentHandler (failed)
   /// </summary>
-  private static void _simulateTraceWithError(InMemorySpanCollector collector) {
+  private static void _simulateTraceWithError() {
     using var dispatch = WhizbangActivitySource.Tracing.StartActivity("Dispatch PaymentCommand");
     dispatch?.SetTag("whizbang.message.type", "PaymentCommand");
 

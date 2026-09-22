@@ -11,24 +11,27 @@ namespace Whizbang.Core.Tests.Perspectives;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Locks the two default-interface-method behaviors on
 /// <see cref="IPerspectiveRunner"/>. Generated runners override these; legacy
 /// runners + test fakes get the defaults. If a refactor changes them,
 /// every uplift path silently behaves differently.
-///
+/// </para>
+/// <para>
 /// Defaults under test:
 ///   1. RunWithEventsAsync returns Completion(Status=None, LastEventId=lastProcessedEventId)
 ///      — the no-op runner pattern used by test doubles that don't override drain mode.
 ///   2. RewindAndRunAsync(streamId, perspectiveName, triggeringEventId,
 ///      triggeringCommitSequence, ct) delegates to the 3-arg overload —
 ///      legacy runners that don't know about commit_sequence keep working.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/perspective-runner</docs>
 public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task RunWithEventsAsync_DefaultImpl_ReturnsNoneStatusAsync() {
-    IPerspectiveRunner runner = new _MinimalRunner();
+    IPerspectiveRunner runner = new MinimalRunner();
     var streamId = Guid.NewGuid();
     var lastEventId = Guid.NewGuid();
 
@@ -47,7 +50,7 @@ public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task RunWithEventsAsync_NullLastProcessedEventId_LandsOnGuidEmptyAsync() {
-    IPerspectiveRunner runner = new _MinimalRunner();
+    IPerspectiveRunner runner = new MinimalRunner();
 
     var result = await runner.RunWithEventsAsync(
       Guid.NewGuid(),
@@ -63,7 +66,7 @@ public class IPerspectiveRunnerDefaultsTests {
 
   [Test]
   public async Task CommitSequenceRewind_DelegatesToLegacyRewindAsync() {
-    var runner = new _MinimalRunner();
+    var runner = new MinimalRunner();
     var streamId = Guid.NewGuid();
     var triggerId = Guid.NewGuid();
 
@@ -80,11 +83,11 @@ public class IPerspectiveRunnerDefaultsTests {
     // 3-arg overload — that's the whole point of the legacy fallback contract.
   }
 
-  private sealed class _MinimalRunner : IPerspectiveRunner {
+  private sealed class MinimalRunner : IPerspectiveRunner {
     public int RewindCalls { get; private set; }
     public Guid? LastTriggerEventId { get; private set; }
 
-    public Type PerspectiveType => typeof(_MinimalRunner);
+    public Type PerspectiveType => typeof(MinimalRunner);
 
     public Task<PerspectiveCursorCompletion> RunAsync(
       Guid streamId,

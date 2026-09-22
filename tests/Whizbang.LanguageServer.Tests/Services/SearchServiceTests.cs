@@ -3,7 +3,7 @@ using Whizbang.LanguageServer.Services;
 
 namespace Whizbang.LanguageServer.Tests.Services;
 
-public class SearchServiceTests : IDisposable {
+public sealed class SearchServiceTests : IDisposable {
   private readonly SearchService _sut = new();
 
   private static readonly List<SearchDocument> _sampleDocs =
@@ -114,7 +114,7 @@ public class SearchServiceTests : IDisposable {
   public async Task Search_ReturnsRankedResultsAsync() {
     // Arrange -- add a doc where "dispatcher" is only in content, not title
     var docs = new List<SearchDocument>(_sampleDocs) {
-      new SearchDocument {
+      new() {
         Slug = "advanced/custom-pipeline",
         Title = "Custom Pipeline",
         Category = "Advanced",
@@ -183,21 +183,21 @@ public class SearchServiceTests : IDisposable {
   public async Task Search_DeduplicatesBySlugAsync() {
     // Arrange -- multiple chunks from same document
     var docs = new List<SearchDocument> {
-      new SearchDocument {
+      new() {
         Slug = "core-concepts/dispatcher",
         Title = "Dispatcher",
         Category = "Core Concepts",
         Content = "The Dispatcher is the central routing component. Section 1.",
         Preview = "The Dispatcher is the central routing component..."
       },
-      new SearchDocument {
+      new() {
         Slug = "core-concepts/dispatcher",
         Title = "Dispatcher",
         Category = "Core Concepts",
         Content = "The Dispatcher supports middleware and pipelines. Section 2.",
         Preview = "The Dispatcher supports middleware..."
       },
-      new SearchDocument {
+      new() {
         Slug = "core-concepts/receptor",
         Title = "Receptor",
         Category = "Core Concepts",

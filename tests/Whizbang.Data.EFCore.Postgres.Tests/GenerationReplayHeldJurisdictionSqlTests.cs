@@ -45,8 +45,7 @@ public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
     var gen = "new/" + Guid.NewGuid().ToString("N")[..8];
 
     var svc = new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-        EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+      ctx, null);
     await svc.ResetForGenerationAsync(gen, 0);
 
     await using var q = conn.CreateCommand();
@@ -79,8 +78,7 @@ public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
     for (var i = 0; i < 40; i++) { await _seedAsync(conn, status: 0); }
 
     var svc = new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
-      ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-        EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+      ctx, null);
     var scheduled = await svc.ResetForGenerationAsync(gen, 30);
 
     await Assert.That(scheduled).IsEqualTo(40);

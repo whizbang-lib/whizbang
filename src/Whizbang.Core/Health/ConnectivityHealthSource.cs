@@ -73,8 +73,8 @@ public sealed class ConnectivityHealthSource : IWhizbangHealthSource {
   /// A placeholder for a managed surface that does not yet have a real connectivity probe (e.g. the
   /// transport broker, the offload store, the signal bus). It represents the surface in the health model
   /// and is still phase-aware (it reports the intentional states), but its probe always succeeds — so it
-  /// never fails readiness. <b>TODO:</b> replace with a real per-driver reachability probe; a real source
-  /// for the same component supersedes this placeholder.
+  /// never fails readiness. A real per-driver reachability probe registered for the same component
+  /// supersedes this placeholder.
   /// </summary>
   public static ConnectivityHealthSource AssumedHealthy(
       string component, IWhizbangLifecycleState lifecycle,

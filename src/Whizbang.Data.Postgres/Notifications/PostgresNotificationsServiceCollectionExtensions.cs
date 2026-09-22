@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Linq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -5,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
@@ -67,6 +70,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangPostgresNotifications(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
+    services.TryAddWhizbangDefaults();
     // AOT-safe options binding: register an IConfigureOptions impl that reads IConfiguration
     // values manually instead of using the reflection-based BindConfiguration<TOptions>.
     services.AddOptions<WhizbangNotificationOptions>();
@@ -92,12 +96,11 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddHostedService(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
 
-    // Replace the NoOp listener registered by AddWhizbangWorkers with the real one — but
-    // the listener is now a thin subscriber. It subscribes via the shared connection in
-    // its IHostedService.StartAsync.
-    services.RemoveAll<IWorkNotificationListener>();
+    // Displace the placeholder listener the core registers; a host's own listener, if it registered
+    // one, is left in place. The listener is a thin subscriber: it subscribes via the shared
+    // connection in its IHostedService.StartAsync.
     services.TryAddSingleton<PgWorkNotificationListener>();
-    services.AddSingleton<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
+    services.TryAddSingletonOverNullDefault<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
     services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
 
     // Slice 26.12: register the commit-order stamper worker. Singleton per pod via
@@ -116,7 +119,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
 
     // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
-    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink;
+    // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink —
     // PgInstanceLifecycleMonitor and ScheduleWorker need ISignalBus). AddWhizbang wires the bus for
     // full hosts, but this extension is also used standalone — without this call those hosted
     // services can't be constructed and GetServices<IHostedService>() throws. AddWhizbangSignalBus
@@ -134,7 +137,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // signal types. They run alongside NOTIFY: when the push transport is healthy the poll adds
     // latency-relaxed correctness checks; when NOTIFY is unavailable they carry the wake load.
     // TimeProvider is resolved from DI so tests can inject a FakeTimeProvider.
-    services.TryAddSingleton<TimeProvider>(sp => TimeProvider.System);
+    services.TryAddSingleton<TimeProvider>(_ => TimeProvider.System);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
@@ -157,7 +160,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // occurrence executes. Inert unless the developer registers an IScheduleFireHook — with none, the gate
     // proceeds for everything and publishing is byte-for-byte unchanged.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleOccurrenceStore, PgScheduleOccurrenceStore>();
-    services.TryAddSingleton<Whizbang.Core.Workers.IOccurrencePublishGate,
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Workers.IOccurrencePublishGate,
       Whizbang.Core.Temporal.ScheduleOccurrencePublishGate>();
 
     // Durable-signal tail worker — delivers Delivery=Durable signals persisted to wh_signals
@@ -180,7 +183,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Duty election (startup-pipeline increment 7): duties are won on a session advisory lock over
     // a dedicated direct connection, with holdings recorded via record_capability — the lock
     // decides, the row reports.
-    services.TryAddSingleton<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IDutyElector, PgDutyElector>();
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
@@ -286,19 +289,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   /// Returns null when none qualify.
   /// </summary>
   private static string? _findFirstCredentialBearingConnectionString(IConfiguration configuration) {
-    foreach (var child in configuration.GetSection("ConnectionStrings").GetChildren()) {
-      var value = child.Value;
-      if (string.IsNullOrEmpty(value)) {
-        continue;
-      }
-      var (_, hasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(value);
-      if (hasSecret) {
-        return value;
-      }
-    }
-    return null;
+    return configuration.GetSection("ConnectionStrings").GetChildren()
+      .Select(child => child.Value)
+      .FirstOrDefault(value => !string.IsNullOrEmpty(value) && ConnectionStringCredentialMarkerSummary.Summarize(value).HasSecret);
   }
-
 
   /// <summary>
   /// Registers a dedicated <see cref="NpgsqlDataSource"/> for the notification
@@ -464,19 +458,19 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
       options.DisableNotifications = disable;
     }
 
-    if (TimeSpan.TryParse(section["PollingFallbackInterval"], out var pollFallback)) {
+    if (TimeSpan.TryParse(section["PollingFallbackInterval"], CultureInfo.InvariantCulture, out var pollFallback)) {
       options.PollingFallbackInterval = pollFallback;
     }
 
-    if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], out var keepalive)) {
+    if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], CultureInfo.InvariantCulture, out var keepalive)) {
       options.ListenKeepaliveInterval = keepalive;
     }
 
-    if (TimeSpan.TryParse(section["ListenReconnectInitialDelay"], out var initialDelay)) {
+    if (TimeSpan.TryParse(section["ListenReconnectInitialDelay"], CultureInfo.InvariantCulture, out var initialDelay)) {
       options.ListenReconnectInitialDelay = initialDelay;
     }
 
-    if (TimeSpan.TryParse(section["ListenReconnectMaxDelay"], out var maxDelay)) {
+    if (TimeSpan.TryParse(section["ListenReconnectMaxDelay"], CultureInfo.InvariantCulture, out var maxDelay)) {
       options.ListenReconnectMaxDelay = maxDelay;
     }
 

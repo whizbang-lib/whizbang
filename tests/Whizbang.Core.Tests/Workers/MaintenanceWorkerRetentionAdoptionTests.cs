@@ -86,7 +86,7 @@ public class MaintenanceWorkerRetentionAdoptionTests {
 
   [Test]
   public async Task Adoption_RecordsTheBacklogOnTheMaintenanceMeter_TaggedByPerspectiveAsync() {
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var readings = new List<(string Name, long Value, string? Perspective)>();
     using var listener = new MeterListener();
     // Pin to THIS test's instrument, not the meter name: parallel tests build MaintenanceMetrics
@@ -171,33 +171,33 @@ public class MaintenanceWorkerRetentionAdoptionTests {
     public List<string> Calls { get; } = [];
 
     public Task<IReadOnlyList<PerspectiveRetentionAdoption>> AdoptEnrolledPerspectiveRetentionAsync(
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
       Calls.Add("adopt");
       return Task.FromResult(Adoptions);
     }
 
     public Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
-        int batchSize = 5000, CancellationToken ct = default) {
+        int batchSize = 5000, CancellationToken cancellationToken = default) {
       Calls.Add("reap");
       return Task.FromResult(new PerspectiveRowReapResult(0, "ok"));
     }
 
-    public Task<bool> TryClaimRowCapSweepAsync(TimeSpan claimWindow, CancellationToken ct = default)
+    public Task<bool> TryClaimRowCapSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default)
       => Task.FromResult(false);
-    public Task<bool> TryClaimSettledFoldSweepAsync(TimeSpan claimWindow, CancellationToken ct = default)
+    public Task<bool> TryClaimSettledFoldSweepAsync(TimeSpan claimWindow, CancellationToken cancellationToken = default)
       => Task.FromResult(false);
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 }

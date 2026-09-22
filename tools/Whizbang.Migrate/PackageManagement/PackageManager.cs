@@ -162,11 +162,8 @@ public static class PackageManager {
       foreach (var csproj in csprojFiles) {
         var content = File.ReadAllText(csproj);
         // Quick check if file contains any old package references
-        foreach (var oldPackage in oldPackageNames) {
-          if (content.Contains($"Include=\"{oldPackage}\"", StringComparison.OrdinalIgnoreCase)) {
-            projects.Add(csproj);
-            break;
-          }
+        if (oldPackageNames.Any(oldPackage => content.Contains($"Include=\"{oldPackage}\"", StringComparison.OrdinalIgnoreCase))) {
+          projects.Add(csproj);
         }
       }
     } catch {

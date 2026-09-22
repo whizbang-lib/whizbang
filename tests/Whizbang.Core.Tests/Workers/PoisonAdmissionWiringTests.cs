@@ -39,7 +39,7 @@ public partial class PoisonAdmissionWiringTests {
     gate.MarkReady();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new _Instance(), new _Drain(), new _Inbox(), gate,
+      new FakeInstance(), new Drain(), new Inbox(), gate,
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       new JsonSerializerOptions(),
       NullLogger<InboxDrainWorker>.Instance);
@@ -127,7 +127,7 @@ public partial class PoisonAdmissionWiringTests {
     await Assert.That(plan.Length).IsEqualTo(0);
   }
 
-  private sealed class _Instance : IServiceInstanceProvider {
+  private sealed class FakeInstance : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "svc";
     public string HostName => "host";
@@ -135,16 +135,15 @@ public partial class PoisonAdmissionWiringTests {
     public ServiceInstanceInfo ToInfo() => ServiceInstanceInfo.Unknown;
   }
 
-  private sealed class _Drain : IInboxDrainChannel {
+  private sealed class Drain : IInboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _c =
       System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _c.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _c.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _c.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _c.Writer.TryWrite(streamId);
-    public void Complete() => _c.Writer.Complete();
   }
 
-  private sealed class _Inbox : IInboxChannelWriter {
+  private sealed class Inbox : IInboxChannelWriter {
     private readonly System.Threading.Channels.Channel<InboxWork> _c =
       System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _c.Reader;
@@ -155,7 +154,7 @@ public partial class PoisonAdmissionWiringTests {
     public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _c.Writer.Complete();
     public void SignalNewInboxWorkAvailable() { }
-    public event Action? OnNewInboxWorkAvailable { add { } remove { } }
+    public event Action? OnNewInboxWorkAvailable { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
   }
 }
 

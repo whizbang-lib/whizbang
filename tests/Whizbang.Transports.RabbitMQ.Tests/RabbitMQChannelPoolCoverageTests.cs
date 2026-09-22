@@ -129,7 +129,7 @@ public class RabbitMQChannelPoolCoverageTests {
     var channel = new FakeChannel();
     var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
     var pool = new RabbitMQChannelPool(connection, maxChannels: 1);
-    using (await pool.RentAsync(CancellationToken.None)) { }
+    using (await pool.RentAsync(CancellationToken.None)) { /* intentionally empty */ }
 
     pool.Dispose();
 

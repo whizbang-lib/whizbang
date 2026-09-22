@@ -79,9 +79,9 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
       throw new InvalidOperationException("expected dead-letter row");
     }
     return (
-      Fingerprint: reader.IsDBNull(0) ? null : reader.GetString(0),
-      Version: reader.IsDBNull(1) ? null : reader.GetInt16(1),
-      ErrorText: reader.IsDBNull(2) ? null : reader.GetString(2));
+      Fingerprint: await reader.IsDBNullAsync(0) ? null : reader.GetString(0),
+      Version: await reader.IsDBNullAsync(1) ? null : reader.GetInt16(1),
+      ErrorText: await reader.IsDBNullAsync(2) ? null : reader.GetString(2));
   }
 
   private static async Task<Guid> _moveToDlqAsync(NpgsqlConnection conn, Guid messageId, string? errorText) {

@@ -185,11 +185,11 @@ public sealed class DefaultMessageSecurityContextProvider(
   /// null when <paramref name="envelopeType"/> is not a constructed envelope.
   /// </summary>
   private static Type? _innerTypeOfEnvelope(Type envelopeType) {
-    if (envelopeType.IsGenericType && envelopeType.GetGenericArguments() is { Length: 1 } direct) {
-      // MessageEnvelope<T> and IMessageEnvelope<T> both carry exactly one argument: the message.
-      if (typeof(IMessageEnvelope).IsAssignableFrom(envelopeType)) {
-        return direct[0];
-      }
+    // MessageEnvelope<T> and IMessageEnvelope<T> both carry exactly one argument: the message.
+    if (envelopeType.IsGenericType
+        && envelopeType.GetGenericArguments() is { Length: 1 } direct
+        && typeof(IMessageEnvelope).IsAssignableFrom(envelopeType)) {
+      return direct[0];
     }
     // A subclass of a constructed envelope keeps the argument on a base type rather than itself.
     for (var baseType = envelopeType.BaseType; baseType is not null; baseType = baseType.BaseType) {

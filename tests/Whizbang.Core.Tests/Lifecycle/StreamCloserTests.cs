@@ -22,23 +22,17 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public class StreamCloserTests {
-  private sealed class RecordingHook : IDestructionHook {
-    private readonly List<string> _log;
-    private readonly DestructionResult _result;
-    private readonly bool _throwOnBefore;
-    private readonly bool _throwOnAfter;
-    private readonly Exception? _beforeThrows;
-    private readonly Exception? _afterThrows;
+  private sealed class RecordingHook(List<string> log, DestructionResult? result = null,
+      bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null,
+      Exception? afterThrows = null) : IDestructionHook {
+    private readonly List<string> _log = log;
+    private readonly DestructionResult _result = result ?? DestructionResult.Proceed();
+    private readonly bool _throwOnBefore = throwOnBefore;
+    private readonly bool _throwOnAfter = throwOnAfter;
+    private readonly Exception? _beforeThrows = beforeThrows;
+    private readonly Exception? _afterThrows = afterThrows;
     public DestructionReason LastReason { get; private set; }
     public DestructionGranularity LastGranularity { get; private set; }
-
-    public RecordingHook(List<string> log, DestructionResult? result = null,
-        bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null,
-        Exception? afterThrows = null) {
-      _log = log; _result = result ?? DestructionResult.Proceed();
-      _throwOnBefore = throwOnBefore; _throwOnAfter = throwOnAfter;
-      _beforeThrows = beforeThrows; _afterThrows = afterThrows;
-    }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       _log.Add("before");
@@ -65,17 +59,13 @@ public class StreamCloserTests {
     }
   }
 
-  private sealed class FakeCloseCoordinator : IWorkCoordinator {
-    private readonly List<string> _log;
-    private readonly StreamCloseResult _result;
+  private sealed class FakeCloseCoordinator(List<string> log, StreamCloseResult? result = null) : IWorkCoordinator {
+    private readonly List<string> _log = log;
+    private readonly StreamCloseResult _result = result ?? new StreamCloseResult("closed", 3);
     public int CloseCalls { get; private set; }
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
 
     public IReadOnlyList<string> ConsumingNames { get; init; } = [];
-
-    public FakeCloseCoordinator(List<string> log, StreamCloseResult? result = null) {
-      _log = log; _result = result ?? new StreamCloseResult("closed", 3);
-    }
 
     public Task<StreamCloseResult> CloseStreamAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       CloseCalls++;
@@ -96,9 +86,7 @@ public class StreamCloserTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
   private static StreamCloser _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>

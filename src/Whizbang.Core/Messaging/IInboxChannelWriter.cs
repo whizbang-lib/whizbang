@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// Mirrors IWorkChannelWriter pattern — callers check IsInFlight before writing,
 /// RemoveInFlight after completion is acknowledged by DB.
 /// </summary>
-/// <docs>messaging/inbox-channel</docs>
+/// <docs>messaging/inbox-pattern</docs>
 /// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 public interface IInboxChannelWriter {
   /// <summary>Gets the channel reader for consumers (WorkCoordinatorPublisherWorker).</summary>

@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -51,7 +52,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     services.AddSingleton(new JsonSerializerOptions());
     services.AddSingleton<ISchemaReadyGate>(SchemaReadyGate.AlreadyReady());
     services.AddSingleton<ILifecycleMessageDeserializer>(new NoOpLifecycleMessageDeserializer());
-    services.AddSingleton(new WhizbangMetrics());
+    services.AddSingleton(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     services.AddSingleton<TransportMetrics>();
   }
 
@@ -59,33 +60,12 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   // IReceptorInvoker Registration Tests
   // ========================================
 
-  [Test]
-  public async Task AddTransportConsumer_WithoutReceptorRegistry_RegistersNullReceptorInvokerAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    _registerRequiredServices(services);
-
-    var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
-
-    // Act - no IReceptorRegistry registered
-    builder.AddTransportConsumer();
-
-    // Assert - should use NullReceptorInvoker fallback
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-
-    await Assert.That(invoker).IsNotNull()
-      .Because("IReceptorInvoker should always be resolvable");
-    await Assert.That(invoker).IsTypeOf<NullReceptorInvoker>()
-      .Because("Without registry, NullReceptorInvoker should be used as fallback");
-  }
 
   [Test]
   public async Task AddTransportConsumer_WithReceptorRegistry_RegistersReceptorInvokerAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     // Register a receptor registry so ReceptorInvoker branch is taken
@@ -107,33 +87,12 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
       .Because("With registry, ReceptorInvoker should be used");
   }
 
-  [Test]
-  public async Task AddTransportConsumer_PerspectiveBuilder_WithoutReceptorRegistry_RegistersNullInvokerAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    _registerRequiredServices(services);
-
-    var builder = new WhizbangBuilder(services);
-    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
-
-    var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
-
-    // Act
-    perspectiveBuilder.AddTransportConsumer();
-
-    // Assert - fallback to NullReceptorInvoker
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var invoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-
-    await Assert.That(invoker).IsNotNull();
-    await Assert.That(invoker).IsTypeOf<NullReceptorInvoker>();
-  }
 
   [Test]
   public async Task AddTransportConsumer_PerspectiveBuilder_WithReceptorRegistry_RegistersReceptorInvokerAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     services.AddSingleton<IReceptorRegistry>(new TestReceptorRegistry());
@@ -163,6 +122,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_HealthCheck_RegisteredCorrectlyAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -190,6 +150,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_HealthCheck_RegisteredAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -214,6 +175,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -238,6 +200,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -263,6 +226,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_WithoutRouting_ThrowsOnResolutionAsync() {
     // Arrange - No WithRouting() called
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     // Note: No WithRouting() call
@@ -285,6 +249,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_RegistersOrderedStreamProcessorAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -304,6 +269,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_PerspectiveBuilder_RegistersOrderedStreamProcessorAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -328,6 +294,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
   public async Task AddTransportConsumer_RegistersDispatcherEventCascaderAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -355,6 +322,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     // and readiness surfaces observe — subscriptions would never actually run even though every
     // other signal reports the worker as registered.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
     _registerWorkerResolutionDependencies(services);
 
@@ -377,6 +345,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     // (e.g. after WithEFCore<T>().WithDriver.Postgres.AddTransportConsumer()) — a broken forward
     // here would mean the perspective-chain host never actually starts the worker it registered.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
     _registerWorkerResolutionDependencies(services);
 
@@ -401,6 +370,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     // consuming subscriptions — reporting the app ready before subscriptions are up, or never
     // reporting ready at all.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
     _registerWorkerResolutionDependencies(services);
 
@@ -430,6 +400,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     // TransportConsumerWorker isn't resolvable would throw instead of degrading to an
     // empty-subscriptions health check — turning a benign ordering/timing gap into a crash.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services);
 
     var builder = new WhizbangBuilder(services);
@@ -473,6 +444,7 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
     // assembly's name (or "UnknownService" if even that is unavailable) rather than throwing —
     // a host that hasn't wired identity yet must still be able to build its subscription set.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     _registerRequiredServices(services, includeServiceInstanceProvider: false);
 
     var builder = new WhizbangBuilder(services);
@@ -566,12 +538,13 @@ public class TransportConsumerBuilderExtensionsCoverageTests {
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
 
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
       false;
 
-    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
-
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage =>
       false;
+
   }
 }

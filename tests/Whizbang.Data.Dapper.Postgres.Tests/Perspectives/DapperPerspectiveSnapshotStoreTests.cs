@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// Tests CRUD operations, pruning, and edge cases for perspective snapshot storage.
 /// </summary>
 [Category("Integration")]
-public class DapperPerspectiveSnapshotStoreTests : IDisposable {
+public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
   private TestFixture _testBase = null!;
   private DapperPerspectiveSnapshotStore _store = null!;
 

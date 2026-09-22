@@ -101,7 +101,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 
@@ -123,7 +123,7 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", streamId);
-    ins.Parameters.AddWithValue("attempts", attempts);
+    ins.Parameters.AddWithValue(nameof(attempts), attempts);
     await ins.ExecuteNonQueryAsync();
   }
 }

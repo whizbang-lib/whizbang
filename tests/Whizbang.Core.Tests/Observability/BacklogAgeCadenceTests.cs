@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -88,7 +90,7 @@ public class BacklogAgeCadenceTests {
     new([peek], [],
       Options.Create(new BacklogAgeOptions { Interval = _interval }),
       new BacklogAgeState(),
-      new BacklogAgeMetrics(new WhizbangMetrics()),
+      new BacklogAgeMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())),
       NullLogger<BacklogAgeWorker>.Instance,
       probeMetrics);
 

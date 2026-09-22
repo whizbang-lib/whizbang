@@ -19,7 +19,7 @@ public class StartupReadinessCoverageTests {
   private static StartupStepDescriptor _step(string name, bool blocking = true) =>
     new() { Name = name, Blocking = blocking };
 
-  private sealed class _narrationLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {
+  private sealed class NarrationLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {
     private readonly List<string> _entries = [];
     private readonly Lock _lock = new();
     public IReadOnlyList<string> Entries {
@@ -51,8 +51,8 @@ public class StartupReadinessCoverageTests {
       CancellationToken cancellationToken) {
     var state = new StartupPipelineState();
     await state.OnRunStartingAsync(new StartupRunPlan([_step("Migrate")]), cancellationToken);
-    var logger = new _narrationLogger();
-    var service = new StartupReadyService(state, new StartupReadySignal(), logger: logger) {
+    var logger = new NarrationLogger();
+    var service = new StartupReadyService(pipelineState: state, signal: new StartupReadySignal(), contributors: [], logger: logger) {
       WaitProbeInterval = TimeSpan.FromMilliseconds(15),
     };
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -85,8 +85,8 @@ public class StartupReadinessCoverageTests {
       CancellationToken cancellationToken) {
     var state = new StartupPipelineState();
     await state.OnStepStartingAsync(new StartupStepContext(_step("SomeStep")), cancellationToken);
-    var logger = new _narrationLogger();
-    var service = new StartupReadyService(state, new StartupReadySignal(), logger: logger) {
+    var logger = new NarrationLogger();
+    var service = new StartupReadyService(pipelineState: state, signal: new StartupReadySignal(), contributors: [], logger: logger) {
       WaitProbeInterval = TimeSpan.FromMilliseconds(15),
     };
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

@@ -85,37 +85,36 @@ public class ChurnReportingWiringTests {
     gate.MarkReady();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new _Instance(), new _Drain(), new _Inbox(), gate,
+      new FakeInstance(), new Drain(), new Inbox(), gate,
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       new JsonSerializerOptions(),
       NullLogger<InboxDrainWorker>.Instance,
       feedback);
   }
 
-  private sealed class _Instance : IServiceInstanceProvider {
+  private sealed class FakeInstance : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "svc";
     public string HostName => "host";
     public int ProcessId => 1;
     public ServiceInstanceInfo ToInfo() => ServiceInstanceInfo.Unknown;
   }
-  private sealed class _Drain : IInboxDrainChannel {
+  private sealed class Drain : IInboxDrainChannel {
     private readonly Channel<Guid> _c = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _c.Reader;
-    public ValueTask WriteAsync(Guid s, CancellationToken ct = default) => _c.Writer.WriteAsync(s, ct);
-    public bool TryWrite(Guid s) => _c.Writer.TryWrite(s);
-    public void Complete() => _c.Writer.Complete();
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _c.Writer.WriteAsync(streamId, cancellationToken);
+    public bool TryWrite(Guid streamId) => _c.Writer.TryWrite(streamId);
   }
-  private sealed class _Inbox : IInboxChannelWriter {
+  private sealed class Inbox : IInboxChannelWriter {
     private readonly Channel<InboxWork> _c = Channel.CreateUnbounded<InboxWork>();
     public ChannelReader<InboxWork> Reader => _c.Reader;
-    public ValueTask WriteAsync(InboxWork w, CancellationToken ct = default) => _c.Writer.WriteAsync(w, ct);
-    public bool TryWrite(InboxWork w) => _c.Writer.TryWrite(w);
-    public bool IsInFlight(Guid id) => false;
-    public void RemoveInFlight(Guid id) { }
-    public bool ShouldRenewLease(Guid id) => false;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _c.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _c.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _c.Writer.Complete();
     public void SignalNewInboxWorkAvailable() { }
-    public event Action? OnNewInboxWorkAvailable { add { } remove { } }
+    public event Action? OnNewInboxWorkAvailable { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
   }
 }

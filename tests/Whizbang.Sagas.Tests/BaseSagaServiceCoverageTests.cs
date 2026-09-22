@@ -28,14 +28,14 @@ public class BaseSagaServiceCoverageTests {
   // what lets a saga where every item ends in failure still auto-complete instead of hanging
   // forever waiting for a "completed" count that will never arrive. Every existing suite only
   // ever drives the tracker through UpdateItemAsync(Completed); none call FailItemAsync after
-  // InitiateSagaAsync for the same saga, so the tracker.Failed++ increment inside
+  // InitiateSagaAsync for the same saga, so the increment of the tracker's failure count inside
   // _tryAutoCompleteAsync has never actually run. If it regressed to counting only completions,
   // an all-failure saga would never dispatch SagaCompletedEvent on the fast path and would sit
   // stranded until a watchdog tick eventually rescued it minutes later.
   [Test]
   public async Task FailItemAsync_AfterInitiate_TrackerCountsFailuresTowardCompletionAsync() {
-    var emitter = new _recordingEmitter();
-    var svc = new _coverageSagaService(emitter);
+    var emitter = new RecordingEmitter();
+    var svc = new CoverageSagaService(emitter);
     var ctx = new SagaContext(_sagaId, _entityId);
 
     await svc.InitiateSagaAsync(ctx, itemIdentifiers: ["a", "b"], hookNames: null, CancellationToken.None);
@@ -48,7 +48,7 @@ public class BaseSagaServiceCoverageTests {
 
     await Assert.That(emitter.PublishedOnce.Count).IsEqualTo(1)
       .Because("both items are now terminal (failed); the tracker's failed count must reach Total exactly like completions would");
-    var completed = (_testCompletedEvent)emitter.PublishedOnce[0].evt;
+    var completed = (TestCompletedEvent)emitter.PublishedOnce[0].evt;
     await Assert.That(completed.FinalStatus).IsEqualTo(SagaStatus.CompletedWithFailures);
     await Assert.That(completed.CompletedItems).IsEqualTo(0);
     await Assert.That(completed.FailedItems).IsEqualTo(2);
@@ -72,8 +72,8 @@ public class BaseSagaServiceCoverageTests {
       FailedItems = 0,
       CompletionEventDispatched = false,
     };
-    var emitter = new _recordingEmitter();
-    var svc = new _coverageSagaService(emitter, projection);
+    var emitter = new RecordingEmitter();
+    var svc = new CoverageSagaService(emitter, projection);
 
     // No InitiateSagaAsync call precedes this — the in-memory tracker has nothing registered
     // for _sagaId, so TryRecoverViaWatchdogAsync falls straight through to the slow path that
@@ -94,8 +94,8 @@ public class BaseSagaServiceCoverageTests {
   // against the framework's own — a silent duplicate-completion hole.
   [Test]
   public async Task SagaName_MatchesTheNameTheFrameworkStampsAndClaimsWithAsync() {
-    var emitter = new _recordingEmitter();
-    var svc = new _coverageSagaService(emitter);
+    var emitter = new RecordingEmitter();
+    var svc = new CoverageSagaService(emitter);
     var ctx = new SagaContext(_sagaId, _entityId);
 
     await svc.InitiateSagaAsync(ctx, itemIdentifiers: ["a"], hookNames: null, CancellationToken.None);
@@ -122,8 +122,8 @@ public class BaseSagaServiceCoverageTests {
   // SagaCompletedEvent for a saga whose real progress nobody has looked at.
   [Test]
   public async Task TryRecoverViaWatchdogAsync_WithNoProjectionLoaderWired_DeclinesRecoveryAsync() {
-    var emitter = new _recordingEmitter();
-    var svc = new _defaultLoaderSagaService(emitter);
+    var emitter = new RecordingEmitter();
+    var svc = new DefaultLoaderSagaService(emitter);
 
     // No InitiateSagaAsync precedes this, so the in-memory tracker holds nothing for _sagaId and
     // recovery drops straight through the fast path into the projection-backed slow path.
@@ -139,7 +139,7 @@ public class BaseSagaServiceCoverageTests {
 
   // ── Test doubles ───────────────────────────────────────────────────────
 
-  private sealed class _recordingEmitter : ISagaEventEmitter {
+  private sealed class RecordingEmitter : ISagaEventEmitter {
     public List<IEvent> Published { get; } = [];
     public List<(string claimKey, IEvent evt)> PublishedOnce { get; } = [];
 
@@ -153,35 +153,35 @@ public class BaseSagaServiceCoverageTests {
     }
   }
 
-  private sealed class _testInitiatedEvent : ISagaInitiatedEvent {
+  private sealed class TestInitiatedEvent : ISagaInitiatedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public IReadOnlyList<string> ItemIdentifiers { get; set; } = [];
     public int TotalItems { get; set; }
     public IReadOnlyList<string>? HookNames { get; set; }
   }
-  private sealed class _testItemsDispatchedEvent : ISagaItemsDispatchedEvent {
+  private sealed class TestItemsDispatchedEvent : ISagaItemsDispatchedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public int TotalItems { get; set; }
     public int SuccessfullyDispatched { get; set; }
     public int FailedToDispatch { get; set; }
   }
-  private sealed class _testItemStartedEvent : ISagaItemStartedEvent {
+  private sealed class TestItemStartedEvent : ISagaItemStartedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public Guid SagaId { get; set; }
     public string ItemIdentifier { get; set; } = "";
     public string? DisplayName { get; set; }
   }
-  private sealed class _testItemCompletedEvent : ISagaItemCompletedEvent {
+  private sealed class TestItemCompletedEvent : ISagaItemCompletedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public Guid SagaId { get; set; }
     public string ItemIdentifier { get; set; } = "";
     public string? DisplayName { get; set; }
   }
-  private sealed class _testItemFailedEvent : ISagaItemFailedEvent {
+  private sealed class TestItemFailedEvent : ISagaItemFailedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public Guid SagaId { get; set; }
@@ -190,7 +190,7 @@ public class BaseSagaServiceCoverageTests {
     public string ErrorMessage { get; set; } = "";
     public string? ErrorDetails { get; set; }
   }
-  private sealed class _testCompletedEvent : ISagaCompletedEvent {
+  private sealed class TestCompletedEvent : ISagaCompletedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public SagaStatus FinalStatus { get; set; }
@@ -199,19 +199,19 @@ public class BaseSagaServiceCoverageTests {
     public int FailedItems { get; set; }
     public int TotalItems { get; set; }
   }
-  private sealed class _testResetEvent : ISagaResetEvent {
+  private sealed class TestResetEvent : ISagaResetEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public string ItemIdentifier { get; set; } = "";
     public SagaItemState PreviousStatus { get; set; }
   }
-  private sealed class _testHookStartedEvent : ISagaHookStartedEvent {
+  private sealed class TestHookStartedEvent : ISagaHookStartedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public string HookName { get; set; } = "";
     public string? DisplayName { get; set; }
   }
-  private sealed class _testHookCompletedEvent : ISagaHookCompletedEvent {
+  private sealed class TestHookCompletedEvent : ISagaHookCompletedEvent {
     public string SagaName { get; set; } = SAGA_NAME;
     public Guid EntityId { get; set; }
     public string HookName { get; set; } = "";
@@ -222,45 +222,45 @@ public class BaseSagaServiceCoverageTests {
   }
 
   // Keeps the framework's own LoadProjectionAsync — the "consumer wired no projection loader"
-  // shape. _coverageSagaService below is the same service with a loader supplied.
-  private class _defaultLoaderSagaService(ISagaEventEmitter emitter)
-    : BaseSagaService<_testInitiatedEvent, _testItemsDispatchedEvent, _testItemStartedEvent, _testItemCompletedEvent,
-                      _testItemFailedEvent, _testCompletedEvent, _testResetEvent, _testHookStartedEvent, _testHookCompletedEvent>(
-        SAGA_NAME, emitter, NullLogger<_defaultLoaderSagaService>.Instance) {
+  // shape. CoverageSagaService below is the same service with a loader supplied.
+  private class DefaultLoaderSagaService(ISagaEventEmitter emitter)
+    : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
+                      TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
+        SAGA_NAME, emitter, NullLogger<DefaultLoaderSagaService>.Instance) {
 
     /// <summary>Surfaces the protected <c>SagaName</c> accessor a consumer subclass would read.</summary>
     public string ExposedSagaName => SagaName;
 
-    protected override _testInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
+    protected override TestInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, ItemIdentifiers = itemIdentifiers, TotalItems = itemIdentifiers.Count, HookNames = hookNames };
 
-    protected override _testItemsDispatchedEvent BuildItemsDispatchedEvent(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, DateTimeOffset sentAt) =>
+    protected override TestItemsDispatchedEvent BuildItemsDispatchedEvent(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, TotalItems = totalItems, SuccessfullyDispatched = successfullyDispatched, FailedToDispatch = failedToDispatch };
 
-    protected override _testItemStartedEvent BuildItemStartedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
+    protected override TestItemStartedEvent BuildItemStartedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName };
 
-    protected override _testItemCompletedEvent BuildItemCompletedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
+    protected override TestItemCompletedEvent BuildItemCompletedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName };
 
-    protected override _testItemFailedEvent BuildItemFailedEvent(SagaContext ctx, string itemIdentifier, string errorMessage, string? errorDetails, string? displayName, DateTimeOffset sentAt) =>
+    protected override TestItemFailedEvent BuildItemFailedEvent(SagaContext ctx, string itemIdentifier, string errorMessage, string? errorDetails, string? displayName, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName, ErrorMessage = errorMessage, ErrorDetails = errorDetails };
 
-    protected override _testCompletedEvent BuildCompletedEvent(SagaContext ctx, SagaStatus finalStatus, string? completedByItemIdentifier, int completedItems, int failedItems, int totalItems, DateTimeOffset sentAt) =>
+    protected override TestCompletedEvent BuildCompletedEvent(SagaContext ctx, SagaStatus finalStatus, string? completedByItemIdentifier, int completedItems, int failedItems, int totalItems, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, FinalStatus = finalStatus, CompletedByItemIdentifier = completedByItemIdentifier, CompletedItems = completedItems, FailedItems = failedItems, TotalItems = totalItems };
 
-    protected override _testResetEvent BuildResetEvent(SagaContext ctx, string itemIdentifier, SagaItemState previousStatus, DateTimeOffset sentAt) =>
+    protected override TestResetEvent BuildResetEvent(SagaContext ctx, string itemIdentifier, SagaItemState previousStatus, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, ItemIdentifier = itemIdentifier, PreviousStatus = previousStatus };
 
-    protected override _testHookStartedEvent BuildHookStartedEvent(SagaContext ctx, string hookName, string? displayName, DateTimeOffset sentAt) =>
+    protected override TestHookStartedEvent BuildHookStartedEvent(SagaContext ctx, string hookName, string? displayName, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, HookName = hookName, DisplayName = displayName };
 
-    protected override _testHookCompletedEvent BuildHookCompletedEvent(SagaContext ctx, string hookName, SagaItemState status, string? errorMessage, string? errorDetails, DateTimeOffset sentAt) =>
+    protected override TestHookCompletedEvent BuildHookCompletedEvent(SagaContext ctx, string hookName, SagaItemState status, string? errorMessage, string? errorDetails, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, HookName = hookName, Status = status, ErrorMessage = errorMessage, ErrorDetails = errorDetails };
   }
 
-  private sealed class _coverageSagaService(ISagaEventEmitter emitter, BaseSagaModel? projection = null)
-    : _defaultLoaderSagaService(emitter) {
+  private sealed class CoverageSagaService(ISagaEventEmitter emitter, BaseSagaModel? projection = null)
+    : DefaultLoaderSagaService(emitter) {
 
     protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
       => Task.FromResult(projection);

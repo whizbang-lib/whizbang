@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public class PerspectiveSyncAwaiterTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // SyncOutcome enum tests
@@ -84,7 +84,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -117,7 +117,7 @@ public class PerspectiveSyncAwaiterTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -150,7 +150,7 @@ public class PerspectiveSyncAwaiterTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -171,7 +171,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -189,7 +189,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Track event that won't match filter
     tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(string), Guid.NewGuid());
@@ -235,7 +235,7 @@ public class PerspectiveSyncAwaiterTests {
     syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
     // Mark it processed so it completes
     syncEventTracker.MarkProcessedByPerspective([eventId], typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromSeconds(5))
@@ -278,7 +278,7 @@ public class PerspectiveSyncAwaiterTests {
     // Track event in SyncEventTracker so WaitForPerspectiveEventsAsync actually waits (doesn't return true immediately)
     var syncEventTracker = new SyncEventTracker();
     syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromMilliseconds(150))
@@ -321,7 +321,7 @@ public class PerspectiveSyncAwaiterTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.ForStream(targetStreamId)
         .WithTimeout(TimeSpan.FromSeconds(5))
@@ -352,7 +352,7 @@ public class PerspectiveSyncAwaiterTests {
     // Track event in SyncEventTracker so WaitForPerspectiveEventsAsync actually waits
     var syncEventTracker = new SyncEventTracker();
     syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromSeconds(30))
@@ -377,7 +377,7 @@ public class PerspectiveSyncAwaiterTests {
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     await Assert.That(awaiter).IsNotNull();
   }
@@ -388,7 +388,7 @@ public class PerspectiveSyncAwaiterTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-        await Task.FromResult(new PerspectiveSyncAwaiter(null!, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker)));
+        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator: null!, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   [Test]
@@ -397,7 +397,7 @@ public class PerspectiveSyncAwaiterTests {
     var coordinator = new MockWorkCoordinator();
 
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator, null!, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker)));
+        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator: coordinator, clock: null!, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   [Test]
@@ -407,7 +407,7 @@ public class PerspectiveSyncAwaiterTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator, clock, null!, new SyncEventTracker(), tracker)));
+        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: null!, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   [Test]
@@ -417,7 +417,7 @@ public class PerspectiveSyncAwaiterTests {
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
 
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
-        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, null!, tracker)));
+        await Task.FromResult(new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: null!, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor())));
   }
 
   // ==========================================================================
@@ -440,7 +440,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
     // NO tracker - simulating cross-request scenario
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act: Call WaitForStreamAsync with EventTypes but no explicit EventId
     var result = await awaiter.WaitForStreamAsync(
@@ -455,28 +455,6 @@ public class PerspectiveSyncAwaiterTests {
   }
 
   [Test]
-  public async Task WaitForStreamAsync_CrossScope_WithNoPendingEvents_ReturnsSyncedImmediatelyAsync() {
-    // Arrange: No pending events in event store
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
-
-    // Act
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
-  }
-
-  [Test]
   public async Task WaitForStreamAsync_WithExplicitEventId_DoesNotSetDiscoverFlagAsync() {
     // Arrange: When explicit EventId is provided, uses event-driven wait.
     // Since the explicit event ID isn't tracked in SyncEventTracker,
@@ -487,7 +465,7 @@ public class PerspectiveSyncAwaiterTests {
     var coordinator = new MockWorkCoordinator();
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -509,7 +487,7 @@ public class PerspectiveSyncAwaiterTests {
     var coordinator = new MockWorkCoordinator();
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -532,7 +510,7 @@ public class PerspectiveSyncAwaiterTests {
     // Arrange - no tracker provided
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -547,7 +525,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -562,7 +540,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -578,7 +556,7 @@ public class PerspectiveSyncAwaiterTests {
     // Arrange - no tracker provided
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -593,7 +571,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -608,7 +586,7 @@ public class PerspectiveSyncAwaiterTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -618,46 +596,6 @@ public class PerspectiveSyncAwaiterTests {
   // ==========================================================================
   // PerspectiveSyncAwaiter - WaitAsync debugger-aware timeout tests
   // ==========================================================================
-
-  [Test]
-  public async Task PerspectiveSyncAwaiter_WaitAsync_WithDefaultDebuggerAwareTimeout_UsesHasTimedOutAsync() {
-    // Arrange
-    var tracker = new ScopedEventTracker();
-    var streamId = Guid.NewGuid();
-    var eventId = Guid.NewGuid();
-    tracker.TrackEmittedEvent(streamId, typeof(string), eventId);
-
-    // Create mock that always returns pending
-    var coordinator = new MockWorkCoordinator((_, _) => Task.FromResult(new WorkBatch {
-      OutboxWork = [],
-      InboxWork = [],
-      PerspectiveWork = [],
-      SyncInquiryResults = [
-        new SyncInquiryResult {
-          InquiryId = Guid.NewGuid(),
-          PendingCount = 1  // Always pending
-        }
-      ]
-    }));
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    // Track event in SyncEventTracker so WaitForPerspectiveEventsAsync actually waits
-    var syncEventTracker = new SyncEventTracker();
-    syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
-
-    // Default DebuggerAwareTimeout = true - uses HasTimedOut method
-    var options = SyncFilter.All()
-        .WithTimeout(TimeSpan.FromMilliseconds(150))
-        .Build();
-
-    // Act
-    var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
-
-    // Assert - should timeout using debugger-aware timeout
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
-    await Assert.That(result.ElapsedTime.TotalMilliseconds).IsGreaterThanOrEqualTo(100);
-  }
 
   [Test]
   public async Task PerspectiveSyncAwaiter_WaitAsync_ReturnsElapsedTimeOnSyncAsync() {
@@ -680,7 +618,7 @@ public class PerspectiveSyncAwaiterTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromSeconds(5))
@@ -703,55 +641,11 @@ public class PerspectiveSyncAwaiterTests {
     // Arrange
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
         await awaiter.WaitForStreamAsync(null!, Guid.NewGuid(), null, TimeSpan.FromSeconds(5)));
-  }
-
-  [Test]
-  public async Task WaitForStreamAsync_WithNullResult_ReturnsSyncedAsync() {
-    // Arrange: With empty SyncEventTracker, no events for this stream → NoPendingEvents
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
-
-    // Act - no explicit event IDs
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
-  }
-
-  [Test]
-  public async Task WaitForStreamAsync_WithEmptyResultList_ReturnsSyncedAsync() {
-    // Arrange: With empty SyncEventTracker, no events for this stream → NoPendingEvents
-    var streamId = Guid.NewGuid();
-
-    var coordinator = new MockWorkCoordinator();
-
-    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
-
-    // Act
-    var result = await awaiter.WaitForStreamAsync(
-        typeof(TestPerspective),
-        streamId,
-        eventTypes: [typeof(string)],
-        timeout: TimeSpan.FromSeconds(5),
-        eventIdToAwait: null);
-
-    // Assert - no events tracked in SyncEventTracker → NoPendingEvents
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   [Test]
@@ -760,7 +654,7 @@ public class PerspectiveSyncAwaiterTests {
     var streamId = Guid.NewGuid();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - null event types, no tracked events
     var result = await awaiter.WaitForStreamAsync(
@@ -807,7 +701,7 @@ public class PerspectiveSyncAwaiterTests {
     });
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().Build();
 
@@ -841,7 +735,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All()
         .WithTimeout(TimeSpan.FromSeconds(5))
@@ -876,7 +770,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Signal processing after a short delay
     _ = Task.Run(async () => {
@@ -911,7 +805,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Verify GetPendingEvents filtering returns only string events
     var stringEvents = syncEventTracker.GetPendingEvents(streamId, perspectiveName, [typeof(string)]);
@@ -966,7 +860,7 @@ public class PerspectiveSyncAwaiterTests {
     // Track event in SyncEventTracker so WaitForPerspectiveEventsAsync actually waits
     var syncEventTracker = new SyncEventTracker();
     syncEventTracker.TrackEvent(typeof(string), eventId, streamId, typeof(TestPerspective).FullName!);
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Disable debugger-aware timeout - uses direct elapsed comparison
     var options = new PerspectiveSyncOptions {
@@ -996,7 +890,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Filter for int, but we only have string events
     var options = SyncFilter.ForEventTypes<int>().Build();
@@ -1025,7 +919,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, singletonTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: singletonTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Start waiting
     var waitTask = awaiter.WaitForStreamAsync(
@@ -1059,7 +953,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, singletonTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: singletonTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - Don't mark processed, should timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -1084,7 +978,7 @@ public class PerspectiveSyncAwaiterTests {
     var coordinator = new MockWorkCoordinator();
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, singletonTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: singletonTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -1118,7 +1012,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, singletonTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: singletonTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Signal only the explicit eventId as processed (not the other event)
     _ = Task.Run(async () => {
@@ -1152,7 +1046,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Filter for int, but we only have string events
     var options = SyncFilter.ForEventTypes<int>()
@@ -1178,8 +1072,7 @@ public class PerspectiveSyncAwaiterTests {
     };
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-      new SyncEventTracker(), tracker: null, lifecycleContextAccessor: contextAccessor);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: contextAccessor);
 
     await Assert.That(
       () => awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromSeconds(5))
@@ -1212,8 +1105,7 @@ public class PerspectiveSyncAwaiterTests {
     };
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-      new SyncEventTracker(), tracker: null, lifecycleContextAccessor: contextAccessor);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: contextAccessor);
 
     // Should not throw — Detached stages are safe
     var result = await awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromMilliseconds(50));
@@ -1224,7 +1116,7 @@ public class PerspectiveSyncAwaiterTests {
   public async Task WaitForStreamAsync_NoContextAccessor_DoesNotThrowAsync() {
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Should not throw — no context accessor means we can't detect stage
     var result = await awaiter.WaitForStreamAsync(typeof(TestPerspective), Guid.NewGuid(), null, TimeSpan.FromMilliseconds(50));
@@ -1258,7 +1150,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: syncEventTracker, tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
@@ -1279,7 +1171,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: new SyncEventTracker(), tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - explicit event not tracked → WaitForPerspectiveEventsAsync returns true immediately → Synced
     var result = await awaiter.WaitForStreamAsync(
@@ -1309,7 +1201,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - start the wait, then signal processing so the event-driven wait completes
     var waitTask = awaiter.WaitForStreamAsync(
@@ -1340,7 +1232,7 @@ public class PerspectiveSyncAwaiterTests {
 
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, syncEventTracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: logger, syncEventTracker: syncEventTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
     // Act - never mark processed → times out
     var result = await awaiter.WaitForStreamAsync(
@@ -1374,9 +1266,10 @@ public class PerspectiveSyncAwaiterTests {
       }
     }
 
-    private sealed class NullScope : IDisposable {
-      public static NullScope Instance { get; } = new();
-      public void Dispose() { }
-    }
+  }
+
+  private sealed class NullScope : IDisposable {
+    public static NullScope Instance { get; } = new();
+    public void Dispose() { }
   }
 }

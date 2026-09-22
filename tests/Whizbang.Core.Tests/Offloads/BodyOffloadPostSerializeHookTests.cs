@@ -166,8 +166,8 @@ public class BodyOffloadPostSerializeHookTests {
     // claim envelope rides wh_outbox/wh_inbox, which are deleted on completion). Without this
     // insert the passive expiry sweep has nothing to sweep and the blob lives forever unless a
     // provider-side lifecycle rule happens to exist.
-    var coordinator = new _ledgerCoordinator();
-    var (hook, store) = _build(
+    var coordinator = new LedgerCoordinator();
+    var (hook, _) = _build(
       opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
       coordinator: coordinator);
     var ctx = _buildContext(new byte[5_000]);
@@ -186,7 +186,7 @@ public class BodyOffloadPostSerializeHookTests {
   public async Task RunAsync_LedgerInsertThrows_OffloadStillProceedsAsync() {
     // Bookkeeping must never block dispatch: a failed ledger insert orphans one blob into the
     // provider-side backstop's territory, which is recoverable; a failed dispatch is not.
-    var coordinator = new _ledgerCoordinator { ThrowOnRecord = true };
+    var coordinator = new LedgerCoordinator { ThrowOnRecord = true };
     var (hook, store) = _build(
       opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
       coordinator: coordinator);
@@ -206,7 +206,7 @@ public class BodyOffloadPostSerializeHookTests {
     // so dispatch continues. A canceled insert means the host is stopping — and the blob is
     // already uploaded, so continuing would hand the dispatcher a claim envelope to publish on
     // the way out. Surfacing here leaves the blob orphaned to the same recoverable backstop.
-    var coordinator = new _ledgerCoordinator { ThrowSpecific = new OperationCanceledException() };
+    var coordinator = new LedgerCoordinator { ThrowSpecific = new OperationCanceledException() };
     var (hook, store) = _build(
       opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
       coordinator: coordinator);
@@ -223,7 +223,7 @@ public class BodyOffloadPostSerializeHookTests {
 
   [Test]
   public async Task RunAsync_PassThrough_RecordsNothingAsync() {
-    var coordinator = new _ledgerCoordinator();
+    var coordinator = new LedgerCoordinator();
     var (hook, _) = _build(
       opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100_000; },
       coordinator: coordinator);
@@ -237,7 +237,7 @@ public class BodyOffloadPostSerializeHookTests {
   }
 
   /// <summary>Every other member is the NoOp base — only the ledger insert is observed.</summary>
-  private sealed class _ledgerCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
+  private sealed class LedgerCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
     public List<(string StorageKey, string ProviderName)> Recorded { get; } = [];
     public bool ThrowOnRecord { get; init; }
     /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
@@ -267,11 +267,11 @@ public class BodyOffloadPostSerializeHookTests {
       .Because("the claim replaces the body, not the scheduling decision; the consumer classifies the claim like the original");
   }
 
-  private static (BodyOffloadPostSerializeHook hook, _captureStore store) _build(
+  private static (BodyOffloadPostSerializeHook hook, CaptureStore store) _build(
       Action<MessageBodyOffloadOptions> configure, TransportMetrics? metrics = null,
       Whizbang.Core.Messaging.IWorkCoordinator? coordinator = null) {
     var services = new ServiceCollection();
-    var captureStore = new _captureStore("memory");
+    var captureStore = new CaptureStore("memory");
     services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => captureStore);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(configure);
     if (coordinator is not null) {
@@ -288,11 +288,11 @@ public class BodyOffloadPostSerializeHookTests {
   }
 
   private static PostSerializeContext _buildContext(byte[] bytes, long? transportMaxBytes = null, int priority = 0) {
-    var envelope = new MessageEnvelope<_testPayload> {
+    var envelope = new MessageEnvelope<TestPayload> {
       Priority = priority,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = new _testPayload("x"),
+      Payload = new TestPayload("x"),
       Hops = [
         new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }
       ]
@@ -309,16 +309,13 @@ public class BodyOffloadPostSerializeHookTests {
     );
   }
 
-  private sealed record _testPayload(string Content);
+  private sealed record TestPayload(string Content);
 
   /// <summary>
   /// Capture-only store: records uploads so tests can introspect.
   /// </summary>
-  private sealed class _captureStore : IMessageBodyStore {
-    public _captureStore(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+  private sealed class CaptureStore(string providerName) : IMessageBodyStore {
+    public string ProviderName { get; } = providerName;
     public int UploadCount { get; private set; }
     public byte[] LastUploadedBody { get; private set; } = [];
 

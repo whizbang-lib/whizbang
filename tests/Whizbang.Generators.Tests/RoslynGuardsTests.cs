@@ -29,7 +29,7 @@ public class RoslynGuardsTests {
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test").AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var classDeclaration = tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>().First();
+    var classDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<ClassDeclarationSyntax>().First();
 
     // Act
     var symbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, default);
@@ -50,7 +50,7 @@ public class RoslynGuardsTests {
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test").AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var recordDeclaration = tree.GetRoot().DescendantNodes().OfType<RecordDeclarationSyntax>().First();
+    var recordDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<RecordDeclarationSyntax>().First();
 
     // Act
     var symbol = RoslynGuards.GetRecordSymbolOrThrow(recordDeclaration, semanticModel, default);
@@ -71,7 +71,7 @@ public class RoslynGuardsTests {
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test").AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var classDeclaration = tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>().First();
+    var classDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<ClassDeclarationSyntax>().First();
 
     // Act
     var symbol = RoslynGuards.GetTypeSymbolFromNode(classDeclaration, semanticModel, default);
@@ -92,7 +92,7 @@ public class RoslynGuardsTests {
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test").AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var recordDeclaration = tree.GetRoot().DescendantNodes().OfType<RecordDeclarationSyntax>().First();
+    var recordDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<RecordDeclarationSyntax>().First();
 
     // Act
     var symbol = RoslynGuards.GetTypeSymbolFromNode(recordDeclaration, semanticModel, default);
@@ -113,7 +113,7 @@ public class RoslynGuardsTests {
       }
     ";
     var tree = CSharpSyntaxTree.ParseText(source);
-    var methodDeclaration = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().First();
+    var methodDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<MethodDeclarationSyntax>().First();
 
     // Act
     var containingClass = RoslynGuards.GetContainingClassOrThrow(methodDeclaration);
@@ -140,7 +140,7 @@ public class RoslynGuardsTests {
         .AddReferences(MetadataReference.CreateFromFile(typeof(Guid).Assembly.Location))
         .AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var propertyDeclaration = tree.GetRoot().DescendantNodes().OfType<PropertyDeclarationSyntax>().First();
+    var propertyDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<PropertyDeclarationSyntax>().First();
     var typeSymbol = semanticModel.GetTypeInfo(propertyDeclaration.Type).Type;
 
     // Act
@@ -167,7 +167,7 @@ public class RoslynGuardsTests {
         .AddReferences(MetadataReference.CreateFromFile(typeof(Guid).Assembly.Location))
         .AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
-    var propertyDeclaration = tree.GetRoot().DescendantNodes().OfType<PropertyDeclarationSyntax>().First();
+    var propertyDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<PropertyDeclarationSyntax>().First();
     var typeSymbol = semanticModel.GetTypeInfo(propertyDeclaration.Type).Type;
 
     // Act

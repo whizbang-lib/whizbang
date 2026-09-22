@@ -25,7 +25,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusFleetDeadLetterDrainer.cs</code-under-test>
 public class AsbDeadLetterDrainerWiringTests {
 
-  private sealed class _recordingDrainer((string TopicName, string SubscriptionName) key) : ITransportDeadLetterDrainer {
+  private sealed class RecordingDrainer((string TopicName, string SubscriptionName) key) : ITransportDeadLetterDrainer {
     public int Invocations;
     public int LastBudget;
     public int ReturnPerDrain { get; init; } = 1;
@@ -59,14 +59,14 @@ public class AsbDeadLetterDrainerWiringTests {
 
   [Test]
   public async Task FleetDrainer_DrainsEveryActiveSubscription_AndSumsCountsAsync() {
-    var made = new Dictionary<(string, string), _recordingDrainer>();
+    var made = new Dictionary<(string, string), RecordingDrainer>();
     var subs = new List<(string TopicName, string SubscriptionName)> {
       ("orders.contracts.job", "svc-orders.contracts.job"),
       ("inbox", "svc-inbox"),
     };
     var fleet = new AzureServiceBusFleetDeadLetterDrainer(
       () => subs,
-      key => { var d = new _recordingDrainer(key) { ReturnPerDrain = 3 }; made[key] = d; return d; });
+      key => { var d = new RecordingDrainer(key) { ReturnPerDrain = 3 }; made[key] = d; return d; });
 
     var drained = await fleet.DrainDeadLetterQueueAsync(500);
 
@@ -82,10 +82,10 @@ public class AsbDeadLetterDrainerWiringTests {
     var subs = new List<(string TopicName, string SubscriptionName)> {
       ("t1", "s1"), ("t2", "s2"), ("t3", "s3"),
     };
-    var made = new List<_recordingDrainer>();
+    var made = new List<RecordingDrainer>();
     var fleet = new AzureServiceBusFleetDeadLetterDrainer(
       () => subs,
-      key => { var d = new _recordingDrainer(key) { ReturnPerDrain = 4 }; made.Add(d); return d; });
+      key => { var d = new RecordingDrainer(key) { ReturnPerDrain = 4 }; made.Add(d); return d; });
 
     var drained = await fleet.DrainDeadLetterQueueAsync(10);
 
@@ -100,10 +100,10 @@ public class AsbDeadLetterDrainerWiringTests {
   [Test]
   public async Task FleetDrainer_NewSubscriptionAppearingLater_GetsDrainedAsync() {
     var subs = new List<(string TopicName, string SubscriptionName)> { ("t1", "s1") };
-    var made = new Dictionary<(string, string), _recordingDrainer>();
+    var made = new Dictionary<(string, string), RecordingDrainer>();
     var fleet = new AzureServiceBusFleetDeadLetterDrainer(
       () => subs,
-      key => { var d = new _recordingDrainer(key); made[key] = d; return d; });
+      key => { var d = new RecordingDrainer(key); made[key] = d; return d; });
 
     _ = await fleet.DrainDeadLetterQueueAsync(100);
     subs.Add(("t2", "s2"));

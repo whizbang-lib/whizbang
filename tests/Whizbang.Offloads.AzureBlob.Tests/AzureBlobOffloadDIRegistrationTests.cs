@@ -72,7 +72,7 @@ public class AzureBlobOffloadDIRegistrationTests {
   public async Task AddWhizbangAzureBlobOffload_NullProviderName_ThrowsAsync() {
     var services = new ServiceCollection();
 
-    Action act = () => services.AddWhizbangAzureBlobOffload(null!, opts => { });
+    void act() => services.AddWhizbangAzureBlobOffload(null!, opts => { });
 
     await Assert.That(act).Throws<ArgumentException>();
   }
@@ -81,14 +81,14 @@ public class AzureBlobOffloadDIRegistrationTests {
   public async Task AddWhizbangAzureBlobOffload_NullConfigure_ThrowsAsync() {
     var services = new ServiceCollection();
 
-    Action act = () => services.AddWhizbangAzureBlobOffload("name", null!);
+    void act() => services.AddWhizbangAzureBlobOffload("name", null!);
 
     await Assert.That(act).Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task AddWhizbangAzureBlobOffload_NullServices_ThrowsAsync() {
-    Action act = () => ((IServiceCollection)null!).AddWhizbangAzureBlobOffload("provider", opts => { });
+    void act() => ((IServiceCollection)null!).AddWhizbangAzureBlobOffload("provider", opts => { });
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("services");
@@ -100,7 +100,7 @@ public class AzureBlobOffloadDIRegistrationTests {
     // (and could never match a claim's ProviderName) — rejected up front.
     var services = new ServiceCollection();
 
-    Action act = () => services.AddWhizbangAzureBlobOffload("   ", opts => { });
+    void act() => services.AddWhizbangAzureBlobOffload("   ", opts => { });
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentException>();
     await Assert.That(ex!.ParamName).IsEqualTo("providerName");
@@ -116,7 +116,7 @@ public class AzureBlobOffloadDIRegistrationTests {
     });
     var sp = services.BuildServiceProvider();
 
-    Action act = () => sp.GetKeyedService<IMessageBodyStore>("misconfigured");
+    void act() => sp.GetKeyedService<IMessageBodyStore>("misconfigured");
 
     var ex = await Assert.That(act).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("ConnectionString")

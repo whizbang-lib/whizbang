@@ -29,7 +29,7 @@ public class BusinessActivitySuppressionTests {
     public string Name { get; init; } = "";
   }
 
-  private sealed class _suppressHook : IApplyHook<object> {
+  private sealed class SuppressHook : IApplyHook<object> {
     public void Configure(IApplyHookBuilder<object> builder, ApplyHookContext context) =>
       builder.SuppressActivity();
   }
@@ -55,7 +55,7 @@ public class BusinessActivitySuppressionTests {
   [Test]
   public async Task SuppressActivityHook_LeavesBusinessTimeUnstampedAsync() {
     var registry = WhizbangApplyHooks.CreatePerEventWithDefaults()
-      .Register<object>(new _suppressHook(), key: "test.not-activity");
+      .Register<object>(new SuppressHook(), key: "test.not-activity");
 
     var plan = PerEventApplyHooks.Resolve(registry, new ApplyHookContext {
       ModelType = typeof(SuppressionModel),

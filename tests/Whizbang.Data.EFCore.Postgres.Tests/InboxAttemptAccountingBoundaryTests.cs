@@ -117,7 +117,7 @@ public class InboxAttemptAccountingBoundaryTests : EFCoreTestBase {
         @inst, 0, 1, NOW() + INTERVAL '5 minutes', NOW(), 1, NOW() - INTERVAL '10 minutes')";
     cmd.Parameters.AddWithValue("inst", claimingInstance);
     await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync()) { }
+    while (await reader.ReadAsync()) { /* drain */ }
   }
 
   private static async Task _releaseUnprocessedAsync(

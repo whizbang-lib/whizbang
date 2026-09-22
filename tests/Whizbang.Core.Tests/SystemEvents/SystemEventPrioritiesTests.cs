@@ -81,11 +81,11 @@ public class SystemEventPrioritiesTests {
   public async Task AnUnclassifiedSystemEvent_DefaultsToBackground_NotIdleAsync() {
     var options = new SystemEventOptions();
 
-    await Assert.That(SystemEventPriorities.For(typeof(_unclassifiedProbeEvent), options))
+    await Assert.That(SystemEventPriorities.For(typeof(UnclassifiedProbeEvent), options))
       .IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a type nobody has thought about must not be withheld by default");
-    await Assert.That(SystemEventPriorities.IsAudit(typeof(_unclassifiedProbeEvent))).IsFalse();
+    await Assert.That(SystemEventPriorities.IsAudit(typeof(UnclassifiedProbeEvent))).IsFalse();
   }
 
-  private sealed record _unclassifiedProbeEvent : ISystemEvent;
+  private sealed record UnclassifiedProbeEvent : ISystemEvent;
 }

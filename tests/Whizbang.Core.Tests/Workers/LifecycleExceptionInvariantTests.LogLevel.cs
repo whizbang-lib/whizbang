@@ -1,18 +1,22 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -33,16 +37,24 @@ public partial class LifecycleExceptionInvariantTests {
     gate.MarkReady();
     var logger = new FakeLogger<InboxDispatchWorker>();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeInboxChannelWriter(),
-      new _FakeHandlerCommitChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
-      Options.Create(new WorkCoordinatorOptions()),
-      logger,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      inboxChannelWriter: new FakeInboxChannelWriter(),
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: logger,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
     return (worker, logger, sp);
   }
 
@@ -66,7 +78,7 @@ public partial class LifecycleExceptionInvariantTests {
 
     await worker.InvokeInboxLifecycleStageAsync(
       work, envelope, scope,
-      new _ThrowingReceptorInvoker(thrown),
+      new ThrowingReceptorInvoker(thrown),
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 

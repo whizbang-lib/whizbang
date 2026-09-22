@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -6,13 +7,19 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
@@ -100,7 +107,7 @@ public class SchemaGateShutdownCoverageTests {
     await using var inner = new ServiceCollection().BuildServiceProvider();
     var watched = new ScopeWatchingProvider(inner);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(SchemaGateShutdownCoverageTests)]);
-    var janitor = new OrphanInboxJanitor(watched, snapshot, schemaReadyGate: gate);
+    var janitor = new OrphanInboxJanitor(watched, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);
@@ -135,11 +142,12 @@ public class SchemaGateShutdownCoverageTests {
     var resolver = new CoalesceGroupResolver(tagOptions, TimeProvider.System, () => []);
 
     var worker = new CoalesceShipWorker(
-      scopeFactory,
-      gate,
-      new ServiceInstanceProvider(),
-      coalesceResolver: resolver,
-      logger: NullLogger<CoalesceShipWorker>.Instance);
+      scopeFactory: scopeFactory,
+      schemaReadyGate: gate,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: resolver);
 
     await worker.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);
@@ -173,11 +181,12 @@ public class SchemaGateShutdownCoverageTests {
     var logger = new FirstLogSignal<CoalesceShipWorker>();
 
     var worker = new CoalesceShipWorker(
-      scopeFactory,
-      gate,
-      new ServiceInstanceProvider(),
-      coalesceResolver: null,
-      logger: logger);
+      scopeFactory: scopeFactory,
+      schemaReadyGate: gate,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: logger,
+      compositeFactory: new CompositeFactory(),
+      coalesceResolver: null);
 
     await worker.StartAsync(CancellationToken.None);
     await logger.Logged.WaitAsync(_wait);
@@ -220,16 +229,24 @@ public class SchemaGateShutdownCoverageTests {
     var strategy = new RecordingPublishStrategy();
 
     var worker = new OutboxPublishWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      channel,
-      new NoOpOutboxCompletionChannel(),
-      new NoOpFailureChannel(),
-      new NoOpLeaseRenewalChannel(),
-      gate,
-      Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new ServiceInstanceProvider(),
-      publishStrategy: strategy);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      workChannelWriter: channel,
+      outboxCompletionChannel: new NoOpOutboxCompletionChannel(),
+      failureChannel: new NoOpFailureChannel(),
+      leaseRenewalChannel: new NoOpLeaseRenewalChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
+      logger: NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      publishStrategy: strategy,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      occurrenceGate: new NoOpOccurrencePublishGate());
 
     await worker.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);
@@ -270,12 +287,20 @@ public class SchemaGateShutdownCoverageTests {
       resilienceOptions: new SubscriptionResilienceOptions(),
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions: new JsonSerializerOptions(),
-      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new ServiceInstanceProvider(),
-      schemaReadyGate: gate);
+      serviceInstanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: gate,
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     await worker.StartAsync(CancellationToken.None);
     await gate.Entered.WaitAsync(_wait);
@@ -374,10 +399,8 @@ public class SchemaGateShutdownCoverageTests {
       return Task.FromResult(_ok(perspectiveName));
     }
 
-    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) {
-      Interlocked.Increment(ref _rebuildCalls);
-      return Task.FromResult(_ok(perspectiveName));
-    }
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) =>
+      RebuildBlueGreenAsync(perspectiveName, ct);
 
     public Task<RebuildResult> RebuildStreamsAsync(
         string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) {
@@ -403,14 +426,6 @@ public class SchemaGateShutdownCoverageTests {
         IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null,
         ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-
-    public Task<ISubscription> SubscribeAsync(
-        Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-        TransportDestination destination,
-        CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCalls);
-      return Task.FromResult<ISubscription>(new NoOpSubscription());
-    }
 
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,

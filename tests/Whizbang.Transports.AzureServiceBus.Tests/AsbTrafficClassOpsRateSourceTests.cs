@@ -44,9 +44,6 @@ public class AsbTrafficClassOpsRateSourceTests {
         IMessageEnvelope requestEnvelope, TransportDestination destination,
         CancellationToken cancellationToken = default)
         where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
-    public Task<ISubscription> SubscribeAsync(
-        Func<TransportMessage, CancellationToken, Task> handler, TransportDestination destination,
-        CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ISubscription> SubscribeBatchAsync(
         Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
         TransportDestination destination, TransportBatchOptions batchOptions,

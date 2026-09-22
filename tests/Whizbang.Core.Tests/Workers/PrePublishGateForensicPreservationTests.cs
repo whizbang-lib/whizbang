@@ -6,11 +6,14 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -55,29 +58,28 @@ public class PrePublishGateForensicPreservationTests {
 
   // --- fakes ---
 
-  private sealed class _FakeOutboxDrainChannel : IOutboxDrainChannel {
+  private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
-  private sealed class _FakeOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeFailureChannel : IFailureChannel {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakePublishStrategy : IMessagePublishStrategy {
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+  private sealed class FakePublishStrategy : IMessagePublishStrategy {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("test: row should DLQ-promote before publish; PublishAsync must never be called");
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -90,27 +92,27 @@ public class PrePublishGateForensicPreservationTests {
     };
   }
 
-  private sealed class _FakeGenerationProvider : IGenerationProvider {
+  private sealed class FakeGenerationProvider : IGenerationProvider {
     public string GetGeneration() => "test-gen";
   }
 
-  private sealed record _MoveCall(string SourceTable, Guid SourceId, MessageFailureReason FailureReason, string? ErrorText);
+  private sealed record MoveCall(string SourceTable, Guid SourceId, MessageFailureReason FailureReason, string? ErrorText);
 
-  private sealed class _CapturingDeadLetterStore : IDeadLetterStore {
-    public ConcurrentBag<_MoveCall> Moves { get; } = [];
-    public TaskCompletionSource<_MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private sealed class CapturingDeadLetterStore : IDeadLetterStore {
+    public ConcurrentBag<MoveCall> Moves { get; } = [];
+    public TaskCompletionSource<MoveCall> FirstMove { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<Guid?> MoveAsync(
         Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText,
         Guid instanceId, string generation, CancellationToken ct = default) {
-      var call = new _MoveCall(sourceTable, sourceId, failureReason, errorText);
+      var call = new MoveCall(sourceTable, sourceId, failureReason, errorText);
       Moves.Add(call);
       FirstMove.TrySetResult(call);
       return Task.FromResult<Guid?>(deadLetterId);
     }
   }
 
-  private sealed class _FakeWorkCoordinator : IWorkCoordinator {
+  private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public Dictionary<Guid, List<OutboxBatchRow>> RowsByStream { get; } = [];
     public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
         IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
@@ -126,14 +128,14 @@ public class PrePublishGateForensicPreservationTests {
       }
       return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
     }
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -180,36 +182,45 @@ public class PrePublishGateForensicPreservationTests {
   public async Task PrePublishGate_ControlPlaneRow_IsDroppedNotStoredAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
-    var coord = new _FakeWorkCoordinator();
+    var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: "transport unavailable",
       messageType: TypeNameFormatter.Format(typeof(IntegrityDivergenceDetected)))];
 
-    var drainChannel = new _FakeOutboxDrainChannel();
-    var dlqStore = new _CapturingDeadLetterStore();
+    var drainChannel = new FakeOutboxDrainChannel();
+    var dlqStore = new CapturingDeadLetterStore();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new FakePublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,
+      })).Value));
 
     // The drop path stores NOTHING, so there is no MoveAsync to await on — and IsIdle starts
     // true, so polling it would assert before the worker ever ran (a vacuous pass that survived
@@ -225,7 +236,7 @@ public class PrePublishGateForensicPreservationTests {
     await batchProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(dlqStore.Moves).IsEmpty()
       .Because("storing control-plane traffic is what let a purged storm revive itself on the next " +
@@ -251,35 +262,44 @@ public class PrePublishGateForensicPreservationTests {
 
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
-    var coord = new _FakeWorkCoordinator();
+    var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: realStack)];
 
-    var drainChannel = new _FakeOutboxDrainChannel();
-    var dlqStore = new _CapturingDeadLetterStore();
+    var drainChannel = new FakeOutboxDrainChannel();
+    var dlqStore = new CapturingDeadLetterStore();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,  // row.Attempts = 11 > 10 → gate fires
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new FakePublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,  // row.Attempts = 11 > 10 → gate fires
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -288,7 +308,7 @@ public class PrePublishGateForensicPreservationTests {
     var move = await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.OUTBOX)
       .Because("DLQ promotion path setup sanity check.");
@@ -307,35 +327,44 @@ public class PrePublishGateForensicPreservationTests {
   public async Task PrePublishGate_RowErrorIsNull_FallsBackToMetaMessageAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
-    var coord = new _FakeWorkCoordinator();
+    var coord = new FakeWorkCoordinator();
     coord.RowsByStream[streamId] = [_row(msgId, streamId, attempts: 11, rowError: null)];
 
-    var drainChannel = new _FakeOutboxDrainChannel();
-    var dlqStore = new _CapturingDeadLetterStore();
+    var drainChannel = new FakeOutboxDrainChannel();
+    var dlqStore = new CapturingDeadLetterStore();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      drainChannel,
-      new _FakeOutboxCompletionChannel(),
-      new _FakeFailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: new FakeFailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _FakePublishStrategy(),
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new FakePublishStrategy(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
-      generationProvider: new _FakeGenerationProvider());
+      generationProvider: new FakeGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxOutboxAttempts = 10,
+      })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -344,7 +373,7 @@ public class PrePublishGateForensicPreservationTests {
     var move = await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(move.ErrorText).Contains("dead-lettered")
       .Because("With no row-side error, the meta-message remains the operator's only signal that the gate fired — must be preserved as a fallback.");

@@ -53,7 +53,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    var (TaskName, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
@@ -95,7 +95,7 @@ public class MaintenanceTests : EFCoreTestBase {
       VALUES ('{oldId}', NOW() - INTERVAL '2 days')");
 
     // Act
-    var results = await _runMaintenanceAsync(conn);
+    _ = await _runMaintenanceAsync(conn);
 
     // Assert — 2-day-old row should be deleted with 1-day retention
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -118,7 +118,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
     await Assert.That(RowsAffected).IsEqualTo(3);
   }
 
@@ -131,7 +131,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task should return 0 rows affected, no error
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
+    var (TaskName, RowsAffected, _, Status) = results.FirstOrDefault(r => r.TaskName == "purge_old_deduplication");
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(RowsAffected).IsEqualTo(0);
     await Assert.That(Status).IsEqualTo("ok");
@@ -159,7 +159,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_stuck_inbox");
+    var (TaskName, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_stuck_inbox");
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
@@ -257,7 +257,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — Task 2 (purge_completed_inbox) should have deleted it, NOT Task 5
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
     await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -326,7 +326,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task reports 1 row deleted.
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    var (TaskName, RowsAffected, _, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(RowsAffected).IsEqualTo(1L);
     await Assert.That(Status).IsEqualTo("ok");
@@ -367,7 +367,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — row survives because the owner still heartbeats.
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
     await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -442,7 +442,7 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — task is present with ok status and 0 rows.
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
+    var (TaskName, RowsAffected, _, Status) = results.FirstOrDefault(r => r.TaskName == "purge_abandoned_active_streams");
     await Assert.That(TaskName).IsNotNull();
     await Assert.That(RowsAffected).IsEqualTo(0L);
     await Assert.That(Status).IsEqualTo("ok");
@@ -470,7 +470,7 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
     await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -498,7 +498,7 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_completed_inbox");
     await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -521,7 +521,7 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_perspective_events");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_completed_perspective_events");
     await Assert.That(RowsAffected).IsEqualTo(0L);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -545,7 +545,7 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var results = await _runMaintenanceAsync(conn);
 
-    var (TaskName, RowsAffected, DurationMs, Status) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
+    var (_, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_completed_outbox");
     await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
 
     var remaining = await conn.ExecuteScalarAsync<long>(
@@ -600,9 +600,9 @@ public class MaintenanceTests : EFCoreTestBase {
     var results = await _runMaintenanceAsync(conn);
 
     // Assert — the sweep reports itself and the row is gone.
-    var task = results.FirstOrDefault(r => r.TaskName == "purge_recovered_dead_letters");
-    await Assert.That(task.TaskName).IsEqualTo("purge_recovered_dead_letters");
-    await Assert.That(task.RowsAffected).IsGreaterThanOrEqualTo(1);
+    var (TaskName, RowsAffected, _, _) = results.FirstOrDefault(r => r.TaskName == "purge_recovered_dead_letters");
+    await Assert.That(TaskName).IsEqualTo("purge_recovered_dead_letters");
+    await Assert.That(RowsAffected).IsGreaterThanOrEqualTo(1);
     await Assert.That(await _countDeadLetterAsync(conn, settledId)).IsEqualTo(0);
   }
 

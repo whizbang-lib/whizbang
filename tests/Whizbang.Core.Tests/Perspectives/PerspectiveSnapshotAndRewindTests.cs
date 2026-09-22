@@ -297,7 +297,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task IPerspectiveRunner_HasRewindAndRunAsyncMethodAsync() {
     var interfaceType = typeof(IPerspectiveRunner);
-    // Slice 26.11 added a second overload taking long? triggeringCommitSequence;
+    // Slice 26.11 added a second overload taking long? triggeringCommitSequence —
     // specify the original 4-arg overload so this stays unambiguous.
     var method = interfaceType.GetMethod(
       "RewindAndRunAsync",
@@ -574,7 +574,7 @@ public class PerspectiveSnapshotAndRewindTests {
     var streamId = Guid.NewGuid();
     var snapshotEventId = Guid.NewGuid();
     using var snapshotJson = System.Text.Json.JsonDocument.Parse("""{"k":"v"}""");
-    IPerspectiveSnapshotStore store = new _LegacyOnlySnapshotStore {
+    IPerspectiveSnapshotStore store = new LegacyOnlySnapshotStore {
       Result = (snapshotEventId, snapshotJson)
     };
 
@@ -590,7 +590,7 @@ public class PerspectiveSnapshotAndRewindTests {
   /// <summary>Companion: default-impl returns null when underlying legacy returns null.</summary>
   [Test]
   public async Task GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync() {
-    IPerspectiveSnapshotStore store = new _LegacyOnlySnapshotStore { Result = null };
+    IPerspectiveSnapshotStore store = new LegacyOnlySnapshotStore { Result = null };
 
     var actual = await store.GetLatestSnapshotWithCommitSequenceAsync(Guid.NewGuid(), "p");
 
@@ -602,7 +602,7 @@ public class PerspectiveSnapshotAndRewindTests {
   /// the production forensic G7 sibling — so calls fall through to the interface default-impl, which is
   /// the path this test exercises.
   /// </summary>
-  private sealed class _LegacyOnlySnapshotStore : IPerspectiveSnapshotStore {
+  private sealed class LegacyOnlySnapshotStore : IPerspectiveSnapshotStore {
     public (Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)? Result { get; set; }
     public Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, System.Text.Json.JsonDocument snapshotData, CancellationToken ct = default) => Task.CompletedTask;
     public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>

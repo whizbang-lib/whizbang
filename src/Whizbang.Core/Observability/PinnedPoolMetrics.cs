@@ -26,7 +26,7 @@ public sealed class PinnedPoolMetrics {
 
   /// <summary>Constructs the metrics group via the host's <see cref="WhizbangMetrics"/> meter factory when available (matches DispatcherMetrics pattern); falls back to a freshly-created <see cref="Meter"/> when the host hasn't registered metrics.</summary>
   public PinnedPoolMetrics(WhizbangMetrics? whizbangMetrics = null) {
-    var meter = whizbangMetrics?.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics?.MeterFactory.Create(METER_NAME) ?? new Meter(METER_NAME);
     BorrowDuration = meter.CreateHistogram<double>(
       "whizbang.workers.pinned_pool.borrow.duration",
       "ms",

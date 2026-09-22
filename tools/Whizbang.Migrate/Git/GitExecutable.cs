@@ -23,9 +23,9 @@ public static class GitExecutable {
   ];
 
   private static readonly string[] _wellKnownWindowsPaths = [
-    @"C:\Program Files\Git\cmd\git.exe",
-    @"C:\Program Files\Git\bin\git.exe",
-    @"C:\Program Files (x86)\Git\cmd\git.exe",
+    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "cmd", "git.exe"),
+    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "bin", "git.exe"),
+    System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Git", "cmd", "git.exe"),
   ];
 
   /// <summary>
@@ -66,12 +66,6 @@ public static class GitExecutable {
     }
 
     var candidates = OperatingSystem.IsWindows() ? _wellKnownWindowsPaths : _wellKnownUnixPaths;
-    foreach (var candidate in candidates) {
-      if (File.Exists(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
+    return candidates.FirstOrDefault(File.Exists);
   }
 }

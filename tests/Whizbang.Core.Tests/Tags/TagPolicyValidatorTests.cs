@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -144,8 +146,10 @@ public class TagPolicyValidatorTests {
     // host.RunAsync(). The registration source is injectable so this test does not have to
     // pollute the process-global MessageTagRegistry.
     var validator = new TagPolicyStartupValidator(
-      new TagOptions(),
-      () => [_registration(typeof(TestUserEvent), "sys-mine")]);
+      options: new TagOptions(),
+      registrationSource: () => [_registration(typeof(TestUserEvent), "sys-mine")],
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => await validator.StartAsync(CancellationToken.None))
       .Throws<TagPolicyConfigurationException>();
@@ -154,8 +158,10 @@ public class TagPolicyValidatorTests {
   [Test]
   public async Task StartAsync_CleanRegistrations_CompletesAsync() {
     var validator = new TagPolicyStartupValidator(
-      new TagOptions(),
-      () => [_registration(typeof(TestUserEvent), "audit")]);
+      options: new TagOptions(),
+      registrationSource: () => [_registration(typeof(TestUserEvent), "audit")],
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      configuration: new ConfigurationBuilder().Build());
 
     await Assert.That(async () => {
       await validator.StartAsync(CancellationToken.None);

@@ -4,11 +4,14 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -25,14 +28,14 @@ public partial class OutboxDrainWorkerCoverageTests {
   /// A consumer's security-context provider that fails — authority resolution is theirs to
   /// implement and may well read a database, so it is one of the batch envelope's ways to throw.
   /// </summary>
-  private sealed class _ThrowingSecurityContextProvider(Exception failure) : IMessageSecurityContextProvider {
+  private sealed class ThrowingSecurityContextProvider(Exception failure) : IMessageSecurityContextProvider {
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) =>
       throw failure;
   }
 
   /// <summary>Returns one publishable row on the first fetch, nothing after, and says when.</summary>
-  private sealed class _OneRowThenEmptyCoordinator(OutboxBatchRow row) : _CoordinatorBase {
+  private sealed class OneRowThenEmptyCoordinator(OutboxBatchRow row) : CoordinatorBase {
     private readonly TaskCompletionSource _secondFetch = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _fetchCalls;
 
@@ -41,7 +44,7 @@ public partial class OutboxDrainWorkerCoverageTests {
 
     public override Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
         IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream, long? maxBytes,
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
       var call = Interlocked.Increment(ref _fetchCalls);
       if (call == 1) {
         return Task.FromResult<IReadOnlyList<OutboxBatchRow>>([row]);
@@ -59,28 +62,34 @@ public partial class OutboxDrainWorkerCoverageTests {
       Exception flushFailure, int expectedEventId) {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var row = _row((Guid)TrackedGuid.NewMedo(), streamId);
-    var coord = new _OneRowThenEmptyCoordinator(row);
-    var drain = new _DrainChannel();
+    var coord = new OneRowThenEmptyCoordinator(row);
+    var drain = new DrainChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var logger = new EventIdSignalingLogger<OutboxDrainWorker>();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
-    services.AddSingleton<IMessageSecurityContextProvider>(new _ThrowingSecurityContextProvider(flushFailure));
+    services.AddSingleton<IMessageSecurityContextProvider>(new ThrowingSecurityContextProvider(flushFailure));
     var sp = services.BuildServiceProvider();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _ServiceInstanceProvider(),
-      drain,
-      new _CompletionChannel(),
-      new _FailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
-      _jsonOpts,
-      logger,
-      new _BulkSuccessStrategy(),
-      lifecycleMessageDeserializer: new _PassthroughDeserializer());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new ServiceInstanceProvider(),
+      drainChannel: drain,
+      completionChannel: new CompletionChannel(),
+      failureChannel: new FailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      jsonOptions: _jsonOpts,
+      logger: logger,
+      publishStrategy: new BulkSuccessStrategy(),
+      lifecycleMessageDeserializer: new PassthroughDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -97,7 +106,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       .Because("the batch after the failure drains as if nothing had happened");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     return logger;
   }
 

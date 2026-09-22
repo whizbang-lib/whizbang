@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// services.AddSingleton&lt;IRawReceptorRegistry, RawReceptorRegistry&gt;();
 /// </code>
 /// </remarks>
-/// <docs>fundamentals/receptors/raw-receptors</docs>
+/// <docs>fundamentals/receptors/receptors</docs>
 public interface IRawReceptorRegistry {
   /// <summary>
   /// Returns the raw receptor whose <see cref="IRawReceptor.TargetMessageTypeName"/> matches

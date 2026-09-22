@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -70,7 +71,7 @@ public class DispatcherCoverageWave3Tests {
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     DispatchModes? defaultRouting = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       envelopeRegistry: envelopeRegistry,
@@ -190,56 +191,6 @@ public class DispatcherCoverageWave3Tests {
     public void Unregister<T>(MessageEnvelope<T> envelope) => UnregisterCount++;
   }
 
-  private sealed class StubEnvelopeSerializer : IEnvelopeSerializer {
-    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
-      var jsonEnvelope = new MessageEnvelope<JsonElement> {
-        MessageId = envelope.MessageId,
-        Payload = JsonSerializer.SerializeToElement(new { }),
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-      };
-      var messageType = typeof(TMessage).AssemblyQualifiedName ?? typeof(TMessage).FullName ?? typeof(TMessage).Name;
-      var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core";
-      return new SerializedEnvelope(jsonEnvelope, envelopeType, messageType);
-    }
-
-    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => new();
-  }
-
-  private sealed class StubWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public List<OutboxMessage> QueuedOutbox { get; } = [];
-    public int FlushCount { get; private set; }
-
-    public void QueueOutboxMessage(OutboxMessage message) => QueuedOutbox.Add(message);
-    public void QueueInboxMessage(InboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      FlushCount++;
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    }
-  }
-
-  private sealed class StubScopedEventTracker : IScopedEventTracker {
-    private readonly List<TrackedEvent> _events = [];
-
-    public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) {
-      _events.Add(new TrackedEvent(streamId, eventType, eventId));
-    }
-
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents() => _events;
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => _events;
-    public bool AreAllProcessed(SyncFilterNode filter, IReadOnlySet<Guid> processedEventIds) {
-      return _events.All(e => processedEventIds.Contains(e.EventId));
-    }
-  }
-
   // ========================================
   // HELPER METHODS
   // ========================================
@@ -300,7 +251,6 @@ public class DispatcherCoverageWave3Tests {
 
   private static ReceptorInvoker<object> _defaultInvoker() =>
     msg => {
-      var cmd = (W3Command)msg;
       return new ValueTask<object>(new W3Result(Guid.NewGuid(), true));
     };
 
@@ -346,7 +296,7 @@ public class DispatcherCoverageWave3Tests {
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new W3Command("cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -388,7 +338,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -416,7 +366,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -468,7 +418,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -498,7 +448,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -770,7 +720,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -889,7 +839,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -938,7 +888,7 @@ public class DispatcherCoverageWave3Tests {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () =>
@@ -1420,7 +1370,7 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalSendManyAsync_Generic_NoReceptor_ThrowsReceptorNotFoundAsync() {
     // Arrange - no invoker for UnhandledW3Command
-    var dispatcher = _createDispatcher(
+    _ = _createDispatcher(
       invoker: _defaultInvoker(),
       handleMessageType: typeof(UnhandledW3Command)); // doesn't match W3Command
     var commands = new[] { new W3Command("x") };

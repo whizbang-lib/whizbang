@@ -190,7 +190,7 @@ public class ContainmentSqlRewriterTests {
   public async Task WhereTheFormsDisagreeItStandsDownAsync(string shape) {
     var sql = shape switch {
       "null comparison" => _sql(rows => rows.Where(r => r.Data.Maybe == null)),
-      "negation" => _sql(rows => rows.Where(r => !(r.Data.Rank == 7))),
+      "negation" => _sql(rows => rows.Where(r => r.Data.Rank != 7)),
       "inequality" => _sql(rows => rows.Where(r => r.Data.Rank != 7)),
       "range" => _sql(rows => rows.Where(r => r.Data.Rank > 7)),
       _ => throw new InvalidOperationException(shape),

@@ -50,6 +50,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
 [Flags]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "EventFlags is the natural name for the [Flags] enum stored in the wh_event_store / wh_outbox / wh_inbox 'flags' column. CA1711's 'Flags' suffix rule is exactly the case where the suffix carries semantic meaning that the rule was not designed for.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2344:Enumeration type names should not have Flags or Enum suffixes", Justification = "Public API; the rename is scheduled with the other 1.0 breaking changes.")]
 public enum EventFlags {
   /// <summary>Regular per-stream event. No special handling.</summary>
   None = 0,

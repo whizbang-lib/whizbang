@@ -22,10 +22,8 @@ public sealed class SecurityContextEventStoreDecoratorPriorityTests {
   private sealed record DecoratorPriorityProbe(string Value) : IEvent;
 
   private static async Task<MessageEnvelope<DecoratorPriorityProbe>> _firstAsync(InMemoryEventStore inner, Guid streamId) {
-    await foreach (var envelope in inner.ReadAsync<DecoratorPriorityProbe>(streamId, 0)) {
-      return envelope;
-    }
-    throw new InvalidOperationException("Test setup: the stream is empty.");
+    // FirstAsync throws InvalidOperationException on an empty stream, which is the setup failure this guards.
+    return await inner.ReadAsync<DecoratorPriorityProbe>(streamId, 0).FirstAsync();
   }
 
   [Test]

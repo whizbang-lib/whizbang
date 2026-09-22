@@ -838,12 +838,12 @@ public class PostgresFunctionTests : PostgresTestBase {
       SELECT update_perspective_cursors(@completedEvents::jsonb, false)",
       new { completedEvents });
 
-    var cursorA = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
+    var (LastEventId, Status) = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
       SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
       new { s = streamA, p = perspName });
-    await Assert.That(cursorA.LastEventId).IsEqualTo((Guid)eA2)
+    await Assert.That(LastEventId).IsEqualTo((Guid)eA2)
       .Because("Pair A: events 1&2 processed, gap-free run ends at eA2 (eA3 still pending). Cursor must advance to eA2.");
-    await Assert.That((int)cursorA.Status).IsEqualTo(0)
+    await Assert.That((int)Status).IsEqualTo(0)
       .Because("Pair A is not complete (eA3 still pending), status must stay at 0.");
 
     var cursorB = await connection.QuerySingleAsync<(Guid LastEventId, short Status)>(@"
@@ -917,18 +917,18 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(results[0].was_deleted).IsFalse()
       .Because("Debug mode MUST report was_deleted=FALSE — the row was UPDATEd in place, not deleted.");
 
-    var row = await connection.QuerySingleAsync<(int Status, DateTime? ProcessedAt, Guid? InstanceId, DateTime? LeaseExpiry)>(@"
+    var (Status, ProcessedAt, InstanceId, LeaseExpiry) = await connection.QuerySingleAsync<(int Status, DateTime? ProcessedAt, Guid? InstanceId, DateTime? LeaseExpiry)>(@"
       SELECT status, processed_at, instance_id, lease_expiry
       FROM wh_perspective_events WHERE event_work_id = @w",
       new { w = workId });
 
-    await Assert.That(row.Status).IsEqualTo(3)
+    await Assert.That(Status).IsEqualTo(3)
       .Because("Debug mode MUST OR p_completions[i].StatusFlags with existing status: 1 (existing) | 2 (new) = 3.");
-    await Assert.That(row.ProcessedAt).IsNotNull()
+    await Assert.That(ProcessedAt).IsNotNull()
       .Because("Debug mode MUST stamp processed_at = p_now so update_perspective_cursors' gap-free SELECT sees this row as processed.");
-    await Assert.That(row.InstanceId).IsNull()
+    await Assert.That(InstanceId).IsNull()
       .Because("Debug mode MUST clear instance_id so claim_orphaned_perspective_events doesn't try to re-claim the row.");
-    await Assert.That(row.LeaseExpiry).IsNull()
+    await Assert.That(LeaseExpiry).IsNull()
       .Because("Debug mode MUST clear lease_expiry for the same reason — row is no longer leased.");
 
     var stillExists = await connection.QuerySingleAsync<int>(@"
@@ -1095,7 +1095,7 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(status & 32768).IsEqualTo(32768); // Failed flag set
 
-    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting;
+    // Phase H step 8 — claim_orphaned_* is the SOLE source of attempt counting —
     // process_outbox_failures records the error + releases the lease without bumping
     // attempts. The initial attempts=0 stays 0 until a subsequent claim_orphaned_outbox
     // re-claims this row.
@@ -1693,27 +1693,6 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId });
     await Assert.That(count).IsEqualTo(1);
   }
-
-  // Helper record types for query results
-  private sealed record WorkBatchRow(
-    int? instance_rank,
-    int? active_instance_count,
-    string source,
-    Guid work_id,
-    Guid? work_stream_id,
-    int? partition_number,
-    string? destination,
-    string? message_type,
-    string? envelope_type,
-    string? message_data,
-    string? metadata,
-    int status,
-    int attempts,
-    bool is_newly_stored,
-    bool is_orphaned,
-    string? error,
-    int? failure_reason,
-    string? perspective_name);
 
   /// <summary>
   /// claim_work short-circuits and returns before it ranks when every queue is empty, so a test

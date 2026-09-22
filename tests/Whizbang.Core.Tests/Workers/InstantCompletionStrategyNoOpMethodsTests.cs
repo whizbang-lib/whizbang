@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,7 +26,7 @@ public class InstantCompletionStrategyNoOpMethodsTests {
 
   [Test]
   public async Task MarkAsSent_DoesNotThrow_AndIsIdempotentAsync() {
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var completions = Array.Empty<TrackedCompletion<PerspectiveCursorCompletion>>();
     var failures = Array.Empty<TrackedCompletion<PerspectiveCursorFailure>>();
 
@@ -40,7 +41,7 @@ public class InstantCompletionStrategyNoOpMethodsTests {
 
   [Test]
   public async Task MarkAsAcknowledged_DoesNotThrow_AsAsync() {
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     strategy.MarkAsAcknowledged(completionCount: 5, failureCount: 3);
     strategy.MarkAsAcknowledged(completionCount: 0, failureCount: 0);
@@ -51,7 +52,7 @@ public class InstantCompletionStrategyNoOpMethodsTests {
 
   [Test]
   public async Task ClearAcknowledged_DoesNotThrow_AsAsync() {
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
 
     strategy.ClearAcknowledged();
     strategy.ClearAcknowledged();
@@ -62,7 +63,7 @@ public class InstantCompletionStrategyNoOpMethodsTests {
 
   [Test]
   public async Task ResetStale_DoesNotThrow_AsAsync() {
-    var strategy = new InstantCompletionStrategy();
+    var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var farPast = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     strategy.ResetStale(farPast);

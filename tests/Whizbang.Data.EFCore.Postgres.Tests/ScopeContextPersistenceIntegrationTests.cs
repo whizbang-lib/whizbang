@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -325,9 +327,10 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
     await base.SetupAsync();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     services.AddSingleton<IServiceInstanceProvider>(
-      new ServiceInstanceProvider(configuration: null));
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
 
     services.AddScoped(_ => CreateDbContext());
 
@@ -351,11 +354,12 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
         PartitionCount = 4
       };
       return new ScopedWorkCoordinatorStrategy(
-        coordinator,
-        instanceProvider,
+        coordinator: coordinator,
+        instanceProvider: instanceProvider,
         workChannelWriter: null,
-        options,
-        logger
+        options: options,
+        logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+        inboxChannelWriter: new InboxChannelWriter()
       );
     });
 

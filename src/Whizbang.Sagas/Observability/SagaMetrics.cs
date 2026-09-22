@@ -50,7 +50,7 @@ public sealed class SagaMetrics {
 
   /// <summary>Initializes a new instance using the shared <see cref="WhizbangMetrics"/> factory.</summary>
   public SagaMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     SagasInitiated = meter.CreatePassiveCounter<long>("whizbang.sagas.initiated", description: "Sagas initiated");
     SagasCompleted = meter.CreatePassiveCounter<long>("whizbang.sagas.completed", description: "Sagas reached a terminal completed state");

@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -40,7 +41,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </para>
 /// </summary>
 public class DeadLetterRecoveryWorkerCoverageTests {
-  private sealed class _fixedGenerationProvider(string value) : IGenerationProvider {
+  private sealed class FixedGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
 
@@ -53,7 +54,7 @@ public class DeadLetterRecoveryWorkerCoverageTests {
   /// Canceled with the delegate never invoked — which satisfies <c>IsCompleted</c>,
   /// <c>!IsFaulted</c> and "zero scans" all at once.
   /// </summary>
-  private sealed class _blockingGate : ISchemaReadyGate {
+  private sealed class BlockingGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Entered => _entered.Task;
@@ -67,7 +68,7 @@ public class DeadLetterRecoveryWorkerCoverageTests {
   }
 
   // Target: src/Whizbang.Core/Workers/DeadLetterRecoveryWorker.cs:154 — `return;` in the
-  // `catch (OperationCanceledException)` around `_schemaReadyGate.WaitForReadyAsync`. Without
+  // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
   // this, a pod stopped while still waiting for the schema (before the DLQ tables exist) would
   // fault its BackgroundService instead of exiting quietly, turning a routine fast restart during
   // a rolling deploy into a logged crash.
@@ -77,14 +78,15 @@ public class DeadLetterRecoveryWorkerCoverageTests {
       CancellationToken testToken) {
     var services = new ServiceCollection();
     var sp = services.BuildServiceProvider();
-    var gate = new _blockingGate();  // never opens
+    var gate = new BlockingGate();  // never opens
     var worker = new DeadLetterRecoveryWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new DeadLetterRecoveryOptions { Enabled = true, ScanIntervalMinutes = 1 }),
-      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      new _fixedGenerationProvider("test/0.0.1"),
-      NullLogger<DeadLetterRecoveryWorker>.Instance);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new DeadLetterRecoveryOptions { Enabled = true, ScanIntervalMinutes = 1 }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

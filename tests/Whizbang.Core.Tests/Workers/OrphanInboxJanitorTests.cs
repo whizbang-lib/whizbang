@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -33,7 +34,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>messaging/resilience/orphan-inbox</docs>
 public class OrphanInboxJanitorTests {
 
-  private sealed record _SnapshotMsg : IMessage;
+  private sealed record SnapshotMsg : IMessage;
 
   /// <summary>
   /// Constructor null-arg guards: surface the actual <c>ArgumentNullException</c>
@@ -41,11 +42,11 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task Constructor_NullServices_ThrowsAsync() {
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
+    var snapshot = new HandledReceptorTypeSnapshot([]);
     await Assert.That(() => new OrphanInboxJanitor(
   services: null!,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -55,7 +56,7 @@ public class OrphanInboxJanitorTests {
     await Assert.That(() => new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: null!,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance))
       .Throws<ArgumentNullException>();
   }
 
@@ -66,8 +67,8 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_NoWorkCoordinator_ReturnsCleanlyAsync() {
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var logger = new _CapturingLogger();
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var logger = new CapturingLogger();
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
@@ -95,13 +96,13 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_NoHandledTypes_SkipsPurgeAsync() {
-    var coordinator = new _RecordingCoordinator();
+    var coordinator = new RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
+    var snapshot = new HandledReceptorTypeSnapshot([]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -114,13 +115,13 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_WithHandledTypes_NoPurge_LogsAndExitsAsync() {
-    var coordinator = new _RecordingCoordinator();  // default empty result
+    var coordinator = new RecordingCoordinator();  // default empty result
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -134,7 +135,7 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_WithHandledTypes_PurgedRows_LogsAndExitsAsync() {
-    var coordinator = new _RecordingCoordinator {
+    var coordinator = new RecordingCoordinator {
       PurgeResult = [
         new PurgedOrphanInboxRow(Guid.NewGuid(), "A", "h1"),
         new PurgedOrphanInboxRow(Guid.NewGuid(), "A", "h1"),
@@ -142,11 +143,11 @@ public class OrphanInboxJanitorTests {
       ],
     };
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -159,10 +160,10 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_CoordinatorThrows_DoesNotPropagateAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnPurge = true };
+    var coordinator = new RecordingCoordinator { ThrowOnPurge = true };
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var logger = new _CapturingLogger();
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var logger = new CapturingLogger();
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
@@ -193,15 +194,15 @@ public class OrphanInboxJanitorTests {
   /// </summary>
   [Test]
   public async Task StartAsync_UnionsPerspectiveAndRawRegistries_IntoHandledNamesAsync() {
-    var coordinator = new _RecordingCoordinator();
-    var perspectives = new _StaticPerspectiveRegistry(new List<Type> { typeof(int) });
-    var raw = new _StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
+    var coordinator = new RecordingCoordinator();
+    var perspectives = new StaticPerspectiveRegistry([typeof(int)]);
+    var raw = new StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
     await using var sp = _buildProviderWith(coordinator, perspectives, raw);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await _runToCompletionAsync(janitor);
 
@@ -215,10 +216,10 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task StartAsync_ReturnsWithoutBlockingOnThePurgeAsync() {
     var gate = new SchemaReadyGate();   // NOT ready — the sweep cannot even begin
-    var coordinator = new _RecordingCoordinator();
+    var coordinator = new RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -238,10 +239,10 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task Sweep_DoesNotPurgeWhileTheGateIsClosedAsync() {
     var gate = new SchemaReadyGate();
-    var coordinator = new _RecordingCoordinator();
+    var coordinator = new RecordingCoordinator();
     await using var sp = _buildProviderWith(coordinator);
-    var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate);
+    var snapshot = new HandledReceptorTypeSnapshot([typeof(SnapshotMsg)]);
+    var janitor = new OrphanInboxJanitor(sp, snapshot, schemaReadyGate: gate, logger: NullLogger<OrphanInboxJanitor>.Instance);
 
     await janitor.StartAsync(CancellationToken.None);
     await Task.Delay(300);
@@ -283,7 +284,7 @@ public class OrphanInboxJanitorTests {
   /// the exception, so <see cref="Exceptions"/> is the only way to see a fault the janitor
   /// contained rather than propagated.
   /// </summary>
-  private sealed class _CapturingLogger : ILogger<OrphanInboxJanitor> {
+  private sealed class CapturingLogger : ILogger<OrphanInboxJanitor> {
     private readonly Lock _lock = new();
     private readonly List<string> _messages = [];
     private readonly List<Exception> _exceptions = [];
@@ -324,7 +325,7 @@ public class OrphanInboxJanitorTests {
   /// throw. Subclasses <see cref="NoOpWorkCoordinator"/> so the long tail of
   /// <see cref="IWorkCoordinator"/> methods get free no-op implementations.
   /// </summary>
-  private sealed class _RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+  private sealed class RecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int PurgeCallCount { get; private set; }
     public IReadOnlyList<string>? LastHandledTypeNames { get; private set; }
     public IReadOnlyList<PurgedOrphanInboxRow> PurgeResult { get; set; } = [];
@@ -345,7 +346,7 @@ public class OrphanInboxJanitorTests {
     }
   }
 
-  private sealed class _StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+  private sealed class StaticPerspectiveRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => [];
     public IReadOnlySet<Whizbang.Core.Messaging.LifecycleStage> LifecycleStagesWithReceptors { get; } =
@@ -353,7 +354,7 @@ public class OrphanInboxJanitorTests {
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
   }
 
-  private sealed class _StaticRawRegistry(IReadOnlyCollection<string> registered) : IRawReceptorRegistry {
+  private sealed class StaticRawRegistry(IReadOnlyCollection<string> registered) : IRawReceptorRegistry {
     public IReadOnlyCollection<string> RegisteredTypeNames => registered;
     public IRawReceptor? FindByTypeName(string messageTypeName) => null;
   }

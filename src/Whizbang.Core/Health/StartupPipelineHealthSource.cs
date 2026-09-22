@@ -30,10 +30,10 @@ namespace Whizbang.Core.Health;
 /// <tests>tests/Whizbang.Core.Tests/Health/StartupPipelineHealthSourceTests.cs</tests>
 public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   private readonly IStartupPipelineState _state;
-  private readonly IStartupReadySignal? _readySignal;
+  private readonly IStartupReadySignal _readySignal;
 
   /// <summary>Creates the source over the pipeline state and, when registered, the composite signal.</summary>
-  public StartupPipelineHealthSource(IStartupPipelineState state, IStartupReadySignal? readySignal = null) {
+  public StartupPipelineHealthSource(IStartupPipelineState state, IStartupReadySignal readySignal) {
     ArgumentNullException.ThrowIfNull(state);
     _state = state;
     _readySignal = readySignal;
@@ -81,7 +81,7 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
         ComponentState.Faulted, $"blocking step '{failedBlockingStep}' failed"));
     }
 
-    var composite = _readySignal?.IsReady ?? _state.IsReady;
+    var composite = _readySignal.IsReady;
     if (composite) {
       var detail = postReadyRunning.Count > 0
         ? $"ready; post-ready steps running: {string.Join(", ", postReadyRunning)}"
@@ -89,7 +89,7 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
       return new ValueTask<ComponentHealth>(new ComponentHealth(ComponentState.Ready, detail));
     }
 
-    // In progress. Migrating is the state operators reason about most, so it gets its own answer;
+    // In progress. Migrating is the state operators reason about most, so it gets its own answer —
     // everything else in the pre-ready band reports as Starting with the current step in detail.
     var state = currentStep == FrameworkStartupSteps.MIGRATE
       ? ComponentState.Migrating

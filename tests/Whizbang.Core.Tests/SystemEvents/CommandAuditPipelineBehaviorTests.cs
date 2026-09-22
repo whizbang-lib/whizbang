@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
@@ -25,7 +26,7 @@ public class CommandAuditPipelineBehaviorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new CommandAuditPipelineBehavior<TestCommand, string>(null!, options))
+    await Assert.That(() => new CommandAuditPipelineBehavior<TestCommand, string>(emitter: null!, options: options, context: new MessageContext()))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -35,7 +36,7 @@ public class CommandAuditPipelineBehaviorTests {
     var emitter = new MockSystemEventEmitter();
 
     // Act & Assert
-    await Assert.That(() => new CommandAuditPipelineBehavior<TestCommand, string>(emitter, null!))
+    await Assert.That(() => new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: null!, context: new MessageContext()))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -48,7 +49,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
     const string expectedResult = "Success";
@@ -65,7 +66,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions()); // CommandAuditEnabled = false
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -81,7 +82,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -98,7 +99,7 @@ public class CommandAuditPipelineBehaviorTests {
     var emitter = new MockSystemEventEmitter();
     emitter.ExcludeTypes.Add(typeof(ExcludedCommand));
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<ExcludedCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<ExcludedCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new ExcludedCommand { Name = "Test" };
 
@@ -114,7 +115,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
     const string response = "Success-123";
@@ -157,7 +158,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<CreateOrderCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<CreateOrderCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new CreateOrderCommand { Amount = 100m };
 
@@ -232,7 +233,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -250,7 +251,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<PlaceOrder, string>(emitter, options);
+    var behavior = new CommandAuditPipelineBehavior<PlaceOrder, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new PlaceOrder { Amount = 100m };
 
@@ -264,11 +265,11 @@ public class CommandAuditPipelineBehaviorTests {
   }
 
   [Test]
-  public async Task HandleAsync_WithNullContext_StillEmitsAuditAsync() {
+  public async Task HandleAsync_WithADefaultContext_StillEmitsAuditAsync() {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options, context: null);
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter: emitter, options: options, context: new MessageContext());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -278,7 +279,7 @@ public class CommandAuditPipelineBehaviorTests {
     // Assert - Audit was emitted even without context
     await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
     var call = emitter.EmitCommandAuditedCalls[0];
-    await Assert.That(call.Context).IsNull();
+    await Assert.That(call.Context).IsNotNull();
   }
 
   #endregion

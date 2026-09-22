@@ -1,10 +1,14 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -50,15 +54,15 @@ public class LifecycleStageTriggerIndependenceTests {
 
   private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => new();
-    public object DeserializeFromBytes(byte[] payload, string messageTypeName) => new();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => new();
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => new();
   }
 
   private sealed class SilentCoordinator : IWorkCoordinator {
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
@@ -108,12 +112,13 @@ public class LifecycleStageTriggerIndependenceTests {
       int batchSize, int debounceMs) {
     var invoker = new RecordingReceptorInvoker();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var provider = services.BuildServiceProvider();
     var strategy = new BatchWorkCoordinatorStrategy(
-      new SilentCoordinator(),
-      new Pod(),
-      new WorkCoordinatorOptions {
+      coordinator: new SilentCoordinator(),
+      instanceProvider: new Pod(),
+      options: new WorkCoordinatorOptions {
         Strategy = WorkCoordinatorStrategy.Batch,
         BatchSize = batchSize,
         IntervalMilliseconds = debounceMs,
@@ -121,8 +126,11 @@ public class LifecycleStageTriggerIndependenceTests {
         LeaseSeconds = 300,
         AbandonStaleInstanceThresholdSeconds = 300,
       },
+      logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      lifecycleMessageDeserializer: new PassthroughDeserializer());
+      lifecycleMessageDeserializer: new PassthroughDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
     return (strategy, invoker);
   }
 

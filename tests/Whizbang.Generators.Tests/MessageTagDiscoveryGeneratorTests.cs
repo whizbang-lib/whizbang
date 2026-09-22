@@ -179,8 +179,8 @@ public class MessageTagDiscoveryGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("__event");
-    await Assert.That(code!).DoesNotContain("IncludeEvent");
+    await Assert.That(code).DoesNotContain("__event");
+    await Assert.That(code).DoesNotContain("IncludeEvent");
   }
 
   /// <summary>
@@ -471,10 +471,10 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert — the emitted AttributeFactory must set Scope alongside Tag.
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Tag = \"bulk-updates\"");
+    await Assert.That(code).Contains("Tag = \"bulk-updates\"");
     // Scope set via enum literal: ((global::TestApp.DeliveryScope)1). The exact form comes
     // from _typedConstantToCSharpLiteral's enum branch in MessageTagDiscoveryGenerator.
-    await Assert.That(code!).Contains("Scope = (global::TestApp.DeliveryScope)(1)");
+    await Assert.That(code).Contains("Scope = (global::TestApp.DeliveryScope)(1)");
   }
 
   /// <summary>
@@ -702,11 +702,11 @@ public class MessageTagDiscoveryGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("TabCreatedEvent");
+    await Assert.That(code).Contains("TabCreatedEvent");
     // No field assignments inside the payload builder
-    await Assert.That(code!).DoesNotContain("dict[\"TabId\"]");
-    await Assert.That(code!).DoesNotContain("dict[\"Name\"]");
-    await Assert.That(code!).DoesNotContain("dict[\"Route\"]");
+    await Assert.That(code).DoesNotContain("dict[\"TabId\"]");
+    await Assert.That(code).DoesNotContain("dict[\"Name\"]");
+    await Assert.That(code).DoesNotContain("dict[\"Route\"]");
   }
 
   /// <summary>
@@ -730,8 +730,8 @@ public class MessageTagDiscoveryGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("dict[\"Id\"]");
-    await Assert.That(code!).Contains("dict[\"Name\"]");
+    await Assert.That(code).Contains("dict[\"Id\"]");
+    await Assert.That(code).Contains("dict[\"Name\"]");
   }
 
   /// <summary>
@@ -755,11 +755,11 @@ public class MessageTagDiscoveryGeneratorTests {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("PaymentProcessedEvent");
-    await Assert.That(code!).Contains("dict[\"PaymentId\"]");
-    await Assert.That(code!).DoesNotContain("dict[\"Amount\"]");
-    await Assert.That(code!).DoesNotContain("dict[\"InternalNote\"]");
-    await Assert.That(code!).DoesNotContain("__event");
+    await Assert.That(code).Contains("PaymentProcessedEvent");
+    await Assert.That(code).Contains("dict[\"PaymentId\"]");
+    await Assert.That(code).DoesNotContain("dict[\"Amount\"]");
+    await Assert.That(code).DoesNotContain("dict[\"InternalNote\"]");
+    await Assert.That(code).DoesNotContain("__event");
   }
 
   // ============================================================================
@@ -1227,8 +1227,8 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
     // Both Tag and TagValue must appear in the AttributeFactory initializer; without
     // the fix, only Tag is emitted and TagValue silently becomes null at runtime.
-    await Assert.That(code!).Contains("Tag = \"user-tabs\"");
-    await Assert.That(code!).Contains("TagValue = \"{UserID}\"");
+    await Assert.That(code).Contains("Tag = \"user-tabs\"");
+    await Assert.That(code).Contains("TagValue = \"{UserID}\"");
   }
 
   /// <summary>
@@ -1265,6 +1265,6 @@ public class MessageTagDiscoveryGeneratorTests {
 
     await Assert.That(code).IsNotNull();
     // Identity preserves the parameter name — note "PropertyName" is already PascalCase here.
-    await Assert.That(code!).Contains("PropertyName = \"PropertyName\"");
+    await Assert.That(code).Contains("PropertyName = \"PropertyName\"");
   }
 }

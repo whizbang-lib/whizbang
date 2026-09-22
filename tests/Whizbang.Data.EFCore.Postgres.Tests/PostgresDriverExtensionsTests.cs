@@ -203,7 +203,7 @@ public class PostgresDriverExtensionsTests {
     // rather than answering from somewhere else.
     services.AddSingleton(NpgsqlDataSource.Create(
       "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1"));
-    services.AddSingleton<IWhizbangLifecycleState>(new _runningLifecycle());
+    services.AddSingleton<IWhizbangLifecycleState>(new RunningLifecycle());
 
     await using var provider = services.BuildServiceProvider();
     var source = provider.GetServices<IWhizbangHealthSource>()
@@ -220,7 +220,7 @@ public class PostgresDriverExtensionsTests {
              + "something else would answer Operational against an unreachable database");
   }
 
-  private sealed class _runningLifecycle : IWhizbangLifecycleState {
+  private sealed class RunningLifecycle : IWhizbangLifecycleState {
     public LifecyclePhase Phase => LifecyclePhase.Running;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
     public ValueTask FaultAsync(CancellationToken cancellationToken) => default;

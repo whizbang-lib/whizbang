@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class OutboxInboxFailureReasonSqlTests : EFCoreTestBase {
   private const int LEASE_EXPIRED = 6;
 
-  private async Task<NpgsqlConnection> _openAsync(DbContext dbContext) {
+  private static async Task<NpgsqlConnection> _openAsync(DbContext dbContext) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
       await connection.OpenAsync();

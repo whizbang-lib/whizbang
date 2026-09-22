@@ -14,10 +14,10 @@ namespace Whizbang.Core.Tests.Security;
 /// default reached only by a <see cref="DeniedAction"/> value outside the four named members.
 /// </summary>
 public class ReceptorInterceptorPipelineCoverageTests {
-  private sealed class StubReceptor { }
+  private sealed class StubReceptor;
 
   private sealed class DenyingInterceptor(DeniedAction action) : IReceptorInterceptor {
-    public ValueTask<InterceptorResult> CanInvokeAsync(Type t, IMessageEnvelope e, IScopeContext? c, CancellationToken ct = default) =>
+    public ValueTask<InterceptorResult> CanInvokeAsync(Type receptorType, IMessageEnvelope envelope, IScopeContext? context, CancellationToken cancellationToken = default) =>
       new(InterceptorResult.Deny(action));
   }
 

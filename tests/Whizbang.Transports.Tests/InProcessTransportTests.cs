@@ -185,8 +185,8 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(() => transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: cts.Token))
@@ -264,8 +264,8 @@ public class InProcessTransportTests {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await transport.SubscribeBatchAsync(
@@ -335,8 +335,7 @@ public class InProcessTransportTests {
     } else {
       // For paused/disposed, the message goes to the collector but subscription is inactive.
       // Give a brief moment to confirm handler does NOT fire, then assert.
-      var completed = batchHandled.Task.Wait(TimeSpan.FromMilliseconds(200));
-      // If it completed, handlerInvoked may be set — but for paused/disposed it shouldn't enqueue.
+      await Task.WhenAny(batchHandled.Task, Task.Delay(TimeSpan.FromMilliseconds(200)));
     }
 
     // Assert
@@ -466,8 +465,8 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await transport.SendAsync<TestMessage, TestMessage>(envelope, destination, cts.Token))
@@ -483,7 +482,7 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
-    var cts = new CancellationTokenSource(timeoutMs);
+    using var cts = new CancellationTokenSource(timeoutMs);
 
     // No responder setup - will timeout
 
@@ -652,10 +651,10 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-service");
-    var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource();
 
     // Cancel immediately so PublishAsync throws
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert - Should throw OperationCanceledException
     // This exercises the finally block (line 90) which removes the pending request

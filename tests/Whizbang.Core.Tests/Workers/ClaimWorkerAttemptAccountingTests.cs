@@ -7,9 +7,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -186,7 +188,7 @@ public class ClaimWorkerAttemptAccountingTests {
 
   /// <summary>A coordinator implementing nothing beyond the required members.</summary>
   private sealed class MinimalCoordinator : IWorkCoordinator {
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
@@ -200,9 +202,6 @@ public class ClaimWorkerAttemptAccountingTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   // ==================== helpers ====================
@@ -268,7 +267,7 @@ public class ClaimWorkerAttemptAccountingTests {
   [Test]
   public async Task Handoff_DoesNotReWriteWorkAlreadyInFlightAsync() {
     var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 3, attempts: 1) };
-    var channel = new _CountingInboxChannel();
+    var channel = new CountingInboxChannel();
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
       PollingMaxIntervalMilliseconds = 60,
@@ -290,7 +289,7 @@ public class ClaimWorkerAttemptAccountingTests {
   }
 
   /// <summary>Counts writes and reports everything written as permanently in flight.</summary>
-  private sealed class _CountingInboxChannel : IInboxChannelWriter {
+  private sealed class CountingInboxChannel : IInboxChannelWriter {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     private readonly HashSet<Guid> _seen = [];
     public int TotalWrites { get; private set; }
@@ -475,18 +474,27 @@ public class ClaimWorkerAttemptAccountingTests {
       IInboxChannelWriter? inboxChannel = null,
       WorkCompletionMeter? completionMeter = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstance(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(options),
-      NullLogger<ClaimWorker>.Instance,
-      inboxChannel: inboxChannel,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstance(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: inboxChannel ?? new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       completionMeter: completionMeter);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
@@ -496,7 +504,7 @@ public class ClaimWorkerAttemptAccountingTests {
   private sealed class WorkerHarness(ClaimWorker worker, CancellationTokenSource cts) : IDisposable {
     public void Dispose() {
       cts.Cancel();
-      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       cts.Dispose();
     }
   }
@@ -521,7 +529,7 @@ public class ClaimWorkerAttemptAccountingTests {
   private sealed class RefusingInboxChannel : IInboxChannelWriter {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     public ChannelReader<InboxWork> Reader => _channel.Reader;
-    public event Action? OnNewInboxWorkAvailable { add { } remove { } }
+    public event Action? OnNewInboxWorkAvailable { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) =>
       throw new InvalidOperationException("channel refuses writes");
     public bool TryWrite(InboxWork work) => false;
@@ -552,10 +560,10 @@ public class ClaimWorkerAttemptAccountingTests {
     /// </summary>
     public WorkCompletionMeter? CompletionMeter { get; set; }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         CallCount++;
-        LastMaxStreams = req.MaxStreams;
+        LastMaxStreams = request.MaxStreams;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       CompletionMeter?.Record(BatchToReturn.InboxWork.Count);
@@ -630,9 +638,6 @@ public class ClaimWorkerAttemptAccountingTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   [Test]

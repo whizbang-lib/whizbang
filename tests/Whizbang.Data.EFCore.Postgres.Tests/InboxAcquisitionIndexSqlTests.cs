@@ -161,6 +161,6 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
       }
     }
 
-    await Assert.That(claimed).IsEquivalentTo(new[] { id1, id2 });
+    await Assert.That(claimed).IsEquivalentTo([id1, id2]);
   }
 }

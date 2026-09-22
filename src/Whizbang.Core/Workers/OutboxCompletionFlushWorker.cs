@@ -29,13 +29,13 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
     IOptions<OutboxCompletionFlushWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<OutboxCompletionFlushWorker> logger,
-    IPinnedConnectionPool? pinnedPool = null) {
+    IPinnedConnectionPool pinnedPool) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
+    _pinnedPool = pinnedPool;
     _flusher = new BatchFlusher<Guid>(_flushBatchAsync, _options.Flusher, _logger);
   }
 
@@ -91,6 +91,7 @@ public sealed partial class OutboxCompletionFlushWorker : BackgroundService, IOu
 }
 
 /// <summary>Channel surface for the OutboxPublishWorker (or test) to enqueue completed ids.</summary>
+/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public interface IOutboxCompletionChannel {
   /// <summary>Enqueue an outbox message id whose transport publish succeeded.</summary>
   ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default);

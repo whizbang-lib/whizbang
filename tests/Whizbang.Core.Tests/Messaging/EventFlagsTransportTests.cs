@@ -101,7 +101,7 @@ public class EventFlagsTransportTests {
   public async Task IMessageEnvelope_Flags_DefaultMember_IsNoneForLegacyImplementersAsync() {
     // The interface default member returns None so envelope implementations that predate the carrier
     // (and don't override Flags) are unaffected — the guard treats them as ordinary, never suppressed.
-    IMessageEnvelope legacy = new _legacyEnvelope();
+    IMessageEnvelope legacy = new LegacyEnvelope();
     await Assert.That(legacy.Flags).IsEqualTo(EventFlags.None);
     await Assert.That(NoRebroadcastGuard.ShouldSuppress(legacy)).IsFalse();
   }
@@ -123,7 +123,7 @@ public class EventFlagsTransportTests {
   }
 
   // A minimal IMessageEnvelope that does NOT override Flags — exercises the interface default member.
-  private sealed class _legacyEnvelope : IMessageEnvelope {
+  private sealed class LegacyEnvelope : IMessageEnvelope {
     public int Version => 1;
     public MessageDispatchContext DispatchContext => new() { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox };
     public MessageId MessageId => MessageId.New();

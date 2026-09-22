@@ -22,7 +22,6 @@ public class PolicyEngineTests {
   // Test messages
   private sealed record OrderCommand(string OrderId, decimal Amount);
   private sealed record PaymentCommand(string PaymentId, decimal Amount);
-  private sealed record NotificationCommand(string UserId, string Message);
 
   /// <summary>
   /// Helper to create a test envelope

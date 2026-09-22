@@ -50,7 +50,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public int Calls => Volatile.Read(ref _calls);
     public Type PerspectiveType => typeof(StoredFormRunner);
 
-    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) =>
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(_completed(streamId, perspectiveName, lastProcessedEventId ?? Guid.Empty));
 
     public Task<PerspectiveCursorCompletion> RunWithEventsAsync(
@@ -112,8 +112,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
     await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var announced = logger.Collector.GetSnapshot().Where(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID).ToList();
     await Assert.That(announced).Count().IsEqualTo(1);
@@ -179,8 +179,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     runner.NextException = null;
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var records = logger.Collector.GetSnapshot();
     await Assert.That(records.Count(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID)).IsEqualTo(1)
@@ -226,8 +226,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
     await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     var records = logger.Collector.GetSnapshot();
     await Assert.That(records.Any(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID)).IsFalse();

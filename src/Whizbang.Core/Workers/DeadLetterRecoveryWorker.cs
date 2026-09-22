@@ -40,8 +40,8 @@ public partial class DeadLetterRecoveryWorker(
   IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
+  Whizbang.Core.Notifications.IWorkNotificationListener notificationListener,
   DeadLetterMetrics? metrics = null,
-  Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null,
   HousekeepingCoordinator? housekeeping = null,
   Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null,
   TimeProvider? timeProvider = null
@@ -63,7 +63,7 @@ public partial class DeadLetterRecoveryWorker(
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
   private readonly Whizbang.Core.Observability.HousekeepingMetrics? _metricsRollup = metricsRollup;
   private readonly DeadLetterMetrics? _metrics = metrics;
-  private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
+  private readonly Whizbang.Core.Notifications.IWorkNotificationListener _notificationListener = notificationListener;
   // The scan backstop delay runs on this provider so tests can drive idle cycles without waiting.
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   // A coalescing single-waiter signal, not a SemaphoreSlim(0, 1): every backstop timeout used to
@@ -89,7 +89,7 @@ public partial class DeadLetterRecoveryWorker(
 
   /// <inheritdoc />
   public override Task StopAsync(CancellationToken cancellationToken) {
-    if (_signalSubscribed && _notificationListener is not null) {
+    if (_signalSubscribed) {
       _notificationListener.OnSignal -= _onSignal;
       _signalSubscribed = false;
     }
@@ -152,14 +152,14 @@ public partial class DeadLetterRecoveryWorker(
     // Slice 7c — subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
     // AFTER INSERT trigger (migration 056) fires this on every new DLQ row so the
     // worker wakes within ms instead of waiting up to ScanIntervalMinutes.
-    if (_notificationListener is not null && !_signalSubscribed) {
+    if (_notificationListener.IsConfigured && !_signalSubscribed) {
       _notificationListener.OnSignal += _onSignal;
       _signalSubscribed = true;
     }
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
-      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { }
+      try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       return;
     }
 
@@ -236,7 +236,7 @@ public partial class DeadLetterRecoveryWorker(
         var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), _timeProvider, stoppingToken);
         // WaitAsync hands back the same pending task while a wait is outstanding, so a backstop
         // timeout leaves no extra waiter behind and the next signal wakes this one task (#728).
-        var wakeTask = _notificationListener is not null
+        var wakeTask = _notificationListener.IsConfigured
           ? _wake.WaitAsync(stoppingToken)
           : new TaskCompletionSource<bool>().Task;
         await Task.WhenAny(pollDelay, wakeTask).ConfigureAwait(false);
@@ -378,8 +378,8 @@ public partial class DeadLetterRecoveryWorker(
           _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Fail);
           _campaignsInFlight.Remove(fingerprint);
           break;
-        case CanaryVerdictKind.Mixed:
         default:
+          // Mixed, and any verdict this switch does not know, is treated as mixed.
           LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
           _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Mixed);
           _campaignsInFlight.Remove(fingerprint);
@@ -432,7 +432,7 @@ public partial class DeadLetterRecoveryWorker(
     // origin to redeliver over the wire — healing locally removes the reason to ask. It is still
     // gated on settledness: re-driving puts work back onto the same queues, so doing it mid-drain
     // is how a recovery becomes a second storm.
-    HousekeepingCoordinator.Decision? housekeeping = null;
+    HousekeepingCoordinator.Decision? housekeepingDecision = null;
     if (_housekeeping is not null && _options.WaitForIdle) {
       var coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
       ServiceBacklog? backlog = null;
@@ -448,7 +448,7 @@ public partial class DeadLetterRecoveryWorker(
         LogRecoveryDeferred(_logger, decision.Reason, backlog?.UnprocessedInboxRows ?? -1);
         return;
       }
-      housekeeping = decision;
+      housekeepingDecision = decision;
     }
     var scanRecovered = 0;
     try {
@@ -495,7 +495,7 @@ public partial class DeadLetterRecoveryWorker(
           if (pruned > 0) {
             LogStackHistoryPruned(_logger, pruned, _options.StackHistoryRetentionDays);
             // The maintenance facet the operator watches: a dedicated counter, and the
-            // housekeeping volume rollup under the Maintenance activity (this IS cleanup).
+            // housekeepingDecision volume rollup under the Maintenance activity (this IS cleanup).
             _metrics?.RecordStackHistoryPruned(pruned);
             _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, pruned);
           }
@@ -519,7 +519,7 @@ public partial class DeadLetterRecoveryWorker(
             churnThreshold: _options.ScanBatchChurnThreshold);
         }
       }
-      var pressured = housekeeping?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit;
+      var pressured = housekeepingDecision?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit;
       // A forced pass keeps the #669 narrow trickle regardless of the adaptive ramp; a settled
       // pass uses the controller's current width (or the fixed ScanBatchSize when adaptivity off).
       var batchSize = pressured
@@ -666,7 +666,7 @@ public partial class DeadLetterRecoveryWorker(
     } finally {
       // In a finally: a scan that throws and never releases the slot would disable BOTH recovery
       // and every lower-ranked activity for the lifetime of the process.
-      if (housekeeping is not null) {
+      if (housekeepingDecision is not null) {
         // Volume rollup before the slot releases: dead letters actually re-driven this cycle.
         _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.DeadLetterRecovery, scanRecovered);
         _housekeeping?.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);

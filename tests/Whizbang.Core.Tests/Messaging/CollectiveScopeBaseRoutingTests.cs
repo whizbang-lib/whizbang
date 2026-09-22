@@ -17,14 +17,14 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class CollectiveScopeBaseRoutingTests {
 
-  private sealed record _archiveEvent : CollectiveEventBase {
+  private sealed record ArchiveEvent : CollectiveEventBase {
     public string Note { get; init; } = "";
   }
 
   [Test]
   public async Task CollectiveEventBase_IsAnEvent_CarriesGeneratedStreamAndScopeAsync() {
     var streamId = TrackedGuid.NewMedo().Value;
-    var evt = new _archiveEvent { StreamId = streamId, Scope = new TenantCollectiveScope("t-1"), Note = "n" };
+    var evt = new ArchiveEvent { StreamId = streamId, Scope = new TenantCollectiveScope("t-1"), Note = "n" };
 
     await Assert.That(evt is IEvent).IsTrue();
     await Assert.That(evt is ICollectiveEvent).IsTrue();
@@ -44,5 +44,13 @@ public class CollectiveScopeBaseRoutingTests {
     await Assert.That(roundTripped).IsTypeOf<TenantCollectiveScope>();
     await Assert.That(roundTripped!.ScopeKind).IsEqualTo("tenant");
     await Assert.That(((TenantCollectiveScope)roundTripped).TenantId).IsEqualTo("tenant-42");
+  }
+
+  [Test]
+  public async Task CollectiveScope_ToString_IsTheScopeKindAsync() {
+    var scope = new TenantCollectiveScope("tenant-42");
+
+    await Assert.That(scope.ToString()).IsEqualTo(scope.ScopeKind)
+      .Because("a scope reads as its discriminator in logs and diagnostics, not as the record's member dump");
   }
 }

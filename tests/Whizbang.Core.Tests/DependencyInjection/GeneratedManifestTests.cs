@@ -54,8 +54,8 @@ public class GeneratedManifestTests {
   public async Task ValidatingTheManifestAgainstAnEmptyCollectionReportsGapsAsync() {
     var services = new ServiceCollection();
 
-    var ex = Assert.Throws<WhizbangRegistrationException>(
-      () => services.ValidateWhizbangRegistrations(CoreManifest.All));
+    var ex = await Assert.That(() => services.ValidateWhizbangRegistrations(CoreManifest.All))
+      .Throws<WhizbangRegistrationException>();
 
     // Proves the manifest is actually exercised rather than merely present: against a collection
     // registering nothing, every dependency it names must be reported missing.

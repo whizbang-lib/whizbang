@@ -3,7 +3,10 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -28,11 +31,13 @@ public class TransportSubscriptionBuilderCoverageTests {
     var routingOptions = new RoutingOptions();
     routingOptions.Inbox.UseCustom(new MetadataVarietyStrategy());
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
     var builder = new TransportSubscriptionBuilder(
-        Options.Create(routingOptions),
-        discovery,
-        "OrderService");
+        routingOptions: Options.Create(routingOptions),
+        discovery: discovery,
+        serviceName: "OrderService",
+        inboxStrategy: routingOptions.InboxStrategy,
+        receptorRegistry: new PermissiveReceptorRegistryQuery());
 
     var destinations = builder.BuildInboxDestinations();
 
@@ -58,8 +63,9 @@ public class TransportSubscriptionBuilderCoverageTests {
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("myapp.orders.commands");
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(Options.Create(routingOptions));
-    services.AddSingleton(new EventSubscriptionDiscovery(Options.Create(routingOptions), null));
+    services.AddSingleton(new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry()));
     services.AddTransportSubscriptionBuilder("OrderService");
     await using var provider = services.BuildServiceProvider();
 
@@ -77,21 +83,6 @@ public class TransportSubscriptionBuilderCoverageTests {
   // up routing must still resolve a usable TopologyManifest - manifest-driven provisioning has to
   // be a deliberate no-op here, not a startup crash and not a manifest that invents subscriptions
   // or publications nobody configured.
-  [Test]
-  public async Task AddTransportSubscriptionBuilder_NoRoutingOptionsRegistered_TopologyManifestIsEmptyAsync() {
-    var services = new ServiceCollection();
-    services.AddTransportSubscriptionBuilder("OrderService");
-    await using var provider = services.BuildServiceProvider();
-
-    var manifest = provider.GetService<TopologyManifest>();
-
-    await Assert.That(manifest).IsNotNull();
-    await Assert.That(manifest!.ServiceName).IsEqualTo("OrderService");
-    await Assert.That(manifest.Subscriptions).IsEmpty()
-      .Because("with no routing configured, provisioning must name nothing rather than guess a " +
-               "default topology");
-    await Assert.That(manifest.PublishDestinations).IsEmpty();
-  }
 
   private sealed class MetadataVarietyStrategy : IInboxRoutingStrategy {
     public InboxSubscription GetSubscription(

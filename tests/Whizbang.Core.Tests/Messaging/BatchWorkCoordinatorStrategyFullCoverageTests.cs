@@ -1,16 +1,21 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -83,7 +88,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -116,7 +121,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var throwingCoordinator = new BatchFullCoverageThrowingCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -145,13 +150,13 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     try {
       // Act — flush with no event subscriber
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — should succeed
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
@@ -172,7 +177,14 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
     var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
 
     sut.QueueInboxMessage(_createInboxMessage());
 
@@ -204,13 +216,21 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_EmptyQueues_WithMetricsAndLogger_RecordsBothAsync() {
     // Arrange
     var logger = new BatchFullCoverageLogger();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions();
     var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -233,13 +253,21 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_BestEffort_WithMetricsAndLogger_RecordsMetricsAsync() {
     // Arrange
     var logger = new BatchFullCoverageLogger();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions();
     var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -262,13 +290,21 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_AllQueueTypes_WithMetricsAndLogger_FlushesEverythingAsync() {
     // Arrange
     var logger = new BatchFullCoverageLogger();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
     var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -301,6 +337,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var logger = new BatchFullCoverageLogger();
     var scopedCoordinator = new BatchFullCoverageCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => scopedCoordinator);
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -312,7 +349,10 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      scopeFactory: scopeFactory
+      scopeFactory: scopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -340,7 +380,14 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
     var sut = new BatchWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger: logger);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter());
 
     // Act — dispose with empty queues
     await sut.DisposeAsync();
@@ -359,7 +406,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 2, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     try {
       // Act
@@ -385,7 +432,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 2, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     try {
       // Act
@@ -411,7 +458,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     try {
       // Act
@@ -435,7 +482,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new OutboxMessage {
@@ -471,7 +518,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new BatchFullCoverageCoordinator();
     var instanceProvider = new BatchFullCoverageInstanceProvider();
     var options = _createOptions(batchSize: 100, debounceMs: 60000);
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     var id = Guid.CreateVersion7();
     var message = new InboxMessage {
@@ -531,7 +578,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       _flushSignal.Release();
@@ -556,7 +603,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       _flushSignal.Release();
       return Task.CompletedTask;
@@ -576,7 +623,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
   private sealed class BatchFullCoverageThrowingCoordinator : IWorkCoordinator {
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
@@ -588,7 +635,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -625,7 +672,7 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     // A long debounce so nothing flushes on its own while the interleaving is set up.
     var options = _createOptions(batchSize: 1000, debounceMs: 60000);
     var logger = new BatchParkingLogger();
-    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+    var sut = new BatchWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter());
 
     var queueCall = Task.Run(() => sut.QueueOutboxMessage(_createOutboxMessage()), testToken);
 

@@ -61,11 +61,11 @@ public class EphemeralReclassifyCoordinatorTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), Guid.NewGuid(), typeB, flags: 0);   // sourced B (other type)
 
     var coordinator = _coordinator(dbContext);
-    var countA = await coordinator.CountSourcedEventsForTypesAsync(new[] { typeA });
+    var countA = await coordinator.CountSourcedEventsForTypesAsync([typeA]);
     await Assert.That(countA).IsEqualTo(2L)
       .Because("Only the two not-yet-ephemeral events of type A count — the already-ephemeral one and type B are excluded.");
 
-    var countEmpty = await coordinator.CountSourcedEventsForTypesAsync(Array.Empty<string>());
+    var countEmpty = await coordinator.CountSourcedEventsForTypesAsync([]);
     await Assert.That(countEmpty).IsEqualTo(0L).Because("An empty type set has no drift.");
   }
 
@@ -78,27 +78,26 @@ public class EphemeralReclassifyCoordinatorTests : EFCoreTestBase {
     await _commitAsync(connection, eventId, Guid.NewGuid(), eventType, flags: 0);
 
     var coordinator = _coordinator(dbContext);
-    await Assert.That(await coordinator.CountSourcedEventsForTypesAsync(new[] { eventType })).IsEqualTo(1L)
+    await Assert.That(await coordinator.CountSourcedEventsForTypesAsync([eventType])).IsEqualTo(1L)
       .Because("The historical Sourced event is drift for the now-ephemeral type.");
 
-    var result = await coordinator.ReclassifyEventsEphemeralAsync(new[] { eventType });
+    var result = await coordinator.ReclassifyEventsEphemeralAsync([eventType]);
     await Assert.That(result.EventsReclassified).IsEqualTo(1L).Because("The one historical event is reclassified.");
     await Assert.That(result.StreamsReclassified).IsEqualTo(1L).Because("Its single stream is reclassified.");
     await Assert.That(result.StreamsBlocked).IsEqualTo(0L).Because("A homogeneous stream is never blocked.");
 
     // Drift is cleared, and the row is now ephemeral with its body offloaded.
-    await Assert.That(await coordinator.CountSourcedEventsForTypesAsync(new[] { eventType })).IsEqualTo(0L)
+    await Assert.That(await coordinator.CountSourcedEventsForTypesAsync([eventType])).IsEqualTo(0L)
       .Because("After reclassification there is no Sourced drift left.");
-    await using (var v = connection.CreateCommand()) {
-      v.CommandText = @"SELECT es.flags,
+    await using var v = connection.CreateCommand();
+    v.CommandText = @"SELECT es.flags,
                           (SELECT count(*) FROM wh_event_body eb WHERE eb.event_id = es.event_id)
                         FROM wh_event_store es WHERE es.event_id = @id";
-      v.Parameters.AddWithValue("id", eventId);
-      await using var r = await v.ExecuteReaderAsync();
-      await r.ReadAsync();
-      await Assert.That(r.GetInt32(0) & 8).IsEqualTo(8).Because("Now stamped ephemeral.");
-      await Assert.That(r.GetInt64(1)).IsEqualTo(1L).Because("Body lives in wh_event_body (full split).");
-    }
+    v.Parameters.AddWithValue("id", eventId);
+    await using var r = await v.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetInt32(0) & 8).IsEqualTo(8).Because("Now stamped ephemeral.");
+    await Assert.That(r.GetInt64(1)).IsEqualTo(1L).Because("Body lives in wh_event_body (full split).");
   }
 
   [Test]
@@ -112,7 +111,7 @@ public class EphemeralReclassifyCoordinatorTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), stream, currentName, flags: 0);
 
     var coordinator = _coordinator(dbContext);
-    var result = await coordinator.ReclassifyEventsEphemeralAsync(new[] { currentName, formerName });
+    var result = await coordinator.ReclassifyEventsEphemeralAsync([currentName, formerName]);
     await Assert.That(result.EventsReclassified).IsEqualTo(2L)
       .Because("Passing the full name set reclassifies the renamed type's history under both names.");
     await Assert.That(result.StreamsBlocked).IsEqualTo(0L)

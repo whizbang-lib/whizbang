@@ -42,11 +42,27 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
     context.RegisterSymbolAction(_analyze, SymbolKind.Method);
   }
 
+  private static bool _isBclDataInterface(ITypeSymbol type) {
+    // System.Collections and everything beneath it (Generic, Immutable, ...).
+    for (var ns = type.ContainingNamespace; ns is { IsGlobalNamespace: false }; ns = ns.ContainingNamespace) {
+      if (ns.Name == "Collections" && ns.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true }) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static void _analyze(SymbolAnalysisContext context) {
     if (context.Symbol is not IMethodSymbol method || method.MethodKind != MethodKind.Constructor) {
       return;
     }
     if (method.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) {
+      return;
+    }
+    // A positional record is a data carrier, not a service. Its parameters are values the caller
+    // supplies at the point of creation, so there is no container to register a default in and
+    // "make it required" would only push a null literal to every construction site.
+    if (method.ContainingType.IsRecord) {
       return;
     }
 
@@ -57,6 +73,12 @@ public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
       // Only interfaces are container-resolved services. A retry count or a name with a sensible
       // default is not a dependency, and flagging it would bury the real signal under noise.
       if (p.Type.TypeKind != TypeKind.Interface) {
+        continue;
+      }
+      // Collection and comparison abstractions from the BCL, such as IReadOnlyList<T> or
+      // IComparer<T>, describe a value the caller shapes, not a collaborator the container resolves,
+      // so the rule's remedy, a TryAdd default, has no meaning for them.
+      if (_isBclDataInterface(p.Type)) {
         continue;
       }
 

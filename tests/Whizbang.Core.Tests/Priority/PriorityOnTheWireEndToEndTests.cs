@@ -2,20 +2,25 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Priority;
 
@@ -131,6 +136,7 @@ public class PriorityOnTheWireEndToEndTests {
     // 1. Producer: the real dispatcher with the framework's producer hooks and the real envelope serializer.
     var producerStrategy = new ProducerStrategy();
     var producerServices = new ServiceCollection();
+    producerServices.TryAddWhizbangDefaults();
     producerServices.AddSingleton<IServiceScopeFactory>(sp => new TestScopeFactory(sp));
     producerServices.AddSingleton<IWorkCoordinatorStrategy>(producerStrategy);
     producerServices.AddWhizbangPriority();
@@ -169,6 +175,7 @@ public class PriorityOnTheWireEndToEndTests {
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
     var consumerStrategy = new ConsumerStrategy();
     var consumerServices = new ServiceCollection();
+    consumerServices.TryAddWhizbangDefaults();
     consumerServices.AddSingleton<IServiceInstanceProvider>(new InstanceProvider());
     consumerServices.AddScoped<IWorkCoordinatorStrategy>(_ => consumerStrategy);
     consumerServices.AddWhizbangPriority();
@@ -176,13 +183,16 @@ public class PriorityOnTheWireEndToEndTests {
     var consumer = new ServiceBusConsumerWorker(
       transport: transport,
       scopeFactory: consumerProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions: options,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
-      orderedProcessor: new OrderedStreamProcessor(),
+      orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
       schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription(TOPIC, "wire-priority-sub")] },
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: serializer,
-      receptorRegistry: new SubscribedRegistry());
+      receptorRegistry: new SubscribedRegistry(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription(TOPIC, "wire-priority-sub")] });
     await consumer.StartAsync(cts.Token);
     await consumer.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -190,6 +200,7 @@ public class PriorityOnTheWireEndToEndTests {
     var coordinator = new PipelineCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
     coordinator.OutboxRowsByStream[streamId] = [outboxRow];
     var workerServices = new ServiceCollection();
+    workerServices.TryAddWhizbangDefaults();
     workerServices.AddSingleton<IWorkCoordinator>(coordinator);
     await using var workerProvider = workerServices.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -197,16 +208,22 @@ public class PriorityOnTheWireEndToEndTests {
     var drainChannel = new DrainChannel();
     var completion = new CompletionChannel();
     var drain = new OutboxDrainWorker(
-      workerProvider.GetRequiredService<IServiceScopeFactory>(),
-      new InstanceProvider(),
-      drainChannel,
-      completion,
-      new FailureChannel(),
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
-      options,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new TransportPublishStrategy(transport, new DefaultTransportReadinessCheck(), "wire-priority-inbox"));
+      scopeFactory: workerProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new InstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: new FailureChannel(),
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
+      jsonOptions: options,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new TransportPublishStrategy(transport: transport, readinessCheck: new DefaultTransportReadinessCheck(), inboxTopic: "wire-priority-inbox", loggerFactory: NullLoggerFactory.Instance, namespaceRouting: NullCommandInboxAddressResolver.Instance),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value));
     await drain.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
     var wire = await wireCaptured.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -253,7 +270,7 @@ public class PriorityOnTheWireEndToEndTests {
 
     await cts.CancelAsync();
     foreach (var hosted in new Microsoft.Extensions.Hosting.IHostedService[] { inboxDrain, drain, consumer }) {
-      try { await hosted.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+      try { await hosted.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
     }
 
     return new WireTrace(outbox, storedOutboxJson, wire, inboxRow, work, handlerEnvelope);
@@ -262,7 +279,7 @@ public class PriorityOnTheWireEndToEndTests {
   #region Producer side
 
   private sealed class OutboxOnlyDispatcher(IServiceProvider sp, IEnvelopeSerializer serializer) : Core.Dispatcher(
-      sp, new ServiceInstanceProvider(configuration: null), envelopeSerializer: serializer) {
+      sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), envelopeSerializer: serializer) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) => null;
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) => _ => Task.CompletedTask;
@@ -302,10 +319,10 @@ public class PriorityOnTheWireEndToEndTests {
     public TaskCompletionSource<InboxMessage> Stored { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void QueueOutboxMessage(OutboxMessage message) { }
     public void QueueInboxMessage(InboxMessage message) => Stored.TrySetResult(message);
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
       Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
@@ -363,14 +380,14 @@ public class PriorityOnTheWireEndToEndTests {
       }
       return Task.FromResult<IReadOnlyList<InboxBatchRow>>(result);
     }
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -384,8 +401,8 @@ public class PriorityOnTheWireEndToEndTests {
   private sealed class CompletionChannel : IOutboxCompletionChannel {
     public ConcurrentBag<Guid> AllIds { get; } = [];
     public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
-      AllIds.Add(id);
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      AllIds.Add(outboxMessageId);
       Reached.TrySetResult();
       return ValueTask.CompletedTask;
     }
@@ -393,7 +410,7 @@ public class PriorityOnTheWireEndToEndTests {
 
   private sealed class FailureChannel : IFailureChannel {
     public ConcurrentBag<MessageFailure> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
     }
@@ -402,9 +419,8 @@ public class PriorityOnTheWireEndToEndTests {
   private sealed class InboxDrainChannel : IInboxDrainChannel {
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
     public ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
   private sealed class InboxChannel : IInboxChannelWriter {

@@ -103,7 +103,7 @@ public sealed class DispatcherMetrics {
   /// <summary>Initializes a new instance of the <see cref="DispatcherMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public DispatcherMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     SendDuration = meter.CreateHistogram<double>("whizbang.dispatcher.send.duration", "ms", "SendAsync: envelope creation → receptor → cascade → lifecycle");
     PublishDuration = meter.CreateHistogram<double>("whizbang.dispatcher.publish.duration", "ms", "PublishAsync: local handlers → outbox queue → flush");

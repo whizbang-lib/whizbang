@@ -24,7 +24,6 @@ namespace Whizbang.Core.Tests.Workers;
 public class CooldownGateDecisionTests {
 
   private sealed class TestEvent : IEvent {
-    public Guid StreamId { get; set; }
   }
 
   private static MessageEnvelope<IEvent> _envelope(Guid messageId) => new() {

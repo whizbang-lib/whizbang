@@ -18,7 +18,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(60_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   [Test]
   public async Task AddAzureServiceBusTransport_RegistersTransport_AsSingletonAsync() {

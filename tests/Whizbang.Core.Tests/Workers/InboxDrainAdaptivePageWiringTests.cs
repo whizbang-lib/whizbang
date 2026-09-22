@@ -33,7 +33,7 @@ public class InboxDrainAdaptivePageWiringTests {
   private static IReadOnlyList<InboxBatchRow> _rows(int count, int attempts = 1)
     => [.. Enumerable.Range(0, count).Select(_ => _row(attempts))];
 
-  private sealed class _Instance : Whizbang.Core.Observability.IServiceInstanceProvider {
+  private sealed class FakeInstance : Whizbang.Core.Observability.IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -47,7 +47,7 @@ public class InboxDrainAdaptivePageWiringTests {
       };
   }
 
-  private sealed class _DrainChannel : IInboxDrainChannel {
+  private sealed class DrainChannel : IInboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _c =
       System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _c.Reader;
@@ -56,7 +56,7 @@ public class InboxDrainAdaptivePageWiringTests {
     public bool TryWrite(Guid streamId) => _c.Writer.TryWrite(streamId);
   }
 
-  private sealed class _InboxWriter : IInboxChannelWriter {
+  private sealed class InboxWriter : IInboxChannelWriter {
     private readonly System.Threading.Channels.Channel<InboxWork> _c =
       System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _c.Reader;
@@ -75,9 +75,9 @@ public class InboxDrainAdaptivePageWiringTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new _Instance(),
-      new _DrainChannel(),
-      new _InboxWriter(),
+      new FakeInstance(),
+      new DrainChannel(),
+      new InboxWriter(),
       new SchemaReadyGate(),
       Options.Create(options),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),

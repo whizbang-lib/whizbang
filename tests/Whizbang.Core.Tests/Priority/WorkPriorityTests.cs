@@ -116,7 +116,7 @@ public class WorkPriorityTests {
 
   [Test]
   public async Task Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync() {
-    IPrioritized[] items = [new _at(WorkPriority.BACKGROUND), new _at(WorkPriority.UNDECLARED), new _at(WorkPriority.STANDARD)];
+    IPrioritized[] items = [new At(WorkPriority.BACKGROUND), new At(WorkPriority.UNDECLARED), new At(WorkPriority.STANDARD)];
 
     await Assert.That(WorkPriority.MostUrgent(items)).IsEqualTo(WorkPriority.STANDARD)
       .Because("rows, envelopes and work items all expose the number through one interface, so a caller folds them without projecting");
@@ -124,5 +124,5 @@ public class WorkPriorityTests {
     await Assert.That(WorkPriority.Average(items)).IsEqualTo(200);
   }
 
-  private sealed record _at(int Priority) : IPrioritized;
+  private sealed record At(int Priority) : IPrioritized;
 }

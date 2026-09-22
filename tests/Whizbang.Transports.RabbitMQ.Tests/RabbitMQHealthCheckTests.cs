@@ -104,12 +104,6 @@ public class RabbitMQHealthCheckTests {
       CancellationToken cancellationToken = default
     ) => throw new NotImplementedException();
 
-    public Task<ISubscription> SubscribeAsync(
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      TransportDestination destination,
-      CancellationToken cancellationToken = default
-    ) => throw new NotImplementedException();
-
     public Task<ISubscription> SubscribeBatchAsync(
       Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
       TransportDestination destination,

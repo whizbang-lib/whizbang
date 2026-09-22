@@ -32,7 +32,6 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 [Category("NullHops")]
 public class TransportConsumerWorkerNullHopsTests {
-  private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
   // ========================================
   // Null Hops Bug Reproduction Tests

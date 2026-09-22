@@ -128,7 +128,7 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
   }
 
   private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _newService(WorkCoordinationDbContext ctx) =>
-    new(ctx, NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance);
+    new(ctx);
 
   private static async Task _seedPassedCampaignAsync(NpgsqlConnection conn, string fingerprint, string generation) {
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -170,6 +170,6 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", dlqId);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return (reader.GetInt32(0), reader.IsDBNull(1) ? null : reader.GetString(1));
+    return (reader.GetInt32(0), await reader.IsDBNullAsync(1) ? null : reader.GetString(1));
   }
 }

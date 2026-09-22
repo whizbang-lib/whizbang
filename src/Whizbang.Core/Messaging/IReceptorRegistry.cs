@@ -124,3 +124,31 @@ public interface IReceptorRegistry {
   /// FullName-only; the implementation normalizes.</param>
   bool HasAnyRuntimeReceptors(string messageType) => false;
 }
+
+/// <summary>
+/// The registry registered when no generated registry is present. Lookups report no receptors;
+/// runtime registration is refused loudly, because a receptor added to an empty registry that
+/// nothing dispatches from would be silently dropped, and that is the one outcome this fallback
+/// must never produce.
+/// </summary>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+public sealed class NullReceptorRegistry : IReceptorRegistry, INullDefault {
+  private const string NO_REGISTRY =
+    "No receptor registry is registered. The source generator emits one for any assembly that declares receptors; "
+    + "reference that assembly from the host, or register an IReceptorRegistry explicitly.";
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullReceptorRegistry Instance { get; } = new();
+  private NullReceptorRegistry() { }
+  /// <inheritdoc />
+  public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
+  /// <inheritdoc />
+  public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage
+    => throw new InvalidOperationException(NO_REGISTRY);
+  /// <inheritdoc />
+  public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage
+    => throw new InvalidOperationException(NO_REGISTRY);
+  /// <inheritdoc />
+  public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  /// <inheritdoc />
+  public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+}

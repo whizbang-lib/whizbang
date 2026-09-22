@@ -34,7 +34,7 @@ public class AzureServiceBusAmqpPropertyIntegrationTests(ServiceBusEmulatorFixtu
   private const string TOPIC = "topic-spike-plain";
   private const string SUBSCRIPTION = "sub-spike";
 
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
   private readonly List<IAsyncDisposable> _disposables = [];
 
   [After(Test)]

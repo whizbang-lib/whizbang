@@ -74,15 +74,15 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task SyncListens_OneChannelHasMalformedName_OtherChannelStillListensAsync(
       CancellationToken cancellationToken) {
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     using var shared = _sharedConnection(logger);
 
     var goodChannel = $"wh_cov_good_{Guid.NewGuid():N}";
     // The embedded double-quote is never escaped by PgSharedNotifyConnection before it builds
     // LISTEN "{channel}", so this turns into invalid SQL and the LISTEN attempt must fail.
     var badChannel = $"wh_cov_bad_{Guid.NewGuid():N}\"x";
-    using var goodHandle = shared.Subscribe(new _NoopSubscription(goodChannel));
-    using var badHandle = shared.Subscribe(new _NoopSubscription(badChannel));
+    using var goodHandle = shared.Subscribe(new NoopSubscription(goodChannel));
+    using var badHandle = shared.Subscribe(new NoopSubscription(badChannel));
 
     await shared.StartAsync(cancellationToken);
     try {
@@ -117,7 +117,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     var sharedInstanceProvider = new ServiceInstanceProvider(
       Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
 
-    var loggerA = new _CapturingLogger();
+    var loggerA = new CapturingLogger();
     using var gateA = _sharedConnection(loggerA, sharedInstanceProvider);
     await gateA.StartAsync(cancellationToken);
     try {
@@ -125,7 +125,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
       await Assert.That(gateA.IsAliveLockHeld).IsTrue()
         .Because("nothing else holds the lock yet, so the first session must claim it");
 
-      var loggerB = new _CapturingLogger();
+      var loggerB = new CapturingLogger();
       using var gateB = _sharedConnection(loggerB, sharedInstanceProvider);
       await gateB.StartAsync(cancellationToken);
       try {
@@ -159,7 +159,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
         "DROP FUNCTION claim_instance_alive_lock(uuid)", cancellationToken);
     }
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     using var gate = _sharedConnection(logger);
     await gate.StartAsync(cancellationToken);
     try {
@@ -190,7 +190,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     var instanceProvider = new ServiceInstanceProvider(
       Guid.NewGuid(), "coverage-svc", "coverage-host", Environment.ProcessId);
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     using var gate = new PgSharedNotifyConnection(
       Options.Create(new WhizbangNotificationOptions {
         DirectConnectionString = ConnectionString,
@@ -243,7 +243,7 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     }
   }
 
-  private sealed class _NoopSubscription(string channel) : INotifySubscription {
+  private sealed class NoopSubscription(string channel) : INotifySubscription {
     public string ChannelName => channel;
     public void OnNotification(string payload) { }
   }
@@ -283,7 +283,7 @@ public class PgSharedNotifyConnectionBackoffCoverageTests {
       PeriodicReprobeInterval = TimeSpan.FromSeconds(2),
     };
 
-    var logger = new _CapturingLogger();
+    var logger = new CapturingLogger();
     var worker = new PgSharedNotifyConnection(
       Options.Create(options),
       cfg,
@@ -328,7 +328,7 @@ internal readonly record struct LogEntry(string Message, Exception? Exception);
 /// Records every log call per event id and exposes a deterministic wait for the N-th
 /// occurrence of a given event id, so tests never poll or sleep to observe a log.
 /// </summary>
-internal sealed class _CapturingLogger : ILogger<PgSharedNotifyConnection> {
+internal sealed class CapturingLogger : ILogger<PgSharedNotifyConnection> {
   private readonly Lock _gate = new();
   private readonly Dictionary<int, List<LogEntry>> _byEventId = [];
   private Action<int>? _onLogged;

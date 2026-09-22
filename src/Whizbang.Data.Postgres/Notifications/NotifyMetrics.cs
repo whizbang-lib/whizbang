@@ -53,7 +53,7 @@ public sealed class NotifyMetrics {
   /// <summary>Initializes a new instance of the <see cref="NotifyMetrics"/> class.</summary>
   public NotifyMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     SignalsReceived = meter.CreatePassiveCounter<long>(
       "whizbang.postgres.notifications.signals_received",

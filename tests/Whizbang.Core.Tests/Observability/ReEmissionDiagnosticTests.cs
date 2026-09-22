@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -25,9 +27,9 @@ public sealed class ReEmissionDiagnosticTests {
   private sealed record ConsumedEvent : IEvent;
 
   private sealed class StubRegistryQuery : IReceptorRegistryQuery {
-    public bool HasAnyConsumer(string messageTypeName) => false;
-    public bool HasInboxHandler(string messageTypeName) => false;
-    public bool HasReceptors(LifecycleStage stage, string messageTypeName) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public IReadOnlyList<HandledMessageInfo> GetHandledMessages() =>
       [new HandledMessageInfo(Whizbang.Core.TypeNameFormatter.Format(typeof(ConsumedEvent)), "tests", Whizbang.Core.Routing.MessageKind.Event)];
   }
@@ -47,7 +49,7 @@ public sealed class ReEmissionDiagnosticTests {
   // collects and returns the cumulative total across the counter's series (the untagged one
   // plus one per re-emitted type), resetting first so repeated calls do not compound.
   private static (ReEmissionDiagnostic Diag, CaptureLogger Log, Func<long> Count) _arm() {
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     long count = 0;
     var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
@@ -97,7 +99,7 @@ public sealed class ReEmissionDiagnosticTests {
 
   [Test]
   public async Task NullRegistry_IsInertAsync() {
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var diag = new ReEmissionDiagnostic(null, null, metrics);
     var act = () => diag.RecordEmission("Any.Type, Asm");
     await Assert.That(act).ThrowsNothing()
@@ -105,7 +107,7 @@ public sealed class ReEmissionDiagnosticTests {
   }
 
   private sealed class PublishProbeDispatcher(IServiceProvider sp)
-      : Whizbang.Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
+      : Whizbang.Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) => null;
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) => _ => Task.CompletedTask;
@@ -123,7 +125,7 @@ public sealed class ReEmissionDiagnosticTests {
   public async Task Dispatcher_Publish_OfConsumedType_FiresTheDiagnosticAsync() {
     // The wiring lock: the diagnostic only matters if the PUBLISH seam actually calls it —
     // a prior attempt at #587 shipped a reporter with zero callers and was deleted.
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     long count = 0;
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
@@ -148,9 +150,9 @@ public sealed class ReEmissionDiagnosticTests {
   }
 
   private sealed class ConsumesProbeRegistry : IReceptorRegistryQuery {
-    public bool HasAnyConsumer(string messageTypeName) => false;
-    public bool HasInboxHandler(string messageTypeName) => false;
-    public bool HasReceptors(LifecycleStage stage, string messageTypeName) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
     public IReadOnlyList<HandledMessageInfo> GetHandledMessages() =>
       [new HandledMessageInfo(Whizbang.Core.TypeNameFormatter.Format(typeof(ProbeEvent)), "tests", Whizbang.Core.Routing.MessageKind.Event)];
   }

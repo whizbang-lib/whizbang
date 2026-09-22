@@ -34,7 +34,7 @@ public class EffectiveExpiryLadderTests : EFCoreTestBase {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version, expires_at)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, @u, @u, 1, @e)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("u", updatedAt);
     cmd.Parameters.Add(new NpgsqlParameter("e", NpgsqlTypes.NpgsqlDbType.TimestampTz) {
       Value = (object?)expiresAt ?? DBNull.Value
@@ -42,7 +42,7 @@ public class EffectiveExpiryLadderTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private async Task _createTableAsync(NpgsqlConnection conn) {
+  private static async Task _createTableAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand($@"
       DROP TABLE IF EXISTS {TABLE};
       CREATE TABLE {TABLE} (

@@ -147,9 +147,9 @@ namespace App.Signals {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "SignalTypeSource.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("_entry<global::App.Signals.ZetaSignal>(\"App.Signals.ZetaSignal\")")
+    await Assert.That(code).Contains("_entry<global::App.Signals.ZetaSignal>(\"App.Signals.ZetaSignal\")")
       .Because("with no [WireName], the wire name must default to the type's own fully-qualified name");
-    await Assert.That(code!).Contains("_entry<global::App.Signals.AlphaSignal>(\"App.Signals.AlphaSignal\")")
+    await Assert.That(code).Contains("_entry<global::App.Signals.AlphaSignal>(\"App.Signals.AlphaSignal\")")
       .Because("an unrelated attribute like [Obsolete] must not be mistaken for [WireName] or block default wire-name assignment");
 
     var alphaIndex = code!.IndexOf("_entry<global::App.Signals.AlphaSignal>", StringComparison.Ordinal);

@@ -232,11 +232,7 @@ namespace Test;";
     const string? code = null;
 
     // Act - Using reflection to call private method
-    var method = typeof(TemplateUtilities).GetMethod(
-        "_removeIndentation",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-    );
-    var result = method!.Invoke(null, [code, "  "]) as string;
+    var result = TemplateUtilities.RemoveIndentation(code!, "  ");
 
     // Assert
     await Assert.That(result).IsNull();
@@ -248,11 +244,7 @@ namespace Test;";
     const string code = "  line1\n  line2";
 
     // Act - Using reflection to call private method
-    var method = typeof(TemplateUtilities).GetMethod(
-        "_removeIndentation",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-    );
-    var result = method!.Invoke(null, [code, ""]) as string;
+    var result = TemplateUtilities.RemoveIndentation(code!, "");
 
     // Assert
     await Assert.That(result).IsEqualTo(code);
@@ -264,11 +256,7 @@ namespace Test;";
     const string code = "  line1\n   \n  line2";
 
     // Act - Using reflection to call private method
-    var method = typeof(TemplateUtilities).GetMethod(
-        "_removeIndentation",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-    );
-    var result = method!.Invoke(null, [code, "  "]) as string;
+    var result = TemplateUtilities.RemoveIndentation(code!, "  ");
 
     // Assert
     await Assert.That(result).Contains("\n   \n");
@@ -280,11 +268,7 @@ namespace Test;";
     const string code = "  line1\n  line2\n  line3";
 
     // Act - Using reflection to call private method
-    var method = typeof(TemplateUtilities).GetMethod(
-        "_removeIndentation",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-    );
-    var result = method!.Invoke(null, [code, "  "]) as string;
+    var result = TemplateUtilities.RemoveIndentation(code!, "  ");
 
     // Assert
     await Assert.That(result).IsEqualTo("line1\nline2\nline3");
@@ -296,11 +280,7 @@ namespace Test;";
     const string code = "  line1\nline2\n  line3";
 
     // Act - Using reflection to call private method
-    var method = typeof(TemplateUtilities).GetMethod(
-        "_removeIndentation",
-        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-    );
-    var result = method!.Invoke(null, [code, "  "]) as string;
+    var result = TemplateUtilities.RemoveIndentation(code!, "  ");
 
     // Assert
     await Assert.That(result).Contains("\nline2\n");

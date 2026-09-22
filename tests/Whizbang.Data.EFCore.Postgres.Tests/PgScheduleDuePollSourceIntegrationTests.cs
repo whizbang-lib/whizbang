@@ -66,7 +66,7 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
       VALUES (gen_random_uuid(), @stream, 0, 0, NOW() + @off::interval, @status, 'TestOccurrence');", conn);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("off", fireOffset);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(status), status);
     await cmd.ExecuteNonQueryAsync();
   }
 

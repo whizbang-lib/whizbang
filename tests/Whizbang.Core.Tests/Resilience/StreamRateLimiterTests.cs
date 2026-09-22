@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,7 +26,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_BelowThreshold_ReturnsTrueAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     for (var i = 0; i < 4; i++) {
@@ -35,7 +36,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_AtThreshold_ReturnsTrueAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     for (var i = 0; i < 5; i++) {
@@ -45,7 +46,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_ExceedsThreshold_ReturnsFalseAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     for (var i = 0; i < 5; i++) { limiter.TryAcquire(streamId); }
@@ -60,7 +61,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_DuringCooldown_ReturnsFalseAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // Exhaust threshold
@@ -75,7 +76,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_AfterCooldownExpires_ReturnsTrueAsync() {
     var options = _defaultOptions();
     options.CooldownDuration = TimeSpan.FromSeconds(1);
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     for (var i = 0; i < 6; i++) { limiter.TryAcquire(streamId); }
@@ -92,7 +93,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_AfterCooldownExpires_ResetsCountAsync() {
     var options = _defaultOptions();
     options.CooldownDuration = TimeSpan.FromSeconds(1);
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // Hit limit → cooldown
@@ -112,7 +113,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_RepeatedThreshold_RepeatedCooldownAsync() {
     var options = _defaultOptions();
     options.CooldownDuration = TimeSpan.FromSeconds(1);
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // First cycle: hit limit → cooldown → resume
@@ -132,7 +133,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_DifferentStreams_IndependentLimitsAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamA = Guid.NewGuid();
     var streamB = Guid.NewGuid();
 
@@ -146,7 +147,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_DifferentStreams_IndependentCooldownsAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     var streamA = Guid.NewGuid();
     var streamB = Guid.NewGuid();
 
@@ -168,7 +169,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_WindowExpires_ResetsCountAsync() {
     var options = _defaultOptions();
     options.WindowDuration = TimeSpan.FromSeconds(1);
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // Use 4 out of 5
@@ -187,7 +188,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_WindowExpires_NoCooldownAsync() {
     var options = _defaultOptions();
     options.WindowDuration = TimeSpan.FromSeconds(1);
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // Use 4 (below threshold)
@@ -205,7 +206,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_EmptyGuid_WorksAsync() {
-    var limiter = new StreamRateLimiter(_defaultOptions());
+    var limiter = new StreamRateLimiter(options: _defaultOptions(), logger: NullLogger<StreamRateLimiter>.Instance);
     await Assert.That(limiter.TryAcquire(Guid.Empty)).IsTrue();
   }
 
@@ -213,7 +214,7 @@ public class StreamRateLimiterTests {
   public async Task TryAcquire_ZeroCooldown_ImmediateResumeAsync() {
     var options = _defaultOptions();
     options.CooldownDuration = TimeSpan.Zero;
-    var limiter = new StreamRateLimiter(options);
+    var limiter = new StreamRateLimiter(options: options, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // Hit limit
@@ -226,7 +227,7 @@ public class StreamRateLimiterTests {
 
   [Test]
   public async Task TryAcquire_ConcurrentAccess_ThreadSafeAsync() {
-    var limiter = new StreamRateLimiter(new StreamRateLimiterOptions { MaxEventsPerWindow = 1000 });
+    var limiter = new StreamRateLimiter(options: new StreamRateLimiterOptions { MaxEventsPerWindow = 1000 }, logger: NullLogger<StreamRateLimiter>.Instance);
     var streamId = Guid.NewGuid();
 
     // 100 concurrent calls

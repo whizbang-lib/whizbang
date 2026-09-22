@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -66,7 +67,7 @@ public class DispatcherComprehensiveCoverageTests {
     Func<object, ValueTask<object?>>? anyInvoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     DispatchModes? defaultRouting = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       envelopeRegistry: envelopeRegistry,
@@ -217,22 +218,6 @@ public class DispatcherComprehensiveCoverageTests {
     }
   }
 
-  private sealed class StubDeferredOutboxChannel : IDeferredOutboxChannel {
-    public List<OutboxMessage> QueuedMessages { get; } = [];
-    public bool HasPending => QueuedMessages.Count > 0;
-
-    public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) {
-      QueuedMessages.Add(message);
-      return ValueTask.CompletedTask;
-    }
-
-    public IReadOnlyList<OutboxMessage> DrainAll() {
-      var items = QueuedMessages.ToList();
-      QueuedMessages.Clear();
-      return items;
-    }
-  }
-
   // ========================================
   // HELPER METHODS
   // ========================================
@@ -291,7 +276,6 @@ public class DispatcherComprehensiveCoverageTests {
 
   private static ReceptorInvoker<object> _defaultInvoker() =>
     msg => {
-      var cmd = (TestCommand)msg;
       return new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
     };
 
@@ -435,7 +419,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("cancel-test");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -584,7 +568,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("cancel-void");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -643,7 +627,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("typed-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -748,7 +732,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("receipt-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1001,7 +985,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.Local, cts.Token))
@@ -1057,7 +1041,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1455,7 +1439,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     object command = new TestCommand("obj-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert
@@ -1524,7 +1508,7 @@ public class DispatcherComprehensiveCoverageTests {
     var dispatcher = _createDispatcher(traceStore: traceStore, invoker: _defaultInvoker());
     var command = new TestCommand("typed-trace-cancel");
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
     // Act & Assert

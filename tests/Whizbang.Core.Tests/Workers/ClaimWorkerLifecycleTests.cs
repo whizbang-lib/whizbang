@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -43,7 +44,6 @@ public class ClaimWorkerLifecycleTests {
   /// <summary>A listener whose signals a test can raise, and which counts live subscribers.</summary>
   private sealed class ControllableListener : IWorkNotificationListener {
     private Action<WorkSignalCategory>? _onSignal;
-    private Action<bool>? _onHealth;
 
     public bool IsHealthy => true;
     public DateTimeOffset? LastSignalAt => null;
@@ -54,8 +54,8 @@ public class ClaimWorkerLifecycleTests {
     }
 
     public event Action<bool>? OnHealthChanged {
-      add { _onHealth += value; HealthSubscribers++; }
-      remove { _onHealth -= value; HealthSubscribers--; }
+      add { ArgumentNullException.ThrowIfNull(value); HealthSubscribers++; }
+      remove { ArgumentNullException.ThrowIfNull(value); HealthSubscribers--; }
     }
 
     public int SignalSubscribers { get; private set; }
@@ -117,7 +117,7 @@ public class ClaimWorkerLifecycleTests {
       lock (_operationLock) { _operations.Add(operation); }
     }
 
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       _record("register");
       HeartbeatAttempted.TrySetResult();
       return HeartbeatThrows
@@ -125,7 +125,7 @@ public class ClaimWorkerLifecycleTests {
         : Task.FromResult(true);
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       _record("claim");
       Interlocked.Increment(ref _claimCount);
       ClaimAttempted.TrySetResult();
@@ -136,17 +136,17 @@ public class ClaimWorkerLifecycleTests {
       });
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -154,22 +154,31 @@ public class ClaimWorkerLifecycleTests {
       ControllableListener listener, ISignalBus? bus = null,
       MinimalCoordinator? coordinator = null, bool perspectiveOnly = false) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator ?? new MinimalCoordinator());
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      listener,
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: listener,
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200,
         PerspectiveOnly = perspectiveOnly,
       }),
-      NullLogger<ClaimWorker>.Instance,
-      signalBus: bus);
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: bus ?? NullSignalBus.Instance);
   }
 
   [Test]

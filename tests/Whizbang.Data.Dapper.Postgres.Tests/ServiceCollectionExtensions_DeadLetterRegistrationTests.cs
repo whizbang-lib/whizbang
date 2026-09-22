@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
@@ -24,6 +25,7 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
     // fast unit test (no Postgres / Docker required) — the DapperDeadLetterStore
     // constructor only stashes the connection string; no I/O at registration.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceCollectionExtensions._addDeadLetterStore(
       services,
       "Host=localhost;Database=test;Username=u;Password=p");
@@ -40,6 +42,7 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
   [Test]
   public async Task AddDeadLetterStore_RegistersAsDapperDeadLetterStoreAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     ServiceCollectionExtensions._addDeadLetterStore(
       services,
       "Host=localhost;Database=test;Username=u;Password=p");

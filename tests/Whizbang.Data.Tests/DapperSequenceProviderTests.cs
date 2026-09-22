@@ -9,7 +9,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from SequenceProviderContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperSequenceProviderTests : SequenceProviderContractTests, IDisposable {
+public sealed class DapperSequenceProviderTests : SequenceProviderContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]

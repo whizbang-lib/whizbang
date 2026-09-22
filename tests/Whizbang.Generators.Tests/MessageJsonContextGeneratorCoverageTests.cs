@@ -60,8 +60,8 @@ public record NoticeContainer : ICommand {
     await Assert.That(code).IsNotNull();
 
     // The polymorphic base must still list the shared type as a derived type...
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_AbstractNotice");
-    await Assert.That(code!).Contains("typeof(global::TestApp.ConcreteNotice)");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_AbstractNotice");
+    await Assert.That(code).Contains("typeof(global::TestApp.ConcreteNotice)");
 
     // ...but its Create_ factory must exist exactly once (top-level discovery), never duplicated
     // by the nested-type discovery walk.
@@ -101,8 +101,8 @@ public record LabelsAssignedEvent : IEvent {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_TagsAssignedEvent");
-    await Assert.That(code!).Contains("Create_TestApp_LabelsAssignedEvent");
+    await Assert.That(code).Contains("Create_TestApp_TagsAssignedEvent");
+    await Assert.That(code).Contains("Create_TestApp_LabelsAssignedEvent");
 
     const string arrayFactorySignature = "private JsonTypeInfo<global::System.String[]> CreateArray_System_String(";
     var occurrences = code!.Split(arrayFactorySignature).Length - 1;
@@ -139,10 +139,10 @@ public record LayeredNoticeSent : IEvent {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_LayeredNoticeSent");
+    await Assert.That(code).Contains("Create_TestApp_LayeredNoticeSent");
     // Not DoesNotContain("HashSet") -- the element type legitimately appears in the envelope
     // factory's own property assignment. What must be absent is a hand-rolled list factory for it.
-    await Assert.That(code!).DoesNotContain(
+    await Assert.That(code).DoesNotContain(
         "CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.HashSet")
         .Because("System.Text.Json handles nested collections natively; a custom factory here would "
                + "reference a HashSet<int> JsonTypeInfo this generator never builds -- a broken reference");
@@ -198,16 +198,16 @@ public record PanelConfigHolder : ICommand {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("Create_TestApp_ConcretePanelConfig");
-    await Assert.That(code!).DoesNotContain("AbandonedPanelConfig")
+    await Assert.That(code).Contains("Create_TestApp_ConcretePanelConfig");
+    await Assert.That(code).DoesNotContain("AbandonedPanelConfig")
         .Because("an abstract [JsonDerivedType] target can't be instantiated and must never reach the registry");
-    await Assert.That(code!).DoesNotContain("InternalPanelConfig")
+    await Assert.That(code).DoesNotContain("InternalPanelConfig")
         .Because("a non-public [JsonDerivedType] target is unreachable from the generated public context and must never reach the registry");
 
     // A `typeof(...)` for a derived type appears only in the polymorphic registration, so asserting
     // on the whole source is specific enough -- and avoids slicing from the factory's CALL site,
     // which precedes its definition and would window past the registration entirely.
-    await Assert.That(code!).Contains("typeof(global::TestApp.ConcretePanelConfig)")
+    await Assert.That(code).Contains("typeof(global::TestApp.ConcretePanelConfig)")
         .Because("the one eligible sibling must still be registered despite the ineligible entries "
                + "around it -- if one bad entry dropped the whole attribute scan, every valid "
                + "sibling would vanish and STJ would throw the first time any of them round-trips");
@@ -245,11 +245,11 @@ public record PanelConfigHolder : ICommand {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("ShipmentSentEvent")
+    await Assert.That(generated).DoesNotContain("ShipmentSentEvent")
         .Because("a ledger entry whose current type isn't in THIS assembly must not produce an alias here");
-    await Assert.That(generated!).DoesNotContain("ShipmentDispatchedEvent");
+    await Assert.That(generated).DoesNotContain("ShipmentDispatchedEvent");
     // The in-assembly event's own registration is unaffected by the foreign ledger entry.
-    await Assert.That(generated!).Contains("typeof(global::TestApp.OrderPlacedEvent)");
+    await Assert.That(generated).Contains("typeof(global::TestApp.OrderPlacedEvent)");
   }
 
   // ========================================
@@ -286,10 +286,10 @@ public record TaggedEvent : MarkerHost.INestedTag, IEvent {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_TaggedEvent");
-    await Assert.That(code!).Contains("CreatePolymorphic_TestApp_MarkerHost_INestedTag")
+    await Assert.That(code).Contains("Create_TestApp_TaggedEvent");
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_MarkerHost_INestedTag")
         .Because("a nested interface shared by message types must still become an auto-discovered polymorphic base");
-    await Assert.That(code!).Contains("typeof(global::TestApp.TaggedEvent)");
+    await Assert.That(code).Contains("typeof(global::TestApp.TaggedEvent)");
   }
 
   [Test]
@@ -316,8 +316,8 @@ public record AuditedEvent : IAuditMarker, IEvent {
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_AuditedEvent");
-    await Assert.That(code!).DoesNotContain("IAuditMarker")
+    await Assert.That(code).Contains("Create_TestApp_AuditedEvent");
+    await Assert.That(code).DoesNotContain("IAuditMarker")
         .Because("an internal base interface must never appear in the generated public context, or consumer code fails to compile");
   }
 
@@ -356,14 +356,14 @@ public class CounterPerspective : IPerspectiveFor<CounterModel, CounterIncrement
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    await Assert.That(code!).Contains("new global::TestApp.CounterModel(")
+    await Assert.That(code).Contains("new global::TestApp.CounterModel(")
         .Because("a perspective TModel with only a primary constructor must be created via that constructor");
-    await Assert.That(code!).DoesNotContain("new global::TestApp.CounterModel() {")
+    await Assert.That(code).DoesNotContain("new global::TestApp.CounterModel() {")
         .Because("CounterModel has no parameterless constructor; the object-initializer form would fail to compile");
 
-    await Assert.That(code!).Contains("new global::TestApp.CounterIncrementedEvent(")
+    await Assert.That(code).Contains("new global::TestApp.CounterIncrementedEvent(")
         .Because("a perspective TEvent with only a primary constructor must be created via that constructor");
-    await Assert.That(code!).DoesNotContain("new global::TestApp.CounterIncrementedEvent() {")
+    await Assert.That(code).DoesNotContain("new global::TestApp.CounterIncrementedEvent() {")
         .Because("CounterIncrementedEvent has no parameterless constructor; the object-initializer form would fail to compile");
   }
 
@@ -396,9 +396,9 @@ public class GenericPerspective<TEvt> : IPerspectiveFor<GenericTargetModel, TEvt
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GenericTargetModel")
+    await Assert.That(code).Contains("GenericTargetModel")
         .Because("the concrete TModel sibling must still be discovered even though TEvent is unbound");
-    await Assert.That(code!).DoesNotContain("TEvt")
+    await Assert.That(code).DoesNotContain("TEvt")
         .Because("an unbound event type parameter must never be emitted as a literal type reference");
   }
 
@@ -429,8 +429,8 @@ public class ArrayModelPerspective : IPerspectiveFor<string[], ArrayModelEvent> 
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_ArrayModelEvent");
-    await Assert.That(code!).DoesNotContain("ArrayModelPerspective")
+    await Assert.That(code).Contains("Create_TestApp_ArrayModelEvent");
+    await Assert.That(code).DoesNotContain("ArrayModelPerspective")
         .Because("an array-typed TModel must be skipped, not turned into a broken message-type registration");
   }
 
@@ -466,10 +466,10 @@ public class InternalTypesPerspective : IPerspectiveFor<InternalOnlyModel, Inter
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Create_TestApp_VisiblePingEvent");
-    await Assert.That(code!).DoesNotContain("InternalOnlyModel")
+    await Assert.That(code).Contains("Create_TestApp_VisiblePingEvent");
+    await Assert.That(code).DoesNotContain("InternalOnlyModel")
         .Because("an internal TModel must never reach the generated public context");
-    await Assert.That(code!).DoesNotContain("InternalOnlyEvent")
+    await Assert.That(code).DoesNotContain("InternalOnlyEvent")
         .Because("an internal TEvent must never reach the generated public context");
   }
 }

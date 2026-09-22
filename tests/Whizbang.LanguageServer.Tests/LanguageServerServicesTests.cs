@@ -39,7 +39,6 @@ public class LanguageServerServicesTests {
   }
 
   [Test]
-  [Arguments(typeof(MermaidGenerator))]
   [Arguments(typeof(SymbolResolver))]
   [Arguments(typeof(SearchService))]
   [Arguments(typeof(TestCoverageService))]

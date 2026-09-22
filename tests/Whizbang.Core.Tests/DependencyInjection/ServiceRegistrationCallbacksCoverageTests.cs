@@ -55,6 +55,7 @@ public class ServiceRegistrationCallbacksCoverageTests {
 
       // Sanity: before restoring, both registrations are live (accumulation is working).
       var beforeRestore = new ServiceCollection();
+      beforeRestore.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(beforeRestore, new ServiceRegistrationOptions());
       await Assert.That(beforeRestore.Any(d => d.ServiceType == typeof(PreSnapshotMarker))).IsTrue();
       await Assert.That(beforeRestore.Any(d => d.ServiceType == typeof(PostSnapshotMarker))).IsTrue();
@@ -62,6 +63,7 @@ public class ServiceRegistrationCallbacksCoverageTests {
       ServiceRegistrationCallbacks.RestoreDispatcherRegistrations(snapshot);
 
       var afterRestore = new ServiceCollection();
+      afterRestore.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(afterRestore, new ServiceRegistrationOptions());
 
       await Assert.That(afterRestore.Any(d => d.ServiceType == typeof(PreSnapshotMarker))).IsTrue()
@@ -94,6 +96,7 @@ public class ServiceRegistrationCallbacksCoverageTests {
       ServiceRegistrationCallbacks.RestoreDispatcherRegistrations(emptySnapshot);
 
       var services = new ServiceCollection();
+      services.TryAddWhizbangDefaults();
       ServiceRegistrationCallbacks.InvokeAll(services, new ServiceRegistrationOptions());
 
       await Assert.That(services.Any(d => d.ServiceType == typeof(LeakedMarker))).IsFalse()

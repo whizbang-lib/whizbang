@@ -76,8 +76,7 @@ public class AsbSharedInboxRetirementE2ELockTests {
     var deliveriesByTopic = new Dictionary<string, int>(StringComparer.Ordinal);
     var subscriptionHandles = new List<IDisposable>();
     try {
-      foreach (var subscription in subscriptions) {
-        var topic = subscription.Topic;
+      foreach (var topic in subscriptions.Select(subscription => subscription.Topic)) {
         subscriptionHandles.Add(await consumerTransport.SubscribeAsync(
           (_, _, _) => {
             lock (deliveriesByTopic) {
@@ -102,9 +101,10 @@ public class AsbSharedInboxRetirementE2ELockTests {
         new AzureServiceBusOptions { EnableSessions = false },
         NullLogger<AzureServiceBusTransport>.Instance);
       var publishStrategy = new TransportPublishStrategy(
-        publisherTransport,
-        new DefaultTransportReadinessCheck(),
-        SHARED_INBOX,
+        transport: publisherTransport,
+        readinessCheck: new DefaultTransportReadinessCheck(),
+        inboxTopic: SHARED_INBOX,
+        loggerFactory: NullLoggerFactory.Instance,
         namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
 
       var domainResult = await publishStrategy.PublishAsync(

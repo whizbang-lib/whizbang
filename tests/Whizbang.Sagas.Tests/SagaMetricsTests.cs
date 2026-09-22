@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -36,7 +38,7 @@ public class SagaMetricsTests {
     });
     listener.Start();
 
-    _ = new SagaMetrics(new WhizbangMetrics());
+    _ = new SagaMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     listener.RecordObservableInstruments();   // what an exporter does at collection
 
     foreach (var counter in new[] {
@@ -49,7 +51,7 @@ public class SagaMetricsTests {
 
   [Test]
   public async Task Constructor_CreatesAllInstrumentsAsync() {
-    var metrics = new SagaMetrics(new WhizbangMetrics());
+    var metrics = new SagaMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.SagasInitiated).IsNotNull();
     await Assert.That(metrics.SagasCompleted).IsNotNull();

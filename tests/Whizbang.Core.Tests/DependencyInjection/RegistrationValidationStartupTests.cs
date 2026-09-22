@@ -84,7 +84,7 @@ public class RegistrationValidationStartupTests {
     await Assert.That(services).IsEmpty();
   }
 
-  private interface IAbsent { }
-  private sealed class Absent : IAbsent { }
-  private sealed class Consumer { }
+  private interface IAbsent;
+  private sealed class Absent : IAbsent;
+  private sealed class Consumer;
 }

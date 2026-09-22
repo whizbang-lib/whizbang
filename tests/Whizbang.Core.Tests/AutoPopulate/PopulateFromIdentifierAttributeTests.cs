@@ -247,7 +247,6 @@ public class PopulateFromIdentifierAttributeTests {
 
   // Derived record inherits the attribute
   private sealed record DerivedEventWithIdentifier : BaseEventWithIdentifier {
-    public string? AdditionalData { get; init; }
   }
 
   // Record with all identifier kinds

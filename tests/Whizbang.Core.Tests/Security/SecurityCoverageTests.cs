@@ -24,7 +24,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithClaimsInScopeDelta_ExtractsClaimsAsync() {
     // Arrange: ScopeDelta with claims collection
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(
@@ -66,7 +66,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithSecurityPrincipalsInScopeDelta_ExtractsPrincipalsAsync() {
     // Arrange: ScopeDelta with security principals collection
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(
@@ -218,9 +218,11 @@ public class SecurityCoverageTests {
   }
 
   [Test]
-  public async Task Extractor_WithNullLogger_AllBranches_DoesNotThrowAsync() {
-    // Arrange: No logger (null) - covers all the "if (logger != null)" false branches in Log wrappers
-    var extractor = new MessageHopSecurityExtractor(null);
+  public async Task Extractor_WithANoOpLogger_AllBranches_DoesNotThrowAsync() {
+    // A no-op logger rather than null: the constructor takes a required ILogger now, and
+    // the extractor never saw a null one anyway because it coalesced to NullLogger. What
+    // this covers is every branch running with logging that discards.
+    var extractor = new MessageHopSecurityExtractor(NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     // Test null hops path
@@ -277,7 +279,7 @@ public class SecurityCoverageTests {
   [Test]
   public async Task Extractor_WithOnlyEmptyStringsScope_ReturnsNullAsync() {
     // Arrange: Scope where TenantId and UserId are empty strings (not null)
-    var extractor = new MessageHopSecurityExtractor();
+    var extractor = new MessageHopSecurityExtractor(logger: NullLogger<MessageHopSecurityExtractor>.Instance);
     var options = new MessageSecurityOptions();
 
     var securityContext = new SecurityContext {

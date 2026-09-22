@@ -100,7 +100,7 @@ public class SyncEventTrackerCoverageTests {
     // stalls on the waiting side under real concurrent load (a MarkProcessed call that lands in the
     // narrow window between the tracker's two pending-checks would otherwise go unnoticed until the
     // full timeout elapses) rather than a hard failure. This races thousands of fresh registrations
-    // against a continuously-draining queue of concurrent MarkProcessed calls to exercise that seam;
+    // against a continuously-draining queue of concurrent MarkProcessed calls to exercise that seam —
     // hitting the exact branch depends on real thread scheduling, so this is a best-effort volume
     // attempt rather than a guaranteed single-shot reproduction.
     var tracker = new SyncEventTracker();

@@ -25,8 +25,8 @@ public class IScopeContextAccessorDefaultsTests {
 
   [Test]
   public async Task UserId_WithInitiatingContext_ReturnsInitiatingUserIdAsync() {
-    IScopeContextAccessor accessor = new _MinimalAccessor {
-      InitiatingContext = new _StubMessageContext { UserId = "alice", TenantId = "acme" },
+    IScopeContextAccessor accessor = new MinimalAccessor {
+      InitiatingContext = new StubMessageContext { UserId = "alice", TenantId = "acme" },
     };
 
     // Default UserId getter: InitiatingContext?.UserId.
@@ -35,28 +35,28 @@ public class IScopeContextAccessorDefaultsTests {
 
   [Test]
   public async Task UserId_WithoutInitiatingContext_ReturnsNullAsync() {
-    IScopeContextAccessor accessor = new _MinimalAccessor();
+    IScopeContextAccessor accessor = new MinimalAccessor();
     await Assert.That(accessor.UserId).IsNull();
   }
 
   [Test]
   public async Task TenantId_WithInitiatingContext_ReturnsInitiatingTenantIdAsync() {
-    IScopeContextAccessor accessor = new _MinimalAccessor {
-      InitiatingContext = new _StubMessageContext { UserId = "alice", TenantId = "acme" },
+    IScopeContextAccessor accessor = new MinimalAccessor {
+      InitiatingContext = new StubMessageContext { UserId = "alice", TenantId = "acme" },
     };
     await Assert.That(accessor.TenantId).IsEqualTo("acme");
   }
 
   [Test]
   public async Task TenantId_WithoutInitiatingContext_ReturnsNullAsync() {
-    IScopeContextAccessor accessor = new _MinimalAccessor();
+    IScopeContextAccessor accessor = new MinimalAccessor();
     await Assert.That(accessor.TenantId).IsNull();
   }
 
   [Test]
   public async Task ScopeContext_ReturnsCurrent_ByDefaultAsync() {
-    var currentScope = new _StubScopeContext();
-    IScopeContextAccessor accessor = new _MinimalAccessor {
+    var currentScope = new StubScopeContext();
+    IScopeContextAccessor accessor = new MinimalAccessor {
       Current = currentScope,
     };
     await Assert.That(accessor.ScopeContext).IsSameReferenceAs(currentScope);
@@ -64,7 +64,7 @@ public class IScopeContextAccessorDefaultsTests {
 
   [Test]
   public async Task ScopeContext_WithoutCurrent_ReturnsNullAsync() {
-    IScopeContextAccessor accessor = new _MinimalAccessor();
+    IScopeContextAccessor accessor = new MinimalAccessor();
     await Assert.That(accessor.ScopeContext).IsNull();
   }
 
@@ -73,12 +73,12 @@ public class IScopeContextAccessorDefaultsTests {
   /// UserId / TenantId / ScopeContext fall through to interface defaults —
   /// which is exactly what this test file is asserting.
   /// </summary>
-  private sealed class _MinimalAccessor : IScopeContextAccessor {
+  private sealed class MinimalAccessor : IScopeContextAccessor {
     public IScopeContext? Current { get; set; }
     public IMessageContext? InitiatingContext { get; set; }
   }
 
-  private sealed class _StubMessageContext : IMessageContext {
+  private sealed class StubMessageContext : IMessageContext {
     public MessageId MessageId { get; init; } = MessageId.New();
     public CorrelationId CorrelationId { get; init; } = CorrelationId.New();
     public MessageId CausationId { get; init; } = MessageId.New();
@@ -90,7 +90,7 @@ public class IScopeContextAccessorDefaultsTests {
     public ICallerInfo? CallerInfo { get; init; }
   }
 
-  private sealed class _StubScopeContext : IScopeContext {
+  private sealed class StubScopeContext : IScopeContext {
     public PerspectiveScope Scope => new();
     public IReadOnlySet<string> Roles => new HashSet<string>();
     public IReadOnlySet<Permission> Permissions => new HashSet<Permission>();

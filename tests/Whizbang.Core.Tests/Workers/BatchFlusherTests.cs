@@ -81,7 +81,7 @@ public class BatchFlusherTests {
   [Test]
   public async Task DisposeAsync_CompletesLoopAsync() {
     var flusher = new BatchFlusher<int>(
-      flush: (items, _) => Task.CompletedTask,
+      flush: (_, _) => Task.CompletedTask,
       options: new BatchFlusherOptions(),
       logger: NullLogger.Instance);
 

@@ -44,7 +44,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class EFCorePostgresLensQuerySplitModeScopeTests {
 
   private static readonly Lock _hydrationLock = new();
-  private static int _hydrationCalls;
+  private static int HydrationCalls { get; set; }
 
   private sealed record SplitScopedLensItem {
     public string Name { get; init; } = "";
@@ -100,7 +100,7 @@ public class EFCorePostgresLensQuerySplitModeScopeTests {
       typeof(PerspectiveRow<SplitScopedLensItem>),
       static _ => {
         lock (_hydrationLock) {
-          _hydrationCalls++;
+          HydrationCalls++;
         }
       });
 
@@ -113,7 +113,7 @@ public class EFCorePostgresLensQuerySplitModeScopeTests {
     await _seedAsync(context, "theirs", tenantId: "tenant-2");
     context.ChangeTracker.Clear();
     lock (_hydrationLock) {
-      _hydrationCalls = 0;
+      HydrationCalls = 0;
     }
 
     var accessor = new TestScopeContextAccessor {
@@ -140,7 +140,7 @@ public class EFCorePostgresLensQuerySplitModeScopeTests {
 
     int calls;
     lock (_hydrationLock) {
-      calls = _hydrationCalls;
+      calls = HydrationCalls;
     }
     await Assert.That(calls).IsGreaterThan(0)
       .Because("tracking alone is not enough: the read also has to subscribe this context to the "

@@ -13,7 +13,7 @@ namespace Whizbang.Benchmarks;
 [MarkdownExporter]
 public class BatchFlusherBenchmarks {
   [Params(100, 1_000, 10_000)]
-  public int ItemCount;
+  public int ItemCount { get; set; }
 
   [Benchmark(Baseline = true, Description = "Direct flush per item — no coalescing")]
   public async Task<int> DirectFlush_PerItemAsync() {

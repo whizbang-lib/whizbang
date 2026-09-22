@@ -99,7 +99,7 @@ public class MessageIdConverterTests {
 
     // Act
     _converter.Write(writer, messageId, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());
@@ -115,7 +115,7 @@ public class MessageIdConverterTests {
 
     // Act - Write
     _converter.Write(writer, original, JsonSerializerOptions.Default);
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Act - Read
     var reader = new Utf8JsonReader(stream.ToArray());
@@ -177,7 +177,7 @@ public class MessageIdConverterTests {
       _converter.Write(writer, messageId, JsonSerializerOptions.Default);
     }
     writer.WriteEndArray();
-    writer.Flush();
+    await writer.FlushAsync();
 
     // Assert
     var json = Encoding.UTF8.GetString(stream.ToArray());

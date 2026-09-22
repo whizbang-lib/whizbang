@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 
@@ -34,15 +35,16 @@ public class MessageDiscardPolicyTests {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       Entries.Add((logLevel, formatter(state, exception)));
     }
-    private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
   }
+
+  private sealed class NullDisposable : IDisposable { public static readonly NullDisposable Instance = new(); public void Dispose() { } }
 
   private static (MessageDiscardPolicy Policy, TestRegistry Registry, RecordingLogger<MessageDiscardPolicy> Logger, Meter Meter)
     _newPolicy() {
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests");
-    var policy = new MessageDiscardPolicy(registry, logger, meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     return (policy, registry, logger, meter);
   }
 
@@ -71,7 +73,7 @@ public class MessageDiscardPolicyTests {
     routing.AbsorbNamespaces(absorb);
     var registry = new TestRegistry(); // UNCONSUMED_TYPE has NO consumer
     var logger = new RecordingLogger<MessageDiscardPolicy>();
-    return new MessageDiscardPolicy(registry, logger, meter, Options.Create(routing));
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
   }
 
   [Test]
@@ -220,7 +222,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry(); // composite type has NO consumer — faithful to every service
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var markerResolver = new EventMarkerResolver(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
-    return new MessageDiscardPolicy(registry, logger, meter, routingOptions: null, markerResolver: markerResolver);
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver);
   }
 
   [Test]
@@ -334,7 +336,7 @@ public class MessageDiscardPolicyTests {
     listener.Start();
 
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
-    var policy = new MessageDiscardPolicy(registry, new RecordingLogger<MessageDiscardPolicy>(), meter);
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
     var decision = new MessageDiscardDecision(
       ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
 

@@ -29,7 +29,7 @@ public class GuidMetadataTests {
   [Test]
   public async Task GuidMetadata_Version4_IsBit0Async() {
     var value = (ushort)GuidMetadatas.Version4;
-    await Assert.That(value).IsEqualTo((ushort)(1 << 0));
+    await Assert.That(value).IsEqualTo((ushort)1);
   }
 
   [Test]

@@ -252,7 +252,7 @@ public class ReceptorTests : DiagnosticTestBase {
   }
 
   // Supporting types for array response test
-  public interface INotificationEvent { }
+  public interface INotificationEvent;
   public record EmailSent(Guid CustomerId) : INotificationEvent;
   public record HighValueAlert(Guid OrderId) : INotificationEvent;
 

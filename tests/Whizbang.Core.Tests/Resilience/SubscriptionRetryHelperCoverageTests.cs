@@ -26,7 +26,7 @@ public class SubscriptionRetryHelperCoverageTests {
   // transport that is going away, instead of unwinding immediately.
   [Test]
   public async Task SubscribeWithRetryAsync_TransportThrowsOperationCanceled_PropagatesWithoutRetryingAsync() {
-    var transport = new _throwingTransport(new OperationCanceledException("simulated shutdown"));
+    var transport = new ThrowingTransport(new OperationCanceledException("simulated shutdown"));
     var destination = new TransportDestination("coverage-topic");
     var state = new SubscriptionState(destination);
     var options = new SubscriptionResilienceOptions {
@@ -50,13 +50,13 @@ public class SubscriptionRetryHelperCoverageTests {
   // reconnection itself blew up — this is the one place that failure is otherwise visible at all.
   [Test]
   public async Task SubscribeWithRetryAsync_ReconnectionAttemptFailsBeforeRetrying_LogsReconnectionFailedAsync() {
-    var transport = new _disconnectableTransport();
+    var transport = new DisconnectableTransport();
     var destination = new TransportDestination("coverage-topic", "coverage-routing");
     var state = new SubscriptionState(destination);
-    var logger = new _signalingLogger();
+    var logger = new SignalingLogger();
     // An invalid negative delay (anything but Timeout.InfiniteTimeSpan) makes the reconnection's
     // own Task.Delay throw ArgumentOutOfRangeException before it ever calls SubscribeBatchAsync
-    // again — a deterministic way to reach the reconnection's own catch(Exception) without racing
+    // again — a deterministic way to reach the reconnection's own the generic exception handler without racing
     // a real clock or a flaky transport.
     var options = new SubscriptionResilienceOptions {
       InitialRetryDelay = TimeSpan.FromMilliseconds(-5)
@@ -66,7 +66,7 @@ public class SubscriptionRetryHelperCoverageTests {
       transport, destination, _noOpHandler(), new TransportBatchOptions(), state, options,
       logger, CancellationToken.None);
 
-    var subscription = (_disconnectableSubscription)state.Subscription!;
+    var subscription = (DisconnectableSubscription)state.Subscription!;
     subscription.TriggerDisconnect(applicationInitiated: false);
 
     await logger.ErrorLogged.WaitAsync(TimeSpan.FromSeconds(10));
@@ -75,7 +75,7 @@ public class SubscriptionRetryHelperCoverageTests {
     await Assert.That(entry.Message).Contains(destination.Address);
   }
 
-  private sealed class _throwingTransport(Exception exceptionToThrow) : ITransport {
+  private sealed class ThrowingTransport(Exception exceptionToThrow) : ITransport {
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -105,7 +105,7 @@ public class SubscriptionRetryHelperCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class _disconnectableTransport : ITransport {
+  private sealed class DisconnectableTransport : ITransport {
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -124,7 +124,7 @@ public class SubscriptionRetryHelperCoverageTests {
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       SubscribeCallCount++;
-      return Task.FromResult<ISubscription>(new _disconnectableSubscription());
+      return Task.FromResult<ISubscription>(new DisconnectableSubscription());
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
@@ -135,7 +135,7 @@ public class SubscriptionRetryHelperCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class _disconnectableSubscription : ISubscription {
+  private sealed class DisconnectableSubscription : ISubscription {
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
     public bool IsActive { get; private set; } = true;
     public Task PauseAsync() { IsActive = false; return Task.CompletedTask; }
@@ -152,7 +152,7 @@ public class SubscriptionRetryHelperCoverageTests {
   // Signals on the first Error-level log rather than any log call: the initial successful
   // subscribe already logs at Debug, and that must not be mistaken for the reconnection failure
   // this test is waiting on.
-  private sealed class _signalingLogger : ILogger {
+  private sealed class SignalingLogger : ILogger {
     private readonly TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public Task ErrorLogged => _tcs.Task;

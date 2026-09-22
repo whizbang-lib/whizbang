@@ -30,32 +30,32 @@ public class EFCoreCollectiveEventExecutorTests {
 
   [Test]
   public async Task ModelType_ReportsTheClosedGenericArgumentAsync() {
-    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<_jobModel>();
+    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<JobModel>();
 
-    await Assert.That(exec.ModelType).IsEqualTo(typeof(_jobModel))
+    await Assert.That(exec.ModelType).IsEqualTo(typeof(JobModel))
       .Because("The worker filters IEnumerable<ICollectiveEventExecutor> by entry.ModelType — the discriminator MUST be the closed generic argument or the lookup misses entirely.");
   }
 
   [Test]
   public async Task ModelType_DifferentTModel_DifferentDiscriminatorAsync() {
-    ICollectiveEventExecutor a = new EFCoreCollectiveEventExecutor<_jobModel>();
-    ICollectiveEventExecutor b = new EFCoreCollectiveEventExecutor<_otherModel>();
+    ICollectiveEventExecutor a = new EFCoreCollectiveEventExecutor<JobModel>();
+    ICollectiveEventExecutor b = new EFCoreCollectiveEventExecutor<OtherModel>();
 
     await Assert.That(a.ModelType).IsNotEqualTo(b.ModelType)
-      .Because("Two executors over different TModels MUST advertise different ModelType discriminators — otherwise the worker's IEnumerable filter would route _jobModel events to a _otherModel executor.");
+      .Because("Two executors over different TModels MUST advertise different ModelType discriminators — otherwise the worker's IEnumerable filter would route JobModel events to a OtherModel executor.");
   }
 
   // ── ApplyAsync delegates into the generic applier ──────────────────────
 
   [Test]
   public async Task ApplyAsync_NonDbContextSession_ThrowsArgumentExceptionAsync() {
-    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<_jobModel>();
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []);
-    var resolver = new _stubResolver("tenant");
+    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<JobModel>();
+    var entry = _entryFor<TypeA>(typeof(JobModel), "Apply");
+    var evt = new TypeA(new TenantScope("t"), []);
+    var resolver = new StubResolver("tenant");
 
     await Assert.That(() => exec.ApplyAsync(
-        entry, new _handler(), evt, resolver,
+        entry, new Handler(), evt, resolver,
         dbContextOrSession: "not a DbContext", // wrong type
         collectiveEventId: Guid.NewGuid(),
         cancellationToken: default))
@@ -65,13 +65,13 @@ public class EFCoreCollectiveEventExecutorTests {
 
   [Test]
   public async Task ApplyAsync_NullDbContext_ThrowsArgumentNullAsync() {
-    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<_jobModel>();
-    var entry = _entryFor<_typeA>(typeof(_jobModel), "Apply");
-    var evt = new _typeA(new _tenantScope("t"), []);
-    var resolver = new _stubResolver("tenant");
+    ICollectiveEventExecutor exec = new EFCoreCollectiveEventExecutor<JobModel>();
+    var entry = _entryFor<TypeA>(typeof(JobModel), "Apply");
+    var evt = new TypeA(new TenantScope("t"), []);
+    var resolver = new StubResolver("tenant");
 
     await Assert.That(() => exec.ApplyAsync(
-        entry, new _handler(), evt, resolver,
+        entry, new Handler(), evt, resolver,
         dbContextOrSession: null!,
         collectiveEventId: Guid.NewGuid(),
         cancellationToken: default))
@@ -80,43 +80,45 @@ public class EFCoreCollectiveEventExecutorTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = string.Empty;
   }
 
-  private sealed class _otherModel {
+  private sealed class OtherModel {
     public string Name { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+  private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
   }
 
-  private sealed record _typeA(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+  private sealed record TypeA(CollectiveScope Scope, IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
 
-  private sealed class _handler {
-    public ICollectiveSpec<_jobModel> Apply(_typeA _) =>
-      new _stubSpec(s => s.SetProperty(j => j.Status, "x"));
+  private sealed class Handler {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature; the event parameter is part of that contract.")]
+    public ICollectiveSpec<JobModel> Apply(TypeA _) =>
+      new StubSpec(s => s.SetProperty(j => j.Status, "x"));
   }
 
-  private sealed class _stubResolver(string kind) : ICollectiveScopeResolver {
+  private sealed class StubResolver(string kind) : ICollectiveScopeResolver {
     public string ScopeKind => kind;
     public bool AcceptsPerspective<TModel>() where TModel : class => true;
     public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
       where TModel : class => _ => true;
-    public IDisposable EnterContext(ICollectiveScope scope) => new _disposable();
-    private sealed class _disposable : IDisposable { public void Dispose() { } }
+    public IDisposable EnterContext(ICollectiveScope scope) => new Disposable();
+    private sealed class Disposable : IDisposable { public void Dispose() { } }
   }
 
-  private sealed record _stubSpec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters) : ICollectiveSpec<_jobModel>;
+  private sealed record StubSpec(Expression<Action<ICollectiveSetters<JobModel>>> Setters) : ICollectiveSpec<JobModel>;
 
   private static CollectiveApplyEntry _entryFor<TEvent>(Type modelType, string methodName) =>
     new(
       ModelType: modelType,
       EventType: typeof(TEvent),
-      HandlerType: typeof(_handler),
+      HandlerType: typeof(Handler),
       MethodName: methodName,
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
-      Invoker: static (handler, evt, _) => ((_handler)handler).Apply((_typeA)evt));
+      Invoker: static (handler, evt, _) => ((Handler)handler).Apply((TypeA)evt));
 }

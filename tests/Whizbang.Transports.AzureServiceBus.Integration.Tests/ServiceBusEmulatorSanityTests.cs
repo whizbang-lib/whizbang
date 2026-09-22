@@ -20,7 +20,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 [Timeout(20_000)]  // 20s timeout for fail-fast (ServiceBus pre-initialized via ClassDataSource)
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   /// <summary>
   /// Most basic test: Send a message to a topic and receive it from a subscription.

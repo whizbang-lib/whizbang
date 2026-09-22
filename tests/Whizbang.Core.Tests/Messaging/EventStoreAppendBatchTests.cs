@@ -25,9 +25,9 @@ public class EventStoreAppendBatchTests {
 
   [Test]
   public async Task AppendBatchAsync_EmptyList_NoOpAsync() {
-    var capture = new _capturingStore();
+    var capture = new CapturingStore();
     IEventStore store = capture;
-    var entries = new List<(Guid streamId, MessageEnvelope<_evt> envelope)>();
+    var entries = new List<(Guid streamId, MessageEnvelope<Evt> envelope)>();
 
     await store.AppendBatchAsync(entries, CancellationToken.None);
 
@@ -37,12 +37,12 @@ public class EventStoreAppendBatchTests {
 
   [Test]
   public async Task AppendBatchAsync_DefaultImpl_LoopsAppendAsyncInOrderAsync() {
-    var capture = new _capturingStore();
+    var capture = new CapturingStore();
     IEventStore store = capture;
     var s1 = Guid.NewGuid();
     var s2 = Guid.NewGuid();
     var s3 = Guid.NewGuid();
-    var entries = new List<(Guid streamId, MessageEnvelope<_evt> envelope)> {
+    var entries = new List<(Guid streamId, MessageEnvelope<Evt> envelope)> {
       (s1, _env("first")),
       (s2, _env("second")),
       (s3, _env("third")),
@@ -54,23 +54,23 @@ public class EventStoreAppendBatchTests {
     await Assert.That(capture.AppendCalls[0].StreamId).IsEqualTo(s1);
     await Assert.That(capture.AppendCalls[1].StreamId).IsEqualTo(s2);
     await Assert.That(capture.AppendCalls[2].StreamId).IsEqualTo(s3);
-    await Assert.That(((_evt)capture.AppendCalls[0].Payload).Tag).IsEqualTo("first");
-    await Assert.That(((_evt)capture.AppendCalls[2].Payload).Tag).IsEqualTo("third");
+    await Assert.That(((Evt)capture.AppendCalls[0].Payload).Tag).IsEqualTo("first");
+    await Assert.That(((Evt)capture.AppendCalls[2].Payload).Tag).IsEqualTo("third");
   }
 
   [Test]
   public async Task AppendBatchAsync_RespectsCancellationBetweenEntriesAsync() {
-    var capture = new _capturingStore();
+    var capture = new CapturingStore();
     IEventStore store = capture;
     using var cts = new CancellationTokenSource();
-    var entries = new List<(Guid streamId, MessageEnvelope<_evt> envelope)> {
+    var entries = new List<(Guid streamId, MessageEnvelope<Evt> envelope)> {
       (Guid.NewGuid(), _env("ok")),
       (Guid.NewGuid(), _env("cancel-after-this")),
       (Guid.NewGuid(), _env("never-reached")),
     };
     // Cancel after the second append fires.
     capture.OnAppend = call => {
-      if (((_evt)call.Payload).Tag == "cancel-after-this") {
+      if (((Evt)call.Payload).Tag == "cancel-after-this") {
         cts.Cancel();
       }
     };
@@ -86,21 +86,21 @@ public class EventStoreAppendBatchTests {
   // Helpers
   // ============================================================
 
-  private static MessageEnvelope<_evt> _env(string tag) =>
+  private static MessageEnvelope<Evt> _env(string tag) =>
     new() {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = new _evt(tag),
+      Payload = new Evt(tag),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
 
-  private sealed record _evt(string Tag) : IEvent;
+  private sealed record Evt(string Tag) : IEvent;
 
   /// <summary>
   /// Bare-minimum IEventStore that captures AppendAsync calls so tests can
   /// prove the default AppendBatchAsync loops through them.
   /// </summary>
-  private sealed class _capturingStore : IEventStore {
+  private sealed class CapturingStore : IEventStore {
     public List<(Guid StreamId, object Payload)> AppendCalls { get; } = [];
     public Action<(Guid StreamId, object Payload)>? OnAppend { get; set; }
 

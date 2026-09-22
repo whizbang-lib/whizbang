@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -100,7 +101,7 @@ public class PgSharedNotifyConnectionMetricsTests {
 
   private static (PgSharedNotifyConnection conn, NotifyMetrics metrics) _build() {
     var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var metrics = new NotifyMetrics(new WhizbangMetrics());
+    var metrics = new NotifyMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var conn = new PgSharedNotifyConnection(
       Options.Create(new WhizbangNotificationOptions { SignalingMode = WorkSignalingMode.Polling }),
       cfg,
@@ -114,25 +115,11 @@ public class PgSharedNotifyConnectionMetricsTests {
   }
 
   private static void _invokeDispatch(PgSharedNotifyConnection conn, string channel, string payload) {
-    var argsType = typeof(global::Npgsql.NpgsqlNotificationEventArgs);
-    var evArgs = (global::Npgsql.NpgsqlNotificationEventArgs)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(argsType);
-    var channelField = argsType.GetField("<Channel>k__BackingField",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    var payloadField = argsType.GetField("<Payload>k__BackingField",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    channelField.SetValue(evArgs, channel);
-    payloadField.SetValue(evArgs, payload);
-    var method = typeof(PgSharedNotifyConnection).GetMethod(
-      "_dispatchNotification",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    method.Invoke(conn, [null, evArgs]);
+    conn.DispatchNotification(channel, payload);
   }
 
   private static void _invokeSetAvailable(PgSharedNotifyConnection conn, bool available, string? failureReason) {
-    var method = typeof(PgSharedNotifyConnection).GetMethod(
-      "_setAvailable",
-      System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-    method.Invoke(conn, [available, failureReason]);
+    conn.SetAvailable(available, failureReason);
   }
 
   /// <summary>
@@ -140,7 +127,7 @@ public class PgSharedNotifyConnectionMetricsTests {
   /// reports its untagged series and the constructor's closed-domain seeds, all at zero.
   /// </summary>
   private static List<Measurement> _counted(IReadOnlyCollection<Measurement> readings, string name) =>
-    readings.Where(m => m.Name == name && m.Value != 0).ToList();
+    [.. readings.Where(m => m.Name == name && m.Value != 0)];
 
   /// <summary>The cumulative connection-state reading: an untagged up-down counter with a single series.</summary>
   private static long _connectionState(IReadOnlyCollection<Measurement> readings) =>
@@ -187,11 +174,7 @@ public class PgSharedNotifyConnectionMetricsTests {
     if (!value.Equals(default(T))) {
       return;
     }
-    string? first = null;
-    foreach (var tag in tags) {
-      first = $"{tag.Key}={tag.Value}";
-      break;
-    }
+    string? first = tags.Length > 0 ? $"{tags[0].Key}={tags[0].Value}" : null;
     lock (zeros) {
       zeros.Add((instrument.Name, first));
     }

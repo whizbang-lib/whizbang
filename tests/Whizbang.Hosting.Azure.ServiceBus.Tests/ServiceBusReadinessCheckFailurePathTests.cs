@@ -27,7 +27,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
   public async Task Constructor_NullTransport_ThrowsArgumentNullExceptionAsync() {
     var client = new TestServiceBusClient(isHealthy: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(null!, client, NullLogger<ServiceBusReadinessCheck>.Instance);
+    void act() => _ = new ServiceBusReadinessCheck(null!, client, NullLogger<ServiceBusReadinessCheck>.Instance);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("transport");
@@ -37,7 +37,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
   public async Task Constructor_NullClient_ThrowsArgumentNullExceptionAsync() {
     var transport = new TestTransport(isInitialized: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(transport, null!, NullLogger<ServiceBusReadinessCheck>.Instance);
+    void act() => _ = new ServiceBusReadinessCheck(transport, null!, NullLogger<ServiceBusReadinessCheck>.Instance);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("client");
@@ -48,7 +48,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
     var transport = new TestTransport(isInitialized: true);
     var client = new TestServiceBusClient(isHealthy: true);
 
-    Action act = () => _ = new ServiceBusReadinessCheck(transport, client, null!);
+    void act() => _ = new ServiceBusReadinessCheck(transport, client, null!);
 
     var ex = await Assert.That(act).ThrowsExactly<ArgumentNullException>();
     await Assert.That(ex!.ParamName).IsEqualTo("logger");
@@ -78,7 +78,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
     var client = new TestServiceBusClient(isHealthy: true);
     using var check = new ServiceBusReadinessCheck(transport, client, NullLogger<ServiceBusReadinessCheck>.Instance);
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // The not-initialized early return happens BEFORE the lock wait — the
     // only point that observes the token — so this returns false instead of
@@ -230,10 +230,6 @@ internal sealed class UninitializedAfterFirstReadTransport : ITransport {
   }
 
   public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public Task<ISubscription> SubscribeAsync(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, TransportDestination destination, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

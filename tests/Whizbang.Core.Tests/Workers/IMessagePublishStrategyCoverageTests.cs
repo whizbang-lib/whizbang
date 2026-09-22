@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class IMessagePublishStrategyCoverageTests {
 
   /// <summary>A minimal strategy that does not override the bulk-publish default.</summary>
-  private sealed class _SingleItemOnlyStrategy : IMessagePublishStrategy {
+  private sealed class SingleItemOnlyStrategy : IMessagePublishStrategy {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
 
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
@@ -33,7 +33,7 @@ public class IMessagePublishStrategyCoverageTests {
   /// </summary>
   [Test]
   public async Task PublishBatchAsync_DefaultImplementation_ThrowsNotSupportedAsync() {
-    IMessagePublishStrategy strategy = new _SingleItemOnlyStrategy();
+    IMessagePublishStrategy strategy = new SingleItemOnlyStrategy();
 
     // async lambda, not a bare call: the assertion overload for a Func<Task<T>> infers a nullable
     // T and mismatches the interface's non-nullable IReadOnlyList return (CS8619).

@@ -26,14 +26,14 @@ namespace Whizbang.Core.Lifecycle;
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs</tests>
 public sealed partial class LifecycleCoordinator(
-    LifecycleCoordinatorMetrics? metrics = null,
-    ILogger<LifecycleCoordinator>? logger = null) : ILifecycleCoordinator {
+    ILogger<LifecycleCoordinator> logger,
+    LifecycleCoordinatorMetrics? metrics = null) : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
   private readonly ConcurrentBag<Task> _abandonedDetachedTasks = [];
   private readonly LifecycleCoordinatorMetrics? _metrics = metrics;
-  private readonly ILogger<LifecycleCoordinator> _logger = logger ?? NullLogger<LifecycleCoordinator>.Instance;
+  private readonly ILogger<LifecycleCoordinator> _logger = logger;
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(

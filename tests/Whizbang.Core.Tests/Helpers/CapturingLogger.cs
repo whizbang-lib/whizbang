@@ -27,7 +27,8 @@ internal sealed class CapturingLogger<T> : ILogger<T> {
       _entries.Add(entry);
       for (var i = _waiters.Count - 1; i >= 0; i--) {
         if (_waiters[i].Predicate(entry)) {
-          (matched ??= []).Add(_waiters[i].Signal);
+          matched ??= [];
+          matched.Add(_waiters[i].Signal);
           _waiters.RemoveAt(i);
         }
       }
@@ -56,8 +57,9 @@ internal sealed class CapturingLogger<T> : ILogger<T> {
     }
   }
 
-  private sealed class NullScope : IDisposable {
-    public static readonly NullScope Instance = new();
-    public void Dispose() { }
-  }
+}
+
+internal sealed class NullScope : IDisposable {
+  public static readonly NullScope Instance = new();
+  public void Dispose() { }
 }

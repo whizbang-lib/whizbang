@@ -47,17 +47,16 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     return id;
   }
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static async Task<(int Status, DateTimeOffset? Next)> _rowAsync(NpgsqlConnection conn, Guid id) {
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT recovery_status, next_recovery_at FROM wh_dead_letters WHERE dead_letter_id=@id";
-    q.Parameters.AddWithValue("id", id);
+    q.Parameters.AddWithValue(nameof(id), id);
     await using var r = await q.ExecuteReaderAsync();
     await r.ReadAsync();
-    return (r.GetInt32(0), r.IsDBNull(1) ? null : r.GetFieldValue<DateTimeOffset>(1));
+    return (r.GetInt32(0), await r.IsDBNullAsync(1) ? null : await r.GetFieldValueAsync<DateTimeOffset>(1));
   }
 
   [Test]
@@ -309,7 +308,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
   private static async Task<Guid?> _heldIdAsync(NpgsqlConnection conn, string fp) {
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT dead_letter_id FROM wh_dead_letters WHERE error_fingerprint=@fp LIMIT 1";
-    q.Parameters.AddWithValue("fp", fp);
+    q.Parameters.AddWithValue(nameof(fp), fp);
     return (Guid?)await q.ExecuteScalarAsync();
   }
 

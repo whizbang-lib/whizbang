@@ -129,9 +129,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     if (acquired) {
       return _grant(taken, caller);
     }
-    if (_logger is not null) {
-      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
-    }
+    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
     return default;
   }
 
@@ -159,8 +157,8 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// </summary>
   public WorkCoordinatorGate(
       int maxConcurrent,
+      ILogger<WorkCoordinatorGate> logger,
       int acquireTimeoutMilliseconds = 30000,
-      ILogger<WorkCoordinatorGate>? logger = null,
       WorkCoordinatorMetrics? metrics = null,
       int? interactiveReserve = null) {
     MaxConcurrent = maxConcurrent;
@@ -172,7 +170,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     var shared = maxConcurrent - InteractiveReserve;
     _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(shared, shared) : null;
     _reserve = InteractiveReserve > 0 ? new SemaphoreSlim(InteractiveReserve, InteractiveReserve) : null;
-    _logger = logger ?? NullLogger<WorkCoordinatorGate>.Instance;
+    _logger = logger;
     _holdDurationHistogram = metrics?.GateHoldDuration;
   }
 
@@ -200,9 +198,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// </remarks>
   public static WorkCoordinatorGate FromPoolSize(
       int maxPoolSize,
+      ILogger<WorkCoordinatorGate> logger,
       int reserve = 5,
       int acquireTimeoutMilliseconds = 30000,
-      ILogger<WorkCoordinatorGate>? logger = null,
       WorkCoordinatorMetrics? metrics = null) {
     var derived = Math.Max(1, maxPoolSize - reserve);
     return new WorkCoordinatorGate(
@@ -238,38 +236,28 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     // nothing completed, leases lapsed at their full length and the claim loop re-offered the same
     // rows: the gate -> pinned wire -> flush -> gate edge of the perspective hold-and-wait.
     if (Whizbang.Core.Workers.PinnedConnectionContext.Current is not null) {
-      if (_logger is not null) {
-        LogAcquireExemptPinned(_logger, caller);
-      }
+      LogAcquireExemptPinned(_logger, caller);
       return default;
     }
     var currentCount = _semaphore.CurrentCount;
-    if (_logger is not null) {
-      LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
-    }
+    LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
     if (_reserve is not null && _isInteractiveCaller()) {
       return await _acquireInteractiveAsync(caller, cancellationToken).ConfigureAwait(false);
     }
     if (AcquireTimeoutMilliseconds <= 0) {
       // Caller opted out of the deadline — preserve the pre-v0.654 behavior verbatim.
       await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-      if (_logger is not null) {
-        LogAcquireGrantedNoDeadline(_logger);
-      }
+      LogAcquireGrantedNoDeadline(_logger);
       return _grant(caller);
     }
     var acquired = await _semaphore
       .WaitAsync(AcquireTimeoutMilliseconds, cancellationToken)
       .ConfigureAwait(false);
     if (acquired) {
-      if (_logger is not null) {
-        LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
-      }
+      LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
       return _grant(caller);
     }
-    if (_logger is not null) {
-      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
-    }
+    LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
     // Degrade gracefully: return a no-op Releaser so the caller proceeds without
     // holding a slot. The cap becomes advisory for this single call; pool exhaustion
     // (if it materialises) surfaces at the Npgsql layer with a real exception instead

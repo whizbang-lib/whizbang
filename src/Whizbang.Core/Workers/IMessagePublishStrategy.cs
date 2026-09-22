@@ -12,6 +12,7 @@ namespace Whizbang.Core.Workers;
 /// Implementations define how messages are published (e.g., to Azure Service Bus, AWS SQS, etc.).
 /// This abstraction allows pluggable publish logic in WorkCoordinatorPublisherWorker.
 /// </summary>
+/// <docs>extending/extensibility/custom-transports</docs>
 public interface IMessagePublishStrategy {
   /// <summary>
   /// Checks if the transport is ready to accept messages.
@@ -41,6 +42,10 @@ public interface IMessagePublishStrategy {
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
   bool SupportsBulkPublish => false;
+
+  /// <summary>False only for the framework fallback registered when no transport is present. Workers
+  /// consult it to go idle rather than retry a publish that can never succeed.</summary>
+  bool IsConfigured => true;
 
   /// <summary>
   /// Publishes a batch of outbox messages to the configured transport.
@@ -112,4 +117,30 @@ public record MessagePublishResult {
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
+}
+
+/// <summary>
+/// The strategy registered when no transport is present. It reports itself unconfigured so the
+/// outbox workers go idle after one log line, which is what they did on a null strategy; a
+/// publish that reaches it anyway fails with a message naming the cause rather than a
+/// NullReferenceException.
+/// </summary>
+/// <docs>extending/extensibility/custom-transports</docs>
+public sealed class NullMessagePublishStrategy : IMessagePublishStrategy, INullDefault {
+  private const string NO_TRANSPORT = "No transport is registered, so outbox messages cannot be published.";
+  /// <summary>The shared instance; the type carries no state.</summary>
+  public static NullMessagePublishStrategy Instance { get; } = new();
+  private NullMessagePublishStrategy() { }
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+  /// <inheritdoc />
+  public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
+  /// <inheritdoc />
+  public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken)
+    => Task.FromResult(new MessagePublishResult {
+      MessageId = work.MessageId,
+      Success = false,
+      CompletedStatus = MessageProcessingStatus.Failed,
+      Error = NO_TRANSPORT
+    });
 }

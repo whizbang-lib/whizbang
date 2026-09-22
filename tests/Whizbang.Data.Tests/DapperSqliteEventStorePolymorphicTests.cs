@@ -33,7 +33,7 @@ namespace Whizbang.Data.Tests;
 /// that current behavior; legacy-format rows are seeded via raw SQL to exercise the
 /// deeper skip branches.
 /// </remarks>
-public class DapperSqliteEventStorePolymorphicTests : IDisposable {
+public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]

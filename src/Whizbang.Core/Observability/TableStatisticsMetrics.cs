@@ -22,7 +22,7 @@ public sealed class TableStatisticsMetrics {
 
   /// <summary>Initializes table statistics meters on the shared Whizbang meter.</summary>
   public TableStatisticsMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     meter.CreateObservableGauge(
       "whizbang.table.estimated_bytes",

@@ -29,14 +29,14 @@ public class ScopedDbContextFactoryTests {
 
   private static ServiceProvider _provider() {
     var services = new ServiceCollection();
-    services.AddScoped<_scopeProbe>();
-    services.AddDbContext<_probeContext>(
+    services.AddScoped<ScopeProbe>();
+    services.AddDbContext<ProbeContext>(
       options => options.UseNpgsql("Host=127.0.0.1;Database=never_connected"),
       ServiceLifetime.Scoped);
     return services.BuildServiceProvider();
   }
 
-  private static ScopedDbContextFactory<_probeContext> _factory(ServiceProvider provider) =>
+  private static ScopedDbContextFactory<ProbeContext> _factory(ServiceProvider provider) =>
     new(provider.GetRequiredService<IServiceScopeFactory>());
 
   [Test]
@@ -76,20 +76,20 @@ public class ScopedDbContextFactoryTests {
   public async Task WithoutAScopeFactory_ItRefusesAtConstructionAsync() {
     // Nothing this class does is possible without a scope factory, and every failure downstream
     // of accepting null would surface on a resolver thread instead of at wiring time.
-    await Assert.That(() => new ScopedDbContextFactory<_probeContext>(null!))
+    await Assert.That(() => new ScopedDbContextFactory<ProbeContext>(null!))
       .Throws<ArgumentNullException>()
       .Because("a factory that cannot create scopes is a wiring mistake, and wiring mistakes "
              + "belong at startup rather than on the first parallel query");
   }
 
   /// <summary>A scoped dependency that reports whether its scope has been disposed.</summary>
-  private sealed class _scopeProbe : IDisposable {
+  private sealed class ScopeProbe : IDisposable {
     public bool Disposed { get; private set; }
     public void Dispose() => Disposed = true;
   }
 
-  private sealed class _probeContext(DbContextOptions<_probeContext> options, _scopeProbe probe)
+  private sealed class ProbeContext(DbContextOptions<ProbeContext> options, ScopeProbe probe)
       : DbContext(options) {
-    public _scopeProbe Probe { get; } = probe;
+    public ScopeProbe Probe { get; } = probe;
   }
 }

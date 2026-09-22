@@ -9,6 +9,10 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:IPerspectiveStreamLocker_HasExpectedMethodsAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveStreamLocker {
+  /// <summary>True when a real implementation is registered. The framework's null default returns false so
+  /// a consumer takes the same skip path an unregistered subsystem produced, without a null check.</summary>
+  bool IsConfigured => true;
+
   /// <summary>
   /// Attempts to acquire a stream lock for the given perspective.
   /// Returns true if the lock was acquired, false if another active instance holds the lock.
@@ -41,4 +45,33 @@ public interface IPerspectiveStreamLocker {
   /// <param name="instanceId">Instance releasing the lock</param>
   /// <param name="ct">Cancellation token</param>
   Task ReleaseLockAsync(Guid streamId, string perspectiveName, Guid instanceId, CancellationToken ct = default);
+}
+
+/// <summary>
+/// The framework's null default for <see cref="IPerspectiveStreamLocker"/>: reports
+/// <see cref="IPerspectiveStreamLocker.IsConfigured"/> false, so rewinds proceed unlocked as they did when no locker
+/// was registered. Callers check the flag first and this implementation throws if they do not.
+/// </summary>
+public sealed class NullPerspectiveStreamLocker : IPerspectiveStreamLocker, INullDefault {
+  private const string NOT_REGISTERED = "No perspective stream locker is registered; a storage driver supplies one. Check IsConfigured before calling.";
+
+  private NullPerspectiveStreamLocker() { }
+
+  /// <summary>The shared instance.</summary>
+  public static NullPerspectiveStreamLocker Instance { get; } = new();
+
+  /// <inheritdoc />
+  public bool IsConfigured => false;
+
+  /// <inheritdoc />
+  public Task<bool> TryAcquireLockAsync(Guid streamId, string perspectiveName, Guid instanceId, string reason, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task RenewLockAsync(Guid streamId, string perspectiveName, Guid instanceId, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc />
+  public Task ReleaseLockAsync(Guid streamId, string perspectiveName, Guid instanceId, CancellationToken ct = default) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
 }

@@ -26,12 +26,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("EFCorePostgresTests")]
 public class MultiModelScopedAccessCoverageTests {
 
-  private sealed record _splitProbeModel { public string Value { get; init; } = ""; }
+  private sealed record SplitProbeModel { public string Value { get; init; } = ""; }
 
-  private sealed class _probeDbContext(DbContextOptions<_probeDbContext> options) : DbContext(options) {
+  private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
-      modelBuilder.Entity<PerspectiveRow<_splitProbeModel>>(entity => {
+      modelBuilder.Entity<PerspectiveRow<SplitProbeModel>>(entity => {
         entity.HasKey(e => e.Id);
         entity.OwnsOne(e => e.Data, data => data.WithOwner());
         entity.OwnsOne(e => e.Metadata, metadata => {
@@ -60,19 +60,19 @@ public class MultiModelScopedAccessCoverageTests {
   // exactly the columns Split mode exists to serve.
   [Test]
   public async Task GetQuery_SplitModeHydratorRegistered_TracksAndFiresTheHydratorAsync() {
-    var probeType = typeof(PerspectiveRow<_splitProbeModel>);
+    var probeType = typeof(PerspectiveRow<SplitProbeModel>);
     var hydratorInvocations = 0;
     SplitModeChangeTrackerHydrator.Register(probeType, _ => hydratorInvocations++);
 
-    var options = new DbContextOptionsBuilder<_probeDbContext>()
+    var options = new DbContextOptionsBuilder<ProbeDbContext>()
       .UseInMemoryDatabase($"multimodel-split-{Guid.NewGuid()}")
       .Options;
-    await using var context = new _probeDbContext(options);
+    await using var context = new ProbeDbContext(options);
 
     var id = Guid.NewGuid();
-    context.Add(new PerspectiveRow<_splitProbeModel> {
+    context.Add(new PerspectiveRow<SplitProbeModel> {
       Id = id,
-      Data = new _splitProbeModel { Value = "seed" },
+      Data = new SplitProbeModel { Value = "seed" },
       Metadata = new PerspectiveMetadata { EventType = "Created", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
       Scope = new PerspectiveScope(),
       CreatedAt = DateTime.UtcNow,
@@ -82,7 +82,7 @@ public class MultiModelScopedAccessCoverageTests {
     await context.SaveChangesAsync();
     context.ChangeTracker.Clear();  // detach so the read below is a fresh materialization, not a cache hit
 
-    var query = MultiModelScopeHelper.GetQuery<_splitProbeModel>(context, null);
+    var query = MultiModelScopeHelper.GetQuery<SplitProbeModel>(context, null);
     var results = await query.ToListAsync();
 
     await Assert.That(results.Count).IsEqualTo(1)
@@ -91,7 +91,7 @@ public class MultiModelScopedAccessCoverageTests {
       .Because("the registered hydrator only ever runs off ChangeTracker.Tracked, which only fires for a "
              + "TRACKING query with EnsureHooked already subscribed — a single invocation proves both the "
              + "AsQueryable() (not AsNoTracking()) branch AND the EnsureHooked call actually ran");
-    await Assert.That(context.ChangeTracker.Entries<PerspectiveRow<_splitProbeModel>>().Any()).IsTrue()
+    await Assert.That(context.ChangeTracker.Entries<PerspectiveRow<SplitProbeModel>>().Any()).IsTrue()
       .Because("the materialized row must actually be tracked, not just have triggered the event once and "
              + "then been forgotten");
   }

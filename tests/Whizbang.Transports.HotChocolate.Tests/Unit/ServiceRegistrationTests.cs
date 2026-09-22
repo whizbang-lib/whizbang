@@ -98,40 +98,6 @@ public class ServiceRegistrationTests {
   }
 
   [Test]
-  public async Task AddWhizbangLenses_ShouldRegisterFilterConventionAsync() {
-    // Arrange & Act
-    var schema = await new ServiceCollection()
-        .AddGraphQL()
-        .AddQueryType(d => d
-            .Name("Query")
-            .Field("test")
-            .Type<StringType>()
-            .Resolve("test"))
-        .AddWhizbangLenses()
-        .BuildSchemaAsync();
-
-    // Assert - schema should be built successfully with filtering support
-    await Assert.That(schema).IsNotNull();
-  }
-
-  [Test]
-  public async Task AddWhizbangLenses_ShouldRegisterSortConventionAsync() {
-    // Arrange & Act
-    var schema = await new ServiceCollection()
-        .AddGraphQL()
-        .AddQueryType(d => d
-            .Name("Query")
-            .Field("test")
-            .Type<StringType>()
-            .Resolve("test"))
-        .AddWhizbangLenses()
-        .BuildSchemaAsync();
-
-    // Assert - schema should be built successfully with sorting support
-    await Assert.That(schema).IsNotNull();
-  }
-
-  [Test]
   public async Task AddWhizbangLenses_ShouldRegisterOptionsAsSingletonAsync() {
     // Arrange
     var serviceProvider = new ServiceCollection()

@@ -124,7 +124,7 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
       return (null, null);
     }
     var inst = await r.IsDBNullAsync(0) ? (Guid?)null : r.GetGuid(0);
-    var exp = await r.IsDBNullAsync(1) ? (DateTimeOffset?)null : r.GetFieldValue<DateTimeOffset>(1);
+    var exp = await r.IsDBNullAsync(1) ? (DateTimeOffset?)null : await r.GetFieldValueAsync<DateTimeOffset>(1);
     return (inst, exp);
   }
 

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -50,6 +51,7 @@ public class SlidingWindowApplyFailurePathTests {
         }
         throw new InvalidOperationException("perspective store unavailable");
       },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: _fastWindow());
 
     await sut.AppendAsync(Guid.CreateVersion7());
@@ -69,11 +71,11 @@ public class SlidingWindowApplyFailurePathTests {
     // Shutdown arriving mid-flush is not a flush failure, and must not be logged as one — every
     // deploy would otherwise file an error per in-flight stream.
     var flushed = new ConcurrentQueue<Guid>();
-    var logger = new _recordingLogger();
+    var logger = new RecordingLogger();
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
-      options: _fastWindow(),
-      logger: logger);
+      logger: logger,
+      options: _fastWindow());
 
     var streamId = Guid.CreateVersion7();
     await sut.AppendAsync(streamId);
@@ -97,6 +99,7 @@ public class SlidingWindowApplyFailurePathTests {
     var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
       options: _fastWindow(idleWindow: TimeSpan.FromSeconds(1)),
       timeProvider: time);
 
@@ -118,7 +121,7 @@ public class SlidingWindowApplyFailurePathTests {
   }
 
   /// <summary>Captures error-level lines so "shutdown was not logged as a failure" is checkable.</summary>
-  private sealed class _recordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+  private sealed class RecordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
     private readonly List<string> _errors = [];
     private readonly Lock _lock = new();
 

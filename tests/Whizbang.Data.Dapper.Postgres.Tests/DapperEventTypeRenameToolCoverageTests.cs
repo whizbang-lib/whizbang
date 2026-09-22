@@ -43,7 +43,7 @@ public class DapperEventTypeRenameToolCoverageTests : PostgresTestBase {
     }
 
     // The catalog knows the SECOND pinned id (under a new name) and not the first at all.
-    var catalog = new _catalogWith(renamedPinnedId, currentName);
+    var catalog = new CatalogWith(renamedPinnedId, currentName);
     var tool = new DapperEventTypeRenameTool(catalog, ConnectionFactory);
 
     var detected = await tool.DetectRenamesAsync();
@@ -63,7 +63,7 @@ public class DapperEventTypeRenameToolCoverageTests : PostgresTestBase {
   }
 
   /// <summary>A catalog carrying exactly one pinned id, under a name that has since changed.</summary>
-  private sealed class _catalogWith(string pinnedId, string clrTypeName) : IMessageTypeCatalog {
+  private sealed class CatalogWith(string pinnedId, string clrTypeName) : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
       [new MessageTypeCatalogEntry(typeof(object), clrTypeName, "event", pinnedId)];
   }

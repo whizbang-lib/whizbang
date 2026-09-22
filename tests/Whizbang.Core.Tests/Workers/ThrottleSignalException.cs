@@ -7,7 +7,7 @@ namespace RabbitMQ.Client;
 /// assembly, and it keeps the classifier's contract (namespace + message text) under test too.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportFailureClassifier.cs</code-under-test>
-internal sealed class ThrottleSignalException : System.Exception {
+public sealed class ThrottleSignalException : System.Exception {
   /// <summary>Creates the double carrying the broker's flow-control signal text.</summary>
   public ThrottleSignalException() : base("connection.blocked: vhost resource alarm") { }
 

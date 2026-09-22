@@ -48,7 +48,7 @@ public class StartupPipelineRunnerCoverageTests {
   [Timeout(30000)]
   public async Task DutyElectorCanceledDuringAcquire_RethrowsRatherThanBeingTreatedAsTransientAsync(CancellationToken testToken) {
     var elector = new CancelDuringAcquireElector();
-    var runner = new StartupPipelineRunner([new ExclusiveStep()], dutyElector: elector);
+    var runner = new StartupPipelineRunner(steps: [new ExclusiveStep()], observers: [], dutyElector: elector);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     var run = runner.RunAsync(cts.Token);

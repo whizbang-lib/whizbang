@@ -38,7 +38,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
   /// <summary>Builds a connection string that targets <paramref name="relay"/>'s loopback port
   /// instead of the real fixture host/port, with pooling off so each test's physical connection is
   /// unambiguously torn down when the relay is disposed.</summary>
-  private string _throughRelay(_flakyRelay relay) => new NpgsqlConnectionStringBuilder(ConnectionString) {
+  private string _throughRelay(FlakyRelay relay) => new NpgsqlConnectionStringBuilder(ConnectionString) {
     Host = "127.0.0.1",
     Port = relay.Port,
     Pooling = false,
@@ -47,7 +47,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
   /// <summary>Captures every log entry and, optionally, reacts to one as it arrives -- synchronously,
   /// from inside the SUT's own catch block. That synchronous callback is the deterministic signal
   /// this file uses instead of sleeping to know exactly when a failed attempt has been logged.</summary>
-  private sealed class _capturingLogger : ILogger {
+  private sealed class CapturingLogger : ILogger {
     private readonly List<(LogLevel Level, string? Message, Exception? Exception)> _entries = [];
 
     public Action<(LogLevel Level, string? Message, Exception? Exception)>? OnEntry { get; set; }
@@ -76,7 +76,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
   /// Postgres's wire protocol is never parsed, only relayed, so this works regardless of what the
   /// protocol exchange looks like (auth, SSL negotiation, etc.).
   /// </summary>
-  private sealed class _flakyRelay : IDisposable {
+  private sealed class FlakyRelay : IDisposable {
     private readonly TcpListener _listener;
     private readonly string _targetHost;
     private readonly int _targetPort;
@@ -85,7 +85,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     private bool _started;
     private bool _disposed;
 
-    private _flakyRelay(int port, string targetHost, int targetPort) {
+    private FlakyRelay(int port, string targetHost, int targetPort) {
       Port = port;
       _listener = new TcpListener(IPAddress.Loopback, port);
       _targetHost = targetHost;
@@ -94,9 +94,9 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
 
     public int Port { get; }
 
-    public static _flakyRelay Create(string targetConnectionString) {
+    public static FlakyRelay Create(string targetConnectionString) {
       var target = new NpgsqlConnectionStringBuilder(targetConnectionString);
-      return new _flakyRelay(_reserveClosedPort(), target.Host!, target.Port);
+      return new FlakyRelay(_reserveClosedPort(), target.Host!, target.Port);
     }
 
     public void Start() {
@@ -166,8 +166,8 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     // caller sees nothing. If this Information log regresses, an operator loses the only record
     // that the database was flapping: "we reconnected 40 times overnight" silently becomes "the
     // database was rock solid," and nobody investigates before it becomes an outage.
-    using var relay = _flakyRelay.Create(ConnectionString);
-    var logger = new _capturingLogger {
+    using var relay = FlakyRelay.Create(ConnectionString);
+    var logger = new CapturingLogger {
       OnEntry = entry => {
         if (entry.Level == LogLevel.Warning) {
           relay.Start();
@@ -202,8 +202,8 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     // branch (LogRetrying) with a real logger attached for the first time -- the database
     // disappearing between the connection wait and the schema wait is exactly the case that branch
     // exists for.
-    using var relay = _flakyRelay.Create(ConnectionString);
-    var logger = new _capturingLogger {
+    using var relay = FlakyRelay.Create(ConnectionString);
+    var logger = new CapturingLogger {
       OnEntry = entry => {
         if (entry.Level == LogLevel.Warning) {
           relay.Start();
@@ -243,7 +243,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     // watching logs during an outage cannot tell "still retrying every few ms" from "the process
     // wedged" -- both look identical: one warning, then nothing.
     var reachedTenthAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new _capturingLogger {
+    var logger = new CapturingLogger {
       OnEntry = entry => {
         if (entry.Level == LogLevel.Warning
             && entry.Message?.Contains("still failing after 10 attempts", StringComparison.Ordinal) == true) {
@@ -287,12 +287,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
     // If a bare SocketException ever stopped being retried, a machine-level network blip (as
     // opposed to a Postgres-reported error) would propagate straight to the caller as a fatal
     // failure instead of triggering backoff -- turning a transient network hiccup into a full outage.
-    var method = typeof(PostgresConnectionRetry).GetMethod("_isTransientException",
-      BindingFlags.NonPublic | BindingFlags.Static);
-    await Assert.That(method).IsNotNull()
-      .Because("this test targets PostgresConnectionRetry's private classifier by exact name");
-
-    var result = (bool)method!.Invoke(null, [new SocketException((int)SocketError.HostUnreachable)])!;
+    var result = PostgresConnectionRetry.IsTransientException(new SocketException((int)SocketError.HostUnreachable));
 
     await Assert.That(result).IsTrue()
       .Because("a raw SocketException must be retried even when it never went through Npgsql's "
@@ -303,12 +298,7 @@ public class PostgresConnectionRetryCoverageTests : EFCoreTestBase {
   public async Task IsTransientException_ClassifiesARawIOExceptionAsTransientAsync() {
     // Same risk as the socket case: a mid-stream read/write failure (the socket dropped while
     // Npgsql was talking to the server) must be retried, not treated as a fatal error.
-    var method = typeof(PostgresConnectionRetry).GetMethod("_isTransientException",
-      BindingFlags.NonPublic | BindingFlags.Static);
-    await Assert.That(method).IsNotNull()
-      .Because("this test targets PostgresConnectionRetry's private classifier by exact name");
-
-    var result = (bool)method!.Invoke(null, [new IOException("connection dropped mid-stream")])!;
+    var result = PostgresConnectionRetry.IsTransientException(new IOException("connection dropped mid-stream"));
 
     await Assert.That(result).IsTrue()
       .Because("a raw IOException must be retried even when its message carries none of the "

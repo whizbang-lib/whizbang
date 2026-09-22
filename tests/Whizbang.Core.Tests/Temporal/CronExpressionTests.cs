@@ -97,7 +97,7 @@ public class CronExpressionTests {
   public async Task DomAndDowBothRestricted_OrSemanticsAsync() {
     // "fire at 00:00 on the 1st OR on any Monday"
     var cron = CronExpression.Parse("0 0 1 * MON");
-    // From Wed 2026-07-15 12:00: next Monday is 07-20, but the 1st does not occur until 08-01;
+    // From Wed 2026-07-15 12:00: next Monday is 07-20, but the 1st does not occur until 08-01 —
     // OR picks the earlier => Monday 07-20.
     await Assert.That(cron.NextFireAfter(_utc(2026, 07, 15, 12, 00), _utcZone)).IsEqualTo(_utc(2026, 07, 20, 00, 00));
     // From Thu 2026-07-30 12:00: next Monday is 08-03, the 1st is 08-01 => OR picks 08-01.

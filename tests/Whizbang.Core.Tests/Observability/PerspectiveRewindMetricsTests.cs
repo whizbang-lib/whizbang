@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 
@@ -13,7 +15,7 @@ public class PerspectiveRewindMetricsTests {
 
   [Test]
   public async Task PerspectiveMetrics_RewindInstruments_CreatedAsync() {
-    var metrics = new PerspectiveMetrics(new WhizbangMetrics());
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 
     await Assert.That(metrics.Rewinds).IsNotNull();
     await Assert.That(metrics.RewindDuration).IsNotNull();

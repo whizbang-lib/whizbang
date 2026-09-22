@@ -30,11 +30,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("EFCorePostgresTests")]
 public class SplitModeChangeTrackerHydratorCoverageTests {
 
-  private sealed class _coverageProbeModel;
+  private sealed class CoverageProbeModel;
 
   [Test]
   public async Task Clear_AfterRegistering_RemovesTheHydratorAsync() {
-    var probeType = typeof(_coverageProbeModel);
+    var probeType = typeof(CoverageProbeModel);
     SplitModeChangeTrackerHydrator.Register(probeType, static _ => { });
 
     await Assert.That(SplitModeChangeTrackerHydrator.HasHydrator(probeType)).IsTrue()

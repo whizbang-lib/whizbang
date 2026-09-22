@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
 
@@ -28,6 +29,7 @@ public sealed class WorkerOptionsBindingTests {
   private static ServiceProvider _hostWith(Dictionary<string, string?> settings) {
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddWhizbangWorkers();
     return services.BuildServiceProvider();
@@ -167,6 +169,7 @@ public sealed class WorkerOptionsBindingTests {
   [Test]
   public async Task NoConfigurationRegistered_KeepsCodeDefaultsAsync() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 

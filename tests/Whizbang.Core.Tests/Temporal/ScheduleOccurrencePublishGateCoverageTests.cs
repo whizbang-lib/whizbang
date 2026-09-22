@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Temporal;
 public class ScheduleOccurrencePublishGateCoverageTests {
   private static readonly Guid _schedule = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
-  private sealed class _fixedDecisionHook(FireDecision decision) : IScheduleFireHook {
+  private sealed class FixedDecisionHook(FireDecision decision) : IScheduleFireHook {
     public ValueTask<FireDecision> OnBeforeFireAsync(ScheduleFireContext context, CancellationToken cancellationToken = default) =>
       ValueTask.FromResult(decision);
   }
@@ -59,7 +59,7 @@ public class ScheduleOccurrencePublishGateCoverageTests {
   [Test]
   public async Task EvaluateAsync_DeferWithNoStoreRegistered_ProceedsInsteadOfLosingTheOccurrenceAsync() {
     var services = new ServiceCollection();
-    services.AddSingleton<IScheduleFireHook>(new _fixedDecisionHook(FireDecision.Defer(DateTimeOffset.UtcNow.AddMinutes(5))));
+    services.AddSingleton<IScheduleFireHook>(new FixedDecisionHook(FireDecision.Defer(DateTimeOffset.UtcNow.AddMinutes(5))));
     // Deliberately no IScheduleOccurrenceStore registered.
     var provider = services.BuildServiceProvider();
     var gate = new ScheduleOccurrencePublishGate(

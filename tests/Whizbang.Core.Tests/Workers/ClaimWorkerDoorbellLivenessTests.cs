@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
@@ -43,7 +44,7 @@ public class ClaimWorkerDoorbellLivenessTests {
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;
     public string? LastFailureReason => null;
-    public event Action<bool>? OnAvailabilityChanged { add { } remove { } }
+    public event Action<bool>? OnAvailabilityChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
     public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
@@ -109,22 +110,31 @@ public class ClaimWorkerDoorbellLivenessTests {
 
   private static ClaimWorker _buildWorker(EdgeCoordinator coord, SignalBusLivenessState liveness, int pollingIntervalMs = 50) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var schemaGate = new SchemaReadyGate();
     schemaGate.MarkReady();
     return new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      schemaGate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = pollingIntervalMs,
         PollingMaxIntervalMilliseconds = Math.Max(2_000, pollingIntervalMs),
         NotifyHealthyPollingIntervalMilliseconds = null,
       }),
-      NullLogger<ClaimWorker>.Instance,
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: new AvailableGate(),
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       busLiveness: liveness);
   }
 

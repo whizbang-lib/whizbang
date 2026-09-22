@@ -27,11 +27,11 @@ public class EventUpcasterPipelineCoverageTests {
   }
 #pragma warning restore WHIZ009
 
-  private sealed class _v1ToV2Upcaster : IEventUpcaster {
+  private sealed class V1ToV2Upcaster : IEventUpcaster {
     public IReadOnlyList<Type> SourceTypes => [typeof(OrderV1Event)];
     public IReadOnlyList<Type> TargetTypes => [typeof(OrderV2Event)];
-    public bool CanUpcast(IEvent @event) => @event is OrderV1Event;
-    public IEvent Upcast(IEvent @event) => new OrderV2Event { StreamId = ((OrderV1Event)@event).StreamId };
+    public bool CanUpcast(IEvent storedEvent) => storedEvent is OrderV1Event;
+    public IEvent Upcast(IEvent storedEvent) => new OrderV2Event { StreamId = ((OrderV1Event)storedEvent).StreamId };
   }
 
   [Test]
@@ -39,7 +39,7 @@ public class EventUpcasterPipelineCoverageTests {
     // If the "no overlap -> continue" branch regressed to always widening, every rebuild/read-seam
     // scope would pull in this upcaster's source type even for callers who never asked for its
     // target — silently widening every unrelated perspective's stream scan.
-    var pipeline = new EventUpcasterPipeline([new _v1ToV2Upcaster()]);
+    var pipeline = new EventUpcasterPipeline([new V1ToV2Upcaster()]);
 
     var names = pipeline.ExtraInputTypeNamesFor([TypeNameFormatter.Format(typeof(OrderV3Event))]);
 

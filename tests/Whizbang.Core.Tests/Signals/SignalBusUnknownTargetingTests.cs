@@ -43,7 +43,7 @@ public class SignalBusUnknownTargetingTests {
   [Test]
   public async Task PublishAsync_UnrecognizedTargetingWithBroadcastTarget_ReachesTheTransportAsync() {
     var transport = new RecordingTransport();
-    SignalBus bus = new([transport]);
+    SignalBus bus = new(transports: [transport], pullSources: []);
 
     await bus.PublishAsync(new UnknownTargetingSignal(1), SignalTarget.Broadcast, CancellationToken.None);
 
@@ -55,7 +55,7 @@ public class SignalBusUnknownTargetingTests {
   [Test]
   public async Task PublishAsync_UnrecognizedTargetingWithInstanceTarget_ReachesTheTransportAsync() {
     var transport = new RecordingTransport();
-    SignalBus bus = new([transport]);
+    SignalBus bus = new(transports: [transport], pullSources: []);
     var instanceId = Guid.NewGuid();
 
     await bus.PublishAsync(new UnknownTargetingSignal(2), SignalTarget.Instance(instanceId), CancellationToken.None);
@@ -71,7 +71,7 @@ public class SignalBusUnknownTargetingTests {
     // The permissive default arm must not have softened the check it sits beside: a signal that
     // DOES declare a targeting the bus understands still has to be validated against the target.
     var transport = new RecordingTransport();
-    SignalBus bus = new([transport]);
+    SignalBus bus = new(transports: [transport], pullSources: []);
 
     await Assert.That(async () =>
         await bus.PublishAsync(new BroadcastOnlySignal(3), SignalTarget.Instance(Guid.NewGuid()), CancellationToken.None))

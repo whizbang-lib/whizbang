@@ -31,7 +31,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -116,7 +116,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -125,8 +125,7 @@ public class DispatcherTransportBridgeTests {
     // Setup remote responder (simulates remote service)
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
-        foreach (var msg in batch) {
-          var requestEnvelope = msg.Envelope;
+        foreach (var requestEnvelope in batch.Select(msg => msg.Envelope)) {
           var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
           var response = new TestResult { Result = request.Value * 2 };
 
@@ -172,7 +171,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -228,7 +227,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -288,7 +287,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -330,7 +329,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -368,7 +367,7 @@ public class DispatcherTransportBridgeTests {
     // Arrange
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
-    var serializer = new JsonMessageSerializer(options);
+    _ = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
@@ -380,8 +379,7 @@ public class DispatcherTransportBridgeTests {
     // Setup remote responder
     await transport.SubscribeBatchAsync(
       async (batch, ct) => {
-        foreach (var msg in batch) {
-          var requestEnvelope = msg.Envelope;
+        foreach (var requestEnvelope in batch.Select(msg => msg.Envelope)) {
           receivedRequest = requestEnvelope;
           var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
           var response = new TestResult { Result = request.Value * 2 };
@@ -480,7 +478,7 @@ public class DispatcherTransportBridgeTests {
       return null;
     }
 
-    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
       return async (_) => await Task.CompletedTask;
     }
 

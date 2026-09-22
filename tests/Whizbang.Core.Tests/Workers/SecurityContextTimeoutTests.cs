@@ -6,12 +6,16 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Execution;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -52,31 +56,30 @@ public class SecurityContextTimeoutTests {
 
   // --- fakes ---
 
-  private sealed class _FakeOutboxDrainChannel : IOutboxDrainChannel {
+  private sealed class FakeOutboxDrainChannel : IOutboxDrainChannel {
     private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
     public System.Threading.Channels.ChannelReader<Guid> Reader => _channel.Reader;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken ct = default) => _channel.Writer.WriteAsync(streamId, ct);
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
-    public void Complete() => _channel.Writer.Complete();
   }
 
-  private sealed class _FakeOutboxCompletionChannel : IOutboxCompletionChannel {
-    public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _FakeFailureChannel : IFailureChannel {
+  private sealed class FakeFailureChannel : IFailureChannel {
     public ConcurrentBag<(WorkCategory Category, MessageFailure Failure)> All { get; } = [];
     public TaskCompletionSource<MessageFailure> FirstFailure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add((category, failure));
       FirstFailure.TrySetResult(failure);
       return ValueTask.CompletedTask;
     }
   }
 
-  private sealed class _NoOpPublishStrategy : IMessagePublishStrategy {
-    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
-    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+  private sealed class NoOpPublishStrategy : IMessagePublishStrategy {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       throw new InvalidOperationException("Slice 5a test should never reach PublishAsync — the hang is in EstablishFullContextAsync upstream.");
   }
 
@@ -84,14 +87,14 @@ public class SecurityContextTimeoutTests {
   /// _tryResolveTypedEnvelope return a non-null typed envelope so the worker
   /// actually enters the EstablishFullContextAsync branch. Without it, the
   /// security-context call is skipped entirely (typedEnvelope is null).</summary>
-  private sealed class _PassthroughDeserializer : ILifecycleMessageDeserializer {
+  private sealed class PassthroughDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] payload, string messageType) => JsonDocument.Parse(payload).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
-  private sealed class _FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "test-svc";
     public string HostName => "test-host";
@@ -107,7 +110,7 @@ public class SecurityContextTimeoutTests {
   /// <summary>Simulates a consumer's hung provider — Task.Delay(Timeout.Infinite, ct) so
   /// the call only completes when its CT cancels. Slice 5a's timeout MUST trigger
   /// that cancellation; without the fix, this hangs forever and the test times out.</summary>
-  private sealed class _HangingSecurityContextProvider : IMessageSecurityContextProvider {
+  private sealed class HangingSecurityContextProvider : IMessageSecurityContextProvider {
     public TaskCompletionSource Called { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public async ValueTask<IScopeContext?> EstablishContextAsync(IMessageEnvelope envelope, IServiceProvider scopedProvider, CancellationToken cancellationToken = default) {
       Called.TrySetResult();
@@ -158,7 +161,7 @@ public class SecurityContextTimeoutTests {
   /// </summary>
   // --- InboxDispatchWorker fakes ---
 
-  private sealed class _FakeInboxChannelWriter : IInboxChannelWriter {
+  private sealed class FakeInboxChannelWriter : IInboxChannelWriter {
     private readonly System.Threading.Channels.Channel<InboxWork> _channel = System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
@@ -171,11 +174,11 @@ public class SecurityContextTimeoutTests {
     public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
   }
 
-  private sealed class _FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
-    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken ct = default) => ValueTask.CompletedTask;
+  private sealed class FakeHandlerCommitChannel : IInboxHandlerCommitChannel {
+    public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class _AllStagesReceptorRegistry : IReceptorRegistryQuery {
+  private sealed class AllStagesReceptorRegistry : IReceptorRegistryQuery {
     public bool HasReceptors(LifecycleStage stage, string messageType) => true;
     public bool HasInboxHandler(string messageType) => true;
     public bool HasAnyConsumer(string messageType) => true;
@@ -202,31 +205,38 @@ public class SecurityContextTimeoutTests {
 
   [Test]
   public async Task InboxDispatchWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync() {
-    var hangingProvider = new _HangingSecurityContextProvider();
+    var hangingProvider = new HangingSecurityContextProvider();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
-    var channel = new _FakeInboxChannelWriter();
-    var failure = new _FakeFailureChannel();
+    var channel = new FakeInboxChannelWriter();
+    var failure = new FakeFailureChannel();
     var worker = new InboxDispatchWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      channel,
-      new _FakeHandlerCommitChannel(),
-      failure,
-      gate,
-      Options.Create(new InboxDispatchWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      inboxChannelWriter: channel,
+      handlerCommitChannel: new FakeHandlerCommitChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new InboxDispatchWorkerOptions {
         Enabled = true,
         SecurityContextTimeoutSeconds = 1,
       }),
-      Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new _PassthroughDeserializer(),
-      receptorRegistry: new _AllStagesReceptorRegistry());
+      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
+      logger: NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      lifecycleMessageDeserializer: new PassthroughDeserializer(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      receptorRegistry: new AllStagesReceptorRegistry(),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -235,7 +245,7 @@ public class SecurityContextTimeoutTests {
     var captured = await failure.FirstFailure.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
     await Assert.That(captured.Reason).IsEqualTo(MessageFailureReason.SecurityContextEstablishmentFailure)
       .Because("Mirror of OutboxDrainWorker: inbox-side SecurityContext hang must route through the same dedicated reason so dashboards bucket the failure correctly.");
@@ -245,31 +255,41 @@ public class SecurityContextTimeoutTests {
 
   [Test]
   public async Task OutboxDrainWorker_SecurityContextHangs_TimesOutAndEnqueuesFailureAsync() {
-    var failure = new _FakeFailureChannel();
-    var hangingProvider = new _HangingSecurityContextProvider();
+    var failure = new FakeFailureChannel();
+    var hangingProvider = new HangingSecurityContextProvider();
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new _FakeServiceInstanceProvider(),
-      new _FakeOutboxDrainChannel(),
-      new _FakeOutboxCompletionChannel(),
-      failure,
-      gate,
-      Options.Create(new OutboxDrainWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      drainChannel: new FakeOutboxDrainChannel(),
+      completionChannel: new FakeOutboxCompletionChannel(),
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         SecurityContextTimeoutSeconds = 1,
       }),
-      _jsonOpts,
-      NullLogger<OutboxDrainWorker>.Instance,
-      new _NoOpPublishStrategy(),
-      lifecycleMessageDeserializer: new _PassthroughDeserializer());
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: new NoOpPublishStrategy(),
+      lifecycleMessageDeserializer: new PassthroughDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        SecurityContextTimeoutSeconds = 1,
+      })).Value));
 
     var row = _row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo());
 

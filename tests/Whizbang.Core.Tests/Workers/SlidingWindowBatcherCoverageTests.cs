@@ -20,7 +20,7 @@ public class SlidingWindowBatcherCoverageTests {
   /// <summary>Claims an item is ready on the first wait even though none is actually buffered —
   /// the exact "WaitToReadAsync said true but TryRead returned nothing" race the batcher's retry
   /// exists to survive, reproduced deterministically instead of via real concurrency.</summary>
-  private sealed class _phantomReadyReader : ChannelReader<int> {
+  private sealed class PhantomReadyReader : ChannelReader<int> {
     private int _waitCalls;
     private readonly Queue<int> _queue = new();
 
@@ -46,7 +46,7 @@ public class SlidingWindowBatcherCoverageTests {
   /// downstream flush logic assumes every yielded batch has at least one item.</summary>
   [Test]
   public async Task ReadBatchesAsync_PhantomReadySignal_NeverYieldsAnEmptyBatchAsync() {
-    var reader = new _phantomReadyReader();
+    var reader = new PhantomReadyReader();
     var batcher = new SlidingWindowBatcher<int>(reader, new SlidingWindowBatcherOptions());
 
     var batches = new List<IReadOnlyList<int>>();
@@ -86,7 +86,7 @@ public class SlidingWindowBatcherCoverageTests {
 
   /// <summary>Completes the second wait canceled — independent of the caller's own token — to
   /// simulate the reader's own wait observing cancellation mid-accumulation.</summary>
-  private sealed class _cancelingSecondWaitReader : ChannelReader<int> {
+  private sealed class CancelingSecondWaitReader : ChannelReader<int> {
     private int _waitCalls;
     private readonly Queue<int> _queue = new();
 
@@ -116,7 +116,7 @@ public class SlidingWindowBatcherCoverageTests {
   /// shutdown contract into something each caller has to re-verify.</summary>
   [Test]
   public async Task ReadBatchesAsync_ReaderWaitCanceledMidAccumulation_StopsCleanlyAsync() {
-    var reader = new _cancelingSecondWaitReader();
+    var reader = new CancelingSecondWaitReader();
     reader.Seed(1);
     var options = new SlidingWindowBatcherOptions {
       MaxSize = 10,

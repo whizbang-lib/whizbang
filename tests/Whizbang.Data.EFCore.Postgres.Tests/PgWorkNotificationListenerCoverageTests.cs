@@ -28,7 +28,7 @@ public class PgWorkNotificationListenerCoverageTests {
   [Test]
   public async Task OnNotification_DeadLetterPayload_FiresOnSignalWithDeadLetterReadyAsync() {
     var listener = new PgWorkNotificationListener(
-      new _fakeSharedConnection(), new _fakeGate(), new ServiceInstanceProvider(
+      new FakeSharedConnection(), new FakeGate(), new ServiceInstanceProvider(
         Guid.NewGuid(), "coverage-svc", "coverage-host", processId: 1),
       NullLogger<PgWorkNotificationListener>.Instance);
     WorkSignalCategory? received = null;
@@ -41,14 +41,14 @@ public class PgWorkNotificationListenerCoverageTests {
              + "so DeadLetterRecoveryWorker actually wakes on it");
   }
 
-  private sealed class _fakeSharedConnection : ISharedNotifyConnection {
-    public IDisposable Subscribe(INotifySubscription subscription) => new _noopDisposable();
-    private sealed class _noopDisposable : IDisposable {
+  private sealed class FakeSharedConnection : ISharedNotifyConnection {
+    public IDisposable Subscribe(INotifySubscription subscription) => new NoopDisposable();
+    private sealed class NoopDisposable : IDisposable {
       public void Dispose() { }
     }
   }
 
-  private sealed class _fakeGate : INotifySignalingGate {
+  private sealed class FakeGate : INotifySignalingGate {
     public bool IsAvailable => true;
     public DateTimeOffset? LastVerifiedAt => null;
     public DateTimeOffset? LastFailureAt => null;

@@ -31,66 +31,64 @@ public class CollectiveEventApplierCoverageTests {
   // permanently un-mutated for events that appeared to process cleanly.
   [Test]
   public async Task ApplyAsync_InvokerReturnsNonSpec_ThrowsInvalidOperationExceptionAsync() {
+    // IDE0039 (use a local function) is off here: this lambda takes three discards, and repeated
+    // `_` is legal for lambda parameters but not for local-function parameters, which are real
+    // parameters and must be uniquely named. Converting it is CS0100. Fenced rather than merely
+    // reverted because `dotnet format style` reapplies the conversion on every run.
+#pragma warning disable IDE0039
     Func<object, ICollectiveEvent, ICollectiveQuery, object> invoker =
-      (_, _, _) => new object(); // not an ICollectiveSpec<_jobModel>
+      (_, _, _) => new object(); // not an ICollectiveSpec<JobModel>
+#pragma warning restore IDE0039
     var entry = new CollectiveApplyEntry(
-      ModelType: typeof(_jobModel),
-      EventType: typeof(_evt),
-      HandlerType: typeof(_handler),
+      ModelType: typeof(JobModel),
+      EventType: typeof(Evt),
+      HandlerType: typeof(Handler),
       MethodName: "Apply",
       ScopeHandling: CollectiveScopeHandling.Framework,
       SpecKind: CollectiveSpecKind.Linq,
       Invoker: invoker);
-    var evt = new _evt(new _tenantScope("t"));
-    var resolver = new _stubResolver("tenant");
+    var evt = new Evt(new TenantScope("t"));
+    var resolver = new StubResolver("tenant");
     await using var ctx = _newCtx();
 
-    await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
-        entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
+    await Assert.That(() => CollectiveEventApplier<JobModel>.ApplyAsync(
+        entry, new Handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))
       .ThrowsExactly<InvalidOperationException>()
       .Because("the Invoker's return value must be the entry's declared ICollectiveSpec<TModel> — "
              + "anything else means the generator's Invoker shape or the handler is broken, and "
              + "proceeding to compile SQL from it would silently corrupt the projection.");
   }
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = string.Empty;
   }
 
-  private sealed record _tenantScope(string TenantId) : CollectiveScope {
+  private sealed record TenantScope(string TenantId) : CollectiveScope {
     public override string ScopeKind => "tenant";
   }
 
-  private sealed record _evt(CollectiveScope Scope) : ICollectiveEvent;
+  private sealed record Evt(CollectiveScope Scope) : ICollectiveEvent;
 
-  private sealed class _handler {
-    public ICollectiveSpec<_jobModel> Apply(_evt e) => new _spec();
-  }
+  private sealed class Handler;
 
-  private sealed class _spec : ICollectiveSpec<_jobModel> {
-    public Expression<Action<ICollectiveSetters<_jobModel>>> Setters { get; } =
-      s => s.SetProperty(j => j.Status, "X");
-  }
-
-  private sealed class _stubResolver(string kind) : ICollectiveScopeResolver {
+  private sealed class StubResolver(string kind) : ICollectiveScopeResolver {
     public string ScopeKind => kind;
     public bool AcceptsPerspective<TModel>() where TModel : class => true;
     public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
       where TModel : class => _ => true;
-    public IDisposable EnterContext(ICollectiveScope scope) => new _exit();
-    private sealed class _exit : IDisposable {
+    public IDisposable EnterContext(ICollectiveScope scope) => new Exit();
+    private sealed class Exit : IDisposable {
       public void Dispose() { }
     }
   }
 
-  private static _ctx _newCtx() {
-    var options = new DbContextOptionsBuilder<_ctx>()
+  private static Ctx _newCtx() {
+    var options = new DbContextOptionsBuilder<Ctx>()
       .UseInMemoryDatabase($"applier-coverage-{Guid.NewGuid():N}")
       .Options;
-    return new _ctx(options);
+    return new Ctx(options);
   }
 
-  private sealed class _ctx(DbContextOptions<_ctx> opts) : DbContext(opts) {
-    public DbSet<PerspectiveRow<_jobModel>> Jobs => Set<PerspectiveRow<_jobModel>>();
+  private sealed class Ctx(DbContextOptions<Ctx> opts) : DbContext(opts) {
   }
 }

@@ -45,7 +45,7 @@ public sealed class AuditingEventStoreDecorator(
     IOptions<SystemEventOptions> options,
     Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
     IAuditDecisionHook auditDecisionHook,
-    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
+    ILogger<AuditingEventStoreDecorator> logger) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>

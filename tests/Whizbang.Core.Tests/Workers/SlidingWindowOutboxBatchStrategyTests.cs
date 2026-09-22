@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -36,6 +37,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -91,6 +93,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -127,6 +130,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         firstFlush.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
         MaxWait = TimeSpan.FromSeconds(10),
@@ -156,6 +160,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         flushed.TrySetResult();
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -187,6 +192,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         }
         return Task.CompletedTask;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMinutes(1),  // very long; only Stop drains
@@ -217,7 +223,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsAsync() {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: (_, _) => Task.CompletedTask);
+      flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync();
 
@@ -251,6 +258,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: _evictionOptions(),
       timeProvider: clock);
 
@@ -281,6 +289,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var flushes = 0;
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => { Interlocked.Increment(ref flushes); return Task.CompletedTask; },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: _evictionOptions(),
       timeProvider: clock);
 
@@ -323,6 +332,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
   public async Task ActiveStreamCount_TracksDistinctStreamsAsync() {
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
@@ -343,6 +353,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     // against each other, so they share one keyed buffer rather than one buffer each.
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => Task.CompletedTask,
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
@@ -374,6 +385,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         }
         throw new InvalidOperationException("bulk flush failed");
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),
@@ -394,7 +406,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
   [Test]
   public async Task AppendAsync_AfterStop_ThrowsObjectDisposedAsync() {
-    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(CancellationToken.None);
 
@@ -406,7 +418,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
   public async Task FlushAndStopAsync_CalledTwice_IsIdempotentAsync() {
     // DisposeAsync also routes here, so a using-block around an explicit stop must not
     // double-dispose the stop token source.
-    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
 
     await sut.FlushAndStopAsync(CancellationToken.None);
     await sut.FlushAndStopAsync(CancellationToken.None);
@@ -429,6 +441,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
         flushEntered.TrySetResult();
         await releaseFlush.Task;
       },
+      logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(20),
         MaxWait = TimeSpan.FromMilliseconds(100),

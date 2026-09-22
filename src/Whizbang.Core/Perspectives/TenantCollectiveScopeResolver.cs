@@ -80,7 +80,7 @@ public sealed class TenantCollectiveScopeResolver : ICollectiveScopeResolver {
       SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
       Claims = new Dictionary<string, string>(),
     };
-    return new _scopeRestore(prior);
+    return new ScopeRestore(prior);
   }
 
   private static TenantCollectiveScope _requireTenantScope(ICollectiveScope scope) {
@@ -93,7 +93,7 @@ public sealed class TenantCollectiveScopeResolver : ICollectiveScopeResolver {
       nameof(scope));
   }
 
-  private sealed class _scopeRestore(IScopeContext? prior) : IDisposable {
+  private sealed class ScopeRestore(IScopeContext? prior) : IDisposable {
     public void Dispose() => ScopeContextAccessor.CurrentContext = prior;
   }
 }

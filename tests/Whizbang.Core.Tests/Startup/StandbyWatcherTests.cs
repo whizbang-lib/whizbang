@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -119,17 +120,17 @@ public class StandbyWatcherTests {
       return Request;
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -161,13 +162,14 @@ public class StandbyWatcherTests {
     gate.MarkReady();
 
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle,
-      host,
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: lifecycle,
+      hostLifetime: host,
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider(ourVersion),
-      assessor: assessor,
+      assessor: assessor ?? NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance,
       pipelineRunner: null,
       options: options ?? new StandbyWatcherOptions());
 
@@ -461,12 +463,14 @@ public class StandbyWatcherTests {
 
     var gate = new BlockingSchemaGate();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
-      versionProvider: new StubVersionProvider("1.0.0"));
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -500,12 +504,14 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance,
       options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
 
     using var cts = new CancellationTokenSource();
@@ -537,12 +543,14 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle,
-      new RecordingHostLifetime(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: lifecycle,
+      hostLifetime: new RecordingHostLifetime(),
       instanceProvider: null!,
-      gate,
-      versionProvider: new StubVersionProvider("1.0.0"));
+      schemaReadyGate: gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -573,12 +581,14 @@ public class StandbyWatcherTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var watcher = new StandbyWatcher(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new RecordingLifecycle(),
-      new RecordingHostLifetime(),
-      new StubInstanceProvider(),
-      gate,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle: new RecordingLifecycle(),
+      hostLifetime: new RecordingHostLifetime(),
+      instanceProvider: new StubInstanceProvider(),
+      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
+      assessor: NullStartupAssessor.Instance,
+      logger: NullLogger<StandbyWatcher>.Instance,
       options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
 
     using var cts = new CancellationTokenSource();

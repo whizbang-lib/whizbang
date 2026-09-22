@@ -57,9 +57,9 @@ public sealed class StandbyWatcherOptions {
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly ILibraryVersionProvider? _versionProvider;
+  private readonly ILibraryVersionProvider _versionProvider;
   private readonly IWhizbangLifecycleState _lifecycle;
-  private readonly IStartupAssessor? _assessor;
+  private readonly IStartupAssessor _assessor;
   private readonly IHostApplicationLifetime _hostLifetime;
   private readonly StartupPipelineRunner? _pipelineRunner;
   private readonly ISchemaReadyGate _schemaReadyGate;
@@ -77,11 +77,11 @@ public sealed partial class StandbyWatcher : BackgroundService {
       IHostApplicationLifetime hostLifetime,
       IServiceInstanceProvider instanceProvider,
       ISchemaReadyGate schemaReadyGate,
-      ILibraryVersionProvider? versionProvider = null,
-      IStartupAssessor? assessor = null,
+      ILibraryVersionProvider versionProvider,
+      IStartupAssessor assessor,
+      ILogger<StandbyWatcher> logger,
       StartupPipelineRunner? pipelineRunner = null,
-      StandbyWatcherOptions? options = null,
-      ILogger<StandbyWatcher>? logger = null) {
+      StandbyWatcherOptions? options = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(lifecycle);
     ArgumentNullException.ThrowIfNull(hostLifetime);
@@ -94,7 +94,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     _pipelineRunner = pipelineRunner;
     _schemaReadyGate = schemaReadyGate;
     _options = options ?? new StandbyWatcherOptions();
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StandbyWatcher>.Instance;
+    _logger = logger;
   }
 
   /// <inheritdoc />
@@ -157,7 +157,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     }
 
     // The verdict is not a startup-only fact — re-assess on the slow cadence.
-    if (_assessor is not null
+    if (_assessor.IsConfigured
         && DateTimeOffset.UtcNow - _lastObsolescenceCheck >= _options.ObsolescenceInterval) {
       _lastObsolescenceCheck = DateTimeOffset.UtcNow;
       var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
@@ -183,7 +183,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     if (!SemanticVersion.TryParse(request.RequestedVersion, out var requested)) {
       return false;
     }
-    if (!SemanticVersion.TryParse(_versionProvider?.LibraryVersion, out var mine)) {
+    if (!SemanticVersion.TryParse(_versionProvider.LibraryVersion, out var mine)) {
       return true;
     }
     return requested.CompareTo(mine) > 0;
@@ -203,7 +203,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     // last read it, a commit made it newer.
     var verdict = StartupVerdict.Serve;
     string reason = "no assessor registered — treating the withdrawn request as a rollback";
-    if (_assessor is not null) {
+    if (_assessor.IsConfigured) {
       var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
       verdict = assessment.Verdict;
       reason = assessment.Reason;

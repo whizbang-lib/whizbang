@@ -223,7 +223,7 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var instance = Guid.CreateVersion7();
     await _registerInstanceAsync(conn, instance);
-    var (stream, rows) = await _seedStreamAsync(conn, TimeSpan.FromMinutes(5), isEvent: true, 150, 50);
+    var (_, rows) = await _seedStreamAsync(conn, TimeSpan.FromMinutes(5), isEvent: true, 150, 50);
     _ = await _claimAsync(conn, instance, limit: 10);
 
     await using var cmd = conn.CreateCommand();
@@ -232,7 +232,7 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
     var seen = new Dictionary<Guid, (int Priority, DateTimeOffset ReceivedAt)>();
     await using (var reader = await cmd.ExecuteReaderAsync()) {
       while (await reader.ReadAsync()) {
-        seen[reader.GetGuid(0)] = (reader.GetInt32(1), reader.GetFieldValue<DateTimeOffset>(2));
+        seen[reader.GetGuid(0)] = (reader.GetInt32(1), await reader.GetFieldValueAsync<DateTimeOffset>(2));
       }
     }
 

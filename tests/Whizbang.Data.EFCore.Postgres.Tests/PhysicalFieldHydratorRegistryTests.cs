@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class PhysicalFieldHydratorRegistryTests {
 
-  private sealed class HydratorTestModel { public string? Name { get; set; } }
+  private sealed class HydratorTestModel;
 
   [Before(Test)]
   public void ClearBefore() => PhysicalFieldHydratorRegistry.Clear();
@@ -37,7 +37,7 @@ public class PhysicalFieldHydratorRegistryTests {
 
   [Test]
   public async Task ARegisteredHydrator_IsFoundByItsRowTypeAsync() {
-    static void Hydrate(MaterializationInterceptionData data, object entity) { }
+    static void Hydrate(MaterializationInterceptionData data, object entity) { /* intentionally empty */ }
     PhysicalFieldHydratorRegistry.Register<HydratorTestModel>(Hydrate);
 
     var found = PhysicalFieldHydratorRegistry.TryGetHydrator(
@@ -69,7 +69,7 @@ public class PhysicalFieldHydratorRegistryTests {
 
   [Test]
   public async Task Clearing_RemovesRegistrationsSoTestsDoNotLeakIntoEachOtherAsync() {
-    static void Hydrate(MaterializationInterceptionData data, object entity) { }
+    static void Hydrate(MaterializationInterceptionData data, object entity) { /* intentionally empty */ }
     PhysicalFieldHydratorRegistry.Register<HydratorTestModel>(Hydrate);
 
     PhysicalFieldHydratorRegistry.Clear();

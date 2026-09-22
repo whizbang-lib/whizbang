@@ -14,22 +14,21 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// Tests lock acquisition, contention, expiry, renewal, and release.
 /// </summary>
 [Category("Integration")]
-public class DapperPerspectiveStreamLockerTests : IDisposable {
+public sealed class DapperPerspectiveStreamLockerTests : IDisposable {
   private TestFixture _testBase = null!;
   private DapperPerspectiveStreamLocker _locker = null!;
-  private PerspectiveStreamLockOptions _lockOptions = null!;
 
   [Before(Test)]
   public async Task SetupAsync() {
     _testBase = new TestFixture();
     await _testBase.SetupAsync();
-    _lockOptions = new PerspectiveStreamLockOptions {
+    var lockOptions = new PerspectiveStreamLockOptions {
       LockTimeout = TimeSpan.FromSeconds(30),
       KeepAliveInterval = TimeSpan.FromSeconds(10)
     };
     _locker = new DapperPerspectiveStreamLocker(
       _testBase.TestConnectionString,
-      Options.Create(_lockOptions));
+      Options.Create(lockOptions));
   }
 
   public void Dispose() {

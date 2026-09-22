@@ -121,7 +121,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
     var versions = new List<string>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      if (!reader.IsDBNull(0)) {
+      if (!await reader.IsDBNullAsync(0, cancellationToken)) {
         versions.Add(reader.GetString(0));
       }
     }

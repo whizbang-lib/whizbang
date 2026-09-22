@@ -76,39 +76,8 @@ public sealed class MarkerInterfaceTransformer : ICodeTransformer {
   /// Checks if the file has types that inherit from Wolverine marker interfaces.
   /// </summary>
   private static bool _hasWolverineMarkerInterfaceUsage(SyntaxNode root) {
-    // Check class declarations
-    var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
-    foreach (var classDecl in classDeclarations) {
-      if (_inheritsFromMarkerInterface(classDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check record declarations
-    var recordDeclarations = root.DescendantNodes().OfType<RecordDeclarationSyntax>();
-    foreach (var recordDecl in recordDeclarations) {
-      if (_inheritsFromMarkerInterface(recordDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check interface declarations
-    var interfaceDeclarations = root.DescendantNodes().OfType<InterfaceDeclarationSyntax>();
-    foreach (var interfaceDecl in interfaceDeclarations) {
-      if (_inheritsFromMarkerInterface(interfaceDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    // Check struct declarations
-    var structDeclarations = root.DescendantNodes().OfType<StructDeclarationSyntax>();
-    foreach (var structDecl in structDeclarations) {
-      if (_inheritsFromMarkerInterface(structDecl.BaseList)) {
-        return true;
-      }
-    }
-
-    return false;
+    // Class, record, interface and struct declarations all carry a base list
+    return root.DescendantNodes().OfType<TypeDeclarationSyntax>().Any(decl => _inheritsFromMarkerInterface(decl.BaseList));
   }
 
   /// <summary>

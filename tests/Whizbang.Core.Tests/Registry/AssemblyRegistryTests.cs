@@ -20,7 +20,7 @@ public class AssemblyRegistryTests {
   /// <summary>
   /// Test contribution type for registry testing.
   /// </summary>
-  private interface ITestContribution { }
+  private interface ITestContribution;
 
   /// <summary>
   /// Simple test contribution implementation.

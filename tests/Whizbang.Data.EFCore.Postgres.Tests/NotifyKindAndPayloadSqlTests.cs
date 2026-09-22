@@ -144,8 +144,8 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
   private static async Task _notifyAsync(NpgsqlConnection conn, string kind, string payload, Guid streamId) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT notify_instance_owners_with_payload(@kind, @payload, ARRAY[@sid]::uuid[])";
-    cmd.Parameters.AddWithValue("kind", kind);
-    cmd.Parameters.AddWithValue("payload", payload);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
+    cmd.Parameters.AddWithValue(nameof(payload), payload);
     cmd.Parameters.AddWithValue("sid", streamId);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -154,7 +154,7 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind)";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue(nameof(kind), kind);
     return (bool)(await cmd.ExecuteScalarAsync() ?? false);
   }
 

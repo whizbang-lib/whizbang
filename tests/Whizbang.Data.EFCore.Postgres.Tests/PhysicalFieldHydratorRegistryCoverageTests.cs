@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PhysicalFieldHydratorRegistryCoverageTests {
 
-  private sealed class HydratorCoverageModel { public string? Name { get; set; } }
+  private sealed class HydratorCoverageModel;
 
   [Before(Test)]
   public void ClearBefore() => PhysicalFieldHydratorRegistry.Clear();
@@ -35,7 +35,7 @@ public class PhysicalFieldHydratorRegistryCoverageTests {
     // Generated code for a split-mode perspective calls this overload with the closed row type it
     // already computed at compile time. If the assignment regressed, physical columns would
     // silently stop hydrating onto the model for every perspective wired through this path.
-    static void Hydrate(MaterializationInterceptionData data, object entity) { }
+    static void Hydrate(MaterializationInterceptionData data, object entity) { /* intentionally empty */ }
     var rowType = typeof(Whizbang.Core.Lenses.PerspectiveRow<HydratorCoverageModel>);
 
     PhysicalFieldHydratorRegistry.Register(rowType, Hydrate);
@@ -52,7 +52,7 @@ public class PhysicalFieldHydratorRegistryCoverageTests {
     // A null row type accepted here would either NRE deep inside the dictionary indexer or, worse,
     // silently key a hydrator under a null Type -- either way the failure surfaces far from the
     // generated call site that passed the bad value.
-    static void Hydrate(MaterializationInterceptionData data, object entity) { }
+    static void Hydrate(MaterializationInterceptionData data, object entity) { /* intentionally empty */ }
 
     await Assert.That(() => PhysicalFieldHydratorRegistry.Register(null!, Hydrate))
       .Throws<ArgumentNullException>();

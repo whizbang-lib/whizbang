@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class InMemoryRequestResponseStoreCoverageTests {
 
   // CleanupExpiredAsync's own scan - as opposed to a request's self-expiring background
-  // timeout task - must find an already-expired-but-still-present record and remove it;
+  // timeout task - must find an already-expired-but-still-present record and remove it —
   // otherwise a request whose background timeout hasn't fired yet (starved thread pool,
   // long GC pause, etc.) would never be reclaimed by the periodic sweep, leaking its
   // TaskCompletionSource and RequestRecord forever.

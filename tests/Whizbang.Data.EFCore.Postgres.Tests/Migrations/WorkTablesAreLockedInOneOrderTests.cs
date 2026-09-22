@@ -377,10 +377,8 @@ public partial class WorkTablesAreLockedInOneOrderTests {
     }
     // INSERT ... ON CONFLICT locks the conflicting row. The ON CONFLICT can sit far below the
     // INSERT, so each INSERT is paired with the text up to the next one.
-    foreach (var m in InsertTarget().Matches(oneLine).ToList()) {
-      if (OnConflict().IsMatch(m.Groups[2].Value)) {
-        Add(m.Groups[1].Value);
-      }
+    foreach (var m in InsertTarget().Matches(oneLine).Where(m => OnConflict().IsMatch(m.Groups[2].Value))) {
+      Add(m.Groups[1].Value);
     }
     // FOR UPDATE waits, and therefore deadlocks -- unless it SKIP LOCKEDs or NOWAITs, which do not.
     if (WaitingForUpdate().IsMatch(oneLine)) {

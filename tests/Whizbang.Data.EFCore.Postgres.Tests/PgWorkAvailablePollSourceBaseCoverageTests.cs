@@ -41,7 +41,7 @@ public class PgWorkAvailablePollSourceBaseCoverageTests {
       new ConfigurationBuilder().Build(),
       instanceProvider,
       NullLogger<PgOutboxWorkAvailablePollSource>.Instance);
-    var sink = new _fakeSink();
+    var sink = new FakeSink();
     await source.StartAsync(sink);
 
     await source.TickForTestsAsync(CancellationToken.None);
@@ -51,7 +51,7 @@ public class PgWorkAvailablePollSourceBaseCoverageTests {
              + "asked to deliver a signal for a tick that found no usable connection");
   }
 
-  private sealed class _fakeSink : ISignalSink {
+  private sealed class FakeSink : ISignalSink {
     public int ReceivedCount { get; private set; }
     public ValueTask ReceiveAsync<TSignal>(TSignal signal, CancellationToken cancellationToken = default)
         where TSignal : ISignal {

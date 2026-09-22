@@ -210,7 +210,7 @@ public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
     cmd.Parameters.Add(new NpgsqlParameter("id", id));
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    var isNull = reader.IsDBNull(0);
+    var isNull = await reader.IsDBNullAsync(0);
 
     await Assert.That(isNull).IsTrue();
   }

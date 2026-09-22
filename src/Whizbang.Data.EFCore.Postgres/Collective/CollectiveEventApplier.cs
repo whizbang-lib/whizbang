@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// <typeparam name="TModel">The perspective model the collective event mutates.</typeparam>
 /// <docs>fundamentals/messaging/collective-events</docs>
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types", Justification = "Matches the established Whizbang.Data.EFCore.Postgres pattern for generic-over-TModel static helpers (e.g. EFCoreCollectiveAdapter<TModel> from Slice 6).")]
-public sealed class CollectiveEventApplier<TModel> where TModel : class {
+public static class CollectiveEventApplier<TModel> where TModel : class {
   /// <summary>
   /// Apply a collective event against the EF-backed perspective.
   /// </summary>
@@ -115,7 +115,7 @@ public sealed class CollectiveEventApplier<TModel> where TModel : class {
     var hookPlan = CollectiveApplyHookPlanner.ResolveForEvent<TModel>(hookRegistry, evt);
 
     // Compose the effective WHERE. The resolver's scope envelope is ALWAYS computed and always binds (D0
-    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where;
+    // safety on shared multi-tenant tables): Framework AND-composes it with the optional handler Where —
     // Custom AND-composes it with the mandatory handler cohort Where. A hook can refine (AndWhere) or replace
     // (ReplaceWhere) the handler cohort, but the scope envelope still binds — a hook never escapes its scope.
     var scopeFilter = resolver.ScopeFilter<TModel>(evt.Scope);

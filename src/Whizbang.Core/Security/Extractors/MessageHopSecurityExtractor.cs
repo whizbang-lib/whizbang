@@ -26,7 +26,7 @@ namespace Whizbang.Core.Security.Extractors;
 /// Creates a new instance of MessageHopSecurityExtractor.
 /// </remarks>
 /// <param name="logger">Optional logger for diagnostics.</param>
-public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) : ISecurityContextExtractor {
+public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor> logger) : ISecurityContextExtractor {
   private readonly ILogger<MessageHopSecurityExtractor> _logger = logger ?? NullLogger<MessageHopSecurityExtractor>.Instance;
 
   /// <summary>

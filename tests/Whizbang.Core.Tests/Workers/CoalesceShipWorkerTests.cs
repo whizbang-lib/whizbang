@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -127,7 +129,7 @@ public class CoalesceShipWorkerTests {
     // individually-shipped floor row at the consumer's inbox).
     var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
     var singles = _singles(2);
-    var expectedIds = singles.Select(m => m.MessageId).ToList();
+    var expectedIds = singles.ConvertAll(m => m.MessageId);
     var expectedType = singles[0].MessageType;
     var expectedDestination = singles[0].Destination;
     coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
@@ -242,7 +244,7 @@ public class CoalesceShipWorkerTests {
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
     await Assert.That(coordinator.ReleasedGroups).IsEmpty();
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -258,7 +260,7 @@ public class CoalesceShipWorkerTests {
 
     await Assert.That(coordinator.StatsCalls).IsEqualTo(0);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -285,7 +287,7 @@ public class CoalesceShipWorkerTests {
     await worker.StartAsync(cts.Token);
     await firstStats.WaitAsync(TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.StatsCalls).IsGreaterThanOrEqualTo(1);
@@ -299,7 +301,7 @@ public class CoalesceShipWorkerTests {
   private static List<OutboxMessage> _mixedSingles() =>
     [_single("test-topic", WorkPriority.BACKGROUND), _single("test-topic", WorkPriority.INTERACTIVE), _single("test-topic", WorkPriority.BACKGROUND)];
 
-  private async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
+  private static async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
     var (worker, coordinator, _) = _build(configureBinding);
     coordinator.Stats = [_stats("record-digest", count: singles.Count, oldestAge: 40, newestAge: 20)];
     coordinator.PendingSingles["record-digest"] = [.. singles];
@@ -357,7 +359,7 @@ public class CoalesceShipWorkerTests {
 
   #region Helpers
 
-  private (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
+  private static (CoalesceShipWorker Worker, FakeCoalesceCoordinator Coordinator, FakeTimeProvider Time) _build(
       Action<CoalescePolicyOptions> configureBinding) {
     var time = new FakeTimeProvider(_testNow);
     var coordinator = new FakeCoalesceCoordinator();
@@ -383,11 +385,12 @@ public class CoalesceShipWorkerTests {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
       coalesceResolver: resolver,
-      logger: null,
       timeProvider: time);
   }
 
@@ -561,13 +564,13 @@ public class CoalesceShipWorkerTests {
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
@@ -629,17 +632,17 @@ public class CoalesceShipWorkerTests {
     }
 
     // The rest of IWorkCoordinator is default-implemented; only the abstract members need bodies.
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -669,7 +672,7 @@ public class CoalesceShipWorkerTests {
     await worker.StartAsync(cts.Token);
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.ReleaseAttempts).IsGreaterThanOrEqualTo(1)
@@ -702,7 +705,7 @@ public class CoalesceShipWorkerTests {
     }
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(3)
@@ -726,7 +729,7 @@ public class CoalesceShipWorkerTests {
     await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = worker.ExecuteTask;
 
-    cts.Cancel();
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(executeTask!.IsCompleted).IsTrue();
@@ -754,11 +757,12 @@ public class CoalesceShipWorkerTests {
     // Gate never marked ready, and it reports the moment a waiter arrives.
     var gate = new BlockingGate();
     var worker = new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      logger: NullLogger<CoalesceShipWorker>.Instance,
+      compositeFactory: new CompositeFactory(),
       coalesceResolver: _oneGroupResolver(time),
-      logger: null,
       timeProvider: time);
 
     using var cts = new CancellationTokenSource();
@@ -848,7 +852,7 @@ public class CoalesceShipWorkerTests {
     var singles = _singles(2);
     // Capture BEFORE the run: the fake's fetch drains the shared list, and iterating it
     // afterwards silently asserts nothing.
-    var expectedStreams = singles.Select(m => m.StreamId).ToList();
+    var expectedStreams = singles.ConvertAll(m => m.StreamId);
     coordinator.PendingSingles["record-digest"] = singles;
 
     await worker.RunOnceAsync(CancellationToken.None);

@@ -9,14 +9,17 @@ namespace Whizbang.Core.Tests;
 #pragma warning disable IDE1006
 
 /// <summary>
+/// <para>
 /// Surface tests for the <see cref="PendingRename"/> record — used by the
 /// rename tool to carry one detected drift (old → new CLR type name) for a
 /// pinned id. PinnedId is nullable because manual <c>Rename()</c> calls
 /// don't know it; row matching then falls back to OldClrTypeName.
-///
+/// </para>
+/// <para>
 /// Coverage report shows 0% — the production rename tool only runs as a
 /// CLI on demand, so the record had no direct unit tests. Pin the ctor
 /// arity + nullable contract + value equality.
+/// </para>
 /// </summary>
 /// <docs>core-concepts/pinned-identity</docs>
 public class PendingRenameTests {

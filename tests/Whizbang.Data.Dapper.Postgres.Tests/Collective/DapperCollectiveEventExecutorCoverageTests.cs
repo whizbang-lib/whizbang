@@ -20,28 +20,30 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventExecutor.cs</code-under-test>
 public class DapperCollectiveEventExecutorCoverageTests {
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string Status { get; set; } = "";
   }
 
-  private sealed record _evtA : ICollectiveEvent { public required CollectiveScope Scope { get; init; } }
-  private sealed record _evtB : ICollectiveEvent { public required CollectiveScope Scope { get; init; } }
+  private sealed record EvtA : ICollectiveEvent { public required CollectiveScope Scope { get; init; } }
+  private sealed record EvtB : ICollectiveEvent { public required CollectiveScope Scope { get; init; } }
 
-  private sealed class _handler {
-    public _spec Apply(_evtA _) => new(s => s.SetProperty(j => j.Status, "x"));
+  private sealed class Handler {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2325:Methods and properties that don't access instance data should be static", Justification = "The executor discovers a collective handler by its signature and invokes it on an instance; the event parameter is part of that contract.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1172:Unused method parameters should be removed", Justification = "The executor discovers a collective handler by its signature and invokes it on an instance; the event parameter is part of that contract.")]
+    public Spec Apply(EvtA _) => new(s => s.SetProperty(j => j.Status, "x"));
   }
 
-  private sealed record _spec(Expression<Action<ICollectiveSetters<_jobModel>>> Setters) : ICollectiveSpec<_jobModel>;
+  private sealed record Spec(Expression<Action<ICollectiveSetters<JobModel>>> Setters) : ICollectiveSpec<JobModel>;
 
   private static readonly IReadOnlyDictionary<Type, string> _noSiblings = new Dictionary<Type, string>();
 
   private static CollectiveApplyEntry _entryFor<TEvent>() => new(
-    ModelType: typeof(_jobModel), EventType: typeof(TEvent), HandlerType: typeof(_handler),
-    MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
-    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((_handler)h).Apply((_evtA)e));
+    ModelType: typeof(JobModel), EventType: typeof(TEvent), HandlerType: typeof(Handler),
+    MethodName: nameof(Handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
+    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((Handler)h).Apply((EvtA)e));
 
   /// <summary>Throws once actually asked for a connection — never a shape the guards above should reach.</summary>
-  private sealed class _factory : IDbConnectionFactory {
+  private sealed class Factory : IDbConnectionFactory {
     public Task<System.Data.IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default)
       => throw new InvalidOperationException("the stub factory only throws once a connection is actually requested");
   }
@@ -51,12 +53,12 @@ public class DapperCollectiveEventExecutorCoverageTests {
   // never update while the caller sees no error at all.
   [Test]
   public async Task ApplyAsync_FactorySession_ForwardsTheCallToTheApplierAsync() {
-    var executor = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job", _noSiblings);
-    var mismatchedEntry = _entryFor<_evtB>(); // entry declares _evtB; the event instance is _evtA
+    var executor = new DapperCollectiveEventExecutor<JobModel>("wh_per_job", _noSiblings);
+    var mismatchedEntry = _entryFor<EvtB>(); // entry declares EvtB; the event instance is EvtA
 
     await Assert.That(() => executor.ApplyAsync(
-        mismatchedEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), new _factory(), Guid.NewGuid(), default))
+        mismatchedEntry, new Handler(), new EvtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new Factory(), Guid.NewGuid(), default))
       .Throws<ArgumentException>()
       .Because("the applier's own event/entry type-mismatch guard must still fire when reached via the executor — proving the call actually forwarded rather than short-circuiting");
   }
@@ -66,11 +68,11 @@ public class DapperCollectiveEventExecutorCoverageTests {
   // real apply could silently skip opening a connection and never persist the mutation.
   [Test]
   public async Task ApplyAsync_MatchingEventAndFactorySession_ReachesTheApplierConnectionStepAsync() {
-    var executor = new DapperCollectiveEventExecutor<_jobModel>("wh_per_job", _noSiblings);
+    var executor = new DapperCollectiveEventExecutor<JobModel>("wh_per_job", _noSiblings);
 
     await Assert.That(() => executor.ApplyAsync(
-        _entryFor<_evtA>(), new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
-        new TenantCollectiveScopeResolver(), new _factory(), Guid.NewGuid(), default))
+        _entryFor<EvtA>(), new Handler(), new EvtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new Factory(), Guid.NewGuid(), default))
       .Throws<InvalidOperationException>()
       .Because("past every validation guard the executor's forwarding call must reach the applier's actual connection-open step");
   }

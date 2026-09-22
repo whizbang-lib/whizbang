@@ -24,14 +24,14 @@ public class IEventStoreCoverageTests {
     // this probe. Its default MUST be false: "no resurrection" is the safe behavior for a store
     // that cannot answer the question, so the runner keeps applying the batch onto the current
     // model instead of assuming history it can't confirm exists.
-    IEventStore store = new _minimalEventStore();
+    IEventStore store = new FakeMinimalEventStore();
 
     var result = await store.HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.NewGuid());
 
     await Assert.That(result).IsFalse();
   }
 
-  private sealed class _minimalEventStore : IEventStore {
+  private sealed class FakeMinimalEventStore : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 

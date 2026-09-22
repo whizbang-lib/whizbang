@@ -29,29 +29,30 @@ namespace Whizbang.Core.Tests.Observability;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class UnobservedExceptionDiagnosticsCoverageTests {
 
-  private sealed record _LogEntry(LogLevel Level, string Message, Exception? Exception);
+  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
 
-  private sealed class _CapturingLogger<T>(bool debugEnabled) : ILogger<T> {
-    public List<_LogEntry> Entries { get; } = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _NullScope.Instance;
+  private sealed class CapturingLogger<T>(bool debugEnabled) : ILogger<T> {
+    public List<LogEntry> Entries { get; } = [];
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.Debug || debugEnabled;
 
     public void Log<TState>(
         LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter) {
-      Entries.Add(new _LogEntry(logLevel, formatter(state, exception), exception));
+      Entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
     }
 
-    private sealed class _NullScope : IDisposable {
-      public static readonly _NullScope Instance = new();
-      public void Dispose() { }
-    }
   }
 
-  private sealed class _FirstChanceCoverageMarkerException : Exception {
-    public _FirstChanceCoverageMarkerException() { }
-    public _FirstChanceCoverageMarkerException(string message) : base(message) { }
-    public _FirstChanceCoverageMarkerException(string message, Exception innerException) : base(message, innerException) { }
+  private sealed class NullScope : IDisposable {
+    public static readonly NullScope Instance = new();
+    public void Dispose() { }
+  }
+
+  public sealed class FirstChanceCoverageMarkerException : Exception {
+    public FirstChanceCoverageMarkerException() { }
+    public FirstChanceCoverageMarkerException(string message) : base(message) { }
+    public FirstChanceCoverageMarkerException(string message, Exception innerException) : base(message, innerException) { }
   }
 
   /// <summary>
@@ -62,7 +63,7 @@ public class UnobservedExceptionDiagnosticsCoverageTests {
   /// </summary>
   [Test]
   public async Task FirstChanceException_NonAllowListedType_IsNotLoggedAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>(debugEnabled: true);
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>(debugEnabled: true);
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
       EnableFirstChanceExceptionLogging = true,
       FirstChanceExceptionTypeAllowList = ["System.InvalidOperationException"],
@@ -71,8 +72,8 @@ public class UnobservedExceptionDiagnosticsCoverageTests {
     var marker = $"WhizbangAllowListMissTest-{Guid.NewGuid():N}";
     using (var diagnostics = new UnobservedExceptionDiagnostics(logger, options)) {
       try {
-        throw new _FirstChanceCoverageMarkerException(marker);
-      } catch (_FirstChanceCoverageMarkerException) {
+        throw new FirstChanceCoverageMarkerException(marker);
+      } catch (FirstChanceCoverageMarkerException) {
         // Expected — the first-chance handler already ran (and skipped logging) before we caught it.
       }
     }
@@ -91,7 +92,7 @@ public class UnobservedExceptionDiagnosticsCoverageTests {
   /// </summary>
   [Test]
   public async Task FirstChanceException_DebugDisabled_IsNotLoggedAsync() {
-    var logger = new _CapturingLogger<UnobservedExceptionDiagnostics>(debugEnabled: false);
+    var logger = new CapturingLogger<UnobservedExceptionDiagnostics>(debugEnabled: false);
     var options = Options.Create(new UnobservedExceptionDiagnosticsOptions {
       EnableFirstChanceExceptionLogging = true,
       FirstChanceExceptionTypeAllowList = null, // wide open — only the Debug gate can exclude this
@@ -100,8 +101,8 @@ public class UnobservedExceptionDiagnosticsCoverageTests {
     var marker = $"WhizbangDebugDisabledTest-{Guid.NewGuid():N}";
     using (var diagnostics = new UnobservedExceptionDiagnostics(logger, options)) {
       try {
-        throw new _FirstChanceCoverageMarkerException(marker);
-      } catch (_FirstChanceCoverageMarkerException) {
+        throw new FirstChanceCoverageMarkerException(marker);
+      } catch (FirstChanceCoverageMarkerException) {
         // Expected — the first-chance handler already ran (and skipped logging) before we caught it.
       }
     }

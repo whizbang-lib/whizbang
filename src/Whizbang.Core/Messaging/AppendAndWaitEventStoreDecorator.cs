@@ -33,8 +33,8 @@ namespace Whizbang.Core.Messaging;
 public sealed class AppendAndWaitEventStoreDecorator(
     IEventStore inner,
     IPerspectiveSyncAwaiter syncAwaiter,
-    IEventCompletionAwaiter? eventCompletionAwaiter = null,
-    IScopedEventTracker? scopedEventTracker = null)
+    IEventCompletionAwaiter eventCompletionAwaiter,
+    IScopedEventTracker scopedEventTracker)
     // IEventStore is re-listed so the AppendAndWaitAsync implementations below re-map onto the
     // interface — without it the base class's interface map wins and callers would get the
     // interface's no-wait default instead.
@@ -42,8 +42,8 @@ public sealed class AppendAndWaitEventStoreDecorator(
   private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);
 
   private readonly IPerspectiveSyncAwaiter _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
-  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = eventCompletionAwaiter;
-  private readonly IScopedEventTracker? _scopedEventTracker = scopedEventTracker;
+  private readonly IEventCompletionAwaiter _eventCompletionAwaiter = eventCompletionAwaiter;
+  private readonly IScopedEventTracker _scopedEventTracker = scopedEventTracker;
 
   /// <inheritdoc />
   public async Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
@@ -98,9 +98,9 @@ public sealed class AppendAndWaitEventStoreDecorator(
     await Inner.AppendAsync(streamId, message, cancellationToken);
 
     // Get tracked events from scoped tracker
-    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
-    if (scopedTracker is null || _eventCompletionAwaiter is null) {
-      // No tracker or awaiter - return synced (can't verify either way)
+    var scopedTracker = _scopedEventTracker;
+    if (!scopedTracker.IsAvailable) {
+      // No request-scoped tracker in this flow - return synced (nothing to wait on)
       var syncedResult = new SyncResult(SyncOutcome.Synced, 1, stopwatch.Elapsed);
       _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, syncedResult, didWait: false);
       return syncedResult;

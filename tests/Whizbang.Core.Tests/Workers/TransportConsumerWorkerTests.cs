@@ -1,17 +1,22 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -33,11 +38,12 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2", "routing2"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -49,15 +55,23 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
 
     // Act
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionsAsync(2, TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
@@ -73,12 +87,13 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic1"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     serviceCollection.AddSingleton<ITransportReadinessCheck>(readinessCheck);
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -90,8 +105,16 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
 
@@ -114,7 +137,7 @@ public class TransportConsumerWorkerTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should subscribe after readiness check completes");
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -126,11 +149,12 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -142,8 +166,16 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
 
@@ -162,7 +194,7 @@ public class TransportConsumerWorkerTests {
         .Because("Each subscription should be paused once");
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -174,11 +206,12 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -190,8 +223,16 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
 
@@ -211,7 +252,7 @@ public class TransportConsumerWorkerTests {
         .Because("Each subscription should be resumed once");
     }
 
-    cts.Cancel();
+    await cts.CancelAsync();
   }
 
   [Test]
@@ -223,11 +264,12 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic2"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(_ => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -239,8 +281,16 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
 
@@ -273,11 +323,12 @@ public class TransportConsumerWorkerTests {
     options.Destinations.Add(new TransportDestination("topic1"));
 
     var serviceCollection = new ServiceCollection();
+    serviceCollection.TryAddWhizbangDefaults();
     serviceCollection.AddSingleton<IDispatcher>(sp => new FakeDispatcher());
     var serviceProvider = serviceCollection.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
+    var orderedProcessor = new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false);
 
     var worker = new TransportConsumerWorker(
       transport: transport,
@@ -289,8 +340,16 @@ public class TransportConsumerWorkerTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -312,9 +371,8 @@ public class TransportConsumerWorkerTests {
 
 // ===== Test Doubles =====
 
-internal class FakeTransport : ITransport, IDisposable {
+internal sealed class FakeTransport : ITransport, IDisposable {
   private readonly List<FakeSubscription> _subscriptions = [];
-  private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
   private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
   private readonly SemaphoreSlim _subscribeSignal = new(0, int.MaxValue);
 
@@ -346,19 +404,6 @@ internal class FakeTransport : ITransport, IDisposable {
     CancellationToken cancellationToken = default
   ) => Task.CompletedTask;
 
-  public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-    TransportDestination destination,
-    CancellationToken cancellationToken = default
-  ) {
-    SubscribeCallCount++;
-    _handler = handler;
-    var subscription = new FakeSubscription();
-    _subscriptions.Add(subscription);
-    _subscribeSignal.Release();
-    return Task.FromResult<ISubscription>(subscription);
-  }
-
   public Task<ISubscription> SubscribeBatchAsync(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportDestination destination,
@@ -384,13 +429,11 @@ internal class FakeTransport : ITransport, IDisposable {
   public async Task SimulateMessageReceivedAsync(IMessageEnvelope envelope, string? envelopeType) {
     if (_batchHandler != null) {
       await _batchHandler([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
-    } else if (_handler != null) {
-      await _handler(envelope, envelopeType, CancellationToken.None);
     }
   }
 }
 
-internal class FakeSubscription : ISubscription {
+internal sealed class FakeSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
   public bool IsDisposed { get; private set; }
   public int DisposeCallCount { get; private set; }
@@ -435,6 +478,28 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
+    string callerMemberName = "",
+    string callerFilePath = "",
+    int callerLineNumber = 0
+  ) {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) {
+    DispatchCallCount++;
+    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
+  }
+
+  public Task<IDeliveryReceipt> SendAsync(
+    object message,
+    IMessageContext context,
+    Whizbang.Core.Dispatch.DispatchOptions options,
     string callerMemberName = "",
     string callerFilePath = "",
     int callerLineNumber = 0
@@ -491,35 +556,13 @@ internal class FakeDispatcher : IDispatcher {
   ) =>
     throw new NotImplementedException();
 
-  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
-    throw new NotImplementedException();
-
-  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(
-    object message,
-    IMessageContext context,
-    Whizbang.Core.Dispatch.DispatchOptions options,
-    string callerMemberName = "",
-    string callerFilePath = "",
-    int callerLineNumber = 0
-  ) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
   public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
+    throw new NotImplementedException();
+
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
     throw new NotImplementedException();
 
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
@@ -549,7 +592,7 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
     throw new NotImplementedException();
 
-  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
+  public static Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
@@ -644,11 +687,11 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public void QueueInboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status) {
+  public void QueueInboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
     // No-op for tests
   }
 
-  public void QueueInboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status, string errorDetails) {
+  public void QueueInboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
     // No-op for tests
   }
 
@@ -656,11 +699,11 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public void QueueOutboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status) {
+  public void QueueOutboxCompletion(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus) {
     // No-op for tests
   }
 
-  public void QueueOutboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus status, string errorDetails) {
+  public void QueueOutboxFailure(Guid messageId, Whizbang.Core.Messaging.MessageProcessingStatus completedStatus, string errorMessage) {
     // No-op for tests
   }
 

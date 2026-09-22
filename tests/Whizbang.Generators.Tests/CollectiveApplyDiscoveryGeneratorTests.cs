@@ -243,7 +243,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("BatchSizeOverride: 250")
+    await Assert.That(code).Contains("BatchSizeOverride: 250")
       .Because("A handler that declares BatchSize must carry it on the entry so the applier can override the global default for this handler.");
     await Assert.That(code).Contains("StatementTimeoutSecondsOverride: 15")
       .Because("A handler that declares StatementTimeoutSeconds must carry it on the entry to override the global timeout per apply.");
@@ -272,7 +272,7 @@ public class CollectiveApplyDiscoveryGeneratorTests {
     var result = GeneratorTestHelper.RunGenerator<CollectiveApplyDiscoveryGenerator>(source);
     var code = GeneratorTestHelper.GetGeneratedSource(result, "CollectiveApplyRegistry.g.cs");
 
-    await Assert.That(code!).Contains("BatchSizeOverride: 0")
+    await Assert.That(code).Contains("BatchSizeOverride: 0")
       .Because("An unspecified knob emits the 0 sentinel meaning 'inherit the global CollectiveApplyOptions default'.");
     await Assert.That(code).Contains("StatementTimeoutSecondsOverride: 0")
       .Because("An unspecified timeout knob emits the 0 sentinel meaning 'inherit the global default'.");

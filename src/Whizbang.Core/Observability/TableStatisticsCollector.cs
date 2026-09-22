@@ -16,7 +16,7 @@ public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
-  ILogger<TableStatisticsCollector>? logger = null
+  ILogger<TableStatisticsCollector> logger
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =
@@ -74,8 +74,17 @@ public sealed partial class TableStatisticsCollector(
         _exposureAdvisory ??= new QueryExposureAdvisory(
           scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger<QueryExposureAdvisory>()
           ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<QueryExposureAdvisory>.Instance);
-        _exposureAdvisory.Report(
+        var findings = _exposureAdvisory.Report(
           sizes, scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.ICollectiveSiblingTableSource>());
+
+        // Emitted in its own method rather than inline: emitting is asynchronous and the advisory
+        // is not, so the findings come back and are awaited here at the cycle's own seam, and
+        // keeping the loop and its error handling out of this method keeps this one readable.
+        await EmitFindingsAsync(
+          findings,
+          scope.ServiceProvider.GetService<Whizbang.Core.SystemEvents.ISystemEventEmitter>(),
+          _logger,
+          stoppingToken);
 
         var depths = await provider.GetQueueDepthsAsync(stoppingToken);
         metrics.UpdateQueueDepths(depths);
@@ -107,4 +116,44 @@ public sealed partial class TableStatisticsCollector(
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Error collecting table statistics — will retry")]
   static partial void LogCollectionError(ILogger logger, Exception exception);
+
+  /// <summary>
+  /// Emits each finding, or logs and carries on when one cannot be emitted.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The emitter is optional and its absence degrades to the log line the advisory already wrote.
+  /// That is the opposite of the advisory's own logger, which is required, and the difference is
+  /// worth keeping straight: without a logger the finding is lost, while without an emitter it is
+  /// still reported -- just not routable.
+  /// </para>
+  /// <para>
+  /// A failed emission is caught rather than allowed to end the statistics cycle. The queue depths
+  /// and the bloat ratio measured after it are unrelated to an advisory, which is the least
+  /// important thing that loop does.
+  /// </para>
+  /// </remarks>
+  internal static async Task EmitFindingsAsync(
+      IReadOnlyList<Whizbang.Core.SystemEvents.PerspectiveIndexAdvised> findings,
+      Whizbang.Core.SystemEvents.ISystemEventEmitter? emitter,
+      ILogger logger,
+      CancellationToken cancellationToken) {
+    if (emitter is null || findings is null || findings.Count == 0) {
+      return;
+    }
+
+    foreach (var finding in findings) {
+      try {
+        await emitter.EmitAsync(finding, cancellationToken);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogAdvisoryEmitFailed(logger, ex);
+      }
+    }
+  }
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+    Message = "Could not emit a perspective index advisory — the finding is in the log above, but nothing downstream was told")]
+  static partial void LogAdvisoryEmitFailed(ILogger logger, Exception exception);
 }

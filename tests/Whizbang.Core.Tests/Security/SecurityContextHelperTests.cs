@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -161,10 +162,7 @@ public class SecurityContextHelperTests {
       .Because("Value set in helper after yield doesn't flow to sibling calls");
   }
 
-  private static async ValueTask _setContextAfterYieldAsync(IScopeContext context) {
-    await Task.Yield();
-    ScopeContextAccessor.CurrentContext = context;
-  }
+  private static ValueTask _setContextAfterYieldAsync(IScopeContext context) => _setCurrentContextAfterAwaitHelperAsync(context);
 
   private static async ValueTask _readContextAsync(Action<IScopeContext?> callback) {
     await Task.Yield();
@@ -281,6 +279,7 @@ public class SecurityContextHelperTests {
 
     // Build services WITHOUT ScopeContextAccessor
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, extraction)],
       callbacks: [],
@@ -385,6 +384,7 @@ public class SecurityContextHelperTests {
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
     var scopeAccessor = new CapturingScopeContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
     var sp = services.BuildServiceProvider();
 
@@ -580,6 +580,7 @@ public class SecurityContextHelperTests {
       CapturingScopeContextAccessor scopeAccessor,
       CapturingMessageContextAccessor messageContextAccessor) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, extraction)],
@@ -919,6 +920,7 @@ public class SecurityContextHelperTests {
 
     // Create a scoped service provider with IScopeContextAccessor set to explicit context
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IScopeContextAccessor>(new MockScopeContextAccessor(explicitContext));
     var serviceProvider = services.BuildServiceProvider();
 
@@ -958,6 +960,7 @@ public class SecurityContextHelperTests {
 
     // Create a scoped service provider with IScopeContextAccessor set to explicit context
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IScopeContextAccessor>(new MockScopeContextAccessor(explicitContext));
     var serviceProvider = services.BuildServiceProvider();
 
@@ -1013,6 +1016,7 @@ public class SecurityContextHelperTests {
     var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-cb", "tenant-cb");
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)], // returns null
       callbacks: [],
@@ -1045,6 +1049,7 @@ public class SecurityContextHelperTests {
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)],
       callbacks: [],
@@ -1082,6 +1087,7 @@ public class SecurityContextHelperTests {
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, extraction)],
       callbacks: [],
@@ -1117,6 +1123,7 @@ public class SecurityContextHelperTests {
     };
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, extraction)],
       callbacks: [],
@@ -1149,6 +1156,7 @@ public class SecurityContextHelperTests {
     var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-1", "tenant-1");
 
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)],
       callbacks: [],
@@ -1184,6 +1192,7 @@ public class SecurityContextHelperTests {
     var messageContextAccessor = new MessageContextAccessor();
     var scopeContextAccessor = new ScopeContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     var sp = services.BuildServiceProvider();
@@ -1202,6 +1211,7 @@ public class SecurityContextHelperTests {
     var envelope = _createEnvelopeWithSecurityContext(new TestSecurityMessage("test"), "user-init2");
     var messageContextAccessor = new MessageContextAccessor();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     // intentionally no IScopeContextAccessor
     var sp = services.BuildServiceProvider();
@@ -1219,6 +1229,7 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithServiceProvider_LogsAndSetsContextAsync() {
     // Arrange: ServiceProvider with logger
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
     var sp = services.BuildServiceProvider();
@@ -1348,6 +1359,7 @@ public class SecurityContextHelperTests {
       SecurityExtraction? extraction,
       IScopeContextAccessor scopeAccessor) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
 
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: extraction is null ? [] : [new TestExtractor(100, extraction)],
@@ -1362,25 +1374,8 @@ public class SecurityContextHelperTests {
 
   private static ServiceProvider _createServiceProviderWithMessageAccessor(MessageContextAccessor accessor) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageContextAccessor>(accessor);
-    return services.BuildServiceProvider();
-  }
-
-  private static ServiceProvider _createServiceProviderWithBothAccessors(
-      SecurityExtraction extraction,
-      ScopeContextAccessor scopeAccessor,
-      MessageContextAccessor messageContextAccessor) {
-    var services = new ServiceCollection();
-
-    var provider = new DefaultMessageSecurityContextProvider(
-      extractors: [new TestExtractor(100, extraction)],
-      callbacks: [],
-      options: new MessageSecurityOptions { AllowAnonymous = true }
-    );
-    services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
-    services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
-
     return services.BuildServiceProvider();
   }
 
@@ -1462,6 +1457,7 @@ public class SecurityContextHelperTests {
     // in ExemptMessageTypes — that's the proper mechanism, not catching exceptions.
     var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)], // extractor returns null
       callbacks: [],
@@ -1487,6 +1483,7 @@ public class SecurityContextHelperTests {
     // Messages that inherently lack security context should be added to ExemptMessageTypes.
     var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)],
       callbacks: [],
@@ -1529,6 +1526,7 @@ public class SecurityContextHelperTests {
     var envelope = _createEnvelopeWithSecurityContextAndTenant(
         new TestLoginEvent("test-user"), "user-123", "tenant-456");
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)], // extractor returns null
       callbacks: [],
@@ -1551,6 +1549,7 @@ public class SecurityContextHelperTests {
     // This is a genuinely unauthenticated message at an entry point — should throw.
     var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)], // extractor returns null
       callbacks: [],
@@ -1572,6 +1571,7 @@ public class SecurityContextHelperTests {
     var envelope = _createEnvelopeWithSecurityContextAndTenant(
         new TestLoginEvent("test-user"), "user-123", "tenant-456");
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestExtractor(100, null)], // extractor returns null
       callbacks: [],
@@ -1606,8 +1606,9 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithLogger_ExplicitContextPath_DispatchesLogsAsync() {
     // Priority 1: explicit ImmutableScopeContext (AsSystem/RunAs)
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
-    var sp = services.BuildServiceProvider();
+    _ = services.BuildServiceProvider();
 
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { TenantId = "explicit-t", UserId = "explicit-u" },
@@ -1636,6 +1637,7 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithLogger_ParentMessageContextPath_DispatchesLogsAsync() {
     // Priority 2: no explicit context, parent MessageContextAccessor has values
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var sp = services.BuildServiceProvider();
 
@@ -1663,6 +1665,7 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithLogger_ScopeAccessorFallbackPath_DispatchesLogsAsync() {
     // Priority 3 (fallback): no explicit context + no parent message context + ScopeContextAccessor has ImmutableScopeContext
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var sp = services.BuildServiceProvider();
 
@@ -1696,6 +1699,7 @@ public class SecurityContextHelperTests {
     // No explicit context, no parent message context, no ScopeContextAccessor — all extraction returns null.
     // Triggers SkippingScopeContextSetup log path.
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     var sp = services.BuildServiceProvider();
 
@@ -1741,6 +1745,7 @@ public class SecurityContextHelperTests {
 
   private static ServiceProvider _buildSpWithAccessor(ScopeContextAccessor scopeAccessor) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
     return services.BuildServiceProvider();

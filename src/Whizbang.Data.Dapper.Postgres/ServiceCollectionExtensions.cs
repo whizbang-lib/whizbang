@@ -136,8 +136,7 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        options.CommandTimeoutSeconds));
+        sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
@@ -146,11 +145,11 @@ public static class ServiceCollectionExtensions {
     services.AddOptions<PerspectiveRewindOptions>();
 
     // Register perspective snapshot store and stream locker
-    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
         connectionString,
         sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
-    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveStreamLocker>(sp =>
       new DapperPerspectiveStreamLocker(
         connectionString,
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
@@ -276,8 +275,7 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        options.CommandTimeoutSeconds));
+        sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
@@ -286,11 +284,11 @@ public static class ServiceCollectionExtensions {
     services.AddOptions<PerspectiveRewindOptions>();
 
     // Register perspective snapshot store and stream locker
-    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveSnapshotStore>(sp =>
       new DapperPerspectiveSnapshotStore(
         connectionString,
         sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
-    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+    services.TryAddSingletonOverNullDefault<IPerspectiveStreamLocker>(sp =>
       new DapperPerspectiveStreamLocker(
         connectionString,
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
@@ -356,11 +354,9 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
   internal static void _addDeadLetterStore(IServiceCollection services, string connectionString) {
-    services.TryAddSingleton<IDeadLetterStore>(sp =>
+    services.TryAddSingletonOverNullDefault<IDeadLetterStore>(sp =>
       new DapperDeadLetterStore(
         connectionString,
-        sp.GetService<ILogger<DapperDeadLetterStore>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DapperDeadLetterStore>.Instance,
         sp.GetService<WorkCoordinatorGate>()));
   }
 }

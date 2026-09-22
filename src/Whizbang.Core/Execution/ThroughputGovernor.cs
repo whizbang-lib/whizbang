@@ -136,7 +136,7 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
     }
 
     // Neither better nor worse: the plateau. Stop growing — the extra width bought nothing, and
-    // continuing would consume a shared resource for no gain. Holding the width IS the action here;
+    // continuing would consume a shared resource for no gain. Holding the width IS the action here —
     // there is nothing to accumulate, so the decline streak simply resets.
     _worseStreak = 0;
   }

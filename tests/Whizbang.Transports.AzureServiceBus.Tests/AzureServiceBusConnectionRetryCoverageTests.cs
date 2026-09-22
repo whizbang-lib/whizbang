@@ -45,7 +45,7 @@ public class AzureServiceBusConnectionRetryCoverageTests {
     "Endpoint=sb://localhost:1;SharedAccessKeyName=probe;SharedAccessKey=cHJvYmVrZXk=";
 
   /// <summary>Counts connection attempts and records the attempt number of every "still retrying" log line.</summary>
-  private sealed class _stillRetryingLog : ILogger {
+  private sealed class StillRetryingLog : ILogger {
     private int _attempts;
 
     public List<int> StillRetryingAtAttempt { get; } = [];
@@ -82,7 +82,7 @@ public class AzureServiceBusConnectionRetryCoverageTests {
   public async Task WhenRetryingIndefinitely_LogsStillRetryingOnlyOnTheTenthAttemptAsync(
       CancellationToken cancellationToken) {
     // Arrange
-    var log = new _stillRetryingLog();
+    var log = new StillRetryingLog();
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     log.OnAttempt = attempt => {
       // Let attempt 10 -- the modulo-10 gate this test targets -- complete its full retry cycle

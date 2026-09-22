@@ -27,9 +27,9 @@ public class PgAppSignalChannelCoverageTests {
     public INotifySubscription? Captured { get; private set; }
     public IDisposable Subscribe(INotifySubscription subscription) {
       Captured = subscription;
-      return new _noOpDisposable();
+      return new NoOpDisposable();
     }
-    private sealed class _noOpDisposable : IDisposable {
+    private sealed class NoOpDisposable : IDisposable {
       public void Dispose() { }
     }
   }

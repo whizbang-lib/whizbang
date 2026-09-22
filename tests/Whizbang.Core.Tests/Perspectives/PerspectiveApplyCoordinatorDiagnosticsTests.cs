@@ -91,7 +91,7 @@ public sealed class PerspectiveApplyCoordinatorDiagnosticsTests {
     var waiterTask = coordinator.AcquireAsync(streamId, "Orders.Projection", cts.Token);
     await logger.FirstWarning.Task.WaitAsync(_timeout);
 
-    cts.Cancel();
+    await cts.CancelAsync();
 
     await Assert.That(async () => await waiterTask).Throws<OperationCanceledException>()
       .Because("the lease-tied cancellation path is the ONLY thing that can free a consumer "

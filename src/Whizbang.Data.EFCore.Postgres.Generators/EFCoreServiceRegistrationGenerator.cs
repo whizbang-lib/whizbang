@@ -53,7 +53,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
   private const string CLOSE_BRACE_INDENT_4 = "    });";
-  private const string CLOSE_BRACE_INDENT_6 = "      });";
   private const string CLOSE_BRACE_INDENT_8 = "        });";
   private const string CLOSE_BRACE_ONLY_INDENT_6 = "      }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";

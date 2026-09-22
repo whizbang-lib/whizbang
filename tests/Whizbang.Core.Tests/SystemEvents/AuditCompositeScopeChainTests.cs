@@ -150,11 +150,11 @@ public class AuditCompositeScopeChainTests {
 
   private static Microsoft.Extensions.DependencyInjection.ServiceProvider _provider() =>
     new Microsoft.Extensions.DependencyInjection.ServiceCollection()
-      .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())
+      .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
       .BuildServiceProvider();
 
   /// <summary>Minimal serializer: fan-out needs one registered, and only the hops matter here.</summary>
-  private sealed class _fakeSerializer : IEnvelopeSerializer {
+  private sealed class FakeSerializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var aqn = envelope.Payload!.GetType().AssemblyQualifiedName!;
       return new SerializedEnvelope(

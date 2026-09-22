@@ -22,7 +22,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// both branches only fire after a live INSERT/DELETE against wh_perspective_snapshots actually
 /// succeeds.
 /// </summary>
-public class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
+public sealed class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
   private TestFixture _testBase = null!;
 
   [Before(Test)]
@@ -43,7 +43,7 @@ public class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
 
   /// <summary>Captures the fully formatted message of every log call, and reports itself enabled for
   /// every level so the store's `logger?.IsEnabled(LogLevel.Debug) == true` guard passes.</summary>
-  private sealed class _capturingLogger : ILogger<DapperPerspectiveSnapshotStore> {
+  private sealed class CapturingLogger : ILogger<DapperPerspectiveSnapshotStore> {
     public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -62,7 +62,7 @@ public class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "CoverageSnapshotPerspective";
     var snapshotEventId = Guid.CreateVersion7();
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var store = new DapperPerspectiveSnapshotStore(_testBase.TestConnectionString, logger);
 
     await store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, JsonDocument.Parse("""{"x":1}"""));
@@ -97,7 +97,7 @@ public class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
     await writer.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), JsonDocument.Parse("{}"));
     await writer.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), JsonDocument.Parse("{}"));
     await writer.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(), JsonDocument.Parse("{}"));
-    var logger = new _capturingLogger();
+    var logger = new CapturingLogger();
     var store = new DapperPerspectiveSnapshotStore(_testBase.TestConnectionString, logger);
 
     await store.PruneOldSnapshotsAsync(streamId, perspectiveName, keepCount: 1);

@@ -60,12 +60,14 @@ public class PolicyContext {
   public PolicyDecisionTrail Trail { get; private set; }
 
   /// <summary>
-  /// Creates a new PolicyContext with the specified message.
+  /// Creates a new PolicyContext with the specified message. The envelope and the service provider are
+  /// values the caller carries into policy evaluation, not injected collaborators: a call site that has
+  /// neither passes null explicitly, so the omission is a stated decision rather than a dropped argument.
   /// </summary>
   public PolicyContext(
       object message,
-      IMessageEnvelope? envelope = null,
-      IServiceProvider? services = null,
+      IMessageEnvelope? envelope,
+      IServiceProvider? services,
       string environment = "development"
   ) {
     Message = message ?? throw new ArgumentNullException(nameof(message));

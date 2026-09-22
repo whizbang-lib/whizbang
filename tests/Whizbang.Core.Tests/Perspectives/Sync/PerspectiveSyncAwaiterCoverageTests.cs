@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
@@ -18,41 +19,42 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Perspectives/Sync/PerspectiveSyncAwaiter.cs</code-under-test>
 public class PerspectiveSyncAwaiterCoverageTests {
-  private sealed class _testPerspective;
+  private sealed class TestPerspective;
 
   // A stand-in for the one real way _buildSyncInquiries sees zero groups after a Count-based
   // non-empty check has already passed: Count and the actual enumeration disagree.
-  private sealed class _countDisagreesWithEnumerationList : IReadOnlyList<TrackedEvent> {
+  private sealed class CountDisagreesWithEnumerationList : IReadOnlyList<TrackedEvent> {
     public int Count => 1;
     public TrackedEvent this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
     public IEnumerator<TrackedEvent> GetEnumerator() { yield break; }
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
   }
 
-  private sealed class _raceyScopedEventTracker : IScopedEventTracker {
+  private sealed class RaceyScopedEventTracker : IScopedEventTracker {
     public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) { }
     public IReadOnlyList<TrackedEvent> GetEmittedEvents() => [];
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => new _countDisagreesWithEnumerationList();
+    public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => new CountDisagreesWithEnumerationList();
     public bool AreAllProcessed(SyncFilterNode filter, IReadOnlySet<Guid> processedEventIds) => true;
   }
 
   private static PerspectiveSyncAwaiter _awaiter(IScopedEventTracker tracker) =>
     new(
-      new MockWorkCoordinator((_, _) => throw new InvalidOperationException(
+      coordinator: new MockWorkCoordinator((_, _) => throw new InvalidOperationException(
         "the database must never be queried when there are no inquiries to resolve")),
-      new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
-      NullLogger<PerspectiveSyncAwaiter>.Instance,
-      new SyncEventTracker(),
-      tracker);
+      clock: new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled }),
+      logger: NullLogger<PerspectiveSyncAwaiter>.Instance,
+      syncEventTracker: new SyncEventTracker(),
+      tracker: tracker,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
 
   // A one-shot status check that treated an inconsistent snapshot as "still pending" would report
   // false forever for events that were never actually there — callers polling IsCaughtUpAsync
   // would spin until their own timeout instead of seeing "nothing to wait on" on the first check.
   [Test]
   public async Task IsCaughtUpAsync_TrackerReportsEventsButEnumeratesNone_ReturnsTrueWithoutQueryingAsync() {
-    var awaiter = _awaiter(new _raceyScopedEventTracker());
+    var awaiter = _awaiter(new RaceyScopedEventTracker());
 
-    var isCaughtUp = await awaiter.IsCaughtUpAsync(typeof(_testPerspective), SyncFilter.All().Build());
+    var isCaughtUp = await awaiter.IsCaughtUpAsync(typeof(TestPerspective), SyncFilter.All().Build());
 
     await Assert.That(isCaughtUp).IsTrue();
   }
@@ -62,9 +64,9 @@ public class PerspectiveSyncAwaiterCoverageTests {
   // zero events that were never going to arrive.
   [Test]
   public async Task WaitAsync_TrackerReportsEventsButEnumeratesNone_ReturnsNoPendingEventsWithoutBlockingAsync() {
-    var awaiter = _awaiter(new _raceyScopedEventTracker());
+    var awaiter = _awaiter(new RaceyScopedEventTracker());
 
-    var result = await awaiter.WaitAsync(typeof(_testPerspective), SyncFilter.All().Build());
+    var result = await awaiter.WaitAsync(typeof(TestPerspective), SyncFilter.All().Build());
 
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
     await Assert.That(result.EventsAwaited).IsEqualTo(0);

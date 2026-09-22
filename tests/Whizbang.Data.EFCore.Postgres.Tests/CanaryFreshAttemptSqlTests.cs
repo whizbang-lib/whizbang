@@ -34,21 +34,20 @@ public class CanaryFreshAttemptSqlTests : EFCoreTestBase {
       VALUES (@id, 'wh_inbox', @src, @mt, '{}'::jsonb, 5, 3, @st, 3, 'seed/1', @fp, 1)";
     ins.Parameters.AddWithValue("id", id);
     ins.Parameters.AddWithValue("src", (Guid)TrackedGuid.NewMedo());
-    ins.Parameters.AddWithValue("mt", mt);
+    ins.Parameters.AddWithValue(nameof(mt), mt);
     ins.Parameters.AddWithValue("st", HELD);
-    ins.Parameters.AddWithValue("fp", fp);
+    ins.Parameters.AddWithValue(nameof(fp), fp);
     await ins.ExecuteNonQueryAsync();
     return id;
   }
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static async Task<int> _attemptsOfPendingAsync(NpgsqlConnection conn, string fp) {
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT COALESCE(max(recovery_attempts),-1) FROM wh_dead_letters WHERE error_fingerprint=@fp AND recovery_status=0";
-    q.Parameters.AddWithValue("fp", fp);
+    q.Parameters.AddWithValue(nameof(fp), fp);
     return (int)(await q.ExecuteScalarAsync() ?? -1);
   }
 

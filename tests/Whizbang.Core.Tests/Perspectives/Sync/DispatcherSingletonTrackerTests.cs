@@ -81,10 +81,12 @@ public class DispatcherSingletonTrackerTests {
 
     // Create awaiter WITH singleton tracker
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      clock,
-      logger,
-      singletonTracker  // <-- KEY: Uses singleton tracker
+      coordinator: mockCoordinator,
+      clock: clock,
+      logger: logger,
+      syncEventTracker: singletonTracker, // <-- KEY: Uses singleton tracker
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor()
     );
 
     // Act - wait for event (will timeout since MarkProcessed is not called)
@@ -131,10 +133,12 @@ public class DispatcherSingletonTrackerTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
 
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      clock,
-      logger,
-      singletonTracker
+      coordinator: mockCoordinator,
+      clock: clock,
+      logger: logger,
+      syncEventTracker: singletonTracker,
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor()
     );
 
     // Simulate perspective worker calling MarkProcessedByPerspective after a delay
@@ -192,10 +196,12 @@ public class DispatcherSingletonTrackerTests {
 
     // Create awaiter with empty SyncEventTracker (no events tracked)
     var awaiter = new PerspectiveSyncAwaiter(
-      mockCoordinator,
-      clock,
-      logger,
-      new SyncEventTracker()  // Empty tracker - no events tracked
+      coordinator: mockCoordinator,
+      clock: clock,
+      logger: logger,
+      syncEventTracker: new SyncEventTracker(), // Empty tracker - no events tracked
+      tracker: NullScopedEventTracker.Instance,
+      lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor()
     );
 
     // Act
@@ -242,6 +248,6 @@ public class DispatcherSingletonTrackerTests {
 }
 
 // Test types (prefixed to avoid collision with other test files)
-internal sealed class SingletonTestProjection { }
-internal sealed class SingletonTestStartedEvent { }
-internal sealed class SingletonTestCompletedEvent { }
+internal sealed class SingletonTestProjection;
+internal sealed class SingletonTestStartedEvent;
+internal sealed class SingletonTestCompletedEvent;

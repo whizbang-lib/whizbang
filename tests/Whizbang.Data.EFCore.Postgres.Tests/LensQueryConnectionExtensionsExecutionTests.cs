@@ -157,6 +157,7 @@ public class LensQueryConnectionExtensionsExecutionTests : EFCoreTestBase {
   // === GetConnection ===
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
   public async Task GetConnection_WithDbContextAccessor_ReturnsUnderlyingConnectionAsync() {
     // Arrange
     await using var context = CreateDbContext();
@@ -170,6 +171,25 @@ public class LensQueryConnectionExtensionsExecutionTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetConnectionAsync_WithoutDbContextAccessor_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var lensQuery = new PlainLensQuery();
+
+    // Act
+    InvalidOperationException? exception = null;
+    try {
+      _ = await lensQuery.GetConnectionAsync();
+    } catch (InvalidOperationException ex) {
+      exception = ex;
+    }
+
+    // Assert
+    await Assert.That(exception).IsNotNull();
+    await Assert.That(exception!.Message).Contains("Connection access requires");
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
   public async Task GetConnection_WithoutDbContextAccessor_ThrowsInvalidOperationExceptionAsync() {
     // Arrange
     var lensQuery = new PlainLensQuery();
@@ -188,6 +208,7 @@ public class LensQueryConnectionExtensionsExecutionTests : EFCoreTestBase {
   }
 
   [Test]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S6966:Awaitable method should be used", Justification = "The synchronous API is the unit under test.")]
   public async Task GetConnection_WithNullLensQuery_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     ILensQuery<Order> lensQuery = null!;
@@ -227,24 +248,6 @@ public class LensQueryConnectionExtensionsExecutionTests : EFCoreTestBase {
     // Assert
     await Assert.That(secondConnection).IsSameReferenceAs(firstConnection);
     await Assert.That(secondConnection.State).IsEqualTo(ConnectionState.Open);
-  }
-
-  [Test]
-  public async Task GetConnectionAsync_WithoutDbContextAccessor_ThrowsInvalidOperationExceptionAsync() {
-    // Arrange
-    var lensQuery = new PlainLensQuery();
-
-    // Act
-    InvalidOperationException? exception = null;
-    try {
-      _ = await lensQuery.GetConnectionAsync();
-    } catch (InvalidOperationException ex) {
-      exception = ex;
-    }
-
-    // Assert
-    await Assert.That(exception).IsNotNull();
-    await Assert.That(exception!.Message).Contains("Connection access requires");
   }
 
   [Test]

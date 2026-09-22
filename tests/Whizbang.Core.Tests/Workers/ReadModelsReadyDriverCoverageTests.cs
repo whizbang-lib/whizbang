@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -28,7 +29,7 @@ public class ReadModelsReadyDriverCoverageTests {
     var schemaGate = new SignallingSchemaGate();   // never marked ready
     var readGate = new ReadModelsReadyGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
+    var driver = new ReadModelsReadyDriver(readModelsGate: readGate, schemaReadyGate: schemaGate, services: sp, logger: NullLogger<ReadModelsReadyDriver>.Instance);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);

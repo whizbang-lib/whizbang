@@ -144,10 +144,9 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
   public async Task ListLogger_BeginScope_ReturnsNoOpDisposableAsync() {
     var logger = new ListLogger<MessageTypeRegistryReconciliationHostedService>();
 
-    using (var scope = logger.BeginScope(new { Tag = "test" })) {
-      await Assert.That(scope).IsNotNull()
-        .Because("ILogger.BeginScope must return a non-null IDisposable to satisfy the contract; the helper's NullScope is sufficient since the SUT doesn't currently emit scoped log entries.");
-    }
+    using var scope = logger.BeginScope(new { Tag = "test" });
+    await Assert.That(scope).IsNotNull()
+      .Because("ILogger.BeginScope must return a non-null IDisposable to satisfy the contract; the helper's NullScope is sufficient since the SUT doesn't currently emit scoped log entries.");
     // The `using` above invokes NullScope.Dispose, completing coverage of all three
     // interface-contract members on the helper logger.
   }

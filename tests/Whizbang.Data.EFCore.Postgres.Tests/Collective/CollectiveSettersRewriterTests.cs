@@ -28,7 +28,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_ConstantValue_ProducesSerializedAssignmentAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived");
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(source);
@@ -47,7 +47,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_TwoChainedSetProperty_ProducesTwoAssignmentsAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.Status, "Archived")
            .SetProperty(j => j.ViewCount, 0);
 
@@ -66,7 +66,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_NullValue_MarksIsNullAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.Status, (string?)null);
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(source);
@@ -82,7 +82,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_ComputedArithmetic_ThrowsNotSupportedAsync() {
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
@@ -93,7 +93,7 @@ public class CollectiveSettersRewriterTests {
   [Test]
   public async Task CollectAssignments_ComputedComparison_ProducesComparisonMetadataAsync() {
     var target = Guid.NewGuid();
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.IsActive, j => j.Id == target);
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(source);
@@ -114,8 +114,8 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_EmptySpec_ThrowsInvalidOperationAsync() {
-    var sParam = Expression.Parameter(typeof(ICollectiveSetters<_jobModel>), "s");
-    var empty = Expression.Lambda<Action<ICollectiveSetters<_jobModel>>>(
+    var sParam = Expression.Parameter(typeof(ICollectiveSetters<JobModel>), "s");
+    var empty = Expression.Lambda<Action<ICollectiveSetters<JobModel>>>(
       Expression.Empty(), sParam);
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(empty))
@@ -128,7 +128,7 @@ public class CollectiveSettersRewriterTests {
   [Test]
   public async Task CollectAssignments_NestedPathSelector_ThrowsNotSupportedAsync() {
     // A two-hop member access (j => j.Nested.Inner) — the visitor must reject it at apply time.
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.Nested.Inner, "x");
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
@@ -140,7 +140,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_NullSource_ThrowsArgumentNullAsync() {
-    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments<_jobModel>(null!))
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments<JobModel>(null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -153,7 +153,7 @@ public class CollectiveSettersRewriterTests {
     // the compiler boxes the value-type access into Convert(j.ViewCount, object). Without stripping
     // that, the body is a UnaryExpression rather than a MemberExpression and the property lookup
     // fails, so a legal call reports that it could not find a property that is plainly there.
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty<object>(j => j.ViewCount, 42);
 
     var assignments = CollectiveSettersRewriter.CollectAssignments(source);
@@ -172,7 +172,7 @@ public class CollectiveSettersRewriterTests {
     // and cannot work for something the database would have to compute. The failure has to name
     // the alternative: this runs while building an UPDATE, and an operator who only learns that
     // "an expression node kind is unsupported" has no way to know RawSql is the way through.
-    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+    Expression<Action<ICollectiveSetters<JobModel>>> source =
       s => s.SetProperty(j => j.Status, string.Concat("a", "b"));
 
     await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
@@ -187,15 +187,15 @@ public class CollectiveSettersRewriterTests {
              + "value sources, and without it the next step is guesswork");
   }
 
-  private sealed class _jobModel {
+  private sealed class JobModel {
     public string? Status { get; set; } = string.Empty;
-    public int ViewCount { get; set; }
-    public Guid Id { get; set; }
-    public bool IsActive { get; set; }
-    public _nested Nested { get; set; } = new();
+    public int ViewCount { get; }
+    public Guid Id { get; }
+    public bool IsActive { get; }
+    public NestedHolder Nested { get; set; } = new();
   }
 
-  private sealed class _nested {
+  private sealed class NestedHolder {
     public string Inner { get; set; } = string.Empty;
   }
 }

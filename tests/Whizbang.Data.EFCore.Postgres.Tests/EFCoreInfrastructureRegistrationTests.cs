@@ -348,11 +348,8 @@ public class EFCoreInfrastructureRegistrationTests {
 
     // Assert - use reflection to verify different DbContext instances
     // This is critical for HotChocolate parallel resolver safety
-    var contextField = typeof(EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)
-        .GetField("_context", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-    var context1 = contextField?.GetValue(query1);
-    var context2 = contextField?.GetValue(query2);
+    var context1 = ((EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)query1).Context;
+    var context2 = ((EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)query2).Context;
 
     await Assert.That(context1).IsNotNull();
     await Assert.That(context2).IsNotNull();

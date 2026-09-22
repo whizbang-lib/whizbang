@@ -57,8 +57,8 @@ public class ReapExhaustedOrphanedPerspectiveRowsTests : EFCoreTestBase {
     await using var cmd = c.CreateCommand();
     cmd.CommandText = "SELECT reap_exhausted_orphaned_perspective_rows(@inst, @streams, @max)";
     cmd.Parameters.AddWithValue("inst", instanceId);
-    cmd.Parameters.AddWithValue("streams", streams);
-    cmd.Parameters.AddWithValue("max", max);
+    cmd.Parameters.AddWithValue(nameof(streams), streams);
+    cmd.Parameters.AddWithValue(nameof(max), max);
     return (int)(await cmd.ExecuteScalarAsync() ?? 0);
   }
 

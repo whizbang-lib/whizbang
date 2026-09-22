@@ -63,6 +63,6 @@ public partial class InboxDrainWorkerCoverageTests {
       .Because("the batch after the failure drains as if nothing had happened");
 
     await cts.CancelAsync();
-    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
   }
 }

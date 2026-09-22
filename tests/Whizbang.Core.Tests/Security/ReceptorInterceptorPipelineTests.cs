@@ -10,11 +10,11 @@ namespace Whizbang.Core.Tests.Security;
 /// </summary>
 /// <tests>ReceptorInterceptorPipeline</tests>
 public class ReceptorInterceptorPipelineTests {
-  private sealed class StubReceptor { }
+  private sealed class StubReceptor;
 
   private sealed class AllowingInterceptor : IReceptorInterceptor {
     public int CallCount { get; private set; }
-    public ValueTask<InterceptorResult> CanInvokeAsync(Type t, IMessageEnvelope e, IScopeContext? c, CancellationToken ct = default) {
+    public ValueTask<InterceptorResult> CanInvokeAsync(Type receptorType, IMessageEnvelope envelope, IScopeContext? context, CancellationToken cancellationToken = default) {
       CallCount++;
       return new ValueTask<InterceptorResult>(InterceptorResult.Allowed);
     }
@@ -22,7 +22,7 @@ public class ReceptorInterceptorPipelineTests {
 
   private sealed class DenyingInterceptor(DeniedAction action) : IReceptorInterceptor {
     public int CallCount { get; private set; }
-    public ValueTask<InterceptorResult> CanInvokeAsync(Type t, IMessageEnvelope e, IScopeContext? c, CancellationToken ct = default) {
+    public ValueTask<InterceptorResult> CanInvokeAsync(Type receptorType, IMessageEnvelope envelope, IScopeContext? context, CancellationToken cancellationToken = default) {
       CallCount++;
       return new ValueTask<InterceptorResult>(InterceptorResult.Deny(action));
     }

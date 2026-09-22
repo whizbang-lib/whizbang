@@ -47,7 +47,7 @@ public class RecoveredDeadLetterPurgeRetentionTests : EFCoreTestBase {
   private static async Task<bool> _existsAsync(NpgsqlConnection conn, Guid id) {
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT EXISTS(SELECT 1 FROM wh_dead_letters WHERE dead_letter_id=@id)";
-    q.Parameters.AddWithValue("id", id);
+    q.Parameters.AddWithValue(nameof(id), id);
     return (bool)(await q.ExecuteScalarAsync() ?? false);
   }
 

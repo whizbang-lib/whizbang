@@ -3,6 +3,7 @@ extern alias fastendpoints_generators;
 extern alias hotchocolate_generators;
 extern alias postgres_generators;
 extern alias shared;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -59,6 +60,7 @@ public class MergedSharedCopyTests {
       typeof(shared::Whizbang.Generators.Shared.Diagnostics.SharedSelfTest).Assembly),
   ];
 
+  [SuppressMessage("Major Code Smell", "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields", Justification = "ILRepack internalizes the merged copy of the shared assembly; reflection is the only way to observe it.")]
   private static MethodInfo _method(Assembly assembly, string name) {
     var type = assembly.GetType(NAMING_TYPE)
       ?? throw new InvalidOperationException(
@@ -123,6 +125,7 @@ public class MergedSharedCopyTests {
       ?? throw new InvalidOperationException(
         $"{fullName} is missing from {assembly.GetName().Name}: the ILRepack merge did not include it.");
 
+  [SuppressMessage("Major Code Smell", "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields", Justification = "ILRepack internalizes the merged copy of the shared assembly; reflection is the only way to observe it.")]
   private static object? _call(Assembly assembly, string typeName, string method, params object?[] args) {
     var type = _type(assembly, typeName);
     var candidates = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
@@ -182,7 +185,7 @@ public class MergedSharedCopyTests {
   [Test]
   [MethodDataSource(nameof(Hosts))]
   public async Task MergedCopy_ParsesSuffixListsAndMeasuresIdentifiersAsync(MergedHost host) {
-    // Suffix lists come from .editorconfig and decide how a model name becomes a table name;
+    // Suffix lists come from .editorconfig and decide how a model name becomes a table name —
     // the byte count is what identifier-length limits are checked against, and getting it wrong
     // means either a rejected migration or a silently truncated name.
     const string ns = "Whizbang.Generators.Shared.Utilities.";
@@ -398,6 +401,7 @@ public class MergedSharedCopyTests {
 
   [Test]
   [MethodDataSource(nameof(Hosts))]
+  [SuppressMessage("Major Code Smell", "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields", Justification = "ILRepack internalizes the merged copy of the shared assembly; reflection is the only way to observe it.")]
   public async Task MergedCopy_ReadsTypeSymbolsIdenticallyAsync(MergedHost host) {
     // Property discovery drives the columns a perspective table gets and the fields an endpoint
     // exposes. A host that enumerated them differently would generate a table missing a column.
@@ -792,14 +796,14 @@ public class MergedSharedCopyTests {
     var named = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Tags");
     await Assert.That(named).IsNotNull();
-    await Assert.That(named!).Contains("public");
-    await Assert.That(named!).Contains("v2");
+    await Assert.That(named).Contains("public");
+    await Assert.That(named).Contains("v2");
 
     var positional = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "channels");
     await Assert.That(positional).IsNotNull()
       .Because("the constructor parameter is matched by name, case-insensitively");
-    await Assert.That(positional!).Contains("orders");
+    await Assert.That(positional).Contains("orders");
 
     var absent = (string[]?)_call(
       host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Missing");

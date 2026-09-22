@@ -45,8 +45,8 @@ public class MessageJsonContextRenameAliasTests {
 
     await Assert.That(generated).IsNotNull();
     // The former assembly-qualified name must resolve to the CURRENT type.
-    await Assert.That(generated!).Contains("\"TestApp.OrderCreatedEvent, TestAssembly\"");
-    await Assert.That(generated!).Contains("typeof(global::TestApp.OrderPlacedEvent)");
+    await Assert.That(generated).Contains("\"TestApp.OrderCreatedEvent, TestAssembly\"");
+    await Assert.That(generated).Contains("typeof(global::TestApp.OrderPlacedEvent)");
   }
 
   [Test]
@@ -57,7 +57,7 @@ public class MessageJsonContextRenameAliasTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).DoesNotContain("OrderCreatedEvent");
+    await Assert.That(generated).DoesNotContain("OrderCreatedEvent");
   }
 
   /// <summary>
@@ -134,7 +134,7 @@ public class MessageJsonContextRenameAliasTests {
 
     await Assert.That(generated).IsNotNull();
     // The living OrderCreatedEvent must map to ITSELF, never be redirected to OrderPlacedEvent by the alias.
-    await Assert.That(generated!).DoesNotContain(
+    await Assert.That(generated).DoesNotContain(
       "\"TestApp.OrderCreatedEvent, TestAssembly\",\n    typeof(global::TestApp.OrderPlacedEvent)");
   }
 }

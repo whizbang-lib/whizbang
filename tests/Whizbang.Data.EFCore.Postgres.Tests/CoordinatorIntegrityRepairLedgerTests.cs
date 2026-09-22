@@ -52,31 +52,31 @@ public class CoordinatorIntegrityRepairLedgerTests {
     public bool RepairResult { get; init; }
 
     public Task<bool> IntegrityTryBeginReportAsync(
-        IntegrityRepairLedger.DivergenceKey key, long a, long b, long c, long d,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) {
+        IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       ReportCalls++;
       return Task.FromResult(ReportResult);
     }
 
     public Task<bool> IntegrityTryBeginRepairAsync(
-        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan backoff, int maxAttempts,
-        CancellationToken ct = default) {
+        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+        CancellationToken cancellationToken = default) {
       RepairCalls++;
       return Task.FromResult(RepairResult);
     }
 
-    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) {
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
       HealedCalls++;
       return Task.CompletedTask;
     }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private static IServiceScopeFactory _factoryWith(IWorkCoordinator coordinator) {
@@ -129,25 +129,25 @@ public class CoordinatorIntegrityRepairLedgerTests {
   /// <summary>A coordinator whose ledger calls all throw — the shape a broken query takes.</summary>
   private sealed class ThrowingCoordinator : IWorkCoordinator {
     public Task<bool> IntegrityTryBeginReportAsync(
-        IntegrityRepairLedger.DivergenceKey key, long a, long b, long c, long d,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) =>
+        IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("ledger unavailable");
 
     public Task<bool> IntegrityTryBeginRepairAsync(
-        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan backoff, int maxAttempts,
-        CancellationToken ct = default) =>
+        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+        CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("ledger unavailable");
 
-    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) =>
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("ledger unavailable");
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) => throw new NotSupportedException();
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   [Test]
@@ -177,40 +177,40 @@ public class CoordinatorIntegrityRepairLedgerTests {
 
   private sealed class CancellingCoordinator : IWorkCoordinator {
     public Task<bool> IntegrityTryBeginReportAsync(
-        IntegrityRepairLedger.DivergenceKey key, long a, long b, long c, long d,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) =>
+        IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
     public Task<bool> IntegrityTryBeginRepairAsync(
-        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan backoff, int maxAttempts,
-        CancellationToken ct = default) =>
+        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+        CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
-    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) =>
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
     public Task<IReadOnlyList<bool>?> IntegrityTryBeginReportBatchAsync(
         Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
-        DateTimeOffset now, TimeSpan cooldown, CancellationToken ct = default) =>
+        DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
     public Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
         DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
-        CancellationToken ct = default) =>
+        CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
     public Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
-        CancellationToken ct = default) =>
+        CancellationToken cancellationToken = default) =>
       throw new OperationCanceledException();
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private static IntegrityReportObservation _observation() => new(_key(), 1, 2, 3, 4);
@@ -287,32 +287,32 @@ public class CoordinatorIntegrityRepairLedgerTests {
     public Task<IReadOnlyList<bool>?> IntegrityTryBeginRepairBatchAsync(
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
         DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts, int maxGrants,
-        CancellationToken ct = default) =>
+        CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("batch ledger unavailable");
 
     public Task<IReadOnlyList<double>?> IntegrityMarkHealedBatchWithAgesAsync(
         Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
-        CancellationToken ct = default) =>
+        CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("batch ledger unavailable");
 
     public Task<bool> IntegrityTryBeginRepairAsync(
-        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan backoff, int maxAttempts,
-        CancellationToken ct = default) {
+        IntegrityRepairLedger.DivergenceKey key, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
+        CancellationToken cancellationToken = default) {
       SingleRepairCalls++;
       return Task.FromResult(true);
     }
 
-    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken ct = default) {
+    public Task IntegrityMarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {
       SingleHealedCalls++;
       return Task.CompletedTask;
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string name, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   [Test]

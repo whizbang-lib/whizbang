@@ -34,7 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class DutyElectionByoDataSourceE2ETests : EFCoreTestBase {
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "byo-duty-svc";
     public string HostName => "byo-duty-host";
@@ -50,7 +50,7 @@ public class DutyElectionByoDataSourceE2ETests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Elector_UnderUseNpgsqlDataSource_WithNoNotificationConfiguration_AcquiresTheDutyAsync(CancellationToken cancellationToken) {
-    var pod = new _pod();
+    var pod = new Pod();
     await using (var ctx = CreateDbContext()) {
       var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
       await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), cancellationToken);

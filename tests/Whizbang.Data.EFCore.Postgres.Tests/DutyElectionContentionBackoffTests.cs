@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard3")]
 public class DutyElectionContentionBackoffTests : EFCoreTestBase {
 
-  private sealed class _pod : IServiceInstanceProvider {
+  private sealed class Pod : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "duty-svc";
     public string HostName => "duty-host";
@@ -43,7 +43,7 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
     };
   }
 
-  private PgDutyElector _electorFor(_pod pod, TimeProvider? clock = null, ProbeCadenceMetrics? metrics = null) => new(
+  private PgDutyElector _electorFor(Pod pod, TimeProvider? clock = null, ProbeCadenceMetrics? metrics = null) => new(
     Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString, PollingFallbackInterval = TimeSpan.FromSeconds(30) }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
@@ -51,7 +51,7 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
     timeProvider: clock,
     probeMetrics: metrics);
 
-  private async Task _joinFleetAsync(_pod pod, CancellationToken ct) {
+  private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), ct);
@@ -60,8 +60,8 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task SecondAttemptInsideTheWindow_IsAnsweredFromMemoryAsync(CancellationToken cancellationToken) {
-    var holder = new _pod();
-    var contender = new _pod();
+    var holder = new Pod();
+    var contender = new Pod();
     await _joinFleetAsync(holder, cancellationToken);
     await _joinFleetAsync(contender, cancellationToken);
     var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -92,8 +92,8 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task WindowExpiry_ReachesTheDatabaseAgainAndDoublesOnContinuedContentionAsync(CancellationToken cancellationToken) {
-    var holder = new _pod();
-    var contender = new _pod();
+    var holder = new Pod();
+    var contender = new Pod();
     await _joinFleetAsync(holder, cancellationToken);
     await _joinFleetAsync(contender, cancellationToken);
     var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -116,8 +116,8 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task HolderReleases_TheNextRealAttemptWinsAndClosesTheWindowAsync(CancellationToken cancellationToken) {
-    var holder = new _pod();
-    var contender = new _pod();
+    var holder = new Pod();
+    var contender = new Pod();
     await _joinFleetAsync(holder, cancellationToken);
     await _joinFleetAsync(contender, cancellationToken);
     var clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -142,8 +142,8 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Windows_AreKeptPerDutyAsync(CancellationToken cancellationToken) {
-    var holder = new _pod();
-    var contender = new _pod();
+    var holder = new Pod();
+    var contender = new Pod();
     await _joinFleetAsync(holder, cancellationToken);
     await _joinFleetAsync(contender, cancellationToken);
     var elector = _electorFor(contender, new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero)));
@@ -161,7 +161,7 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
 
   [Test]
   public async Task IsBackingOff_UnknownDuty_IsFalseAsync() {
-    var elector = _electorFor(new _pod());
+    var elector = _electorFor(new Pod());
 
     await Assert.That(elector.IsBackingOff("never-attempted", out var remaining)).IsFalse();
     await Assert.That(remaining).IsEqualTo(TimeSpan.Zero);
@@ -170,7 +170,7 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
 
   [Test]
   public async Task ContentionBackoffCeiling_IsThePollingFallbackIntervalAsync() {
-    var elector = _electorFor(new _pod());
+    var elector = _electorFor(new Pod());
 
     await Assert.That(elector.ContentionBackoffCeiling).IsEqualTo(TimeSpan.FromSeconds(30))
       .Because("the ceiling is an option that already exists; no new knob");

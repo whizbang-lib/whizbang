@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -74,14 +76,14 @@ public class ClaimWorkerCoverageTests {
     /// <summary>Thrown by the next claim only, then cleared: one failed tick, then normal service.</summary>
     public Exception? NextClaimException { get; set; }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       WorkBatch batch;
       Exception? failure;
       lock (_lock) {
         CallCount++;
-        LastMaxStreams = req.MaxStreams;
-        if (req.MaxStreams > PeakMaxStreams) { PeakMaxStreams = req.MaxStreams; }
-        batch = _batchToReturn;
+        LastMaxStreams = request.MaxStreams;
+        if (request.MaxStreams > PeakMaxStreams) { PeakMaxStreams = request.MaxStreams; }
+        batch = BatchToReturn;
         failure = NextClaimException;
         NextClaimException = null;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
@@ -101,7 +103,7 @@ public class ClaimWorkerCoverageTests {
       return tcs.Task.WaitAsync(timeout);
     }
 
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) { HeartbeatCallCount++; }
       HeartbeatAttempted.TrySetResult();
       return HeartbeatException is not null
@@ -109,23 +111,19 @@ public class ClaimWorkerCoverageTests {
         : Task.FromResult(true);
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) =>
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) =>
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) =>
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) =>
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) =>
-      Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) =>
-      Task.CompletedTask;
   }
 
   /// <summary>
@@ -161,17 +159,25 @@ public class ClaimWorkerCoverageTests {
       ClaimChurnFeedback? churnFeedback = null,
       Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstance(),
-      new NoOpWorkNotificationListener(),
-      schemaGate ?? SchemaReadyGate.AlreadyReady(),
-      Options.Create(options),
-      logger ?? NullLogger<ClaimWorker>.Instance,
-      outboxChannel: outboxChannel,
-      perspectiveChannel: perspectiveChannel,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstance(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: schemaGate ?? SchemaReadyGate.AlreadyReady(),
+      options: Options.Create(options),
+      logger: logger ?? NullLogger<ClaimWorker>.Instance,
+      outboxChannel: outboxChannel ?? new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: perspectiveChannel ?? new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       churnFeedback: churnFeedback);
     return (worker, coord);
   }
@@ -179,7 +185,7 @@ public class ClaimWorkerCoverageTests {
   private sealed class WorkerHarness(ClaimWorker worker, CancellationTokenSource cts) : IDisposable {
     public void Dispose() {
       cts.Cancel();
-      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+      try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
       cts.Dispose();
     }
   }
@@ -368,14 +374,14 @@ public class ClaimWorkerCoverageTests {
     var ids = new[] { TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value };
     var coord = new RecordingCoordinator {
       BatchToReturn = new WorkBatch {
-        OutboxWork = ids.Select(id => new OutboxWork {
+        OutboxWork = [.. ids.Select(id => new OutboxWork {
           MessageId = id,
           Envelope = null!,
           EnvelopeType = "TestEvent",
           MessageType = "TestEvent",
           Attempts = 1,
           Destination = "test",
-        }).ToList(),
+        })],
         InboxWork = [],
         PerspectiveWork = [],
       }
@@ -413,13 +419,13 @@ public class ClaimWorkerCoverageTests {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
-        PerspectiveWork = streamIds.Select(sid => new PerspectiveWork {
+        PerspectiveWork = [.. streamIds.Select(sid => new PerspectiveWork {
           WorkId = TrackedGuid.NewMedo().Value,
           StreamId = sid,
           PerspectiveName = "Test.Perspective",
           LastProcessedEventId = null,
           PartitionNumber = 1,
-        }).ToList(),
+        })],
         // A real store populates the stream-id list alongside the rows, and it has to be set here
         // too: ClaimWorker's "did this claim find anything" test reads PerspectiveStreamIds, not
         // PerspectiveWork. A batch carrying rows but no stream ids reads as an empty poll and is
@@ -475,12 +481,12 @@ public class ClaimWorkerCoverageTests {
       BatchToReturn = new WorkBatch {
         OutboxWork = [],
         PerspectiveWork = [],
-        InboxWork = cleanRowIds.Select(id => new InboxWork {
+        InboxWork = cleanRowIds.ConvertAll(id => new InboxWork {
           MessageId = id,
           MessageType = "TestEvent",
           Envelope = null!,
           Attempts = 1,
-        }).ToList(),
+        }),
       }
     };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
@@ -512,7 +518,7 @@ public class ClaimWorkerCoverageTests {
       // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
       // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
       // narrowing this test exists to prove could never be observed.
-      InboxStreamIds = Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value).ToList(),
+      InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value)],
     };
 
     // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering

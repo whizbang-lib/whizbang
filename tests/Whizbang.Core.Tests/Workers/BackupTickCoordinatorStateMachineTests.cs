@@ -4,6 +4,7 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -41,7 +42,7 @@ public class BackupTickCoordinatorStateMachineTests {
       Options.Create(options),
       NullLogger<BackupTickCoordinator>.Instance,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      gate: null,
+      gate: NullNotifySignalingGate.Instance,
       timeProvider: timeProvider);
 
   [Test]

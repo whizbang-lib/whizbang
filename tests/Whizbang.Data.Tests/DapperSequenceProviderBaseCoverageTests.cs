@@ -23,9 +23,9 @@ public class DapperSequenceProviderBaseCoverageTests {
   // next sequence value would throw instead of allocating a stream's next number.
   [Test]
   public async Task EnsureConnectionOpen_WithClosedConnection_OpensItAsync() {
-    var connection = new _fakeDbConnection(ConnectionState.Closed);
+    var connection = new FakeDbConnection(ConnectionState.Closed);
 
-    _testableSequenceProvider.CallEnsureConnectionOpen(connection);
+    TestableSequenceProvider.CallEnsureConnectionOpen(connection);
 
     await Assert.That(connection.OpenCallCount).IsEqualTo(1)
       .Because("a closed connection handed to the sequence provider must be opened before any command runs against it");
@@ -36,19 +36,16 @@ public class DapperSequenceProviderBaseCoverageTests {
   // provider -- the guard exists specifically to avoid calling Open() unconditionally.
   [Test]
   public async Task EnsureConnectionOpen_WithAlreadyOpenConnection_DoesNotReopenItAsync() {
-    var connection = new _fakeDbConnection(ConnectionState.Open);
+    var connection = new FakeDbConnection(ConnectionState.Open);
 
-    _testableSequenceProvider.CallEnsureConnectionOpen(connection);
+    TestableSequenceProvider.CallEnsureConnectionOpen(connection);
 
     await Assert.That(connection.OpenCallCount).IsEqualTo(0)
       .Because("an already-open connection must be left alone -- calling Open() again is redundant at best and provider-dependent-unsafe at worst");
   }
 
   /// <summary>Exists solely to reach the protected static <c>EnsureConnectionOpen</c> under test; never instantiated.</summary>
-  private sealed class _testableSequenceProvider : DapperSequenceProviderBase {
-    public _testableSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-      : base(connectionFactory, executor) { }
-
+  private sealed class TestableSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
     protected override string GetUpdateSequenceSql() => "";
     protected override string GetInsertOrUpdateSequenceSql() => "";
     protected override string GetCurrentSequenceSql() => "";
@@ -57,7 +54,7 @@ public class DapperSequenceProviderBaseCoverageTests {
     public static void CallEnsureConnectionOpen(IDbConnection connection) => EnsureConnectionOpen(connection);
   }
 
-  private sealed class _fakeDbConnection(ConnectionState initialState) : IDbConnection {
+  private sealed class FakeDbConnection(ConnectionState initialState) : IDbConnection {
     public int OpenCallCount { get; private set; }
 
     [System.Diagnostics.CodeAnalysis.AllowNull]

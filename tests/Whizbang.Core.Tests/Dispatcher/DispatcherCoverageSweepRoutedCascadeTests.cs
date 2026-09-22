@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -77,7 +78,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     ReceptorInvoker<object>? invoker = null,
     VoidReceptorInvoker? voidInvoker = null,
     Type? handleMessageType = null
-    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor,
@@ -465,9 +466,9 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     await Assert.That(result).IsNotNull();
     List<Activity> dispatchActivities;
     lock (stopped) {
-      dispatchActivities = stopped.Where(a =>
+      dispatchActivities = [.. stopped.Where(a =>
         a.OperationName == "Dispatch SweepRoutedCommand" &&
-        Equals(a.GetTagItem("whizbang.message.type"), typeof(SweepRoutedCommand).FullName)).ToList();
+        Equals(a.GetTagItem("whizbang.message.type"), typeof(SweepRoutedCommand).FullName))];
     }
     await Assert.That(dispatchActivities.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(dispatchActivities[0].GetTagItem("whizbang.debug.parent.id")).IsNotNull();
@@ -481,10 +482,10 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   [Test]
   [NotInParallel]
   public async Task LocalInvokeAsync_VoidWithTracing_InvokerThrows_RecordsErrorMetricAsync() {
-    // Arrange - DispatcherMetrics registered + trace store forces the tracing path;
+    // Arrange - DispatcherMetrics registered + trace store forces the tracing path —
     // a throwing receptor must record an error measurement and rethrow
     var errorCount = 0L;
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
+    var metrics = new DispatcherMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     using var meterListener = new MeterListener();
     // Pin to THIS test's error counter: other tests build DispatcherMetrics on the same meter
     // name, and a passive counter reports every instance's series at collection.
@@ -610,7 +611,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
   [Test]
   public async Task SendAsync_CascadedOwnedCommandRoutedOutbox_IsDowngradedToLocalAsync() {
-    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing;
+    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing —
     // owned commands must stay local (no transport), so the outbox cascade never fires
     var dispatcher = new SweepRoutedDispatcher(
       _buildProvider(ownedDomains: _parentOwnedDomains),
@@ -674,7 +675,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
   [Test]
   public async Task SendAsync_CascadedEventWithoutIHasStreamId_InheritsStreamIdViaSetStreamIdAsync() {
-    // Arrange - cascaded event does NOT implement IHasStreamId and its own StreamId is empty;
+    // Arrange - cascaded event does NOT implement IHasStreamId and its own StreamId is empty —
     // the source command has one → the generated-setter fallback (SetStreamId) must be used
     var sourceStreamId = Guid.NewGuid();
     var cascaded = new SweepNoStreamPropEvent(Guid.NewGuid());

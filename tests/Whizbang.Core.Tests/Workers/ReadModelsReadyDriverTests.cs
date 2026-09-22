@@ -1,11 +1,21 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Execution;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Options;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -21,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel(Order = 105)]
 public class ReadModelsReadyDriverTests {
 
-  private sealed class _stubInstanceProvider : IServiceInstanceProvider {
+  private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
     public string ServiceName => "svc";
     public string HostName => "host";
@@ -47,7 +57,7 @@ public class ReadModelsReadyDriverTests {
     var schemaGate = new SchemaReadyGate();
     var readGate = new ReadModelsReadyGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
-    var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
+    var driver = new ReadModelsReadyDriver(readModelsGate: readGate, schemaReadyGate: schemaGate, services: sp, logger: NullLogger<ReadModelsReadyDriver>.Instance);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);
@@ -70,14 +80,39 @@ public class ReadModelsReadyDriverTests {
 
     var inner = new ServiceCollection().BuildServiceProvider();
     var worker = new PerspectiveWorker(
-      instanceProvider: new _stubInstanceProvider(),
+      instanceProvider: new StubInstanceProvider(),
       scopeFactory: inner.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions()),
-      schemaReadyGate: schemaGate);
+      schemaReadyGate: schemaGate,
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: NullEventTypeProvider.Instance,
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: new PerspectiveChannelWriter(),
+      perspectiveCompletionChannel: new CapturingPerspectiveCompletionChannel(),
+      failureChannel: new CapturingFailureChannel(),
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor((Options.Create(new PerspectiveWorkerOptions())).Value));
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(worker);
     await using var sp = services.BuildServiceProvider();
-    var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
+    var driver = new ReadModelsReadyDriver(readModelsGate: readGate, schemaReadyGate: schemaGate, services: sp, logger: NullLogger<ReadModelsReadyDriver>.Instance);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);
@@ -102,6 +137,7 @@ public class ReadModelsReadyDriverTests {
   public async Task ReadModelsGuard_RefusesWhileClosed_AndOnlyWhileClosedAsync() {
     var readGate = new ReadModelsReadyGate();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IReadModelsReadyGate>(readGate);
     await using var sp = services.BuildServiceProvider();
 

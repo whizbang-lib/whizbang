@@ -330,7 +330,7 @@ public class ReceptorInvokerTagScopePropagationTests {
 
   #region Setup Helper
 
-  private (ScopeCapturingHook hook, ReceptorInvoker invoker, MessageEnvelope<TestTaggedEvent> envelope)
+  private static (ScopeCapturingHook hook, ReceptorInvoker invoker, MessageEnvelope<TestTaggedEvent> envelope)
       _setupTagScopeTest(LifecycleStage stage, string userId, string tenantId) {
     var tagRegistry = new TestMessageTagRegistry();
     tagRegistry.AddRegistration(typeof(TestTaggedEvent), typeof(SignalTagAttribute), "test-tag");
@@ -482,8 +482,10 @@ public class ReceptorInvokerTagScopePropagationTests {
     }
 
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
-    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 

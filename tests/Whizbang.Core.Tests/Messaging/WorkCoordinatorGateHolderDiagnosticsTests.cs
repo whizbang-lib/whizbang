@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -17,7 +18,7 @@ namespace Whizbang.Core.Tests.Messaging;
 public class WorkCoordinatorGateHolderDiagnosticsTests {
   [Test]
   public async Task SnapshotHolders_NamesEveryCurrentHolder_AndForgetsReleasedOnesAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 1000);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, logger: NullLogger<WorkCoordinatorGate>.Instance, acquireTimeoutMilliseconds: 1000);
     var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     var b = await gate.AcquireAsync(CancellationToken.None, caller: "ReportPerspectiveCompletionAsync");
 
@@ -36,7 +37,7 @@ public class WorkCoordinatorGateHolderDiagnosticsTests {
   [Test]
   public async Task Deadline_NamesTheHoldersInTheWarningAsync() {
     var logger = new CapturingLogger<WorkCoordinatorGate>();
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, acquireTimeoutMilliseconds: 100, logger: logger);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: logger, acquireTimeoutMilliseconds: 100);
     var a = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     var b = await gate.AcquireAsync(CancellationToken.None, caller: "CommitHandlerBatchAsync");
     try {
@@ -57,7 +58,7 @@ public class WorkCoordinatorGateHolderDiagnosticsTests {
 
   [Test]
   public async Task DisabledGate_HasNoHoldersAsync() {
-    using var gate = new WorkCoordinatorGate(maxConcurrent: 0);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 0, logger: NullLogger<WorkCoordinatorGate>.Instance);
     var pass = await gate.AcquireAsync(CancellationToken.None, caller: "Anything");
     await Assert.That(gate.SnapshotHolders()).IsEmpty()
       .Because("a disabled gate hands out no slots, so there is nothing to attribute");

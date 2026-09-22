@@ -505,14 +505,12 @@ public class ScopeContextAccessorInitiatingContextTests {
     public string? ActualPrincipal => null;
     public string? EffectivePrincipal => null;
     public SecurityContextType ContextType => SecurityContextType.User;
-    public string? Source => "test";
-    public bool PropagateToOutgoingMessages => true;
 
     public bool HasPermission(Permission permission) => false;
     public bool HasAnyPermission(params Permission[] permissions) => false;
     public bool HasAllPermissions(params Permission[] permissions) => false;
-    public bool HasRole(string role) => false;
-    public bool HasAnyRole(params string[] roles) => false;
+    public bool HasRole(string roleName) => false;
+    public bool HasAnyRole(params string[] roleNames) => false;
     public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
   }

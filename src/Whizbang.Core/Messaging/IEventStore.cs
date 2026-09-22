@@ -18,6 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+/// <docs>fundamentals/events/event-store</docs>
 public interface IEventStore {
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
@@ -41,6 +42,34 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Appends an event to the specified stream using a raw message (AOT-compatible).
+  /// If the message was dispatched through IDispatcher, its envelope is automatically
+  /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).
+  /// If no envelope is found, a minimal envelope is created for the message.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID)</param>
+  /// <param name="message">The message payload to append</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when the event is appended</returns>
+  /// <remarks>
+  /// <para>
+  /// This overload provides a simpler API for callers who don't need direct envelope access.
+  /// The envelope (with tracing context) is looked up automatically via IEnvelopeRegistry.
+  /// </para>
+  /// <para>
+  /// Typical flow:
+  /// 1. Dispatcher creates envelope and registers it with IEnvelopeRegistry
+  /// 2. Receptor handles message, calls eventStore.AppendAsync(streamId, message)
+  /// 3. EventStore retrieves envelope from registry, appending with full tracing context
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
 
   /// <summary>
   /// Appends a BATCH of envelopes to (potentially different) streams in a
@@ -127,34 +156,6 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
   Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
     Task.FromResult(false);
-
-  /// <summary>
-  /// Appends an event to the specified stream using a raw message (AOT-compatible).
-  /// If the message was dispatched through IDispatcher, its envelope is automatically
-  /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).
-  /// If no envelope is found, a minimal envelope is created for the message.
-  /// </summary>
-  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
-  /// <param name="streamId">The stream identifier (aggregate ID)</param>
-  /// <param name="message">The message payload to append</param>
-  /// <param name="cancellationToken">Cancellation token</param>
-  /// <returns>Task that completes when the event is appended</returns>
-  /// <remarks>
-  /// <para>
-  /// This overload provides a simpler API for callers who don't need direct envelope access.
-  /// The envelope (with tracing context) is looked up automatically via IEnvelopeRegistry.
-  /// </para>
-  /// <para>
-  /// Typical flow:
-  /// 1. Dispatcher creates envelope and registers it with IEnvelopeRegistry
-  /// 2. Receptor handles message, calls eventStore.AppendAsync(streamId, message)
-  /// 3. EventStore retrieves envelope from registry, appending with full tracing context
-  /// </para>
-  /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
-  Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
 
   /// <summary>
   /// Reads events from a stream by stream ID (UUID) with strong typing.

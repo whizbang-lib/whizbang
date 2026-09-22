@@ -29,30 +29,30 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IWorkCoordinator coordinator,
   IServiceInstanceProvider instanceProvider,
   WorkCoordinatorOptions options,
-  ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
-  IServiceScopeFactory? scopeFactory = null,
-  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-  IOptionsMonitor<TracingOptions>? tracingOptions = null,
-  IDeferredOutboxChannel? deferredChannel = null,
+  ILogger<ImmediateWorkCoordinatorStrategy> logger,
+  IServiceScopeFactory scopeFactory,
+  ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+  IOptionsMonitor<TracingOptions> tracingOptions,
+  IDeferredOutboxChannel deferredChannel,
+  IOptions<SystemEventOptions> systemEventOptions,
+  IWorkChannelWriter workChannelWriter,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
-  IOptions<SystemEventOptions>? systemEventOptions = null,
-  IWorkChannelWriter? workChannelWriter = null,
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<ImmediateWorkCoordinatorStrategy> _logger = logger ?? NullLogger<ImmediateWorkCoordinatorStrategy>.Instance;
-  private readonly IServiceScopeFactory? _scopeFactory = scopeFactory;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
-  private readonly IDeferredOutboxChannel? _deferredChannel = deferredChannel;
-  private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
+  private readonly ILogger<ImmediateWorkCoordinatorStrategy> _logger = logger;
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
+  private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions> _tracingOptions = tracingOptions;
+  private readonly IDeferredOutboxChannel _deferredChannel = deferredChannel;
+  private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly SystemEventOptions? _systemEventOptions = systemEventOptions?.Value;
+  private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
   private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
 
   /// <summary>
@@ -62,9 +62,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   public void QueueOutboxMessage(OutboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox", message.MessageType);
     _queues.AddOutboxMessage(message, _systemEventOptions);
-    if (_logger != null) {
-      LogOutboxMessageQueued(_logger);
-    }
+    LogOutboxMessageQueued(_logger);
   }
 
   /// <summary>
@@ -74,9 +72,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   public void QueueInboxMessage(InboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox", message.MessageType);
     _queues.AddInboxMessage(message);
-    if (_logger != null) {
-      LogInboxMessageQueued(_logger);
-    }
+    LogInboxMessageQueued(_logger);
   }
 
   /// <summary>
@@ -84,9 +80,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     _queues.AddOutboxCompletion(messageId, completedStatus);
-    if (_logger != null) {
-      LogOutboxCompletionQueued(_logger);
-    }
+    LogOutboxCompletionQueued(_logger);
   }
 
   /// <summary>
@@ -94,9 +88,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     _queues.AddInboxCompletion(messageId, completedStatus);
-    if (_logger != null) {
-      LogInboxCompletionQueued(_logger);
-    }
+    LogInboxCompletionQueued(_logger);
   }
 
   /// <summary>
@@ -104,9 +96,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     _queues.AddOutboxFailure(messageId, completedStatus, errorMessage);
-    if (_logger != null) {
-      LogOutboxFailureQueued(_logger);
-    }
+    LogOutboxFailureQueued(_logger);
   }
 
   /// <summary>
@@ -114,9 +104,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     _queues.AddInboxFailure(messageId, completedStatus, errorMessage);
-    if (_logger != null) {
-      LogInboxFailureQueued(_logger);
-    }
+    LogInboxFailureQueued(_logger);
   }
 
   /// <inheritdoc />
@@ -139,7 +127,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
     // are picked up here and included in the current work batch.
-    if (_deferredChannel?.HasPending == true) {
+    if (_deferredChannel.HasPending) {
       var deferredMessages = _deferredChannel.DrainAll();
       // Prepend deferred messages to the queue. The deferred channel bypasses
       // AddOutboxMessage, so this drain is a mint seam of its own — coalesce stamping
@@ -149,21 +137,17 @@ public partial class ImmediateWorkCoordinatorStrategy(
       foreach (var deferred in deferredMessages) {
         _queues.OutboxMessages.Insert(index++, _queues.Stamp(deferred));
       }
-      if (_logger != null) {
-        LogDeferredChannelDrained(_logger, deferredMessages.Count);
-      }
+      LogDeferredChannelDrained(_logger, deferredMessages.Count);
     }
 
     // Immediate strategy calls process_work_batch with all queued operations
-    if (_logger != null) {
-      LogFlushStarting(
-        _logger,
-        _queues.OutboxMessages.Count,
-        _queues.InboxMessages.Count,
-        _queues.OutboxCompletions.Count + _queues.InboxCompletions.Count,
-        _queues.OutboxFailures.Count + _queues.InboxFailures.Count
-      );
-    }
+    LogFlushStarting(
+      _logger,
+      _queues.OutboxMessages.Count,
+      _queues.InboxMessages.Count,
+      _queues.OutboxCompletions.Count + _queues.InboxCompletions.Count,
+      _queues.OutboxFailures.Count + _queues.InboxFailures.Count
+    );
 
     // Snapshot arrays from queues + pending audit messages
     var outboxMessages = _queues.OutboxMessages.ToArray();

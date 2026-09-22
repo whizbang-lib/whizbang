@@ -158,8 +158,8 @@ public abstract class ExecutionStrategyContractTests {
     await strategy.StartAsync();
     var envelope = CreateTestEnvelope("test");
     var context = CreateTestContext();
-    var cts = new CancellationTokenSource();
-    cts.Cancel();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
 
     // Act & Assert
     await Assert.That(async () => {

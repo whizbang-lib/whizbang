@@ -38,10 +38,10 @@ public class PinnedTypeLedgerGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("88888888-8888-8888-8888-888888888888");
-    await Assert.That(generated!).DoesNotContain("77777777-7777-7777-7777-777777777777")
+    await Assert.That(generated).Contains("88888888-8888-8888-8888-888888888888");
+    await Assert.That(generated).DoesNotContain("77777777-7777-7777-7777-777777777777")
       .Because("an abstract type has no concrete runtime instance to ever match a ledger entry");
-    await Assert.That(generated!).DoesNotContain("AbstractOrderEvent");
+    await Assert.That(generated).DoesNotContain("AbstractOrderEvent");
   }
 
   // ==================== Kind classification ====================
@@ -68,8 +68,8 @@ public class PinnedTypeLedgerGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("99999999-9999-9999-9999-999999999999");
-    await Assert.That(generated!).Contains("\"\"command\"\"")
+    await Assert.That(generated).Contains("99999999-9999-9999-9999-999999999999");
+    await Assert.That(generated).Contains("\"\"command\"\"")
       .Because("a pinned ICommand type must be recorded with kind \"command\" (JSON is @-escaped: \"\" == \")");
   }
 
@@ -95,8 +95,8 @@ public class PinnedTypeLedgerGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-    await Assert.That(generated!).Contains("\"\"message\"\"");
+    await Assert.That(generated).Contains("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    await Assert.That(generated).Contains("\"\"message\"\"");
   }
 
   /// <summary>
@@ -125,10 +125,10 @@ public class PinnedTypeLedgerGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("cccccccc-cccc-cccc-cccc-cccccccccccc");
-    await Assert.That(generated!).DoesNotContain("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    await Assert.That(generated).Contains("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    await Assert.That(generated).DoesNotContain("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
       .Because("a type with no recognized message/perspective kind must not be added to the ledger");
-    await Assert.That(generated!).DoesNotContain("UntrackedPojo");
+    await Assert.That(generated).DoesNotContain("UntrackedPojo");
   }
 
   // ==================== Pinned-id value validation ====================
@@ -159,8 +159,8 @@ public class PinnedTypeLedgerGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains("dddddddd-dddd-dddd-dddd-dddddddddddd");
-    await Assert.That(generated!).DoesNotContain("BlankIdEvent")
+    await Assert.That(generated).Contains("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    await Assert.That(generated).DoesNotContain("BlankIdEvent")
       .Because("a whitespace-only pinned id is not a usable identity and must not be committed to the ledger");
   }
 

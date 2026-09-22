@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -32,17 +33,17 @@ namespace Whizbang.Core.Tests.Messaging;
 [Category("Dispatcher")]
 public class DispatcherCompositePublishFanoutTests {
 
-  private sealed record _innerEvt(string Id) : IEvent;
+  private sealed record InnerEvt(string Id) : IEvent;
 
-  private sealed class _ownedComposite : CompositeEventBase;
+  private sealed class OwnedComposite : CompositeEventBase;
 
-  private sealed class _atomicComposite : CompositeEventBase {
-    public _atomicComposite() => Atomicity = FanoutAtomicity.Atomic;
+  private sealed class AtomicComposite : CompositeEventBase {
+    public AtomicComposite() => Atomicity = FanoutAtomicity.Atomic;
   }
 
-  private sealed record _localCascade(IMessage Message, IMessageEnvelope? Source);
+  private sealed record LocalCascade(IMessage Message, IMessageEnvelope? Source);
 
-  private sealed class _fakeSerializer : IEnvelopeSerializer {
+  private sealed class FakeSerializer : IEnvelopeSerializer {
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var aqn = envelope.Payload!.GetType().AssemblyQualifiedName!;
       var jsonEnv = new MessageEnvelope<JsonElement> {
@@ -56,9 +57,9 @@ public class DispatcherCompositePublishFanoutTests {
     public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotSupportedException();
   }
 
-  private sealed class _scopeFactory(IServiceProvider provider) : IServiceScopeFactory {
-    public IServiceScope CreateScope() => new _scope(provider);
-    private sealed class _scope(IServiceProvider provider) : IServiceScope {
+  private sealed class ScopeFactory(IServiceProvider provider) : IServiceScopeFactory {
+    public IServiceScope CreateScope() => new Scope(provider);
+    private sealed class Scope(IServiceProvider provider) : IServiceScope {
       public IServiceProvider ServiceProvider { get; } = provider;
       public void Dispose() { }
     }
@@ -68,16 +69,16 @@ public class DispatcherCompositePublishFanoutTests {
   // CascadeMessageAsync(Local), whose EventStore half lands here. Overriding it avoids needing a real event
   // store and lets us assert WHICH messages were fanned out locally and that they were sourced from the
   // composite (lineage). Inner events must NEVER reach the cascade-outbox seam (no rebroadcast).
-  private sealed class _fanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
-    public List<_localCascade> LocalEventStores { get; } = [];
+  private sealed class FanoutDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build())) {
+    public List<LocalCascade> LocalEventStores { get; } = [];
     public int InnerOutboxCascadeCount { get; private set; }
     public string? ThrowOnInnerId { get; set; }
 
     protected override Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
-      if (ThrowOnInnerId is not null && message is _innerEvt e && e.Id == ThrowOnInnerId) {
+      if (ThrowOnInnerId is not null && message is InnerEvt e && e.Id == ThrowOnInnerId) {
         throw new InvalidOperationException($"injected failure for inner '{e.Id}'");
       }
-      LocalEventStores.Add(new _localCascade(message, sourceEnvelope));
+      LocalEventStores.Add(new LocalCascade(message, sourceEnvelope));
       return Task.CompletedTask;
     }
     protected override Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
@@ -95,32 +96,32 @@ public class DispatcherCompositePublishFanoutTests {
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
-  private static _fanoutDispatcher _build(bool ownTestNamespace) {
+  private static FanoutDispatcher _build(bool ownTestNamespace) {
     var coordinator = new NoOpWorkCoordinator();
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceScopeFactory>(sp => new _scopeFactory(sp));
+    services.AddSingleton<IServiceScopeFactory>(sp => new ScopeFactory(sp));
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IEnvelopeSerializer>(new _fakeSerializer());
+    services.AddSingleton<IEnvelopeSerializer>(new FakeSerializer());
     services.Configure<RoutingOptions>(o => {
       if (ownTestNamespace) {
-        o.OwnDomains(typeof(_ownedComposite).Namespace!);
+        o.OwnDomains(typeof(OwnedComposite).Namespace!);
       }
     });
     var sp = services.BuildServiceProvider();
-    return new _fanoutDispatcher(sp);
+    return new FanoutDispatcher(sp);
   }
 
   [Test]
   public async Task OwnedComposite_LocalPublishesEachInnerEventAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: true);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b"), new _innerEvt("c")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
     await dispatcher.PublishAsync(composite);
 
-    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<InnerEvt>().Select(e => e.Id).ToList();
     await Assert.That(fannedOut).IsEquivalentTo(["a", "b", "c"])
       .Because("an owned composite local-publishes each inner event at publish (local dispatch + event store).");
     await Assert.That(dispatcher.InnerOutboxCascadeCount).IsEqualTo(0)
@@ -130,14 +131,14 @@ public class DispatcherCompositePublishFanoutTests {
   [Test]
   public async Task OwnedComposite_FansOutAtPublish_ViaDispatchOptionsOverloadAsync() {
     var dispatcher = _build(ownTestNamespace: true);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
     await dispatcher.PublishAsync(composite, new DispatchOptions());
 
-    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<InnerEvt>().Select(e => e.Id).ToList();
     await Assert.That(fannedOut).IsEquivalentTo(["a", "b"])
       .Because("the DispatchOptions overload fans out an owned composite at publish, same as the simple overload.");
   }
@@ -145,17 +146,17 @@ public class DispatcherCompositePublishFanoutTests {
   [Test]
   public async Task OwnedComposite_InnerEventsSourcedFromCompositeForLineageAsync() {
     var dispatcher = _build(ownTestNamespace: true);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
     await dispatcher.PublishAsync(composite);
 
-    var innerCascades = dispatcher.LocalEventStores.Where(c => c.Message is _innerEvt).ToList();
+    var innerCascades = dispatcher.LocalEventStores.Where(c => c.Message is InnerEvt).ToList();
     await Assert.That(innerCascades.Count).IsEqualTo(2);
     foreach (var cascade in innerCascades) {
-      await Assert.That(cascade.Source?.Payload is _ownedComposite).IsTrue()
+      await Assert.That(cascade.Source?.Payload is OwnedComposite).IsTrue()
         .Because("each inner event is local-published sourced from the composite, so its stored hop traces back to it.");
     }
   }
@@ -163,16 +164,16 @@ public class DispatcherCompositePublishFanoutTests {
   [Test]
   public async Task OwnedComposite_OverCap_ThrowsAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: true);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
       MaxInnerEventsAllowed = 1,
-      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
     await Assert.That(async () => await dispatcher.PublishAsync(composite))
       .ThrowsExactly<InvalidOperationException>()
       .Because("a composite over MaxInnerEventsAllowed fails fast at publish so a runaway producer surfaces synchronously.");
-    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is _innerEvt)).IsFalse()
+    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is InnerEvt)).IsFalse()
       .Because("the cap is checked before any child is fanned out.");
   }
 
@@ -180,14 +181,14 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_IndependentAtomicity_SkipsFailedChild_ContinuesAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     dispatcher.ThrowOnInnerId = "b";  // default Atomicity is Independent
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b"), new _innerEvt("c")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
     await dispatcher.PublishAsync(composite);
 
-    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<InnerEvt>().Select(e => e.Id).ToList();
     await Assert.That(fannedOut).IsEquivalentTo(["a", "c"])
       .Because("Independent atomicity drops the failed child ('b') and fans out the rest.");
   }
@@ -196,9 +197,9 @@ public class DispatcherCompositePublishFanoutTests {
   public async Task OwnedComposite_AtomicAtomicity_PropagatesChildFailureAsync() {
     var dispatcher = _build(ownTestNamespace: true);
     dispatcher.ThrowOnInnerId = "b";
-    var composite = new _atomicComposite {
+    var composite = new AtomicComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b"), new _innerEvt("c")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b"), new InnerEvt("c")],
     };
 
     await Assert.That(async () => await dispatcher.PublishAsync(composite))
@@ -209,14 +210,14 @@ public class DispatcherCompositePublishFanoutTests {
   [Test]
   public async Task OwnedComposite_SkipsNullInnerAsync() {
     var dispatcher = _build(ownTestNamespace: true);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), null!, new _innerEvt("c")],
+      Inner = [new InnerEvt("a"), null!, new InnerEvt("c")],
     };
 
     await dispatcher.PublishAsync(composite);
 
-    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<_innerEvt>().Select(e => e.Id).ToList();
+    var fannedOut = dispatcher.LocalEventStores.Select(c => c.Message).OfType<InnerEvt>().Select(e => e.Id).ToList();
     await Assert.That(fannedOut).IsEquivalentTo(["a", "c"])
       .Because("a null inner event is skipped without failing the fan-out.");
   }
@@ -224,14 +225,14 @@ public class DispatcherCompositePublishFanoutTests {
   [Test]
   public async Task NonOwnedComposite_DoesNotFanOutAtPublishAsync() {
     var dispatcher = _build(ownTestNamespace: false);
-    var composite = new _ownedComposite {
+    var composite = new OwnedComposite {
       StreamId = (Guid)TrackedGuid.NewMedo(),
-      Inner = [new _innerEvt("a"), new _innerEvt("b")],
+      Inner = [new InnerEvt("a"), new InnerEvt("b")],
     };
 
     await dispatcher.PublishAsync(composite);
 
-    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is _innerEvt)).IsFalse()
+    await Assert.That(dispatcher.LocalEventStores.Any(c => c.Message is InnerEvt)).IsFalse()
       .Because("a composite outside the service's owned domains fans out only at the receive-side (other services).");
   }
 }

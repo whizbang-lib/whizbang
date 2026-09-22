@@ -113,7 +113,7 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
       .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p", npgsql => npgsql.UseWhizbangFunctions())
       .Options);
 
-  private ImmutableArray<(string Name, string Sql)> _rewrites() {
+  private static ImmutableArray<(string Name, string Sql)> _rewrites() {
     using var context = _context();
     return CanonicalTemporalRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, "public");
   }

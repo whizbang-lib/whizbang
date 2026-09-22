@@ -21,9 +21,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard2")]
 public class StackHistorySqlTests : EFCoreTestBase {
 
-  private EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
-    new(ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
-      EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+  private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _svc(WorkCoordinationDbContext ctx) =>
+    new(ctx, null);
 
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, string errorText) {
     var id = (Guid)TrackedGuid.NewMedo();

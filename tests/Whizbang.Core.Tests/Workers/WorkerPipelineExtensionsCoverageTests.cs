@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -112,6 +113,9 @@ public class WorkerPipelineExtensionsCoverageTests {
     // forever and the test hangs to its timeout rather than failing -- the storage write this test
     // is about is downstream of that wait.
     services.AddSingleton<ISchemaReadyGate>(SchemaReadyGate.AlreadyReady());
+    // Lifecycle stages run only where a receptor invoker exists; without one the helper skips the
+    // stage before deserializing, and the throwing deserializer this test is about is never reached.
+    services.AddSingleton<IReceptorInvoker>(new NullReceptorInvoker());
 
     await using var provider = services.BuildServiceProvider();
     var callback = provider.GetRequiredService<OutboxBulkFlushCallback>();
@@ -162,6 +166,7 @@ public class WorkerPipelineExtensionsCoverageTests {
 
   private static ServiceCollection _composeWorkerPipeline() {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbangWorkers();
     return services;
@@ -274,16 +279,14 @@ public class WorkerPipelineExtensionsCoverageTests {
     public Task WaitForAsync(
         Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> predicate) {
       lock (_sync) {
-        foreach (var existing in _entries) {
-          if (predicate(existing)) { return Task.CompletedTask; }
-        }
+        if (_entries.Any(predicate)) { return Task.CompletedTask; }
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _waiters.Add((predicate, signal));
         return signal.Task;
       }
     }
 
-    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, this);
+    public ILogger CreateLogger(string categoryName) => new RecordingLogger(categoryName, this);
 
     public void Dispose() { }
 
@@ -303,7 +306,7 @@ public class WorkerPipelineExtensionsCoverageTests {
       foreach (var signal in ready) { signal.TrySetResult(); }
     }
 
-    private sealed class _RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
+    private sealed class RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
       public bool IsEnabled(LogLevel logLevel) => true;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -40,8 +41,8 @@ public class IntegrityReceptorsPriorityTests {
 
   [Test]
   public async Task CheckpointReceptor_ConfirmedGap_TheRepairRequestIsBackgroundAsync() {
-    var coordinator = new _verifyCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new VerifyCoordinator();
+    var transport = new CaptureTransport();
     var sp = _checkpointProvider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
     var receptor = new IntegrityCheckpointReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
     var originId = TrackedGuid.NewMedo().Value;
@@ -57,8 +58,8 @@ public class IntegrityReceptorsPriorityTests {
 
   [Test]
   public async Task CheckpointReceptor_HandledInsideAnInteractiveHandling_TheRepairRequestStaysBackgroundAsync() {
-    var coordinator = new _verifyCoordinator();
-    var transport = new _captureTransport();
+    var coordinator = new VerifyCoordinator();
+    var transport = new CaptureTransport();
     var sp = _checkpointProvider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
     var receptor = new IntegrityCheckpointReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance);
     var originId = TrackedGuid.NewMedo().Value;
@@ -76,10 +77,10 @@ public class IntegrityReceptorsPriorityTests {
 
   [Test]
   public async Task ManifestRequestReceptor_EveryManifestChunkIsBackgroundAsync() {
-    var coordinator = new _auditCoordinator {
+    var coordinator = new AuditCoordinator {
       OwnDigests = [_digest(TrackedGuid.NewMedo().Value, 11, 21, 2), _digest(TrackedGuid.NewMedo().Value, 12, 22, 1), _digest(TrackedGuid.NewMedo().Value, 13, 23, 3)],
     };
-    var transport = new _captureTransport();
+    var transport = new CaptureTransport();
     var sp = _manifestProvider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
@@ -98,8 +99,8 @@ public class IntegrityReceptorsPriorityTests {
   public async Task ManifestReceptor_CursorAnswer_TheFollowUpRequestIsBackgroundAsync() {
     var cursor = TrackedGuid.NewMedo().Value;
     var stream = TrackedGuid.NewMedo().Value;
-    var coordinator = new _auditCoordinator { ReceivedDigests = [_digest(stream, 41, 42, 5)] };
-    var transport = new _captureTransport();
+    var coordinator = new AuditCoordinator { ReceivedDigests = [_digest(stream, 41, 42, 5)] };
+    var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _manifestProvider(coordinator, transport, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
@@ -139,7 +140,7 @@ public class IntegrityReceptorsPriorityTests {
   };
 
 
-  private static IntegrityManifest _manifest(_auditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+  private static IntegrityManifest _manifest(AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
     ManifestStreamId = coordinator.OriginId,
     OriginServiceId = coordinator.OriginId,
     OriginServiceName = "origin-svc",
@@ -148,18 +149,18 @@ public class IntegrityReceptorsPriorityTests {
     Recomputed = false,
   };
 
-  private static ServiceProvider _checkpointProvider(_verifyCoordinator coordinator, _captureTransport transport, StreamIntegrityOptions options) {
+  private static ServiceProvider _checkpointProvider(VerifyCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions options) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IDispatcher>(new _captureDispatcher());
+    services.AddSingleton<IDispatcher>(new CaptureDispatcher());
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
+    services.AddSingleton(new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())));
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new _typeProvider());
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
+    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     services.AddSingleton(Options.Create(options));
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination("inbox"));
@@ -168,13 +169,13 @@ public class IntegrityReceptorsPriorityTests {
   }
 
   private static ServiceProvider _manifestProvider(
-      _auditCoordinator coordinator, _captureTransport transport, StreamIntegrityOptions? options = null, IntegrityGapTracker? tracker = null) {
+      AuditCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions? options = null, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
-    services.AddSingleton<IDispatcher>(new _captureDispatcher());
+    services.AddSingleton<IDispatcher>(new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("auditor-svc"));
+    services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("auditor-svc"));
     services.AddSingleton(Options.Create(options ?? new StreamIntegrityOptions { PublishReportEvents = true }));
     if (tracker is not null) {
       services.AddSingleton(tracker);
@@ -187,11 +188,11 @@ public class IntegrityReceptorsPriorityTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class _typeProvider : IEventTypeProvider {
+  private sealed class TypeProvider : IEventTypeProvider {
     public IReadOnlyList<Type> GetEventTypes() => [typeof(IntegrityCheckpointReceptorTests.VerifiedEvent)];
   }
 
-  private sealed class _instanceProvider(string serviceName) : IServiceInstanceProvider {
+  private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public string ServiceName => serviceName;
     public string HostName => "test-host";
@@ -205,24 +206,24 @@ public class IntegrityReceptorsPriorityTests {
   }
 
   /// <summary>The members every coordinator fake here needs; the rest of the interface keeps its defaults.</summary>
-  private abstract class _coordinatorBase : IWorkCoordinator {
+  private abstract class CoordinatorBase : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) => Task.FromResult(LocalServiceId);
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken ct = default) => Task.FromResult(new PartitionRecomputeResult());
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
   /// <summary>Consumer side of a checkpoint: received nothing, so every bucket is a deficit.</summary>
-  private sealed class _verifyCoordinator : _coordinatorBase, IWorkCoordinator {
+  private sealed class VerifyCoordinator : CoordinatorBase, IWorkCoordinator {
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<ServiceBacklog?>(null);
     public Task<IReadOnlyList<CheckpointBucket>> CountReceivedFromOriginAsync(
       Guid originServiceId, long fromCommitSequence, long toCommitSequence, CancellationToken cancellationToken = default) =>
@@ -230,12 +231,12 @@ public class IntegrityReceptorsPriorityTests {
   }
 
   /// <summary>Both sides of a manifest exchange: own digests when asked as an origin, received digests when comparing as a consumer.</summary>
-  private sealed class _auditCoordinator : _coordinatorBase, IWorkCoordinator {
+  private sealed class AuditCoordinator : CoordinatorBase, IWorkCoordinator {
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
     public IReadOnlyList<StreamDigest> OwnDigests { get; init; } = [];
     public IReadOnlyList<StreamDigest> ReceivedDigests { get; init; } = [];
     public IReadOnlyList<StreamDigest> ReceivedTypeDigests { get; init; } = [];
-    public WindowedDigestResult? WindowedTypeResult { get; init; }
+    public WindowedDigestResult? WindowedTypeResult { get; }
     public Task<IReadOnlyList<StreamDigest>> ComputeStreamDigestsAsync(
       Guid? originServiceId, IReadOnlyList<string>? eventTypes, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
       Task.FromResult(originServiceId is null ? OwnDigests : ReceivedDigests);
@@ -269,7 +270,7 @@ public class IntegrityReceptorsPriorityTests {
       Task.CompletedTask;
   }
 
-  private sealed class _captureTransport : ITransport {
+  private sealed class CaptureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -285,11 +286,11 @@ public class IntegrityReceptorsPriorityTests {
   }
 
   /// <summary>Accepts publishes (report events are not the subject here); every other member is unused.</summary>
-  private sealed class _captureDispatcher : IDispatcher {
+  private sealed class CaptureDispatcher : IDispatcher {
     public List<object> Published { get; } = [];
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       Published.Add(eventData!);
-      return Task.FromResult<IDeliveryReceipt>(new _receipt());
+      return Task.FromResult<IDeliveryReceipt>(new Receipt());
     }
     public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => PublishAsync(eventData);
     public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotSupportedException();
@@ -322,7 +323,7 @@ public class IntegrityReceptorsPriorityTests {
     public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) => throw new NotSupportedException();
-    private sealed class _receipt : IDeliveryReceipt {
+    private sealed class Receipt : IDeliveryReceipt {
       public MessageId MessageId => MessageId.New();
       public CorrelationId? CorrelationId => null;
       public MessageId? CausationId => null;

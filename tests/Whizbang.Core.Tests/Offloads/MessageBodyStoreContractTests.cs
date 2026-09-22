@@ -7,12 +7,14 @@ using Whizbang.Core.Offloads;
 namespace Whizbang.Core.Tests.Offloads;
 
 /// <summary>
+/// <para>
 /// Locks the Whizbang.Core.Offloads contract surface — the abstractions
 /// the body-offload (claim-check) feature builds on. These types live in
 /// Whizbang.Core so concrete provider projects (Whizbang.Offloads.InMemory,
 /// Whizbang.Offloads.AzureBlob, etc.) can depend on them without pulling
 /// Whizbang.Core into provider-specific transitive dependency graphs.
-///
+/// </para>
+/// <para>
 /// What gets locked here:
 ///   - <see cref="MessageBodyClaim"/> record shape: every field load-bearing
 ///     (StorageKey + ContentHash drive integrity check on download; Size +
@@ -24,6 +26,7 @@ namespace Whizbang.Core.Tests.Offloads;
 ///   - <see cref="IMessageBodyStore"/> contract: a non-abstract impl
 ///     compiles, ProviderName surfaces, and the three methods reach
 ///     their override
+/// </para>
 /// </summary>
 /// <docs>fundamentals/offloads/message-body-store</docs>
 public class MessageBodyStoreContractTests {
@@ -128,14 +131,14 @@ public class MessageBodyStoreContractTests {
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_ProviderNameSurfacesAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
 
     await Assert.That(store.ProviderName).IsEqualTo("test-noop");
   }
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_UploadAndDownloadRoundTripAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
     var body = new byte[] { 1, 2, 3, 4 };
 
     var claim = await store.UploadAsync(body, "application/octet-stream");
@@ -148,7 +151,7 @@ public class MessageBodyStoreContractTests {
 
   [Test]
   public async Task IMessageBodyStore_NoOpImpl_DeleteWithNullOptionsAsync() {
-    IMessageBodyStore store = new _noOpStore("test-noop");
+    IMessageBodyStore store = new NoOpStore("test-noop");
     var claim = await store.UploadAsync(new byte[] { 0xAA }, "application/octet-stream");
 
     // Must not throw — provider impls MUST tolerate null options for all three operations.
@@ -167,12 +170,10 @@ public class MessageBodyStoreContractTests {
   /// dispatches. Not exported — provider projects (Slice 4) ship the real
   /// in-memory + Azure Blob impls.
   /// </summary>
-  private sealed class _noOpStore : IMessageBodyStore {
+  private sealed class NoOpStore(string providerName) : IMessageBodyStore {
     private readonly Dictionary<string, byte[]> _bodies = [];
-    public _noOpStore(string providerName) {
-      ProviderName = providerName;
-    }
-    public string ProviderName { get; }
+
+    public string ProviderName { get; } = providerName;
 
     public Task<MessageBodyClaim> UploadAsync(
       ReadOnlyMemory<byte> body,

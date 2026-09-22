@@ -24,7 +24,7 @@ public class SignalBusCoverageTests {
   /// </summary>
   [Test]
   public async Task ReceiveAsync_NoSubscriberRegistered_CompletesAsNoOpAsync() {
-    SignalBus bus = new([]);
+    SignalBus bus = new(transports: [], pullSources: []);
 
     var receive = bus.ReceiveAsync(new UnsubscribedSignal(42), CancellationToken.None);
 

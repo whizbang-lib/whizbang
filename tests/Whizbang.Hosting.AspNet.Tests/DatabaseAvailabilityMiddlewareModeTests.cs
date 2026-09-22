@@ -17,7 +17,7 @@ public class DatabaseAvailabilityMiddlewareModeTests {
   private sealed class FakeGate(bool ready) : ISchemaReadyGate {
     public bool IsReady { get; } = ready;
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   private static async Task<int> _statusAsync(AvailabilityGateMode mode, string method, string path, bool ready) {

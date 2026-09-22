@@ -595,42 +595,6 @@ public interface IDispatcher {
       where TPerspective : class
       => throw new NotSupportedException("LocalInvokeAndSyncAsync with specific perspective requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
 
-  /// <summary>
-  /// Invokes a void receptor and waits for a SPECIFIC perspective to process
-  /// any events emitted during the invocation.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Unlike <see cref="LocalInvokeAndSyncAsync{TMessage}(TMessage,TimeSpan?,Action{Perspectives.Sync.SyncWaitingContext}?,Action{Perspectives.Sync.SyncDecisionContext}?,CancellationToken)"/>
-  /// which waits for ALL perspectives, this method waits only for the specified perspective type.
-  /// </para>
-  /// <para>
-  /// This method is named differently from the result-returning overload to avoid generic type
-  /// parameter ambiguity between TMessage,TResult and TMessage,TPerspective.
-  /// </para>
-  /// </remarks>
-  /// <typeparam name="TMessage">The message type.</typeparam>
-  /// <typeparam name="TPerspective">The perspective type to wait for.</typeparam>
-  /// <param name="message">The message to process.</param>
-  /// <param name="timeout">Maximum time to wait for the perspective to sync. Defaults to 30 seconds.</param>
-  /// <param name="onWaiting">Optional callback invoked when waiting begins.</param>
-  /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
-  /// <param name="cancellationToken">A cancellation token.</param>
-  /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
-  Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
-      TMessage message,
-      TimeSpan? timeout = null,
-      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
-      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
-      CancellationToken cancellationToken = default)
-      where TMessage : notnull
-      where TPerspective : class
-      => throw new NotSupportedException("LocalInvokeAndSyncForPerspectiveAsync requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
-
-  // ========================================
-  // W4 — SYNC MODE (NEW SHAPE, NO TIMEOUT)
-  // ========================================
 
   /// <summary>
   /// Invokes a receptor in-process and waits for completion as defined by
@@ -669,6 +633,43 @@ public interface IDispatcher {
       where TMessage : notnull
       => throw new System.NotSupportedException(
           "LocalInvokeAndSyncAsync(SyncMode) requires a Dispatcher implementation with IEventCompletionAwaiter / IEventStore support. Ensure AddWhizbang() ran.");
+
+  /// <summary>
+  /// Invokes a void receptor and waits for a SPECIFIC perspective to process
+  /// any events emitted during the invocation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Unlike <see cref="LocalInvokeAndSyncAsync{TMessage}(TMessage,TimeSpan?,Action{Perspectives.Sync.SyncWaitingContext}?,Action{Perspectives.Sync.SyncDecisionContext}?,CancellationToken)"/>
+  /// which waits for ALL perspectives, this method waits only for the specified perspective type.
+  /// </para>
+  /// <para>
+  /// This method is named differently from the result-returning overload to avoid generic type
+  /// parameter ambiguity between TMessage,TResult and TMessage,TPerspective.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <typeparam name="TPerspective">The perspective type to wait for.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for the perspective to sync. Defaults to 30 seconds.</param>
+  /// <param name="onWaiting">Optional callback invoked when waiting begins.</param>
+  /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
+  Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
+      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class
+      => throw new NotSupportedException("LocalInvokeAndSyncForPerspectiveAsync requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
+
+  // ========================================
+  // W4 — SYNC MODE (NEW SHAPE, NO TIMEOUT)
+  // ========================================
 
   // ========================================
   // BATCH OPERATIONS

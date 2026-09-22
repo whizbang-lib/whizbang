@@ -1,16 +1,21 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -79,7 +84,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Queue one of each to ensure the unflushed-operations branch is reached
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -109,7 +114,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Queue completions and failures (not just messages) to test all unflushed counters
     sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
@@ -133,13 +138,22 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_EmptyQueues_WithMetricsAndLogger_RecordsEmptyFlushAndLogsAsync() {
     // Arrange
     var logger = new FullCoverageRecordingLogger<IntervalWorkCoordinatorStrategy>();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     try {
       // Act
@@ -163,13 +177,22 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_WithItems_WithMetricsAndLogger_TracksMetricsAndLogsAsync() {
     // Arrange
     var logger = new FullCoverageRecordingLogger<IntervalWorkCoordinatorStrategy>();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -180,7 +203,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     try {
       // Act
-      var result = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Assert — outbox + inbox each trigger their own store call
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -201,7 +224,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var throwingCoordinator = new FullCoverageThrowingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -227,7 +250,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     // Act — dispose with empty queues
     await sut.DisposeAsync();
@@ -248,6 +271,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var logger = new FullCoverageRecordingLogger<IntervalWorkCoordinatorStrategy>();
     var scopedCoordinator = new FullCoverageTrackingCoordinator();
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddScoped<IWorkCoordinator>(_ => scopedCoordinator);
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -259,7 +283,11 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       instanceProvider: instanceProvider,
       options: options,
       logger: logger,
-      scopeFactory: scopeFactory
+      scopeFactory: scopeFactory,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -284,13 +312,22 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
   public async Task FlushAsync_BestEffort_WithMetricsAndLogger_RecordsMetricsAndReturnsEmptyAsync() {
     // Arrange
     var logger = new FullCoverageRecordingLogger<IntervalWorkCoordinatorStrategy>();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(
-      coordinator, instanceProvider, options, logger, metrics: metrics);
+      coordinator: coordinator,
+      instanceProvider: instanceProvider,
+      options: options,
+      logger: logger,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -316,7 +353,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueInboxMessage(_createInboxMessage());
 
@@ -333,7 +370,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
   }
 
   // ============================================================
-  // Deleted as obsolete (completion/failure-only flush no longer touches coordinator;
+  // Deleted as obsolete (completion/failure-only flush no longer touches coordinator —
   // routes via IOutboxCompletionChannel / IFailureChannel, covered in WorkCoordinatorFlushHelperTests):
   //   FlushAsync_CompletionsOnly_WithLogger_LogsFlushAsync
   //   FlushAsync_FailuresOnly_WithLogger_LogsFlushAsync
@@ -353,7 +390,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
 
     sut.QueueInboxMessage(_createInboxMessage());
 
@@ -390,7 +427,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = messages;
@@ -415,7 +452,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
       LastNewInboxMessages = messages;
       return Task.CompletedTask;
@@ -441,7 +478,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
-      int partitionCount = 2,
+      int partitionCount,
       CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _storeOutboxCalls);
       throw new InvalidOperationException("Simulated failure");
@@ -455,7 +492,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       throw new InvalidOperationException("Simulated failure");
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());

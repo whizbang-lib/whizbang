@@ -93,7 +93,7 @@ public class PostgresSignalTransportStreamsTargetTests : EFCoreTestBase {
 
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
-    var bus = new SignalBus([transport]);
+    var bus = new SignalBus(transports: [transport], pullSources: []);
 
     var received = new TaskCompletionSource<StreamsTargetedTransportProbe>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<StreamsTargetedTransportProbe>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });

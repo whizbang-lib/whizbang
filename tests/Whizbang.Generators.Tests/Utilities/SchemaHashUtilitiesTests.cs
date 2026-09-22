@@ -416,7 +416,7 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
     var indexes = new List<IndexSchema> {
-      new("ix_orders_tenant", new List<string> { "tenant_id", "created_at" }, "btree", IsUnique: false)
+      new("ix_orders_tenant", ["tenant_id", "created_at"], "btree", IsUnique: false)
     };
     var schema = new PerspectiveTableSchema(columns, indexes);
 
@@ -432,12 +432,12 @@ public class SchemaHashUtilitiesTests {
     var columns = new List<ColumnSchema> {
       new("id", "uuid", false, true, false, null)
     };
-    var forward = new PerspectiveTableSchema(columns, new List<IndexSchema> {
-      new("ix", new List<string> { "a", "b", "c" }, "btree", IsUnique: false)
-    });
-    var shuffled = new PerspectiveTableSchema(columns, new List<IndexSchema> {
-      new("ix", new List<string> { "c", "a", "b" }, "btree", IsUnique: false)
-    });
+    var forward = new PerspectiveTableSchema(columns, [
+      new("ix", ["a", "b", "c"], "btree", IsUnique: false)
+    ]);
+    var shuffled = new PerspectiveTableSchema(columns, [
+      new("ix", ["c", "a", "b"], "btree", IsUnique: false)
+    ]);
 
     await Assert.That(SchemaHashUtilities.ToCanonicalJson(shuffled))
         .IsEqualTo(SchemaHashUtilities.ToCanonicalJson(forward));
@@ -448,12 +448,12 @@ public class SchemaHashUtilitiesTests {
     var columns = new List<ColumnSchema> {
       new("id", "uuid", false, true, false, null)
     };
-    var forward = new PerspectiveTableSchema(columns, new List<IndexSchema> {
-      new("ix", new List<string> { "a", "b" }, "btree", IsUnique: true)
-    });
-    var shuffled = new PerspectiveTableSchema(columns, new List<IndexSchema> {
-      new("ix", new List<string> { "b", "a" }, "btree", IsUnique: true)
-    });
+    var forward = new PerspectiveTableSchema(columns, [
+      new("ix", ["a", "b"], "btree", IsUnique: true)
+    ]);
+    var shuffled = new PerspectiveTableSchema(columns, [
+      new("ix", ["b", "a"], "btree", IsUnique: true)
+    ]);
 
     await Assert.That(SchemaHashUtilities.ComputeSchemaHash(shuffled))
         .IsEqualTo(SchemaHashUtilities.ComputeSchemaHash(forward));
@@ -464,10 +464,10 @@ public class SchemaHashUtilitiesTests {
     var columns = new List<ColumnSchema> {
       new("id", "uuid", false, true, false, null)
     };
-    var without = new PerspectiveTableSchema(columns, new List<IndexSchema>());
-    var with = new PerspectiveTableSchema(columns, new List<IndexSchema> {
-      new("ix", new List<string> { "a" }, "btree", IsUnique: false)
-    });
+    var without = new PerspectiveTableSchema(columns, []);
+    var with = new PerspectiveTableSchema(columns, [
+      new("ix", ["a"], "btree", IsUnique: false)
+    ]);
 
     await Assert.That(SchemaHashUtilities.ComputeSchemaHash(with))
         .IsNotEqualTo(SchemaHashUtilities.ComputeSchemaHash(without));

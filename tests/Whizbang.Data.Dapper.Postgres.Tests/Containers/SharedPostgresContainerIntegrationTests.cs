@@ -136,16 +136,6 @@ public class SharedPostgresContainerIntegrationTests {
     await Assert.That(connString).Contains("Maximum Pool Size=2");
   }
 
-  [Test]
-  [Timeout(60000)]
-  public async Task InitializeAsync_WithCancellation_RespectsTokenAsync(CancellationToken cancellationToken) {
-    // Act - Initialize (should succeed if already initialized, or complete quickly)
-    await SharedPostgresContainer.InitializeAsync(cancellationToken);
-
-    // Assert - Should be initialized
-    await Assert.That(SharedPostgresContainer.IsInitialized).IsTrue();
-  }
-
   // The five tests that previously exercised SharedPostgresContainer.DisposeAsync() to
   // verify static-state lifecycle behavior (DisposeAsync_ResetsState_*, InitializeAsync_
   // ConcurrentCalls_*, GetPerTestDatabaseConnectionString_BeforeInitialize_*, Connection

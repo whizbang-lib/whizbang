@@ -40,7 +40,7 @@ public class AsbDeadLetterImportSeamIntegrationTests(ServiceBusEmulatorFixtureSo
   private const string CUSTODY_SUB = "sub-dlq-import-custody";
   private const string NO_CUSTODY_SUB = "sub-dlq-import-nocustody";
 
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
+  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
 
   [Test]
   public async Task DrainDeadLetterQueue_WithACoordinatorRegistered_ImportsThroughTheSeamAndSettlesTheBrokerCopyAsync(
@@ -266,7 +266,7 @@ public class AsbDeadLetterImportSeamIntegrationTests(ServiceBusEmulatorFixtureSo
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
 
     public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>

@@ -68,55 +68,55 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
 
     public Task<IReadOnlyList<PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
         string clrTypeName, string tableName, IReadOnlyCollection<Guid> rowIds,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<PerspectiveRowDestructionTarget>>(RowsById);
 
     public Task HoldPerspectiveRowDestructionAsync(
-        IReadOnlyCollection<PerspectiveRowRef> rows, DateTimeOffset holdUntil, CancellationToken ct = default) {
+        IReadOnlyCollection<PerspectiveRowRef> rows, DateTimeOffset holdUntil, CancellationToken cancellationToken = default) {
       lock (Held) { Held.AddRange(rows.Select(r => (r, holdUntil))); }
       return Task.CompletedTask;
     }
 
     public Task<int> RecordPerspectiveRowDestructionFailureAsync(
         IReadOnlyCollection<PerspectiveRowRef> rows, TimeSpan retryBackoff, int maxRetries,
-        OnDestroyFailure onDestroyFailure, CancellationToken ct = default) {
+        OnDestroyFailure onDestroyFailure, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref FailuresRecorded);
       return Task.FromResult(1);
     }
 
     public Task<IReadOnlyList<PerspectiveRowRef>> DrainRowEvictionJournalAsync(
-        int limit = 1000, CancellationToken ct = default)
+        int limit = 1000, CancellationToken cancellationToken = default)
       => DrainThrows is not null
         ? Task.FromException<IReadOnlyList<PerspectiveRowRef>>(DrainThrows)
         : Task.FromResult<IReadOnlyList<PerspectiveRowRef>>(Journal);
 
     public Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
-        IReadOnlyCollection<string> clrTypeNames, CancellationToken ct = default)
+        IReadOnlyCollection<string> clrTypeNames, CancellationToken cancellationToken = default)
       => Task.FromResult<IReadOnlyList<PerspectiveTableName>>(Tables);
 
     public Task<int> CascadeDeletePerspectiveRowsAsync(
-        string tableName, IReadOnlyCollection<Guid> rowIds, CancellationToken ct = default) {
+        string tableName, IReadOnlyCollection<Guid> rowIds, CancellationToken cancellationToken = default) {
       lock (Deleted) { Deleted.Add((tableName, rowIds)); }
       return Task.FromResult(rowIds.Count);
     }
 
     public Task RequeueRowEvictionsAsync(
-        IReadOnlyCollection<PerspectiveRowRef> rows, CancellationToken ct = default) {
+        IReadOnlyCollection<PerspectiveRowRef> rows, CancellationToken cancellationToken = default) {
       lock (Requeued) { Requeued.AddRange(rows); }
       return Task.CompletedTask;
     }
 
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
-        Guid streamId, string perspectiveName, CancellationToken ct = default)
+        Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
   }
 
@@ -127,7 +127,7 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     public int AfterCalls;
 
     public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken ct = default) {
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken cancellationToken = default) {
       if (throws is not null) {
         return ValueTask.FromException<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(throws);
       }
@@ -139,7 +139,7 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     }
 
     public ValueTask OnAfterReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken ct = default) {
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref AfterCalls);
       return ValueTask.CompletedTask;
     }
@@ -384,14 +384,14 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     public IReadOnlyCollection<Type> GuardedModels => [typeof(FollowerModel)];
 
     public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken ct = default) {
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken cancellationToken = default) {
       stopping.Cancel();
       return ValueTask.FromException<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(
         new OperationCanceledException());
     }
 
     public ValueTask OnAfterReapAsync(
-        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken ct = default)
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 

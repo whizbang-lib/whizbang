@@ -246,7 +246,7 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
 
   [Test]
   public async Task ReadPolymorphicAsync_HopsJsonNull_YieldsEnvelopeWithEmptyHopsAsync() {
-    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm;
+    // Arrange - "hops": null exercises the Deserialize-returns-null ?? [] arm —
     // scope is SQL NULL, covering the scope-absent early return
     var store = _createStore();
     var streamId = (Guid)TrackedGuid.NewMedo();

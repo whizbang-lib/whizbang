@@ -21,7 +21,7 @@ public class PassiveCounterTests {
   public async Task UntaggedSeries_ExistsAtZero_BeforeAnyAddAsync() {
     using var meter = new Meter("Whizbang.Tests.PassiveCounter.A");
     using var observed = new Observed(meter);
-    var counter = meter.CreatePassiveCounter<long>("passive.untagged");
+    _ = meter.CreatePassiveCounter<long>("passive.untagged");
 
     observed.Collect();
 

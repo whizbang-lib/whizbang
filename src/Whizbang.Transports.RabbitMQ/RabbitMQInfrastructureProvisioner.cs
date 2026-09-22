@@ -250,8 +250,9 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
       try {
         await queueProbe.Channel.QueueDeclarePassiveAsync(queueName, cancellationToken);
         // Both exist — a previous boot of THIS service explains the exchange. Not drift.
-      } catch (OperationInterruptedException) {
+      } catch (OperationInterruptedException queueMissing) {
         _logger.LogError(
+          queueMissing,
           "Topology ownership drift: command inbox exchange '{ExchangeName}' already exists but this service's queue '{QueueName}' does not — another service appears to have claimed the entity; one service owns a command namespace",
           exchangeName,
           queueName);

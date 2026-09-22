@@ -737,7 +737,7 @@ public class AzureServiceBusErrorHandlingTests {
     }
 
     public override ServiceBusSessionProcessor CreateSessionProcessor(
-      string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options) {
+      string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options = default!) {
       LastSessionProcessor = new FakeSessionProcessor();
       return LastSessionProcessor;
     }

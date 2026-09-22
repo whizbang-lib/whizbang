@@ -11,6 +11,7 @@ namespace Whizbang.Sagas.Services;
 /// route saga events through a non-dispatcher pipeline (e.g. an
 /// in-memory simulator) can swap the implementation.
 /// </summary>
+/// <docs>fundamentals/sagas/whizbang-sagas</docs>
 public interface ISagaEventEmitter {
 
   /// <summary>Publishes an event through the dispatcher's normal path. Used for non-terminal saga events.</summary>

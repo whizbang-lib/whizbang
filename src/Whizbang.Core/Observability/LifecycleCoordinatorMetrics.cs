@@ -62,7 +62,7 @@ public sealed class LifecycleCoordinatorMetrics {
   /// <summary>Initializes a new instance of the <see cref="LifecycleCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public LifecycleCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
-    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     ActiveTrackedEvents = meter.CreatePassiveUpDownCounter<int>(
       "whizbang.lifecycle_coordinator.active_tracked_events",

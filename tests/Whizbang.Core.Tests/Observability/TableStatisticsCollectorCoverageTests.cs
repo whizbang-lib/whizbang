@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -31,16 +33,16 @@ public class TableStatisticsCollectorCoverageTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_SchemaGateCancelledBeforeReady_ExitsGracefullyWithoutTouchingProviderAsync() {
-    var provider = new _RecordingProvider();
+    var provider = new RecordingProvider();
     var services = new ServiceCollection();
     services.AddSingleton<ITableStatisticsProvider>(provider);
     var sp = services.BuildServiceProvider();
 
-    var gate = new _SignallingSchemaGate(); // deliberately never marked ready
+    var gate = new SignallingSchemaGate(); // deliberately never marked ready
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      metrics: new TableStatisticsMetrics(new WhizbangMetrics()),
-      schemaReadyGate: gate);
+      metrics: new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())),
+      schemaReadyGate: gate, logger: NullLogger<TableStatisticsCollector>.Instance);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -74,7 +76,7 @@ public class TableStatisticsCollectorCoverageTests {
   /// has not dequeued ExecuteAsync yet". Only the first makes "the provider was never touched"
   /// evidence that the gate was honored rather than evidence that nothing happened.
   /// </remarks>
-  private sealed class _SignallingSchemaGate : ISchemaReadyGate {
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -90,7 +92,7 @@ public class TableStatisticsCollectorCoverageTests {
     }
   }
 
-  private sealed class _RecordingProvider : ITableStatisticsProvider {
+  private sealed class RecordingProvider : ITableStatisticsProvider {
     public int CallCount { get; private set; }
 
     public Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) {
@@ -98,10 +100,7 @@ public class TableStatisticsCollectorCoverageTests {
       return Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
     }
 
-    public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) {
-      CallCount++;
-      return Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
-    }
+    public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) => GetEstimatedTableSizesAsync(ct);
 
     public Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
       CallCount++;

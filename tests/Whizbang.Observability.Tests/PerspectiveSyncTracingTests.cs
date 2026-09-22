@@ -107,7 +107,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -146,7 +146,7 @@ public class PerspectiveSyncTracingTests {
     }));
 
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromSeconds(5)).Build();
 
     // Act
@@ -291,7 +291,7 @@ public class PerspectiveSyncTracingTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
+    return new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: new SyncEventTracker(), tracker: tracker, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
   }
 
   private static PerspectiveSyncAwaiter _createAwaiterWithSyncTracker() {
@@ -309,7 +309,7 @@ public class PerspectiveSyncTracingTests {
       ]
     }));
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    return new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncTracker);
+    return new PerspectiveSyncAwaiter(coordinator: coordinator, clock: clock, logger: NullLogger<PerspectiveSyncAwaiter>.Instance, syncEventTracker: syncTracker, tracker: NullScopedEventTracker.Instance, lifecycleContextAccessor: new AsyncLocalLifecycleContextAccessor());
   }
 
   // Mock work coordinator for testing
@@ -334,21 +334,21 @@ public class PerspectiveSyncTracingTests {
       return probe.SyncInquiryResults ?? [];
     }
 
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
       return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }

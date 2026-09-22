@@ -107,8 +107,8 @@ public class JsonbContainmentTypeSetTests {
 
   private sealed class MatrixProbeContext(Microsoft.EntityFrameworkCore.DbContextOptions<MatrixProbeContext> o)
     : Microsoft.EntityFrameworkCore.DbContext(o) {
-    protected override void OnModelCreating(Microsoft.EntityFrameworkCore.ModelBuilder b) =>
-      b.Entity<Whizbang.Core.Lenses.PerspectiveRow<MetaModel>>(e => {
+    protected override void OnModelCreating(Microsoft.EntityFrameworkCore.ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<Whizbang.Core.Lenses.PerspectiveRow<MetaModel>>(e => {
         e.ToTable("wh_per_meta");
         e.HasKey(x => x.Id);
         e.ComplexProperty(x => x.Data, d => d.ToJson("data"));

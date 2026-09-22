@@ -23,7 +23,7 @@ public sealed record CompactionResult(string Status, long ThroughVersion, long E
 /// BEFORE the truncate), then gated-truncate the folded detail via the A1 <see cref="IStreamCloser"/>. The
 /// compacted stream then replays only back to the <see cref="Compacted"/> event.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams</docs>
 public interface IStreamCompactor {
   /// <summary>Compact <paramref name="streamId"/> to the authoritative model of <paramref name="perspectiveName"/>.</summary>
   Task<CompactionResult> CompactAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default);
@@ -74,7 +74,7 @@ public sealed partial class StreamCompactor(
       ThroughVersion = throughVersion.Value,
     };
     // Compacted is ICompactedEvent, so the flag deriver stamps EventFlags.Compacted (permanent StateBased) —
-    // the reaper (self-destruct = flags&8) never targets it. The authoritative origin is protected BY MODE;
+    // the reaper (self-destruct, flag bit 8) never targets it. The authoritative origin is protected BY MODE —
     // no hold-at-infinity is needed (the design-review payoff of the StateBased factoring).
     await _eventStore.AppendAsync(streamId, compacted, cancellationToken).ConfigureAwait(false);
 

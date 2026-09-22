@@ -341,7 +341,7 @@ public class TagHookStageFilteringAndScopeTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvocationCount++;
       LastScope = context.Scope;
       LastStage = context.Stage;
@@ -364,7 +364,7 @@ public class TagHookStageFilteringAndScopeTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvocationCount++;
       // This is the exact pattern a consumer uses — reads from accessor, NOT from context.Scope
       LastCapturedScope = scopeContextAccessor.ScopeContext;
@@ -387,7 +387,7 @@ public class TagHookStageFilteringAndScopeTests {
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<TestNotificationTagAttribute> context,
-        CancellationToken _) {
+        CancellationToken ct) {
       InvocationCount++;
       LastScope = context.Scope;
       return ValueTask.FromResult<JsonElement?>(null);

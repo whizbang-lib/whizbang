@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -57,7 +59,7 @@ public class OutstandingBudgetChurnFeedbackTests {
   /// Reports a FIXED outstanding figure regardless of what it hands back, which is the situation the
   /// store actually presents: the response is truncated, the held total is not.
   /// </summary>
-  private sealed class _reportingCoordinator(
+  private sealed class ReportingCoordinator(
       long outstandingRows, bool measurable, WorkCompletionMeter? meter = null) : IWorkCoordinator {
     private readonly Lock _lock = new();
     private readonly Dictionary<int, TaskCompletionSource> _watchers = [];
@@ -72,12 +74,12 @@ public class OutstandingBudgetChurnFeedbackTests {
     /// <summary>When set, claims carry these counts on the batch — the coalesced round trip.</summary>
     public OutstandingWork? BatchOutstanding { get; set; }
 
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var inbox = new List<InboxWork>();
       lock (_lock) {
         CallCount++;
-        LastStreamsRequested = req.MaxStreams;
-        LastRequest = req;
+        LastStreamsRequested = request.MaxStreams;
+        LastRequest = request;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       // Report healthy drain. Without it the budget's stall rule ("work held, nothing completing →
@@ -87,7 +89,7 @@ public class OutstandingBudgetChurnFeedbackTests {
 
       // Hand back exactly what was asked for — the truncated view. If the worker sized its budget
       // from this, it would never see the outstanding total reported below.
-      for (var i = 0; i < req.MaxStreams; i++) {
+      for (var i = 0; i < request.MaxStreams; i++) {
         inbox.Add(new InboxWork {
           MessageId = TrackedGuid.NewMedo().Value,
           MessageType = "TestEvent",
@@ -129,22 +131,21 @@ public class OutstandingBudgetChurnFeedbackTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
-  private static ClaimWorker _worker(_reportingCoordinator coord, WorkCompletionMeter? meter) {
+  private static ClaimWorker _worker(ReportingCoordinator coord, WorkCompletionMeter? meter) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         AdaptiveOutstandingBudget = true,
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,
@@ -152,11 +153,20 @@ public class OutstandingBudgetChurnFeedbackTests {
         MinOutstandingInboxRows = BUDGET_FLOOR,
         MaxOutstandingInboxRows = BUDGET_CEILING,
       }),
-      NullLogger<ClaimWorker>.Instance,
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       completionMeter: meter);
   }
 
-  private static async Task _driveAsync(_reportingCoordinator coord, WorkCompletionMeter? meter, int cycles) {
+  private static async Task _driveAsync(ReportingCoordinator coord, WorkCompletionMeter? meter, int cycles) {
     var worker = _worker(coord, meter);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -164,9 +174,9 @@ public class OutstandingBudgetChurnFeedbackTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
-  private static async Task<_reportingCoordinator> _runAsync(
+  private static async Task<ReportingCoordinator> _runAsync(
       long outstanding, bool measurable, WorkCompletionMeter? meter, int cycles = 6) {
-    var coord = new _reportingCoordinator(outstanding, measurable, meter);
+    var coord = new ReportingCoordinator(outstanding, measurable, meter);
     var worker = _worker(coord, meter);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -223,24 +233,34 @@ public class OutstandingBudgetChurnFeedbackTests {
     // Disabling the budget must mean BYPASSED, not "engaged but permissive". The adaptive claim
     // window already had a latent bug of exactly this shape — "disabled" left it frozen at its
     // constructed value, which was harmless only while that value happened to be the ceiling.
-    var coord = new _reportingCoordinator(BUDGET_CEILING, measurable: true, meter: null);
+    var coord = new ReportingCoordinator(BUDGET_CEILING, measurable: true, meter: null);
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var worker = new ClaimWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new StubInstanceProvider(),
-      new NoOpWorkNotificationListener(),
-      gate,
-      Options.Create(new ClaimWorkerOptions {
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new StubInstanceProvider(),
+      notificationListener: new NoOpWorkNotificationListener(),
+      schemaReadyGate: gate,
+      options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,
         MinStreamsPerBatch = WINDOW_FLOOR,
         AdaptiveOutstandingBudget = false,
       }),
-      NullLogger<ClaimWorker>.Instance,
+      logger: NullLogger<ClaimWorker>.Instance,
+      outboxChannel: new WorkChannelWriter(),
+      inboxChannel: new InboxChannelWriter(),
+      perspectiveChannel: new PerspectiveChannelWriter(),
+      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      outboxDrainChannel: new OutboxDrainChannel(),
+      inboxDrainChannel: new InboxDrainChannel(),
+      signalingGate: NullNotifySignalingGate.Instance,
+      pinnedPool: NoOpPinnedConnectionPool.Instance,
+      signalBus: NullSignalBus.Instance,
       completionMeter: new WorkCompletionMeter());
 
     using var cts = new CancellationTokenSource();
@@ -289,7 +309,7 @@ public class OutstandingBudgetChurnFeedbackTests {
   [Test]
   public async Task BatchCarriedOutstanding_SkipsTheSeparateProbe_AndNullFallsBackAsync() {
     var meter = new WorkCompletionMeter();
-    var withBatch = new _reportingCoordinator(BUDGET_FLOOR, measurable: true, meter) {
+    var withBatch = new ReportingCoordinator(BUDGET_FLOOR, measurable: true, meter) {
       BatchOutstanding = new OutstandingWork { InboxRows = BUDGET_FLOOR },
     };
     await _driveAsync(withBatch, meter, cycles: 3);

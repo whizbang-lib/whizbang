@@ -169,7 +169,7 @@ public class ScopedEventStoreQueryTests : EFCoreTestBase {
     await _seedEventAsync(_idProvider.NewGuid(), "Event1", 1);
 
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
 
     // Act
     OperationCanceledException? caught = null;

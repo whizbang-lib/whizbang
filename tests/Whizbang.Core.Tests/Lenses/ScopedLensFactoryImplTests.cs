@@ -333,9 +333,12 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var (factory, _) = _createFactory();
 
+    // The empty array itself is the case under test: it must reach the params overload.
+    Permission[] noPermissions = [];
+
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilters.None, []))
+      ScopeFilters.None, noPermissions))
       .ThrowsExactly<ArgumentException>();
   }
 

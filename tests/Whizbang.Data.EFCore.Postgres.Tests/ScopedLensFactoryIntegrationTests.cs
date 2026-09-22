@@ -194,7 +194,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   public async Task ScopedLensFactory_GetTenantLens_WithRealDatabase_FiltersCorrectlyAsync() {
     // Arrange
     await using var context = CreateDbContext();
-    var (provider, factory, contextAccessor) = _createDatabaseBackedServices(context);
+    var (_, factory, contextAccessor) = _createDatabaseBackedServices(context);
 
     var order1Id = _idProvider.NewGuid();
     var order2Id = _idProvider.NewGuid();
@@ -222,7 +222,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   public async Task ScopedLensFactory_GetPrincipalLens_WithRealDatabase_FiltersCorrectlyAsync() {
     // Arrange
     await using var context = CreateDbContext();
-    var (provider, factory, contextAccessor) = _createDatabaseBackedServices(context);
+    var (_, factory, contextAccessor) = _createDatabaseBackedServices(context);
 
     var order1Id = _idProvider.NewGuid();
     var order2Id = _idProvider.NewGuid();
@@ -259,7 +259,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   public async Task ScopedLensFactory_GetMyOrSharedLens_WithRealDatabase_ReturnsOwnedAndSharedAsync() {
     // Arrange
     await using var context = CreateDbContext();
-    var (provider, factory, contextAccessor) = _createDatabaseBackedServices(context);
+    var (_, factory, contextAccessor) = _createDatabaseBackedServices(context);
 
     var order1Id = _idProvider.NewGuid();
     var order2Id = _idProvider.NewGuid();
@@ -309,7 +309,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   public async Task ScopedLensFactory_GetLensWithPermission_WithRealDatabase_EnforcesPermissionAsync() {
     // Arrange
     await using var context = CreateDbContext();
-    var (provider, factory, contextAccessor) = _createDatabaseBackedServices(context);
+    var (_, factory, contextAccessor) = _createDatabaseBackedServices(context);
 
     var orderId = _idProvider.NewGuid();
     await _seedOrderAsync(context, orderId, 100m, tenantId: "tenant-1");
@@ -334,7 +334,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   public async Task ScopedLensFactory_GetLensWithPermission_WithRealDatabase_DeniesUnauthorizedAsync() {
     // Arrange
     await using var context = CreateDbContext();
-    var (provider, factory, contextAccessor) = _createDatabaseBackedServices(context);
+    var (_, factory, contextAccessor) = _createDatabaseBackedServices(context);
 
     contextAccessor.Current = new ScopeContext {
       Scope = new PerspectiveScope { TenantId = "tenant-1" },
@@ -388,7 +388,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     context.ChangeTracker.Clear();
   }
 
-  private (IServiceProvider provider, IScopedLensFactory factory, ScopeContextAccessor contextAccessor)
+  private static (IServiceProvider provider, IScopedLensFactory factory, ScopeContextAccessor contextAccessor)
     _createDatabaseBackedServices(DbContext context) {
     var services = new ServiceCollection();
 

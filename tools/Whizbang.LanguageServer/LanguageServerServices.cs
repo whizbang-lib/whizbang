@@ -17,6 +17,7 @@ namespace Whizbang.LanguageServer;
 public static class LanguageServerServices {
   /// <summary>Default documentation host used when the environment does not override it.</summary>
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S1075:URIs should not be hardcoded", Justification = "The public documentation site is the documented default; the environment overrides it.")]
   public const string DEFAULT_DOCS_BASE_URL = "https://whizbang-lib.github.io";
 #pragma warning restore CA1707
 
@@ -45,7 +46,6 @@ public static class LanguageServerServices {
     ArgumentException.ThrowIfNullOrWhiteSpace(docsBaseUrl);
 
     // Services
-    services.AddSingleton<MermaidGenerator>();
     services.AddSingleton(new SymbolResolver(docsBaseUrl));
     services.AddSingleton<SearchService>();
     services.AddSingleton<TestCoverageService>();

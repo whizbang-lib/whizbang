@@ -533,9 +533,9 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
 
   /// <summary>The columns of wh_perspective_cursors this suite asserts on.</summary>
   private sealed class CursorRow {
-    public Guid? LastEventId { get; init; }
-    public short Status { get; init; }
-    public string? Error { get; init; }
+    public Guid? LastEventId { get; }
+    public short Status { get; }
+    public string? Error { get; }
   }
 
   [Test]

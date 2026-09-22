@@ -37,14 +37,14 @@ public class CollectionMemberShapeProbeTests {
   public record Turn(Guid TurnId, string Content, IReadOnlyList<Tag>? Tags);
 
   public class ListModel { [StreamId] public Guid Id { get; init; } public List<Tag> Items { get; init; } = []; }
-  public class IListModel { [StreamId] public Guid Id { get; init; } public IList<Tag> Items { get; init; } = []; }
+  public class ListInterfaceModel { [StreamId] public Guid Id { get; init; } public IList<Tag> Items { get; init; } = []; }
   public class ImmutableModel { [StreamId] public Guid Id { get; init; } public ImmutableList<Tag> Items { get; init; } = []; }
   public class PrimitiveInterfaceModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<string> Items { get; init; } = []; }
 
-  public class ICollectionModel { [StreamId] public Guid Id { get; init; } public ICollection<Tag> Items { get; init; } = []; }
-  public class IEnumerableModel { [StreamId] public Guid Id { get; init; } public IEnumerable<Tag> Items { get; init; } = []; }
-  public class IReadOnlyListModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<Tag> Items { get; init; } = []; }
-  public class IReadOnlyCollectionModel { [StreamId] public Guid Id { get; init; } public IReadOnlyCollection<Tag> Items { get; init; } = []; }
+  public class CollectionModel { [StreamId] public Guid Id { get; init; } public ICollection<Tag> Items { get; init; } = []; }
+  public class EnumerableModel { [StreamId] public Guid Id { get; init; } public IEnumerable<Tag> Items { get; init; } = []; }
+  public class ReadOnlyListModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<Tag> Items { get; init; } = []; }
+  public class ReadOnlyCollectionModel { [StreamId] public Guid Id { get; init; } public IReadOnlyCollection<Tag> Items { get; init; } = []; }
   public class UnconstructibleElementModel { [StreamId] public Guid Id { get; init; } public List<Turn> Turns { get; init; } = []; }
 
   /// <summary>The document mapped property by property, which walks the whole graph.</summary>
@@ -101,7 +101,7 @@ public class CollectionMemberShapeProbeTests {
   [Test]
   public async Task TheMappedPathAcceptsTheseShapesAsync() {
     await Assert.That(_mapped<ListModel>()).IsNull().Because("List of a complex element maps");
-    await Assert.That(_mapped<IListModel>()).IsNull().Because("IList maps: it can be filled");
+    await Assert.That(_mapped<ListInterfaceModel>()).IsNull().Because("IList maps: it can be filled");
     await Assert.That(_mapped<ImmutableModel>()).IsNull().Because("ImmutableList maps");
     await Assert.That(_mapped<PrimitiveInterfaceModel>()).IsNull()
       .Because("a collection of primitives is stored as a value whatever interface declares it, "
@@ -113,10 +113,10 @@ public class CollectionMemberShapeProbeTests {
   /// </summary>
   [Test]
   public async Task TheMappedPathRefusesTheseShapesAsync() {
-    await Assert.That(_mapped<ICollectionModel>()).IsNotNull();
-    await Assert.That(_mapped<IEnumerableModel>()).IsNotNull();
-    await Assert.That(_mapped<IReadOnlyListModel>()).IsNotNull();
-    await Assert.That(_mapped<IReadOnlyCollectionModel>()).IsNotNull();
+    await Assert.That(_mapped<CollectionModel>()).IsNotNull();
+    await Assert.That(_mapped<EnumerableModel>()).IsNotNull();
+    await Assert.That(_mapped<ReadOnlyListModel>()).IsNotNull();
+    await Assert.That(_mapped<ReadOnlyCollectionModel>()).IsNotNull();
     await Assert.That(_mapped<UnconstructibleElementModel>()).IsNotNull()
       .Because("a collection cannot be bound to a constructor parameter, and a positional record "
         + "declares no other constructor, so the element cannot be constructed at all");
@@ -132,7 +132,7 @@ public class CollectionMemberShapeProbeTests {
   /// </remarks>
   [Test]
   public async Task TheOpaqueFormTakesWhatTheMappedPathRefusesAsync() {
-    await Assert.That(_opaque<IReadOnlyListModel>()).IsNull();
+    await Assert.That(_opaque<ReadOnlyListModel>()).IsNull();
     await Assert.That(_opaque<UnconstructibleElementModel>()).IsNull()
       .Because("the whole document is one value the serializer owns, so the shape inside it stops "
         + "being Entity Framework's problem");

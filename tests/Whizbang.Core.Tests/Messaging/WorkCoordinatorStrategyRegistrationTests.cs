@@ -1,13 +1,18 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Options;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -99,70 +104,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   // so the flush path can signal the publisher (which then claims work from the DB).
   // ========================================
 
-  [Test]
-  public async Task GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync() {
-    // Arrange - Register a TestWorkChannelWriter so we can observe writes
-    var options = new WorkCoordinatorOptions {
-      Strategy = WorkCoordinatorStrategy.Interval,
-      IntervalMilliseconds = 60_000 // long interval so timer doesn't fire
-    };
-    var services = new ServiceCollection();
-    services.AddSingleton(options);
-    services.AddSingleton<IServiceInstanceProvider, RegFakeInstanceProvider>();
-    var testWriter = new TestWorkChannelWriter();
-    services.AddSingleton<IWorkChannelWriter>(testWriter);
 
-    // Register a fake coordinator that returns outbox work
-    services.AddScoped<IWorkCoordinator, RegFakeWorkCoordinatorWithOutboxWork>();
-
-    _addGeneratorStrategyRegistrations(services);
-
-    await using var sp = services.BuildServiceProvider();
-
-    // Act - Resolve the singleton, queue a message, flush
-    var strategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
-    strategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await strategy.FlushAsync(WorkBatchOptions.None);
-
-    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
-    await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-
-    // Cleanup
-    await strategy.DisposeAsync();
-  }
-
-  [Test]
-  public async Task GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync() {
-    // Arrange
-    var options = new WorkCoordinatorOptions {
-      Strategy = WorkCoordinatorStrategy.Batch,
-      BatchSize = 100,
-      IntervalMilliseconds = 60_000
-    };
-    var services = new ServiceCollection();
-    services.AddSingleton(options);
-    services.AddSingleton<IServiceInstanceProvider, RegFakeInstanceProvider>();
-    var testWriter = new TestWorkChannelWriter();
-    services.AddSingleton<IWorkChannelWriter>(testWriter);
-    services.AddScoped<IWorkCoordinator, RegFakeWorkCoordinatorWithOutboxWork>();
-
-    _addGeneratorStrategyRegistrations(services);
-
-    await using var sp = services.BuildServiceProvider();
-
-    // Act
-    var strategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
-    strategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await strategy.FlushAsync(WorkBatchOptions.None);
-
-    // Assert — ExecuteFlushAsync signals publisher but does not write to channel
-    await Assert.That(testWriter.WrittenWork).Count().IsEqualTo(0)
-      .Because("ExecuteFlushAsync signals publisher but does not write to channel");
-
-    // Cleanup
-    await strategy.DisposeAsync();
-  }
 
   [Test]
   public async Task GeneratorPattern_IntervalSingleton_MetricsAreNull_FlushRecordsNothingAsync() {
@@ -172,9 +114,10 @@ public class WorkCoordinatorStrategyRegistrationTests {
       IntervalMilliseconds = 60_000
     };
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddSingleton<IServiceInstanceProvider, RegFakeInstanceProvider>();
-    var whizbangMetrics = new WhizbangMetrics();
+    var whizbangMetrics = new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
     var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
     services.AddSingleton(metrics);
     services.AddScoped<IWorkCoordinator, RegFakeWorkCoordinatorWithOutboxWork>();
@@ -260,6 +203,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
     await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
       .Because("Interval option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+    await Assert.That(strategy2).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("every scope resolves the same non-disposing wrapper shape");
 
     // Verify the underlying singleton is shared (resolve concrete type)
     var singleton = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
@@ -294,6 +239,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
     // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
     await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
       .Because("Batch option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+    await Assert.That(strategy2).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("every scope resolves the same non-disposing wrapper shape");
 
     // Verify the underlying singleton is shared (resolve concrete type)
     var singleton = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
@@ -331,6 +278,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   public async Task GeneratorPattern_OptionsConfiguredViaIOptions_AppliedCorrectlyAsync() {
     // Arrange - Simulate user configuring via services.Configure<WorkCoordinatorOptions>()
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.Configure<WorkCoordinatorOptions>(opts => {
       opts.Strategy = WorkCoordinatorStrategy.Batch;
       opts.BatchSize = 42;
@@ -500,6 +448,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   /// </summary>
   private static ServiceCollection _buildServiceCollection(WorkCoordinatorOptions options) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddScoped<IWorkCoordinator, RegFakeWorkCoordinator>();
     services.AddSingleton<IServiceInstanceProvider, RegFakeInstanceProvider>();
@@ -512,6 +461,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
   /// </summary>
   private static ServiceCollection _buildGeneratorRegistrationPattern(WorkCoordinatorOptions options) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     services.AddSingleton(options);
     services.AddScoped<IWorkCoordinator, RegFakeWorkCoordinator>();
     services.AddSingleton<IServiceInstanceProvider, RegFakeInstanceProvider>();
@@ -535,12 +485,16 @@ public class WorkCoordinatorStrategyRegistrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new IntervalWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        options,
+        instanceProvider: instanceProvider,
+        options: options,
+        logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
         scopeFactory: scopeFactory,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        inboxChannelWriter: new InboxChannelWriter(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>()
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
@@ -549,12 +503,15 @@ public class WorkCoordinatorStrategyRegistrationTests {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new BatchWorkCoordinatorStrategy(
         coordinator: null,
-        instanceProvider,
-        options,
+        instanceProvider: instanceProvider,
+        options: options,
+        logger: NullLogger<BatchWorkCoordinatorStrategy>.Instance,
         scopeFactory: scopeFactory,
+        lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+        tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+        workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
-        workChannelWriter: sp.GetService<IWorkChannelWriter>()
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
     });
 
@@ -589,7 +546,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 
@@ -602,31 +559,6 @@ public class WorkCoordinatorStrategyRegistrationTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
-    public void ClearInFlight() { }
-    private readonly List<OutboxWork> _writtenWork = [];
-    public IReadOnlyList<OutboxWork> WrittenWork => _writtenWork;
-    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
-      System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>().Reader;
-    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
-      _writtenWork.Add(work);
-      return ValueTask.CompletedTask;
-    }
-    public bool TryWrite(OutboxWork work) {
-      _writtenWork.Add(work);
-      return true;
-    }
-    public void Complete() { }
-
-    public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
-    public bool ShouldRenewLease(Guid messageId) => false;
-    public event Action? OnNewWorkAvailable;
-    public void SignalNewWorkAvailable() => OnNewWorkAvailable?.Invoke();
-    public event Action? OnNewPerspectiveWorkAvailable;
-    public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
-  }
-
   private sealed class RegFakeWorkCoordinatorWithOutboxWork : IWorkCoordinator {
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
@@ -636,7 +568,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

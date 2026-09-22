@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
@@ -19,7 +20,7 @@ public class TransportManagerPriorityTests {
   private sealed record ManagerPriorityProbe(int Value);
 
   private static async Task<(TransportManager Manager, List<PublishTarget> Targets, TaskCompletionSource<IMessageEnvelope> Received)> _setupAsync(string destination) {
-    var manager = new TransportManager(new ServiceInstanceProvider(configuration: null));
+    var manager = new TransportManager(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
     var received = new TaskCompletionSource<IMessageEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,7 +62,7 @@ public class TransportManagerPriorityTests {
 
   [Test]
   public async Task PublishToTargetsAsync_WithTwoTargets_BothEnvelopesCarryTheSameNumberAsync() {
-    var manager = new TransportManager(new ServiceInstanceProvider(configuration: null));
+    var manager = new TransportManager(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
     var first = new TaskCompletionSource<IMessageEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -240,14 +240,14 @@ public class ThroughputBenchmarks {
 
     // Setup response handler
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
-      foreach (var msg in batch) {
+      foreach (var envelope in batch.Select(msg => msg.Envelope)) {
         // Simulate processing and send response
-        var typedEnvelope = (MessageEnvelope<SmallCommand>)msg.Envelope;
+        var typedEnvelope = (MessageEnvelope<SmallCommand>)envelope;
         var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
         var responseEnvelope = _createEnvelope(response);
 
         // Get correlation ID from request
-        var correlationId = msg.Envelope.Hops[^1].CorrelationId;
+        var correlationId = envelope.Hops[^1].CorrelationId;
         if (correlationId.HasValue) {
           await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
         }
@@ -364,24 +364,24 @@ public class ThroughputBenchmarks {
 
   // Helper classes for benchmarking
   private sealed class InMemoryTraceStore : ITraceStore {
-    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
       // No-op storage for benchmarking
       return Task.CompletedTask;
     }
 
-    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken ct = default) {
       return Task.FromResult<IMessageEnvelope?>(null);
     }
 
-    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
 
-    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
 
-    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken = default) {
+    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
   }
@@ -394,9 +394,9 @@ public class ThroughputBenchmarks {
       return Task.CompletedTask;
     }
 
-    public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope responseEnvelope, CancellationToken cancellationToken = default) {
+    public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
       if (_pending.TryGetValue(correlationId, out var tcs)) {
-        tcs.TrySetResult(responseEnvelope);
+        tcs.TrySetResult(response);
       }
       return Task.CompletedTask;
     }

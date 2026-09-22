@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -265,7 +266,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     // ILifecycleContextAccessor is registered by AddWhizbang() (core services), so we register it
     // manually here since we only use AddReceptors()/AddWhizbangDispatcher() in these tests.
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped<ILifecycleContextAccessor, AsyncLocalLifecycleContextAccessor>();
     services.AddReceptors();
     services.AddWhizbangDispatcher();
@@ -304,7 +305,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
   /// </summary>
   private static IReceptorRegistry _createRegistry() {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
 
@@ -317,7 +318,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
   /// </summary>
   private static ServiceProvider _createServiceProvider() {
     var services = new ServiceCollection();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: null));
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     return services.BuildServiceProvider();

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -23,10 +24,10 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
 
   private static RecentlyProcessedEventCacheSweepWorker _worker(
       RecentlyProcessedEventCache cache, bool enabled, int intervalSeconds = 1) =>
-    new(cache, Options.Create(new RecentlyProcessedEventCacheOptions {
+    new(cache: cache, options: Options.Create(new RecentlyProcessedEventCacheOptions {
       Enabled = enabled,
       SweepIntervalSeconds = intervalSeconds,
-    }));
+    }), logger: NullLogger<RecentlyProcessedEventCacheSweepWorker>.Instance);
 
   /// <summary>
   /// A clock the test can move forward and break on demand. A sweep reads it exactly once per pass,
@@ -97,8 +98,6 @@ public class RecentlyProcessedEventCacheSweepWorkerTests {
 
     /// <summary>Completes once the worker has logged that it is disabled and parking.</summary>
     public Task Disabled => _disabled.Task;
-
-    public string Recorded { get { lock (_messages) { return string.Join("|", _messages); } } }
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

@@ -73,6 +73,8 @@ internal static class WhizbangVersionInfo
     <InternalsVisibleTo Include="Whizbang.Testing" />
     <InternalsVisibleTo Include="Whizbang.Observability.Tests" />
     <InternalsVisibleTo Include="Whizbang.Transports.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Transports.AzureServiceBus.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Transports.RabbitMQ.Tests" />
     <InternalsVisibleTo Include="Whizbang.Policies.Tests" />
     <InternalsVisibleTo Include="Whizbang.Execution.Tests" />
     <InternalsVisibleTo Include="Whizbang.Documentation.Tests" />

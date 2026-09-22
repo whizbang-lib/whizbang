@@ -6,6 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Workers;
@@ -25,8 +26,8 @@ public class WhizbangDatabaseInitializerServiceTests {
   [Test]
   public async Task TryRecompute_QueryCancellation_NonShutdownToken_IsSwallowedAsync() {
     // A plain OCE with a live (uncanceled) token is a query cancellation — must NOT escape.
-    var logger = new _CapturingLogger();
-    var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()), logger: logger);
+    var logger = new CapturingLogger();
+    var service = _create(coordinator: new ThrowingCoordinator(new OperationCanceledException()), logger: logger);
 
     await service.TryRecomputePartitionsAsync(CancellationToken.None);
 
@@ -38,17 +39,17 @@ public class WhizbangDatabaseInitializerServiceTests {
 
   [Test]
   public async Task TryRecompute_HostShutdown_CanceledToken_PropagatesAsync() {
-    var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()));
+    var service = _create(coordinator: new ThrowingCoordinator(new OperationCanceledException()));
     using var cts = new CancellationTokenSource();
-    cts.Cancel();
+    await cts.CancelAsync();
     await Assert.That(async () => await service.TryRecomputePartitionsAsync(cts.Token))
       .ThrowsExactly<OperationCanceledException>();
   }
 
   [Test]
   public async Task TryRecompute_NonCancellationFailure_IsSwallowedAsync() {
-    var logger = new _CapturingLogger();
-    var service = _create(coordinator: new _ThrowingCoordinator(new InvalidOperationException("boom")), logger: logger);
+    var logger = new CapturingLogger();
+    var service = _create(coordinator: new ThrowingCoordinator(new InvalidOperationException("boom")), logger: logger);
 
     await service.TryRecomputePartitionsAsync(CancellationToken.None);
 
@@ -62,7 +63,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   [Test]
   public async Task Blocking_StartAsync_WaitsForInit_ThenMarksReadyAsync() {
     var gate = new SchemaReadyGate();
-    var runner = new _HeldRunner();
+    var runner = new HeldRunner();
     var service = _create(gate: gate, runner: runner, nonBlocking: false);
 
     var startTask = service.StartAsync(CancellationToken.None);
@@ -80,7 +81,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   [Test]
   public async Task NonBlocking_StartAsync_ReturnsBeforeInit_ThenMarksReadyWhenDoneAsync() {
     var gate = new SchemaReadyGate();
-    var runner = new _HeldRunner();
+    var runner = new HeldRunner();
     var service = _create(gate: gate, runner: runner, nonBlocking: true);
 
     // Non-blocking: StartAsync returns immediately so the host can bind + answer liveness.
@@ -99,7 +100,7 @@ public class WhizbangDatabaseInitializerServiceTests {
     // re-attempts is a NotReady zombie only a human can fix. Fail-closed WHILE retrying.
     var gate = new SchemaReadyGate();
     var attempts = 0;
-    var runner = new _FakeRunner(_ => ++attempts <= 2
+    var runner = new FakeRunner(_ => ++attempts <= 2
       ? throw new InvalidOperationException("transient boom")
       : Task.CompletedTask);
     var service = _create(gate: gate, runner: runner, nonBlocking: true, initRetryDelay: TimeSpan.Zero);
@@ -118,7 +119,7 @@ public class WhizbangDatabaseInitializerServiceTests {
     var gate = new SchemaReadyGate();
     var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var attempts = 0;
-    var runner = new _FakeRunner(_ => {
+    var runner = new FakeRunner(_ => {
       attempts++;
       failed.TrySetResult();
       throw new InvalidOperationException("still broken");
@@ -144,10 +145,10 @@ public class WhizbangDatabaseInitializerServiceTests {
     // succeeds. The closed gate (readiness) is the honest health signal while init re-attempts.
     var gate = new SchemaReadyGate();
     var attempts = 0;
-    var runner = new _FakeRunner(_ => ++attempts == 1
+    var runner = new FakeRunner(_ => ++attempts == 1
       ? throw new InvalidOperationException("transient boom")
       : Task.CompletedTask);
-    var lifecycle = new _FakeLifecycle();
+    var lifecycle = new FakeLifecycle();
     var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle,
       initRetryDelay: TimeSpan.Zero);
 
@@ -162,8 +163,8 @@ public class WhizbangDatabaseInitializerServiceTests {
   public async Task NonBlocking_InitSuccess_DoesNotFaultLifecycleAsync() {
     // The happy path never faults the lifecycle.
     var gate = new SchemaReadyGate();
-    var runner = new _HeldRunner();
-    var lifecycle = new _FakeLifecycle();
+    var runner = new HeldRunner();
+    var lifecycle = new FakeLifecycle();
     var service = _create(gate: gate, runner: runner, nonBlocking: true, lifecycle: lifecycle);
 
     await service.StartAsync(CancellationToken.None);
@@ -179,7 +180,7 @@ public class WhizbangDatabaseInitializerServiceTests {
     var gate = new SchemaReadyGate();
     var fakeTime = new FakeTimeProvider();
     var attempts = 0;
-    var runner = new _SignalingRunner(ct => ++attempts == 1
+    var runner = new SignalingRunner(ct => ++attempts == 1
       ? Task.Delay(Timeout.Infinite, ct)          // first attempt hangs → trips the timeout
       : Task.CompletedTask);                      // retry succeeds
     var service = _create(gate: gate, runner: runner, nonBlocking: true,
@@ -201,7 +202,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   public async Task NonBlocking_WithinTimeout_MarksReadyAsync() {
     var gate = new SchemaReadyGate();
     var fakeTime = new FakeTimeProvider();
-    var runner = new _HeldRunner();
+    var runner = new HeldRunner();
     var service = _create(gate: gate, runner: runner, nonBlocking: true,
       migrationTimeout: TimeSpan.FromMinutes(5), timeProvider: fakeTime);
 
@@ -224,6 +225,7 @@ public class WhizbangDatabaseInitializerServiceTests {
       TimeSpan? initRetryDelay = null,
       ILogger<WhizbangDatabaseInitializerService>? logger = null) {
     var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
     }
@@ -233,7 +235,7 @@ public class WhizbangDatabaseInitializerServiceTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      runner ?? new _FakeRunner(_ => Task.CompletedTask),
+      runner ?? new FakeRunner(_ => Task.CompletedTask),
       gate ?? new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions {
@@ -246,7 +248,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   /// <summary>Captures the exceptions the service logged instead of rethrowing.</summary>
-  private sealed class _CapturingLogger : ILogger<WhizbangDatabaseInitializerService> {
+  private sealed class CapturingLogger : ILogger<WhizbangDatabaseInitializerService> {
     private readonly Lock _lock = new();
     private readonly List<Exception> _failures = [];
     public List<Exception> Failures { get { lock (_lock) { return [.. _failures]; } } }
@@ -261,19 +263,19 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   /// <summary>Runner whose migration blocks until <see cref="Complete"/> is called.</summary>
-  private sealed class _HeldRunner : ISchemaInitializationRunner {
+  private sealed class HeldRunner : ISchemaInitializationRunner {
     private readonly TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public void Complete() => _tcs.TrySetResult();
     public Task RunAsync(CancellationToken cancellationToken) => _tcs.Task.WaitAsync(cancellationToken);
   }
 
   /// <summary>Runner that runs a supplied behavior.</summary>
-  private sealed class _FakeRunner(Func<CancellationToken, Task> behavior) : ISchemaInitializationRunner {
+  private sealed class FakeRunner(Func<CancellationToken, Task> behavior) : ISchemaInitializationRunner {
     public Task RunAsync(CancellationToken cancellationToken) => behavior(cancellationToken);
   }
 
   /// <summary>Runner that signals when its migration has started (so a timeout timer is armed).</summary>
-  private sealed class _SignalingRunner(Func<CancellationToken, Task> behavior) : ISchemaInitializationRunner {
+  private sealed class SignalingRunner(Func<CancellationToken, Task> behavior) : ISchemaInitializationRunner {
     public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task RunAsync(CancellationToken cancellationToken) {
       Entered.TrySetResult();
@@ -282,7 +284,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   /// <summary>Lifecycle that records how many times <see cref="FaultAsync"/> was invoked.</summary>
-  private sealed class _FakeLifecycle : IWhizbangLifecycleState {
+  private sealed class FakeLifecycle : IWhizbangLifecycleState {
     public int FaultCount { get; private set; }
     public LifecyclePhase Phase => LifecyclePhase.Migrating;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
@@ -293,7 +295,7 @@ public class WhizbangDatabaseInitializerServiceTests {
   }
 
   /// <summary>Coordinator whose partition recompute throws a supplied exception; defaults cover the rest.</summary>
-  private sealed class _ThrowingCoordinator(Exception toThrow) : IWorkCoordinator {
+  private sealed class ThrowingCoordinator(Exception toThrow) : IWorkCoordinator {
     public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
         int partitionCount, CancellationToken cancellationToken = default)
       => throw toThrow;
@@ -305,7 +307,7 @@ public class WhizbangDatabaseInitializerServiceTests {
         PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task StoreInboxMessagesAsync(
-        InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default)
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
       => Task.FromResult(new WorkCoordinatorStatistics());

@@ -49,10 +49,10 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmptyKeyPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.EmptyKeyModel), \"kept\", true, true, false)")
       .Because("the membership with a real key must still register normally.");
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .DoesNotContain("Register(typeof(global::TestNamespace.EmptyKeyModel), \"\",")
       .Because("an empty StreamGroup key must never reach the registry as a group of its own.");
   }
@@ -89,7 +89,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SatellitePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.SatelliteModel), \"satellite-group\", false, true, false)")
       .Because("Announce=false must be read from the named argument, not left at the true default.");
   }
@@ -130,10 +130,10 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PipeKeyPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.PipeKeyModel), \"safe\", true, true, false)")
       .Because("the well-formed sibling membership must still register.");
-    await Assert.That(runnerSource!).DoesNotContain("weird")
+    await Assert.That(runnerSource).DoesNotContain("weird")
       .Because("a '|' inside the key desyncs the pipe-delimited encoding, so the membership is silently dropped instead of registered or diagnosed.");
   }
 
@@ -173,7 +173,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "NullableKeyPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("new global::TestNamespace.NullableKeyModel { WidgetId = streamId }")
+    await Assert.That(runnerSource).Contains("new global::TestNamespace.NullableKeyModel { WidgetId = streamId }")
       .Because("Guid? must be initialized the same direct way as Guid — no reflection, no unset key.");
   }
 
@@ -210,11 +210,11 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SequenceKeyPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("new global::TestNamespace.SequenceKeyModel { }")
+    await Assert.That(runnerSource).Contains("new global::TestNamespace.SequenceKeyModel { }")
       .Because("no supported conversion exists from Guid to int, so the key must be left unset rather than guessed.");
     // Scoped to the initializer: the bare identifier appears elsewhere in the generated file
     // (prose in comments, unrelated members), so forbidding it outright fails for the wrong reason.
-    await Assert.That(runnerSource!).DoesNotContain("SequenceKeyModel { Sequence =")
+    await Assert.That(runnerSource).DoesNotContain("SequenceKeyModel { Sequence =")
       .Because("guessing a value for a key the generator cannot convert would silently write every "
              + "row under the wrong identity, which reads as data loss rather than a codegen bug.");
   }
@@ -257,7 +257,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "HelperPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
       .Because("the real (model, event) overload must still classify and generate normally despite the unrelated single-parameter overload sharing its name.");
   }
@@ -300,9 +300,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LeftoverPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!).Contains("case global::TestNamespace.DeclaredEvent typedEvent:")
+    await Assert.That(runnerSource).Contains("case global::TestNamespace.DeclaredEvent typedEvent:")
       .Because("the declared event's case must still generate normally.");
-    await Assert.That(runnerSource!).DoesNotContain("UndeclaredEvent")
+    await Assert.That(runnerSource).DoesNotContain("UndeclaredEvent")
       .Because("an Apply overload for an event outside this perspective's declared interfaces must not leak into the generated runner.");
   }
 
@@ -340,7 +340,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "MislabeledPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource!)
+    await Assert.That(runnerSource)
       .Contains("return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
       .Because("a 2-tuple whose second element isn't ModelAction must be classified as the plain Model case, not the Tuple case.");
   }

@@ -17,12 +17,12 @@ namespace Whizbang.Core.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/EventMarkerResolver.cs</code-under-test>
 public class EventMarkerResolverCoverageTests {
-  private sealed class _knownType;
-  private sealed class _unknownType;
+  private sealed class KnownType;
+  private sealed class UnknownType;
 
-  private sealed class _catalog : IMessageTypeCatalog {
+  private sealed class Catalog : IMessageTypeCatalog {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
-      new(typeof(_knownType), TypeNameFormatter.FormatClrTypeName(typeof(_knownType)), "event", null) {
+      new(typeof(KnownType), TypeNameFormatter.FormatClrTypeName(typeof(KnownType)), "event", null) {
         IsComposite = true,
       },
     ];
@@ -33,9 +33,9 @@ public class EventMarkerResolverCoverageTests {
     // If this regresses, a caller on the typed dispatch path (holding a CLR Type rather than a
     // wire name) silently loses the composite/collective/compacted markers the catalog stamped
     // for that type.
-    var resolver = new EventMarkerResolver(new _catalog());
+    var resolver = new EventMarkerResolver(new Catalog());
 
-    var flags = resolver.Resolve(typeof(_knownType));
+    var flags = resolver.Resolve(typeof(KnownType));
 
     await Assert.That(flags is not null).IsTrue();
     await Assert.That(flags!.Value.HasFlag(EventFlags.Composite)).IsTrue();
@@ -43,9 +43,9 @@ public class EventMarkerResolverCoverageTests {
 
   [Test]
   public async Task Resolve_Type_UnknownType_ReturnsNullAsync() {
-    var resolver = new EventMarkerResolver(new _catalog());
+    var resolver = new EventMarkerResolver(new Catalog());
 
-    var flags = resolver.Resolve(typeof(_unknownType));
+    var flags = resolver.Resolve(typeof(UnknownType));
 
     await Assert.That(flags).IsNull()
       .Because("a type absent from the catalog must resolve to null (unknown here), not EventFlags.None — a miss means callers fall back to runtime type checks rather than assuming no markers apply.");

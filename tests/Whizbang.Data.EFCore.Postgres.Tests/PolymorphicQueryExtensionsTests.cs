@@ -27,10 +27,6 @@ public class PolymorphicQueryExtensionsTests {
     public string SettingsTypeName { get; init; } = "";
   }
 
-  private sealed record NumberFieldSettings {
-    public string SettingsTypeName { get; init; } = "";
-  }
-
   [Test]
   public async Task WhereDiscriminatorEquals_WithValidSelector_ReturnsQueryableAsync() {
     // Arrange

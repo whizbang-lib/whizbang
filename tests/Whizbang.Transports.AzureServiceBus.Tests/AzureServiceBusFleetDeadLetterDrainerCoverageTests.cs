@@ -13,12 +13,10 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusFleetDeadLetterDrainer.cs</code-under-test>
 public class AzureServiceBusFleetDeadLetterDrainerCoverageTests {
 
-  private sealed class _recordingDrainer((string TopicName, string SubscriptionName) key) : ITransportDeadLetterDrainer {
-    public int Invocations;
+  private sealed class RecordingDrainer((string TopicName, string SubscriptionName) key) : ITransportDeadLetterDrainer {
     public int ReturnPerDrain { get; init; } = 1;
     public string TransportName => $"asb:{key.TopicName}/{key.SubscriptionName}";
     public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
-      Invocations++;
       return Task.FromResult(Math.Min(ReturnPerDrain, maxCount));
     }
   }
@@ -71,10 +69,10 @@ public class AzureServiceBusFleetDeadLetterDrainerCoverageTests {
     var subs = new List<(string TopicName, string SubscriptionName)> {
       ("t1", "s1"), ("t2", "s2"), ("t3", "s3"), ("t4", "s4"),
     };
-    var made = new Dictionary<(string, string), _recordingDrainer>();
+    var made = new Dictionary<(string, string), RecordingDrainer>();
     var fleet = new AzureServiceBusFleetDeadLetterDrainer(
       () => subs,
-      key => { var d = new _recordingDrainer(key) { ReturnPerDrain = 5 }; made[key] = d; return d; });
+      key => { var d = new RecordingDrainer(key) { ReturnPerDrain = 5 }; made[key] = d; return d; });
 
     var drained = await fleet.DrainDeadLetterQueueAsync(10);
 

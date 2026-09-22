@@ -91,15 +91,15 @@ public sealed class RedeliveryPump(
     ITransport transport,
     IEnvelopeSerializer envelopeSerializer,
     IServiceInstanceProvider instanceProvider,
+    ICompositeFactory compositeFactory,
     RedeliveryPumpOptions? options = null,
-    TimeProvider? timeProvider = null,
-    ICompositeFactory? compositeFactory = null) {
+    TimeProvider? timeProvider = null) {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IEnvelopeSerializer _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly RedeliveryPumpOptions _options = options ?? new RedeliveryPumpOptions();
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
-  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
+  private readonly ICompositeFactory _compositeFactory = compositeFactory;
 
   /// <summary>
   /// Publishes the given (stream, version)-ordered selection as per-stream re-delivery composites.
@@ -215,7 +215,8 @@ public sealed class RedeliveryPump(
     // aborts the whole serve — every later chunk dies with it and the requester's attempt burns
     // for nothing. Cancellation is a shutdown signal, never retried.
     var attempts = Math.Max(1, _options.PublishRetryAttempts);
-    for (var attempt = 1; ; attempt++) {
+    var attempt = 1;
+    while (true) {
       try {
         await _transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
           cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -227,6 +228,7 @@ public sealed class RedeliveryPump(
         if (delayMs > 0) {
           await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _time, cancellationToken).ConfigureAwait(false);
         }
+        attempt++;
       }
     }
   }
