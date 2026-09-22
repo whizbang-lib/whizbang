@@ -38,6 +38,29 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("EFCorePostgresTests")]
 public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   private const int ROWS_PER_TABLE = 20_000;
+  /// <summary>
+  /// Rows in the perspective-event table, which needs more of them than the other two to measure
+  /// anything.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// These tests assert a PLAN property: that a poll reaches its rows through an index and stops at
+  /// its batch. A planner only chooses that plan while it is the cheaper one, and cheaper is decided
+  /// by the size of the alternative. Outbox and inbox rows carry 1500 bytes of padding, so a full
+  /// scan of 20,000 of them is expensive and the index wins easily. Perspective events are narrow: at
+  /// 20,000 rows the whole table is about 330 blocks, a full scan of it costs less than a hundred
+  /// primary-key probes, and the planner correctly takes the scan. The assertion then fails against
+  /// SQL that is doing nothing wrong.
+  /// </para>
+  /// <para>
+  /// So the fixture has to be past the size where the index wins, or the test measures the fixture
+  /// instead of the query. Verified by measurement, not chosen: at 20,000 rows the lease statement
+  /// and the per-stream ordering guard are both sequential scans and the poll reads 40,001 tuples; at
+  /// this size both are index scans, looping once per row of the batch, and the poll reads almost
+  /// none.
+  /// </para>
+  /// </remarks>
+  private const int PERSPECTIVE_ROWS = 200_000;
   private const int BATCH = 100;
   /// <summary>Tuples a bounded poll may read from one table: a few batches, never the backlog.</summary>
   private const long READ_BUDGET_PER_TABLE = 4L * BATCH * 4;
@@ -146,10 +169,11 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       INSERT INTO wh_perspective_events
         (stream_id, perspective_name, event_id, status, attempts, created_at, instance_id, lease_expiry)
       SELECT gen_random_uuid(), 'TestPerspective', gen_random_uuid(), 0, 0, NOW(), @holder, {lease}
-      FROM generate_series(1, @n);";
+      FROM generate_series(1, @perspective_n);";
     fill.Parameters.AddWithValue(nameof(holder), (object?)holder ?? DBNull.Value);
     fill.Parameters[nameof(holder)].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid;
     fill.Parameters.AddWithValue("n", ROWS_PER_TABLE);
+    fill.Parameters.AddWithValue("perspective_n", PERSPECTIVE_ROWS);
     fill.CommandTimeout = 300;
     await fill.ExecuteNonQueryAsync();
   }
@@ -178,6 +202,11 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
     }
 
     await _fillAsync(connection, holder: null);
+    // The plan under test is the one a deployed database chooses, and it chooses it from statistics.
+    // Without this the planner has none for a table that just took its rows, so its estimate is
+    // wrong -- and wrong in the direction that happens to agree with the assertion, which made this
+    // test pass by accident and fail whenever autoanalyze had got there first.
+    await _settleAsync(connection);
     var before = await _sequentialTuplesReadAsync(connection);
 
     var claimed = await _claimAsync(connection, poller);
@@ -664,6 +693,7 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
     }
 
     await _fillAsync(connection, holder: holder);
+    await _settleAsync(connection);   // same reason as the sibling above: the plan follows statistics
     var before = await _sequentialTuplesReadAsync(connection);
 
     var claimed = await _claimAsync(connection, poller);
