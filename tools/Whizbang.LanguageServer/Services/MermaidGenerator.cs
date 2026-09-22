@@ -6,7 +6,7 @@ namespace Whizbang.LanguageServer.Services;
 /// Generates Mermaid flowchart diagrams from message registry data.
 /// Shows the dispatch flow: Dispatchers → Message → Receptors + Perspectives.
 /// </summary>
-public sealed class MermaidGenerator {
+public static class MermaidGenerator {
   /// <summary>
   /// Generates a Mermaid flowchart for a message showing its full dispatch flow.
   /// </summary>
