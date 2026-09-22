@@ -140,15 +140,13 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
   /// </summary>
   internal readonly record struct ConsumerPlugin(Type PluginType, Action<IServiceCollection> Register);
 
-  private readonly IReadOnlyList<ConsumerPlugin> _consumerPlugins;
-
   public WhizbangOptionsExtension() : this([]) { }
 
   private WhizbangOptionsExtension(IReadOnlyList<ConsumerPlugin> consumerPlugins) =>
-    _consumerPlugins = consumerPlugins;
+    ConsumerPlugins = consumerPlugins;
 
   /// <summary>The consumer's own translator plugins, in the order they were registered.</summary>
-  public IReadOnlyList<ConsumerPlugin> ConsumerPlugins => _consumerPlugins;
+  public IReadOnlyList<ConsumerPlugin> ConsumerPlugins { get; }
 
   /// <summary>
   /// This extension with <paramref name="plugin"/> added, or itself when it already has it.
@@ -162,9 +160,9 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     ArgumentNullException.ThrowIfNull(plugin);
     ArgumentNullException.ThrowIfNull(register);
 
-    return _consumerPlugins.Any(p => p.PluginType == plugin)
+    return ConsumerPlugins.Any(p => p.PluginType == plugin)
       ? this
-      : new WhizbangOptionsExtension([.. _consumerPlugins, new ConsumerPlugin(plugin, register)]);
+      : new WhizbangOptionsExtension([.. ConsumerPlugins, new ConsumerPlugin(plugin, register)]);
   }
 
   public DbContextOptionsExtensionInfo Info => new WhizbangOptionsExtensionInfo(this);
@@ -182,7 +180,7 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     // pipeline depends on would change the meaning of a query the framework generates, which is a
     // worse failure than a consumer's own translation being ignored because only one of the two is
     // visible to the person who wrote it.
-    foreach (var plugin in _consumerPlugins) {
+    foreach (var plugin in ConsumerPlugins) {
       plugin.Register(services);
     }
 

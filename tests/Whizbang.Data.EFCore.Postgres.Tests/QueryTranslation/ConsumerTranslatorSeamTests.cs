@@ -114,7 +114,7 @@ public class ConsumerTranslatorSeamTests {
       .ToQueryString();
 
     await Assert.That(sql).Contains("<>", StringComparison.Ordinal)
-      .Because($"the consumer's function has to be translated rather than falling back to the "
+      .Because("the consumer's function has to be translated rather than falling back to the "
         + $"client or throwing. SQL was:\n{sql}");
   }
 
