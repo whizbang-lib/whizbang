@@ -150,7 +150,7 @@ public class NullDefaultBehaviorTests {
     var assessor = NullStartupAssessor.Instance;
 
     await Assert.That(assessor.IsConfigured).IsFalse();
-    var ex = await Assert.That(async () => { await assessor.AssessAsync(CancellationToken.None); }).Throws<InvalidOperationException>();
+    var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await assessor.AssessAsync(CancellationToken.None));
     await Assert.That(ex!.Message).Contains("No startup assessor is registered");
   }
 
@@ -159,7 +159,7 @@ public class NullDefaultBehaviorTests {
     var elector = NullDutyElector.Instance;
 
     await Assert.That(elector.IsConfigured).IsFalse();
-    var ex = await Assert.That(async () => { await elector.TryAcquireAsync("schema", CancellationToken.None); }).Throws<InvalidOperationException>();
+    var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await elector.TryAcquireAsync("schema", CancellationToken.None));
     await Assert.That(ex!.Message).Contains("No duty elector is registered");
   }
 
