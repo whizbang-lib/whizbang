@@ -454,6 +454,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
+    string? columnType = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
@@ -472,6 +473,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
           break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
+          break;
       }
     }
 
@@ -489,7 +495,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -693,6 +700,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static string _getEFCoreColumnType(PhysicalFieldInfo field) {
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // The author's own type wins over the derived one. Checked before the switch rather than as its
+    // default arm, because the switch's fallback is text: a type it does not recognize would
+    // otherwise silently become text, which is how an array column becomes a delimited string.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
     }
 
     // Normalize the type name

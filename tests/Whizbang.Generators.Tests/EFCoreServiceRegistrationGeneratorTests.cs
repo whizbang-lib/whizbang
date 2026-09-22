@@ -1730,6 +1730,72 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// A declared column type reaches the DDL.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This generator emits the table; the configuration generator emits the model. They derive the
+  /// column type separately, so both have to honour what the author declared, or the model and the
+  /// table describe different columns.
+  /// </para>
+  /// <para>
+  /// A declared LENGTH is a different matter and is pinned as unhonoured. This generator emits
+  /// CREATE TABLE and additive ADD COLUMN, never ALTER COLUMN TYPE, so honouring a length that has
+  /// been declarable and ignored for a long time would constrain a new database where an existing
+  /// one stays unconstrained. A declared column type does not have that problem: it is new, so
+  /// there is no existing table that declared one and was ignored.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_DeclaredColumnType_ReachesTheTable_WhileLengthStaysUnhonouredAsync() {
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System;
+
+      namespace TestApp;
+
+      public record LineageEvent : IEvent;
+
+      public class LineageModel {
+        [PhysicalField(ColumnType = "uuid[]")]
+        public Guid[] AncestorIds { get; init; } = [];
+
+        [PhysicalField(MaxLength = 64)]
+        public string Label { get; init; } = "";
+      }
+
+      public class LineagePerspective : IPerspectiveFor<LineageModel, LineageEvent> {
+        public LineageModel Apply(LineageModel currentData, LineageEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    await Assert.That(sourceText).Contains("uuid[]", StringComparison.Ordinal)
+      .Because("the derivation's fallback is text, so a declared type that did not win here would "
+             + "create the array column as a delimited string.");
+    // MaxLength is deliberately NOT asserted here. This generator does not honour it, and making
+    // it do so would constrain a new database where an existing one is unconstrained; see the
+    // comment at the construction site.
+    await Assert.That(sourceText).Contains("TEXT", StringComparison.Ordinal)
+      .Because("a declared length is not honoured on this path, so the column stays text -- pinned "
+             + "so that changing it is a decision with a migration behind it rather than a silent "
+             + "divergence between databases of different ages.");
+  }
+
+  /// <summary>
   /// A declared composite index, and a partial one, reach the DDL.
   /// </summary>
   /// <remarks>

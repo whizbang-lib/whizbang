@@ -237,6 +237,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
+    string? columnType = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
@@ -256,6 +257,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
           break;
+        case "ColumnType":
+          // Verbatim: the set of types a server might have is open, so there is nothing to
+          // validate against that would not refuse the cases this exists for.
+          columnType = namedArg.Value.Value as string;
+          break;
       }
     }
 
@@ -273,7 +279,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         VectorDimensions: null,
         VectorDistanceMetric: null,
         VectorIndexType: null,
-        VectorIndexLists: null
+        VectorIndexLists: null,
+        ColumnType: columnType
     );
   }
 
@@ -521,6 +528,14 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private static string _mapToPostgresType(PhysicalFieldInfo field) {
     if (field.IsVector && field.VectorDimensions.HasValue) {
       return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // The author's own type wins over the derived one, and is consulted BEFORE the mapping table
+    // rather than as its default arm. That arm is TEXT, so a native array, a domain or a type from
+    // an extension would otherwise be silently downgraded -- and storing an array as text is the
+    // exact defect the option exists to remove.
+    if (!string.IsNullOrWhiteSpace(field.ColumnType)) {
+      return field.ColumnType!;
     }
 
     // Normalize the type name by removing global:: and nullable markers
